@@ -1,0 +1,40 @@
+[tool.poetry]
+name = "Qube2"
+version = "0.0.1"
+description = "Qube2 experiments"
+authors = ["Dmitry Marienko <dmitry@gmail.com>"]
+readme = "README.md"
+packages = [
+    { include = "qube", from = "src" },
+]
+repository = "https://github.com/dmarienko/Qube2exp"
+
+[tool.poetry.dependencies]
+python = ">=3.9,<4.0"
+pytest = {extras = ["lazyfixture"], version = "^7.2.0"}
+numpy = "^1.23.4"
+ntplib = "^0.4.0"
+loguru = "^0.7.2"
+stackprinter = "^0.2.10"
+websocket-client = "^1.6.3"
+websockets = "^11.0.3"
+pymongo = "^4.5.0"
+pydantic = "^1.10.2"
+python-dotenv = "^1.0.0"
+scipy = "^1.9.3"
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "^2.20.0"
+pytest = "^7.1.3"
+
+[project.optional-dependencies]
+numba = "^0.57.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.test.dependencies]
+pytest = "^7.1.3"
+pytest-mock = "*"
+
