@@ -1,0 +1,9 @@
+def make_ext(modname, pyxfilename):
+    import os
+    print('>>>>>>>>>', modname, pyxfilename, os.getcwd())
+    pyxfilename = "c:/Users/dmitr/devs/Qube2exp/src/qube/core/cseries.pyx"
+
+    from distutils.extension import Extension
+    return Extension(name=modname,
+                     sources=[pyxfilename],
+                     extra_compile_args=['-O3', '-march=native'])
