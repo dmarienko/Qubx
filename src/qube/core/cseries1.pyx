@@ -103,7 +103,7 @@ cdef class Indexed:
         if len(self.values) >= self.max_series_length:
             self.values.pop(0)
 
-    def update(self, v):
+    def update_last(self, v):
         if self.values:
             self.values[-1] = v
         else:
@@ -133,27 +133,29 @@ cdef class TimeSeries:
     def __getitem__(self, idx):
         return self.values[idx]
 
-    def _add_new_item(self, long long time, float value):
+    def _add_new_item(self, long long time, double value):
         self.times.add(time)
         self.values.add(value)
         self._is_new_item = True
 
-    def _update_last_item(self, long long time, float value):
-        self.times.update(time)
-        self.values.update(value)
+    def _update_last_item(self, long long time, double value):
+        self.times.update_last(time)
+        self.values.update_last(value)
         self._is_new_item = False
 
-    def update(self, long long time, float value) -> short:
+    def update(self, long long time, double value) -> short:
         item_start_time = floor_t64(time, self.timeframe)
+
         if not self.times:
             self._add_new_item(item_start_time, value)
 
             # Here we disable first notification because first item may be incomplete
             self._is_new_item = False
+
         elif time - self.times[0] >= self.timeframe:
-            # first we update indicators by current last bar
-            print(f"~~ UI ~~ FALSE {value} > ", end='')
-            self._update_indicators(item_start_time, value, False)
+            # first we update indicators
+            # print(f" + [{time_to_str(item_start_time)[:19]}] <NEW> {value}\t| ", end='')
+            self._update_indicators(item_start_time, value, True)
 
             # then add new item
             self._add_new_item(item_start_time, value)
@@ -162,14 +164,15 @@ cdef class TimeSeries:
             self._update_last_item(item_start_time, value)
 
         # update indicators by new data
-        print(f"~~ UI ~~ TRUE {value}  > ", end='')
-        self._update_indicators(item_start_time, value, True)
+        # print(f" - [{time_to_str(item_start_time)[:19]}] <LST> {value}\t| ", end='')
+
+        self._update_indicators(item_start_time, value, False)
 
         return self._is_new_item
 
-    cdef _update_indicators(self, long long time, value, short is_last_item):
+    cdef _update_indicators(self, long long time, value, short new_item_started):
         for i in self.indicators:
-            i.update(time, value, is_last_item)
+            i.update(time, value, new_item_started)
 
     def to_records(self) -> dict:
         ts = [np.datetime64(t, 'ns') for t in self.times[::-1]]
@@ -201,25 +204,28 @@ cdef class Indicator(TimeSeries):
     def name(self) -> str:
         return 'none'
 
-    def update(self, long long time, value, short is_last_item) -> any:
-        iv = self.calculate(time, value, is_last_item)
-        if is_last_item:
+    def update(self, long long time, value, short new_item_started) -> any:
+        iv = self.calculate(time, value, new_item_started)
+
+        if new_item_started:
+            self._add_new_item(time, iv)
+        else:
             if len(self) > 0:
                 self._update_last_item(time, iv)
             else:
                 self._add_new_item(time, iv)
-        else:
-            self._add_new_item(time, iv)
+
         return iv
 
-    def calculate(self, long long time, value) -> any:
+    def calculate(self, long long time, value, short new_item_started) -> any:
         pass
 
 
 cdef class Sma(Indicator):
-    cdef int period
+    cdef unsigned int period
     cdef np.ndarray __s
-    cdef int __i
+    cdef unsigned int __i
+    # cdef double _r_sum
 
     """
     Simple moving average
@@ -228,15 +234,15 @@ cdef class Sma(Indicator):
         self.period = period
         self.__s = nans(period)
         self.__i = 0
+        # self._r_sum = 0.0
         super().__init__(series)
 
     def name(self) -> str:
         return f'sma{self.period}'
 
-    cpdef calculate(self, long long time, value, short is_last_item):
-        cdef float _x = value / self.period
-        self.__s[self.__i] = _x
-        if not is_last_item:
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        self.__s[self.__i] = value / self.period
+        if new_item_started:
             self.__i += 1
             if self.__i >= self.period:
                 self.__i = 0
@@ -250,9 +256,10 @@ cdef class Ema(Indicator):
     cdef int period
     cdef np.ndarray __s
     cdef int __i
-    cdef float alpha
-    cdef float alpha_1
+    cdef double alpha
+    cdef double alpha_1
     cdef unsigned short init_mean 
+    cdef unsigned short _init_stage
 
     def __init__(self, TimeSeries series, int period, init_mean=True):
         self.period = period
@@ -263,33 +270,37 @@ cdef class Ema(Indicator):
             self.__s = nans(period)
             self.__i = 0
 
+        self._init_stage = 1
         self.alpha = 2.0 / (1.0 + period)
         self.alpha_1 = (1 - self.alpha)
         super().__init__(series)
 
-    cpdef calculate(self, long long time, value, short is_last_item):
-        # when we need to initialize ema by average from initial period
-        if self.init_mean and self.__i < self.period:
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        cdef int p_idx = 0 if new_item_started else 1 
 
-            # we skip any nans on initial period (tema, dema, ...)
-            if np.isnan(value):
-                return np.nan
+        # - - - - - - - -
+        if self._init_stage:
+            if np.isnan(value): return np.nan
+
+            if new_item_started:
+                self.__i += 1
+                if self.__i > self.period - 1:
+                    self._init_stage = False
+                    # print(' >>> (STANDARD A)', self[p_idx], self.alpha * value + self.alpha_1 * self[p_idx])
+                    return self.alpha * value + self.alpha_1 * self[p_idx]
+
+            if self.__i == self.period - 1:
+                self.__s[self.__i] = value 
+                # print(' >>> update last in init', self.__s)
+                return np.nansum(self.__s) / self.period
 
             self.__s[self.__i] = value 
-            if not is_last_item:
-                self.__i += 1
-
-                if self.__i >= self.period:
-                    self.init_mean = False
-                    print(value, ' -> ', self.__s, np.sum(self.__s) / self.period)
-                    return np.sum(self.__s) / self.period
-
-            print(' -> ret NAN | ', self.__s)
+            # print(' -> ret NAN | ', self.__s)
             return np.nan
+        # - - - - - - - -
 
         if len(self) == 0:
-            print(' >>> zero 1')
             return value
 
-        print(' >>> STANDARD', value, self[0], self.alpha * value + self.alpha_1 * self[0])
-        return self.alpha * value + self.alpha_1 * self[0]
+        # print(' >>> (STANDARD X)', self[p_idx], self.alpha * value + self.alpha_1 * self[p_idx])
+        return self.alpha * value + self.alpha_1 * self[p_idx]
