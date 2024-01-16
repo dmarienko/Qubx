@@ -122,7 +122,7 @@ cdef class TimeSeries:
     cdef float max_series_length
     cdef unsigned short _is_new_item
     cdef str name
-    cdef indicators
+    cdef dict indicators
 
     def __init__(self, str name, timeframe, max_series_length=INFINITY) -> None:
         self.name = name
@@ -130,7 +130,7 @@ cdef class TimeSeries:
         self.timeframe = recognize_timeframe(timeframe)
         self.times = Indexed(max_series_length)
         self.values = Indexed(max_series_length)
-        self.indicators = list()
+        self.indicators = dict()
 
     def __len__(self) -> int:
         return len(self.times)
@@ -176,7 +176,7 @@ cdef class TimeSeries:
         return self._is_new_item
 
     cdef _update_indicators(self, long long time, value, short new_item_started):
-        for i in self.indicators:
+        for i in self.indicators.values():
             i.update(time, value, new_item_started)
 
     def to_records(self) -> dict:
@@ -185,6 +185,9 @@ cdef class TimeSeries:
 
     def to_series(self):
         return pd.Series(self.to_records(), name=self.name)
+
+    def get_indicators(self) -> dict:
+        return self.indicators
 
     def __str__(self):
         nl = len(self)
@@ -209,12 +212,9 @@ cdef class Indicator(TimeSeries):
 
     def __init__(self, TimeSeries series):
         super().__init__(self.name(), series.timeframe, series.max_series_length)
-        series.indicators.append(self)
+        series.indicators[self.name()] = self
         self.series = series 
         self._recalculate()
-
-    def name(self) -> str:
-        return 'none'
 
     def _recalculate(self):
         for t, v in zip(self.series.times[::-1], self.series.values[::-1]):
@@ -236,8 +236,11 @@ cdef class Indicator(TimeSeries):
 
         return iv
 
+    def name(self) -> str:
+        raise ValueError("Indicator must override name() method to return unique indicator name !")
+
     def calculate(self, long long time, value, short new_item_started) -> any:
-        pass
+        raise ValueError("Indicator must implement calculate() method")
 
 
 cdef class Sma(Indicator):
@@ -303,10 +306,12 @@ cdef class Ema(Indicator):
         self.alpha_1 = (1 - self.alpha)
         super().__init__(series)
 
-    cpdef double calculate(self, long long time, double value, short new_item_started):
-        cdef int p_idx = 0 if new_item_started else 1 
+    def name(self) -> str:
+        return f'ema{self.period}_{self.init_mean}'
 
-        # - - - - - - - -
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        cdef int prev_bar_idx = 0 if new_item_started else 1 
+
         if self._init_stage:
             if np.isnan(value): return np.nan
 
@@ -314,21 +319,64 @@ cdef class Ema(Indicator):
                 self.__i += 1
                 if self.__i > self.period - 1:
                     self._init_stage = False
-                    # print(' >>> (STANDARD A)', self[p_idx], self.alpha * value + self.alpha_1 * self[p_idx])
-                    return self.alpha * value + self.alpha_1 * self[p_idx]
+                    return self.alpha * value + self.alpha_1 * self[prev_bar_idx]
 
             if self.__i == self.period - 1:
                 self.__s[self.__i] = value 
-                # print(' >>> update last in init', self.__s)
                 return np.nansum(self.__s) / self.period
 
             self.__s[self.__i] = value 
-            # print(' -> ret NAN | ', self.__s)
             return np.nan
-        # - - - - - - - -
 
         if len(self) == 0:
             return value
 
-        # print(' >>> (STANDARD X)', self[p_idx], self.alpha * value + self.alpha_1 * self[p_idx])
-        return self.alpha * value + self.alpha_1 * self[p_idx]
+        return self.alpha * value + self.alpha_1 * self[prev_bar_idx]
+
+
+cdef class Tema(Indicator):
+    cdef int period
+    cdef unsigned short init_mean 
+    cdef TimeSeries ser0
+    cdef Ema ema1
+    cdef Ema ema2
+    cdef Ema ema3
+
+    def __init__(self, TimeSeries series, int period, init_mean=True):
+        self.period = period
+        self.init_mean = init_mean
+        self.ser0 = TimeSeries('ser0', series.timeframe, series.max_series_length)
+        self.ema1 = Ema(self.ser0, period, init_mean)
+        self.ema2 = Ema(self.ema1, period, init_mean)
+        self.ema3 = Ema(self.ema2, period, init_mean)
+        super().__init__(series)
+        
+    def name(self) -> str:
+        return f'tema{self.period}_{self.init_mean}'
+
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        self.ser0.update(time, value)
+        return 3 * self.ema1[0] - 3 * self.ema2[0] + self.ema3[0]
+
+
+cdef class Dema(Indicator):
+    cdef int period
+    cdef unsigned short init_mean 
+    cdef TimeSeries ser0
+    cdef Ema ema1
+    cdef Ema ema2
+
+    def __init__(self, TimeSeries series, int period, init_mean=True):
+        self.period = period
+        self.init_mean = init_mean
+        self.ser0 = TimeSeries('ser0', series.timeframe, series.max_series_length)
+        self.ema1 = Ema(self.ser0, period, init_mean)
+        self.ema2 = Ema(self.ema1, period, init_mean)
+        super().__init__(series)
+        
+    def name(self) -> str:
+        return f'dema{self.period}_{self.init_mean}'
+
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        self.ser0.update(time, value)
+        return 2 * self.ema1[0] - self.ema2[0]
