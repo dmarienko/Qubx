@@ -3,6 +3,8 @@ import numpy as np
 cimport numpy as np
 from cpython.datetime cimport datetime
 from qube.utils import convert_tf_str_td64
+import pandas as pd
+
 
 cpdef recognize_time(time):
     return np.datetime64(time, 'ns') if isinstance(time, str) else np.datetime64(time, 'ms')
@@ -178,6 +180,9 @@ cdef class TimeSeries:
         ts = [np.datetime64(t, 'ns') for t in self.times[::-1]]
         return dict(zip(ts, self.values[::-1]))
 
+    def to_series(self):
+        return pd.Series(self.to_records(), name=self.name)
+
     def __str__(self):
         nl = len(self)
         r = f"{self.name}[{time_delta_to_str(self.timeframe)}] | {nl} records\n"
@@ -206,7 +211,7 @@ cdef class Indicator(TimeSeries):
 
     def update(self, long long time, value, short new_item_started) -> any:
         iv = self.calculate(time, value, new_item_started)
-
+        
         if new_item_started:
             self._add_new_item(time, iv)
         else:
@@ -214,6 +219,9 @@ cdef class Indicator(TimeSeries):
                 self._update_last_item(time, iv)
             else:
                 self._add_new_item(time, iv)
+
+        # update attached indicators
+        self._update_indicators(time, iv, self._is_new_item)
 
         return iv
 
@@ -243,6 +251,8 @@ cdef class Sma(Indicator):
         return f'sma{self.period}'
 
     cpdef double calculate(self, long long time, double value, short new_item_started):
+        if np.isnan(value):
+            return np.nan
         sub = self.__s[self.__i]
         if new_item_started:
             self.__i += 1
