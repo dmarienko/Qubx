@@ -111,6 +111,9 @@ cdef class Indexed:
         else:
             self.append(v)
 
+    def clear(self):
+        self.values.clear()
+
 
 cdef class TimeSeries:
     cdef public long long timeframe
@@ -202,12 +205,20 @@ cdef class TimeSeries:
 
 
 cdef class Indicator(TimeSeries):
+    cdef TimeSeries series
+
     def __init__(self, TimeSeries series):
         super().__init__(self.name(), series.timeframe, series.max_series_length)
         series.indicators.append(self)
+        self.series = series 
+        self._recalculate()
 
     def name(self) -> str:
         return 'none'
+
+    def _recalculate(self):
+        for t, v in zip(self.series.times[::-1], self.series.values[::-1]):
+            self.update(t, v, True)
 
     def update(self, long long time, value, short new_item_started) -> any:
         iv = self.calculate(time, value, new_item_started)
