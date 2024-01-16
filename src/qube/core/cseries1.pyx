@@ -1,9 +1,9 @@
-# - experimental 2 -
+import pandas as pd
 import numpy as np
 cimport numpy as np
-from cpython.datetime cimport datetime
 from qube.utils import convert_tf_str_td64
-import pandas as pd
+from collections import deque
+from cython cimport abs
 
 
 cpdef recognize_time(time):
@@ -398,9 +398,6 @@ cdef class Dema(Indicator):
         return 2 * self.ema1[0] - self.ema2[0]
 
 
-from collections import deque
-from cython cimport abs
-
 cdef class Kama(Indicator):
     cdef int period
     cdef int fast_span
@@ -433,10 +430,9 @@ cdef class Kama(Indicator):
         cdef double er = abs(value - self._x_past[0]) / rs
         cdef double sc = (er * self._K1 + self._S1) ** 2
 
-        if self.summator.is_init_stage and not np.isnan(self._x_past[0]):
-            return value
-
         if self.summator.is_init_stage:
+            if not np.isnan(self._x_past[0]):
+                return value
             return np.nan
 
         return sc * value + (1 - sc) * self[0 if new_item_started else 1]
