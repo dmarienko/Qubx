@@ -225,28 +225,35 @@ cdef class Sma(Indicator):
     cdef unsigned int period
     cdef np.ndarray __s
     cdef unsigned int __i
-    # cdef double _r_sum
+    cdef double _r_sum
+    cdef unsigned short _init_stage
 
     """
     Simple moving average
     """
     def __init__(self, TimeSeries series, int period):
         self.period = period
-        self.__s = nans(period)
+        self.__s = np.zeros(period)
         self.__i = 0
-        # self._r_sum = 0.0
+        self._r_sum = 0.0
+        self._init_stage = 1
         super().__init__(series)
 
     def name(self) -> str:
         return f'sma{self.period}'
 
     cpdef double calculate(self, long long time, double value, short new_item_started):
-        self.__s[self.__i] = value / self.period
+        sub = self.__s[self.__i]
         if new_item_started:
             self.__i += 1
             if self.__i >= self.period:
                 self.__i = 0
-        return np.sum(self.__s)
+                self._init_stage = 0
+            sub = self.__s[self.__i]
+        self.__s[self.__i] = value
+        self._r_sum -= sub
+        self._r_sum += value 
+        return np.nan if self._init_stage else self._r_sum / self.period
 
 
 cdef class Ema(Indicator):
