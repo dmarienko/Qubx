@@ -114,13 +114,18 @@ cdef class RollingSum:
 cdef class Indexed:
     cdef list values
     cdef float max_series_length
+    cdef unsigned short _is_empty
 
     def __init__(self, max_series_length=INFINITY):
         self.max_series_length = max_series_length
         self.values = list()
+        self._is_empty = 1
 
     def __len__(self) -> int:
         return len(self.values)
+
+    def empty(self) -> bool:
+        return self._is_empty
 
     def __getitem__(self, idx):
         if isinstance(idx, slice):
@@ -135,6 +140,7 @@ cdef class Indexed:
 
     def add(self, v):
         self.values.append(v)
+        self._is_empty = 0
         if len(self.values) >= self.max_series_length:
             self.values.pop(0)
 
@@ -143,9 +149,11 @@ cdef class Indexed:
             self.values[-1] = v
         else:
             self.append(v)
+        self._is_empty = 0
 
     def clear(self):
         self.values.clear()
+        self._is_empty = 1
 
 
 cdef class TimeSeries:
@@ -192,7 +200,6 @@ cdef class TimeSeries:
 
         elif time - self.times[0] >= self.timeframe:
             # first we update indicators
-            # print(f" + [{time_to_str(item_start_time)[:19]}] <NEW> {value}\t| ", end='')
             self._update_indicators(item_start_time, value, True)
 
             # then add new item
@@ -202,8 +209,6 @@ cdef class TimeSeries:
             self._update_last_item(item_start_time, value)
 
         # update indicators by new data
-        # print(f" - [{time_to_str(item_start_time)[:19]}] <LST> {value}\t| ", end='')
-
         self._update_indicators(item_start_time, value, False)
 
         return self._is_new_item
@@ -436,3 +441,110 @@ cdef class Kama(Indicator):
             return np.nan
 
         return sc * value + (1 - sc) * self[0 if new_item_started else 1]
+
+
+cdef class Bar:
+    cdef public long long time
+    cdef public double open
+    cdef public double high
+    cdef public double low
+    cdef public double close
+    cdef public double volume
+
+    def __init__(self, long long time, double open, double high, double low, double close, double volume) -> None:
+        self.open = open
+        self.high = high
+        self.low = low
+        self.close = close
+        self.volume = volume
+
+    cpdef Bar update(self, double price, double volume):
+        self.close = price
+        self.high = max(price, self.high)
+        self.low = min(price, self.low)
+        self.volume += volume
+        return self
+
+    cpdef dict to_dict(self, skip_time=False):
+        if skip_time:
+            return {
+                'open': self.open, 'high': self.high, 'low': self.low, 'close': self.close, 'volume': self.volume,
+            }
+        return {
+            'timestamp': np.datetime64(self.time, 'ns'), 'open': self.open, 'high': self.high, 'low': self.low, 'close': self.close, 'volume': self.volume,
+        }
+
+    def __repr__(self):
+        return "{o:%f | h:%f | l:%f | c:%f | v:%f}" % (self.open, self.high, self.low, self.close, self.volume)
+
+
+cdef class OHLCV(TimeSeries):
+    cdef public TimeSeries open
+    cdef public TimeSeries high
+    cdef public TimeSeries low
+    cdef public TimeSeries close
+    cdef public TimeSeries volume
+
+    def __init__(self, timeframe, max_series_length=INFINITY) -> None:
+        super().__init__('OHLCV', timeframe, max_series_length)
+        self.open = TimeSeries('open', timeframe, max_series_length)
+        self.high = TimeSeries('high', timeframe, max_series_length)
+        self.low = TimeSeries('low', timeframe, max_series_length)
+        self.close = TimeSeries('close', timeframe, max_series_length)
+        self.volume = TimeSeries('volume', timeframe, max_series_length)
+
+    def _add_new_item(self, long long time, Bar value):
+        self.times.add(time)
+        self.values.add(value)
+        self.open._add_new_item(time, value.open)
+        self.high._add_new_item(time, value.high)
+        self.low._add_new_item(time, value.low)
+        self.close._add_new_item(time, value.close)
+        self.volume._add_new_item(time, value.volume)
+        self._is_new_item = True
+
+    def _update_last_item(self, long long time, Bar value):
+        self.times.update_last(time)
+        self.values.update_last(value)
+        self.open._update_last_item(time, value.open)
+        self.high._update_last_item(time, value.high)
+        self.low._update_last_item(time, value.low)
+        self.close._update_last_item(time, value.close)
+        self.volume._update_last_item(time, value.volume)
+        self._is_new_item = False
+
+    cpdef short update(self, long long time, double price, double volume=0.0):
+        cdef Bar b
+        bar_start_time = floor_t64(time, self.timeframe)
+
+        if not self.times:
+            self._add_new_item(bar_start_time, Bar(bar_start_time, price, price, price, price, volume))
+
+            # Here we disable first notification because first item may be incomplete
+            self._is_new_item = False
+
+        elif time - self.times[0] >= self.timeframe:
+            # first we update indicators
+            b = Bar(bar_start_time, price, price, price, price, volume)
+            self._update_indicators(bar_start_time, b, True)
+
+            # then add new item
+            self._add_new_item(bar_start_time, b)
+            return self._is_new_item
+        else:
+            self._update_last_item(bar_start_time, self[0].update(price, volume))
+
+        # update indicators by new data
+        self._update_indicators(bar_start_time, self[0], False)
+
+        return self._is_new_item
+
+    def to_records(self) -> dict:
+        ts = [np.datetime64(t, 'ns') for t in self.times[::-1]]
+        bs = [v.to_dict(skip_time=True) for v in self.values[::-1]]
+        return dict(zip(ts, bs))
+
+    def to_series(self):
+        df = pd.DataFrame.from_dict(self.to_records(), orient='index')
+        df.index.name = 'timestamp'
+        return df
