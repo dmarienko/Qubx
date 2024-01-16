@@ -78,6 +78,39 @@ cpdef recognize_timeframe(timeframe):
     return tf
 
 
+cdef class RollingSum:
+    """
+    Rolling fast summator (TODO: move to utils)
+    """
+    cdef unsigned int period
+    cdef np.ndarray __s
+    cdef unsigned int __i
+    cdef double rsum
+    cdef unsigned short is_init_stage 
+
+    def __init__(self, int period):
+        self.period = period
+        self.__s = np.zeros(period)
+        self.__i = 0
+        self.rsum = 0.0
+        self.is_init_stage = 1
+
+    cpdef double update(self, double value, short new_item_started):
+        if np.isnan(value):
+            return np.nan
+        sub = self.__s[self.__i]
+        if new_item_started:
+            self.__i += 1
+            if self.__i >= self.period:
+                self.__i = 0
+                self.is_init_stage = 0
+            sub = self.__s[self.__i]
+        self.__s[self.__i] = value
+        self.rsum -= sub
+        self.rsum += value 
+        return self.rsum
+
+
 cdef class Indexed:
     cdef list values
     cdef float max_series_length
@@ -245,39 +278,22 @@ cdef class Indicator(TimeSeries):
 
 cdef class Sma(Indicator):
     cdef unsigned int period
-    cdef np.ndarray __s
-    cdef unsigned int __i
-    cdef double _r_sum
-    cdef unsigned short _init_stage
+    cdef RollingSum summator
 
     """
     Simple moving average
     """
     def __init__(self, TimeSeries series, int period):
         self.period = period
-        self.__s = np.zeros(period)
-        self.__i = 0
-        self._r_sum = 0.0
-        self._init_stage = 1
+        self.summator = RollingSum(period)
         super().__init__(series)
 
     def name(self) -> str:
-        return f'sma{self.period}'
+        return f'sma({self.period})'
 
     cpdef double calculate(self, long long time, double value, short new_item_started):
-        if np.isnan(value):
-            return np.nan
-        sub = self.__s[self.__i]
-        if new_item_started:
-            self.__i += 1
-            if self.__i >= self.period:
-                self.__i = 0
-                self._init_stage = 0
-            sub = self.__s[self.__i]
-        self.__s[self.__i] = value
-        self._r_sum -= sub
-        self._r_sum += value 
-        return np.nan if self._init_stage else self._r_sum / self.period
+        cdef double r = self.summator.update(value, new_item_started)
+        return np.nan if self.summator.is_init_stage else r / self.period
 
 
 cdef class Ema(Indicator):
@@ -307,7 +323,7 @@ cdef class Ema(Indicator):
         super().__init__(series)
 
     def name(self) -> str:
-        return f'ema{self.period}_{self.init_mean}'
+        return f'ema({self.period},{self.init_mean})'
 
     cpdef double calculate(self, long long time, double value, short new_item_started):
         cdef int prev_bar_idx = 0 if new_item_started else 1 
@@ -352,7 +368,7 @@ cdef class Tema(Indicator):
         super().__init__(series)
         
     def name(self) -> str:
-        return f'tema{self.period}_{self.init_mean}'
+        return f'tema({self.period},{self.init_mean})'
 
     cpdef double calculate(self, long long time, double value, short new_item_started):
         self.ser0.update(time, value)
@@ -375,8 +391,52 @@ cdef class Dema(Indicator):
         super().__init__(series)
         
     def name(self) -> str:
-        return f'dema{self.period}_{self.init_mean}'
+        return f'dema({self.period},{self.init_mean})'
 
     cpdef double calculate(self, long long time, double value, short new_item_started):
         self.ser0.update(time, value)
         return 2 * self.ema1[0] - self.ema2[0]
+
+
+from collections import deque
+from cython cimport abs
+
+cdef class Kama(Indicator):
+    cdef int period
+    cdef int fast_span
+    cdef int slow_span
+    cdef double _S1 
+    cdef double _K1 
+    cdef _x_past
+    cdef RollingSum summator
+
+    def __init__(self, TimeSeries series, int period, int fast_span=2, int slow_span=30):
+        self.period = period
+        self.fast_span = fast_span
+        self.slow_span = slow_span
+        self._S1 = 2.0 / (slow_span + 1)
+        self._K1 = 2.0 / (fast_span + 1) - self._S1
+        self._x_past = deque(nans(period), period)
+        self.summator = RollingSum(period)
+        super().__init__(series)
+
+    def name(self) -> str:
+        return f'kama({self.period},{self.fast_span},{self.slow_span})'
+
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        if new_item_started:
+            self._x_past.append(value)
+        else:
+            self._x_past[-1] = value
+
+        cdef double rs = self.summator.update(abs(value - self._x_past[-2]), new_item_started)
+        cdef double er = abs(value - self._x_past[0]) / rs
+        cdef double sc = (er * self._K1 + self._S1) ** 2
+
+        if self.summator.is_init_stage and not np.isnan(self._x_past[0]):
+            return value
+
+        if self.summator.is_init_stage:
+            return np.nan
+
+        return sc * value + (1 - sc) * self[0 if new_item_started else 1]
