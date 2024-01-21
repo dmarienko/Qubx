@@ -1,8 +1,9 @@
 import pandas as pd
 import numpy as np
 cimport numpy as np
-from qube.utils import convert_tf_str_td64
 from collections import deque
+from qube.utils import convert_tf_str_td64
+
 from cython cimport abs
 
 
@@ -418,7 +419,7 @@ cdef class Kama(Indicator):
         self.slow_span = slow_span
         self._S1 = 2.0 / (slow_span + 1)
         self._K1 = 2.0 / (fast_span + 1) - self._S1
-        self._x_past = deque(nans(period), period)
+        self._x_past = deque(nans(period+1), period+1)
         self.summator = RollingSum(period)
         super().__init__(series)
 
@@ -436,7 +437,7 @@ cdef class Kama(Indicator):
         cdef double sc = (er * self._K1 + self._S1) ** 2
 
         if self.summator.is_init_stage:
-            if not np.isnan(self._x_past[0]):
+            if not np.isnan(self._x_past[1]):
                 return value
             return np.nan
 
@@ -538,6 +539,10 @@ cdef class OHLCV(TimeSeries):
         self._update_indicators(bar_start_time, self[0], False)
 
         return self._is_new_item
+
+    cpdef _update_indicators(self, long long time, value, short new_item_started):
+        TimeSeries._update_indicators(self, time, value, new_item_started)
+        # self.open._update_indicators(time, )
 
     def to_records(self) -> dict:
         ts = [np.datetime64(t, 'ns') for t in self.times[::-1]]

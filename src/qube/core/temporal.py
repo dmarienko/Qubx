@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, List, Optional, Union
 
 import numpy as np
-from qube.core.series import Bar, TimeItem
+from qube.core.series_x import Bar, TimeItem
 
 from qube.utils import convert_tf_str_td64, convert_seconds_to_str, time_to_str, infer_series_frequency
 from qube.utils.time import floor_t64
