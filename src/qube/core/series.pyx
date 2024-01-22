@@ -249,26 +249,15 @@ cdef class TimeSeries:
         return r
 
 
-class Cached:
-    """
-    Caching object for indicators
-    """
-
-    @classmethod
-    def name(cls, *args):
-        return cls.__name__ + "(" + ','.join([str(a) for a in args]) + ")"
-
-    def __new__(cls, series: TimeSeries, *args):
-        nn = cls.name(*args)
-        # print(f'Creating a new {cls.__name__} -> {nn} object for {series}')
-
-        inds = series.get_indicators()
-        # print(inds)
-        if nn in inds:
-            return inds[nn]
-
-        obj = super().__new__(cls, *args)
-        return obj
+def _wrap_indicator(series: TimeSeries, clz, *args, **kwargs):
+    aw = ','.join([str(a) for a in args])
+    if kwargs:
+        aw += ',' + ','.join([f"{k}={str(v)}" for k,v in kwargs.items()])
+    nn = clz.__name__.lower() + "(" + aw + ")"
+    inds = series.get_indicators()
+    if nn in inds:
+        return inds[nn]
+    return clz(nn, series, *args, **kwargs) 
 
 
 cdef class Indicator(TimeSeries):
@@ -305,6 +294,10 @@ cdef class Indicator(TimeSeries):
     def calculate(self, long long time, value, short new_item_started) -> any:
         raise ValueError("Indicator must implement calculate() method")
 
+    @classmethod
+    def wrap(clz, series:TimeSeries, *args, **kwargs):
+        return _wrap_indicator(series, clz, *args, **kwargs)
+
 
 cdef class Sma(Indicator):
     cdef unsigned int period
@@ -323,9 +316,8 @@ cdef class Sma(Indicator):
         return np.nan if self.summator.is_init_stage else r / self.period
 
 
-class sma(Cached, Sma):
-    def __init__(self, series:TimeSeries, period: int):
-        super().__init__(self.name(period), series, period)
+def sma(series:TimeSeries, period: int): 
+    return Sma.wrap(series, period)
 
 
 cdef class Ema(Indicator):
@@ -379,9 +371,8 @@ cdef class Ema(Indicator):
         return self.alpha * value + self.alpha_1 * self[prev_bar_idx]
 
 
-class ema(Cached, Ema):
-    def __init__(self, series:TimeSeries, period: int, init_mean: bool=True ):
-        super().__init__(self.name(period, int(init_mean)), series, period, init_mean)
+def ema(series:TimeSeries, period: int, init_mean: bool = True):
+    return Ema.wrap(series, period, init_mean=init_mean)
 
 
 cdef class Tema(Indicator):
@@ -406,9 +397,8 @@ cdef class Tema(Indicator):
         return 3 * self.ema1[0] - 3 * self.ema2[0] + self.ema3[0]
 
 
-class tema(Cached, Tema):
-    def __init__(self, series:TimeSeries, period: int, init_mean: bool=True ):
-        super().__init__(self.name(period, int(init_mean)), series, period, init_mean)
+def tema(series:TimeSeries, period: int, init_mean: bool = True):
+    return Tema.wrap(series, period, init_mean=init_mean)
 
 
 cdef class Dema(Indicator):
@@ -431,9 +421,8 @@ cdef class Dema(Indicator):
         return 2 * self.ema1[0] - self.ema2[0]
 
 
-class dema(Cached, Dema):
-    def __init__(self, series:TimeSeries, period: int, init_mean: bool=True ):
-        super().__init__(self.name(period, int(init_mean)), series, period, init_mean)
+def dema(series:TimeSeries, period: int, init_mean: bool = True):
+    return Dema.wrap(series, period, init_mean=init_mean)
 
 
 cdef class Kama(Indicator):
@@ -473,9 +462,8 @@ cdef class Kama(Indicator):
         return sc * value + (1 - sc) * self[0 if new_item_started else 1]
 
 
-class kama(Cached, Kama):
-    def __init__(self, series:TimeSeries, period: int, fast_span:int=2, slow_span:int=30):
-        super().__init__(self.name(period, fast_span, slow_span), series, period, fast_span, slow_span)
+def kama(series:TimeSeries, period: int, fast_span:int=2, slow_span:int=30):
+    return Kama.wrap(series, period, fast_span, slow_span)
 
 
 cdef class Bar:
@@ -593,13 +581,3 @@ cdef class OHLCV(TimeSeries):
         df.index.name = 'timestamp'
         return df
 
-
-# - not sure ???????????
-# def _cached(cls, *args):
-#     # print(cls)
-#     def ctor(self, series, *args):
-#         # print(type(self))
-#         return super(type(self), self).__init__(self.name(*args), series, *args)
-#     return type(cls.__name__.lower(), (Cached, cls), { "__init__": ctor })
-# sma = _cached(Sma)
-# ema = _cached(Ema)
