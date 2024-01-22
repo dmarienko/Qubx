@@ -18,6 +18,8 @@ def push(series: TimeSeries, ds: List[Tuple], v=None):
     for t, d in ds:
         if isinstance(t, str):
             t = recognize_time(t)
+        elif isinstance(t, pd.Timestamp):
+            t = t.asm8
         if isinstance(d, (list, tuple)):
             series.update(t, d[0], d[1])
         else:
@@ -172,3 +174,8 @@ def kama(xs, period=10, period_fast=2, period_slow=30):
     kama[kama==0]=np.nan
 
     return kama
+
+
+def dema(x, n: int, init_mean=True):
+    e1 = ema(x, n, init_mean=init_mean)
+    return 2 * e1 - ema(e1, n, init_mean=init_mean)

@@ -4,8 +4,8 @@ import pandas as pd
 # from qube.utils import reload_pyx_module
 # reload_pyx_module('src/qube/core/')
 
-from qube.core.series import (TimeSeries, Sma, Ema, recognize_time, Tema, Dema, Kama, OHLCV)
-from tests.qube.ta.utils_for_testing import sma, ema, tema, kama, apply_to_frame, N, push
+from qube.core.series import (TimeSeries, sma, ema, tema, dema, kama, OHLCV)
+import tests.qube.ta.utils_for_testing as test
 
 
 MIN1_UPDATES = [
@@ -39,23 +39,31 @@ class TestIndicators:
         _, _, data = self.generate_random_series()
 
         ts = TimeSeries('close', '1h')
-        s1 = Sma(ts, 50)
-        e1 = Ema(ts, 50)
-        ss1 = Sma(s1, 50)
-        ee1 = Ema(e1, 50)
-        t1 = Tema(ts, 50)
-        k1 = Kama(ts, 50)
-        [ts.update(ti.asm8, vi) for ti, vi in data];
+        s1 = sma(ts, 50)
+        e1 = ema(ts, 50)
+        d1 = dema(ts, 50)
+        t1 = tema(ts, 50)
+        k1 = kama(ts, 50)
+        ss1 = sma(s1, 50)
+        ee1 = ema(e1, 50)
+        test.push(ts, data)
 
-        assert N(s1.to_series()[-20:]) == apply_to_frame(sma, ts.to_series(), 50)[-20:]
-        assert N(e1.to_series()[-20:]) == apply_to_frame(ema, ts.to_series(), 50)[-20:]
-        assert N(t1.to_series()[-20:]) == apply_to_frame(tema, ts.to_series(), 50)[-20:]
-        assert N(k1.to_series()[-20:]) == apply_to_frame(kama, ts.to_series(), 50)[-20:]
+        assert test.N(s1.to_series()[-20:]) == test.apply_to_frame(test.sma, ts.to_series(), 50)[-20:]
+        assert test.N(e1.to_series()[-20:]) == test.apply_to_frame(test.ema, ts.to_series(), 50)[-20:]
+        assert test.N(t1.to_series()[-20:]) == test.apply_to_frame(test.tema, ts.to_series(), 50)[-20:]
+        assert test.N(k1.to_series()[-20:]) == test.apply_to_frame(test.kama, ts.to_series(), 50)[-20:]
+        assert test.N(d1.to_series()[-20:]) == test.apply_to_frame(test.dema, ts.to_series(), 50)[-20:]
+        # print(ss1.to_series())
 
     def test_indicators_on_ohlc(self):
         ohlc = OHLCV('1Min')
-        s1 = Sma(ohlc.close, 5)
-        push(ohlc, MIN1_UPDATES, 1)
+        s1 = sma(ohlc.close, 5)
+        test.push(ohlc, MIN1_UPDATES, 1)
         print(ohlc.to_series())
         print(s1.to_series())
-        print(Sma(ohlc.close, 5).to_series())
+
+        s2s = sma(ohlc.close, 5).to_series()
+        print(s2s)
+
+        # - TODO: fix this behaviour (nan) ! 
+        assert test.N(s2s) == s1.to_series()

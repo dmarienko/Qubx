@@ -249,12 +249,36 @@ cdef class TimeSeries:
         return r
 
 
+class Cached:
+    """
+    Caching object for indicators
+    """
+
+    @classmethod
+    def name(cls, *args):
+        return cls.__name__ + "(" + ','.join([str(a) for a in args]) + ")"
+
+    def __new__(cls, series: TimeSeries, *args):
+        nn = cls.name(*args)
+        # print(f'Creating a new {cls.__name__} -> {nn} object for {series}')
+
+        inds = series.get_indicators()
+        # print(inds)
+        if nn in inds:
+            return inds[nn]
+
+        obj = super().__new__(cls, *args)
+        return obj
+
+
 cdef class Indicator(TimeSeries):
     cdef TimeSeries series
 
-    def __init__(self, TimeSeries series):
-        super().__init__(self.name(), series.timeframe, series.max_series_length)
-        series.indicators[self.name()] = self
+    def __init__(self, str name, TimeSeries series):
+        if not name:
+            raise ValueError(f" > Name must not be empty for {self.__class__.__name__}!")
+        super().__init__(name, series.timeframe, series.max_series_length)
+        series.indicators[name] = self
         self.series = series 
         self._recalculate()
 
@@ -278,9 +302,6 @@ cdef class Indicator(TimeSeries):
 
         return iv
 
-    def name(self) -> str:
-        raise ValueError("Indicator must override name() method to return unique indicator name !")
-
     def calculate(self, long long time, value, short new_item_started) -> any:
         raise ValueError("Indicator must implement calculate() method")
 
@@ -292,17 +313,19 @@ cdef class Sma(Indicator):
     """
     Simple moving average
     """
-    def __init__(self, TimeSeries series, int period):
+    def __init__(self, str name, TimeSeries series, int period):
         self.period = period
         self.summator = RollingSum(period)
-        super().__init__(series)
-
-    def name(self) -> str:
-        return f'sma({self.period})'
+        super().__init__(name, series)
 
     cpdef double calculate(self, long long time, double value, short new_item_started):
         cdef double r = self.summator.update(value, new_item_started)
         return np.nan if self.summator.is_init_stage else r / self.period
+
+
+class sma(Cached, Sma):
+    def __init__(self, series:TimeSeries, period: int):
+        super().__init__(self.name(period), series, period)
 
 
 cdef class Ema(Indicator):
@@ -317,7 +340,7 @@ cdef class Ema(Indicator):
     cdef unsigned short init_mean 
     cdef unsigned short _init_stage
 
-    def __init__(self, TimeSeries series, int period, init_mean=True):
+    def __init__(self, str name, TimeSeries series, int period, init_mean=True):
         self.period = period
 
         # when it's required to initialize this ema by mean on first period
@@ -329,10 +352,7 @@ cdef class Ema(Indicator):
         self._init_stage = 1
         self.alpha = 2.0 / (1.0 + period)
         self.alpha_1 = (1 - self.alpha)
-        super().__init__(series)
-
-    def name(self) -> str:
-        return f'ema({self.period},{self.init_mean})'
+        super().__init__(name, series)
 
     cpdef double calculate(self, long long time, double value, short new_item_started):
         cdef int prev_bar_idx = 0 if new_item_started else 1 
@@ -359,6 +379,11 @@ cdef class Ema(Indicator):
         return self.alpha * value + self.alpha_1 * self[prev_bar_idx]
 
 
+class ema(Cached, Ema):
+    def __init__(self, series:TimeSeries, period: int, init_mean: bool=True ):
+        super().__init__(self.name(period, int(init_mean)), series, period, init_mean)
+
+
 cdef class Tema(Indicator):
     cdef int period
     cdef unsigned short init_mean 
@@ -367,21 +392,23 @@ cdef class Tema(Indicator):
     cdef Ema ema2
     cdef Ema ema3
 
-    def __init__(self, TimeSeries series, int period, init_mean=True):
+    def __init__(self, str name, TimeSeries series, int period, init_mean=True):
         self.period = period
         self.init_mean = init_mean
         self.ser0 = TimeSeries('ser0', series.timeframe, series.max_series_length)
-        self.ema1 = Ema(self.ser0, period, init_mean)
-        self.ema2 = Ema(self.ema1, period, init_mean)
-        self.ema3 = Ema(self.ema2, period, init_mean)
-        super().__init__(series)
+        self.ema1 = ema(self.ser0, period, init_mean)
+        self.ema2 = ema(self.ema1, period, init_mean)
+        self.ema3 = ema(self.ema2, period, init_mean)
+        super().__init__(name, series)
         
-    def name(self) -> str:
-        return f'tema({self.period},{self.init_mean})'
-
     cpdef double calculate(self, long long time, double value, short new_item_started):
         self.ser0.update(time, value)
         return 3 * self.ema1[0] - 3 * self.ema2[0] + self.ema3[0]
+
+
+class tema(Cached, Tema):
+    def __init__(self, series:TimeSeries, period: int, init_mean: bool=True ):
+        super().__init__(self.name(period, int(init_mean)), series, period, init_mean)
 
 
 cdef class Dema(Indicator):
@@ -391,20 +418,22 @@ cdef class Dema(Indicator):
     cdef Ema ema1
     cdef Ema ema2
 
-    def __init__(self, TimeSeries series, int period, init_mean=True):
+    def __init__(self, str name, TimeSeries series, int period, init_mean=True):
         self.period = period
         self.init_mean = init_mean
         self.ser0 = TimeSeries('ser0', series.timeframe, series.max_series_length)
-        self.ema1 = Ema(self.ser0, period, init_mean)
-        self.ema2 = Ema(self.ema1, period, init_mean)
-        super().__init__(series)
+        self.ema1 = ema(self.ser0, period, init_mean)
+        self.ema2 = ema(self.ema1, period, init_mean)
+        super().__init__(name, series)
         
-    def name(self) -> str:
-        return f'dema({self.period},{self.init_mean})'
-
     cpdef double calculate(self, long long time, double value, short new_item_started):
         self.ser0.update(time, value)
         return 2 * self.ema1[0] - self.ema2[0]
+
+
+class dema(Cached, Dema):
+    def __init__(self, series:TimeSeries, period: int, init_mean: bool=True ):
+        super().__init__(self.name(period, int(init_mean)), series, period, init_mean)
 
 
 cdef class Kama(Indicator):
@@ -416,7 +445,7 @@ cdef class Kama(Indicator):
     cdef _x_past
     cdef RollingSum summator
 
-    def __init__(self, TimeSeries series, int period, int fast_span=2, int slow_span=30):
+    def __init__(self, str name, TimeSeries series, int period, int fast_span=2, int slow_span=30):
         self.period = period
         self.fast_span = fast_span
         self.slow_span = slow_span
@@ -424,10 +453,7 @@ cdef class Kama(Indicator):
         self._K1 = 2.0 / (fast_span + 1) - self._S1
         self._x_past = deque(nans(period+1), period+1)
         self.summator = RollingSum(period)
-        super().__init__(series)
-
-    def name(self) -> str:
-        return f'kama({self.period},{self.fast_span},{self.slow_span})'
+        super().__init__(name, series)
 
     cpdef double calculate(self, long long time, double value, short new_item_started):
         if new_item_started:
@@ -445,6 +471,11 @@ cdef class Kama(Indicator):
             return np.nan
 
         return sc * value + (1 - sc) * self[0 if new_item_started else 1]
+
+
+class kama(Cached, Kama):
+    def __init__(self, series:TimeSeries, period: int, fast_span:int=2, slow_span:int=30):
+        super().__init__(self.name(period, fast_span, slow_span), series, period, fast_span, slow_span)
 
 
 cdef class Bar:
@@ -561,3 +592,14 @@ cdef class OHLCV(TimeSeries):
         df = pd.DataFrame.from_dict(self.to_records(), orient='index')
         df.index.name = 'timestamp'
         return df
+
+
+# - not sure ???????????
+# def _cached(cls, *args):
+#     # print(cls)
+#     def ctor(self, series, *args):
+#         # print(type(self))
+#         return super(type(self), self).__init__(self.name(*args), series, *args)
+#     return type(cls.__name__.lower(), (Cached, cls), { "__init__": ctor })
+# sma = _cached(Sma)
+# ema = _cached(Ema)
