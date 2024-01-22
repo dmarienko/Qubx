@@ -1,8 +1,9 @@
 import numpy as np
-from qube.utils import reload_pyx_module
-reload_pyx_module('src/qube/core/')
+# from qube.utils import reload_pyx_module
+# reload_pyx_module('src/qube/core/')
 
 from qube.core.series import TimeSeries, OHLCV, recognize_time
+from tests.qube.ta.utils_for_testing import N, push
 
 
 class TestCoreSeries:
@@ -24,7 +25,7 @@ class TestCoreSeries:
 
     def test_ohlc_series(self):
         ohlc = OHLCV('1Min')
-        for t, v in [
+        push(ohlc, [
             ('2024-01-01 00:00', 9), ('2024-01-01 00:00', 1),
             ('2024-01-01 00:01', 2), ('2024-01-01 00:01', 3),   ('2024-01-01 00:01', 2),
             ('2024-01-01 00:02', 3),
@@ -40,8 +41,7 @@ class TestCoreSeries:
             ('2024-01-01 00:13', 15),
             ('2024-01-01 00:14', 17),
             ('2024-01-01 00:15', 4),
-        ]:
-            ohlc.update(recognize_time(t), v, 1)
+        ], 1)
 
         assert len(ohlc) == 15
 

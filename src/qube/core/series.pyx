@@ -111,6 +111,9 @@ cdef class RollingSum:
         self.rsum += value 
         return self.rsum
 
+    def __str__(self):
+        return f"rs[{self.period}] = {self.__s} @ {self.__i} -> {self.is_init_stage}"
+
 
 cdef class Indexed:
     cdef list values
@@ -542,7 +545,12 @@ cdef class OHLCV(TimeSeries):
 
     cpdef _update_indicators(self, long long time, value, short new_item_started):
         TimeSeries._update_indicators(self, time, value, new_item_started)
-        # self.open._update_indicators(time, )
+        if new_item_started:
+            self.open._update_indicators(time, value.open, new_item_started)
+        self.close._update_indicators(time, value.close, new_item_started)
+        self.high._update_indicators(time, value.high, new_item_started)
+        self.low._update_indicators(time, value.low, new_item_started)
+        self.volume._update_indicators(time, value.volume, new_item_started)
 
     def to_records(self) -> dict:
         ts = [np.datetime64(t, 'ns') for t in self.times[::-1]]

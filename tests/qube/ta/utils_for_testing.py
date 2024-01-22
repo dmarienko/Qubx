@@ -1,11 +1,27 @@
 import types
-from typing import Tuple
+from typing import Tuple, List
 
 import numpy as np
 import pandas as pd
 
+from qube.core.series import TimeSeries, recognize_time
 from pytest import approx
+
+
 N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
+
+
+def push(series: TimeSeries, ds: List[Tuple], v=None):
+    """
+    Update series by data from the input 
+    """
+    for t, d in ds:
+        if isinstance(t, str):
+            t = recognize_time(t)
+        if isinstance(d, (list, tuple)):
+            series.update(t, d[0], d[1])
+        else:
+            series.update(t, d) if v is None else series.update(t, d, v) 
 
 
 def shift(xs: np.ndarray, n: int, fill=np.nan) -> np.ndarray:
