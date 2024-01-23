@@ -199,20 +199,21 @@ cdef class TimeSeries:
         if not self.times:
             self._add_new_item(item_start_time, value)
 
-            # Here we disable first notification because first item may be incomplete
+            # - disable first notification because first item may be incomplete
             self._is_new_item = False
 
         elif time - self.times[0] >= self.timeframe:
-            # first we update indicators
+            # - add new item
+            self._add_new_item(item_start_time, value)
+
+            # - update indicators
             self._update_indicators(item_start_time, value, True)
 
-            # then add new item
-            self._add_new_item(item_start_time, value)
             return self._is_new_item
         else:
             self._update_last_item(item_start_time, value)
 
-        # update indicators by new data
+        # - update indicators by new data
         self._update_indicators(item_start_time, value, False)
 
         return self._is_new_item
@@ -268,23 +269,26 @@ cdef class Indicator(TimeSeries):
             raise ValueError(f" > Name must not be empty for {self.__class__.__name__}!")
         super().__init__(name, series.timeframe, series.max_series_length)
         series.indicators[name] = self
-        self.series = series 
-        self._recalculate()
 
-    def _recalculate(self):
-        for t, v in zip(self.series.times[::-1], self.series.values[::-1]):
+        # - we need to make a empty copy and fill it 
+        self.series = TimeSeries(series.name, series.timeframe, series.max_series_length)
+
+        # - recalculate indicator on data as if it would being streamed
+        self._recalculate(series)
+
+    def _recalculate(self, TimeSeries series):
+        for t, v in zip(series.times[::-1], series.values[::-1]):
             self.update(t, v, True)
 
     def update(self, long long time, value, short new_item_started) -> any:
-        iv = self.calculate(time, value, new_item_started)
-        
-        if new_item_started:
+        if new_item_started or len(self) == 0:
+            self.series._add_new_item(time, value)
+            iv = self.calculate(time, value, new_item_started)
             self._add_new_item(time, iv)
         else:
-            if len(self) > 0:
-                self._update_last_item(time, iv)
-            else:
-                self._add_new_item(time, iv)
+            self.series._update_last_item(time, value)
+            iv = self.calculate(time, value, new_item_started)
+            self._update_last_item(time, iv)
 
         # update attached indicators
         self._update_indicators(time, iv, self._is_new_item)
@@ -547,17 +551,19 @@ cdef class OHLCV(TimeSeries):
             self._is_new_item = False
 
         elif time - self.times[0] >= self.timeframe:
-            # first we update indicators
             b = Bar(bar_start_time, price, price, price, price, volume)
+
+            # - add new item
+            self._add_new_item(bar_start_time, b)
+
+            # - update indicators
             self._update_indicators(bar_start_time, b, True)
 
-            # then add new item
-            self._add_new_item(bar_start_time, b)
             return self._is_new_item
         else:
             self._update_last_item(bar_start_time, self[0].update(price, volume))
 
-        # update indicators by new data
+        # - update indicators by new data
         self._update_indicators(bar_start_time, self[0], False)
 
         return self._is_new_item
@@ -581,3 +587,19 @@ cdef class OHLCV(TimeSeries):
         df.index.name = 'timestamp'
         return df
 
+
+cdef class Lag(Indicator):
+    cdef int period
+
+    def __init__(self, str name, TimeSeries series, int period):
+        self.period = period
+        super().__init__(name, series)
+
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        if len(self.series) <= self.period:
+            return np.nan
+        return self.series[self.period]
+     
+
+def lag(series:TimeSeries, period: int):
+    return Lag.wrap(series, period)

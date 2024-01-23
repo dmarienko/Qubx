@@ -11,6 +11,32 @@ from pytest import approx
 N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
 
 
+def drop_duplicated_indexes(df, keep='first'):
+    return df[~df.index.duplicated(keep=keep)]
+
+
+def scols(*xs, keys=None, names=None, keep='all'):
+    r = pd.concat([x.to_series() if isinstance(x, TimeSeries) else x for x in xs], axis=1, keys=keys)
+    if names:
+        if isinstance(names, (list, tuple)):
+            if len(names) == len(r.columns):
+                r.columns = names
+            else:
+                raise ValueError(
+                    f"if 'names' contains new column names it must have same length as resulting df ({len(r.columns)})")
+        elif isinstance(names, dict):
+            r = r.rename(columns=names)
+    return r
+
+
+def srows(*xs, keep='all', sort=True):
+    r = pd.concat((xs), axis=0)
+    r = r.sort_index() if sort else r
+    if keep != 'all':
+        r = drop_duplicated_indexes(r, keep=keep)
+    return r
+
+
 def push(series: TimeSeries, ds: List[Tuple], v=None):
     """
     Update series by data from the input 

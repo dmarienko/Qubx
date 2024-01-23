@@ -4,7 +4,7 @@ import pandas as pd
 # from qube.utils import reload_pyx_module
 # reload_pyx_module('src/qube/core/')
 
-from qube.core.series import (TimeSeries, sma, ema, tema, dema, kama, OHLCV)
+from qube.core.series import (TimeSeries, sma, ema, tema, dema, kama, lag, OHLCV)
 import tests.qube.ta.utils_for_testing as test
 
 
@@ -54,6 +54,14 @@ class TestIndicators:
         assert test.N(k1.to_series()[-20:]) == test.apply_to_frame(test.kama, ts.to_series(), 50)[-20:]
         assert test.N(d1.to_series()[-20:]) == test.apply_to_frame(test.dema, ts.to_series(), 50)[-20:]
         # print(ss1.to_series())
+
+    def test_indicators_lagged(self):
+        _, _, data = self.generate_random_series()
+        ts = TimeSeries('close', '1h')
+        l1 = lag(ts, 1)
+        l2 = lag(lag(ts, 1), 4)
+        test.push(ts, data)
+        assert all(lag(ts, 5).to_series().dropna() == l2.to_series().dropna())
 
     def test_indicators_on_ohlc(self):
         ohlc = OHLCV('1Min')
