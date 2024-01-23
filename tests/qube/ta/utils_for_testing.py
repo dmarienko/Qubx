@@ -37,7 +37,7 @@ def srows(*xs, keep='all', sort=True):
     return r
 
 
-def push(series: TimeSeries, ds: List[Tuple], v=None):
+def push(series: TimeSeries, ds: List[Tuple], v=None) -> TimeSeries:
     """
     Update series by data from the input 
     """
@@ -50,6 +50,7 @@ def push(series: TimeSeries, ds: List[Tuple], v=None):
             series.update(t, d[0], d[1])
         else:
             series.update(t, d) if v is None else series.update(t, d, v) 
+    return series
 
 
 def shift(xs: np.ndarray, n: int, fill=np.nan) -> np.ndarray:

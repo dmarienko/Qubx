@@ -4,7 +4,7 @@ import pandas as pd
 # from qube.utils import reload_pyx_module
 # reload_pyx_module('src/qube/core/')
 
-from qube.core.series import (TimeSeries, sma, ema, tema, dema, kama, lag, OHLCV)
+from qube.core.series import (TimeSeries, sma, ema, tema, dema, kama, lag, compare, OHLCV)
 import tests.qube.ta.utils_for_testing as test
 
 
@@ -62,6 +62,19 @@ class TestIndicators:
         l2 = lag(lag(ts, 1), 4)
         test.push(ts, data)
         assert all(lag(ts, 5).to_series().dropna() == l2.to_series().dropna())
+
+    def test_indicators_comparison(self):
+        _, _, data = self.generate_random_series()
+        # - precalculated
+        xs = test.push(TimeSeries('close', '10Min'), data)
+        r = test.scols(xs.to_series(), lag(xs, 1).to_series(), names=['a', 'b'])
+        assert all(np.sign(r.a - r.b).dropna() == compare(xs, lag(xs, 1)).to_series().dropna())
+
+        # - on streamed data
+        xs1 = TimeSeries('close', '10Min')
+        c1 = compare(xs1, lag(xs1, 1))
+        r = test.scols(xs1.to_series(), lag(xs1, 1).to_series(), names=['a', 'b'])
+        assert all(np.sign(r.a - r.b).dropna() == c1.to_series().dropna())
 
     def test_indicators_on_ohlc(self):
         ohlc = OHLCV('1Min')

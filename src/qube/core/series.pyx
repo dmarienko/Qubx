@@ -251,7 +251,7 @@ cdef class TimeSeries:
 
 
 def _wrap_indicator(series: TimeSeries, clz, *args, **kwargs):
-    aw = ','.join([str(a) for a in args])
+    aw = ','.join([str(a) for a in args if not isinstance(a, TimeSeries)])
     if kwargs:
         aw += ',' + ','.join([f"{k}={str(v)}" for k,v in kwargs.items()])
     nn = clz.__name__.lower() + "(" + aw + ")"
@@ -603,3 +603,34 @@ cdef class Lag(Indicator):
 
 def lag(series:TimeSeries, period: int):
     return Lag.wrap(series, period)
+
+
+cdef double _fcmp(double a, double b):
+    if np.isnan(a) or np.isnan(b):
+        return np.nan
+    return +1 if a > b else -1 if a < b else 0
+
+
+cdef class Compare(Indicator):
+    cdef TimeSeries to_compare 
+
+    def __init__(self, str name, TimeSeries original, TimeSeries comparable):
+        if comparable.timeframe != original.timeframe:
+            raise ValueError("Series must be of the same timeframe to compare !")
+        self.to_compare = comparable
+        super().__init__(name, original)
+
+    def _recalculate(self, TimeSeries series):
+        r = pd.concat((series.to_series(), self.to_compare.to_series()), axis=1)
+        for t, (a, b) in zip(r.index, r.values):
+            self.series._add_new_item(t.asm8, a)
+            self._add_new_item(t.asm8, _fcmp(a, b))
+
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        if len(self.to_compare) == 0 or len(self.series) or time != self.to_compare.times[0]:
+            return np.nan
+        return _fcmp(value, self.to_compare[0])
+
+
+def compare(series0:TimeSeries, series1:TimeSeries):
+    return Compare.wrap(series0, series1)
