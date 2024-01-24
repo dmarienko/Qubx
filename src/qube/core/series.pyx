@@ -21,6 +21,12 @@ cpdef str time_to_str(long long t, str units = 'ns'):
     return str(np.datetime64(t, units)) #.isoformat()
 
 
+cdef double _fcmp(double a, double b):
+    if np.isnan(a) or np.isnan(b):
+        return np.nan
+    return +1 if a > b else -1 if a < b else 0
+
+
 cpdef str time_delta_to_str(long long d):
     """
     Convert timedelta object to pretty print format
@@ -166,7 +172,7 @@ cdef class TimeSeries:
     cdef public Indexed values
     cdef float max_series_length
     cdef unsigned short _is_new_item
-    cdef str name
+    cdef public str name
     cdef dict indicators
 
     def __init__(self, str name, timeframe, max_series_length=INFINITY) -> None:
@@ -251,7 +257,7 @@ cdef class TimeSeries:
 
 
 def _wrap_indicator(series: TimeSeries, clz, *args, **kwargs):
-    aw = ','.join([str(a) for a in args if not isinstance(a, TimeSeries)])
+    aw = ','.join([a.name if isinstance(a, TimeSeries) else str(a) for a in args])
     if kwargs:
         aw += ',' + ','.join([f"{k}={str(v)}" for k,v in kwargs.items()])
     nn = clz.__name__.lower() + "(" + aw + ")"
@@ -269,14 +275,15 @@ cdef class Indicator(TimeSeries):
             raise ValueError(f" > Name must not be empty for {self.__class__.__name__}!")
         super().__init__(name, series.timeframe, series.max_series_length)
         series.indicators[name] = self
+        self.name = name
 
         # - we need to make a empty copy and fill it 
         self.series = TimeSeries(series.name, series.timeframe, series.max_series_length)
 
         # - recalculate indicator on data as if it would being streamed
-        self._recalculate(series)
+        self._initial_data_recalculate(series)
 
-    def _recalculate(self, TimeSeries series):
+    def _initial_data_recalculate(self, TimeSeries series):
         for t, v in zip(series.times[::-1], series.values[::-1]):
             self.update(t, v, True)
 
@@ -605,12 +612,6 @@ def lag(series:TimeSeries, period: int):
     return Lag.wrap(series, period)
 
 
-cdef double _fcmp(double a, double b):
-    if np.isnan(a) or np.isnan(b):
-        return np.nan
-    return +1 if a > b else -1 if a < b else 0
-
-
 cdef class Compare(Indicator):
     cdef TimeSeries to_compare 
 
@@ -620,14 +621,14 @@ cdef class Compare(Indicator):
         self.to_compare = comparable
         super().__init__(name, original)
 
-    def _recalculate(self, TimeSeries series):
+    def _initial_data_recalculate(self, TimeSeries series):
         r = pd.concat((series.to_series(), self.to_compare.to_series()), axis=1)
         for t, (a, b) in zip(r.index, r.values):
             self.series._add_new_item(t.asm8, a)
             self._add_new_item(t.asm8, _fcmp(a, b))
 
     cpdef double calculate(self, long long time, double value, short new_item_started):
-        if len(self.to_compare) == 0 or len(self.series) or time != self.to_compare.times[0]:
+        if len(self.to_compare) == 0 or len(self.series) == 0 or time != self.to_compare.times[0]:
             return np.nan
         return _fcmp(value, self.to_compare[0])
 

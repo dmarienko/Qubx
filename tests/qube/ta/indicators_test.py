@@ -68,12 +68,15 @@ class TestIndicators:
         # - precalculated
         xs = test.push(TimeSeries('close', '10Min'), data)
         r = test.scols(xs.to_series(), lag(xs, 1).to_series(), names=['a', 'b'])
+        assert len(compare(xs, lag(xs, 1)).to_series()) > 0
         assert all(np.sign(r.a - r.b).dropna() == compare(xs, lag(xs, 1)).to_series().dropna())
 
         # - on streamed data
         xs1 = TimeSeries('close', '10Min')
         c1 = compare(xs1, lag(xs1, 1))
+        test.push(xs1, data)
         r = test.scols(xs1.to_series(), lag(xs1, 1).to_series(), names=['a', 'b'])
+        assert len(c1.to_series()) > 0
         assert all(np.sign(r.a - r.b).dropna() == c1.to_series().dropna())
 
     def test_indicators_on_ohlc(self):
