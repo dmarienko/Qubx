@@ -3,7 +3,8 @@ import numpy as np
 cimport numpy as np
 from collections import deque
 from qube.utils import convert_tf_str_td64
-
+from cpython cimport array
+import array
 from cython cimport abs
 
 
@@ -228,12 +229,23 @@ cdef class TimeSeries:
         for i in self.indicators.values():
             i.update(time, value, new_item_started)
 
+    def shift(self, int period):
+        """
+        Returns shifted series by period
+        """
+        if period < 0:
+            raise ValueError("Only positive shift (from past) period is allowed !")
+        return lag(self, period)
+
     def to_records(self) -> dict:
         ts = [np.datetime64(t, 'ns') for t in self.times[::-1]]
         return dict(zip(ts, self.values[::-1]))
 
     def to_series(self):
-        return pd.Series(self.to_records(), name=self.name)
+        return pd.Series(self.to_records(), name=self.name, dtype=float)
+
+    def pd(self):
+        return self.to_series()
 
     def get_indicators(self) -> dict:
         return self.indicators
@@ -635,3 +647,65 @@ cdef class Compare(Indicator):
 
 def compare(series0:TimeSeries, series1:TimeSeries):
     return Compare.wrap(series0, series1)
+
+
+cdef class Highest(Indicator):
+    cdef int period
+    cdef queue
+
+    def __init__(self, str name, TimeSeries series, int period):
+        self.period = period
+        self.queue = deque([np.nan] * period, maxlen=period)
+        super().__init__(name, series)
+
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        """
+        Not a most effictive algo but simplest and can handle updated last value
+        """
+        cdef float r = np.nan
+
+        if not np.isnan(value):
+            if new_item_started:
+                self.queue.append(value)
+            else:
+                self.queue[-1] = value
+
+        if not np.isnan(self.queue[0]):
+            r = max(self.queue) 
+
+        return r
+
+
+def highest(series:TimeSeries, period:int):
+    return Highest.wrap(series, period)
+
+
+cdef class Lowest(Indicator):
+    cdef int period
+    cdef queue
+
+    def __init__(self, str name, TimeSeries series, int period):
+        self.period = period
+        self.queue = deque([np.nan] * period, maxlen=period)
+        super().__init__(name, series)
+
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        """
+        Not a most effictive algo but simplest and can handle updated last value
+        """
+        cdef float r = np.nan
+
+        if not np.isnan(value):
+            if new_item_started:
+                self.queue.append(value)
+            else:
+                self.queue[-1] = value
+
+        if not np.isnan(self.queue[0]):
+            r = min(self.queue) 
+
+        return r
+
+
+def lowest(series:TimeSeries, period:int):
+    return Lowest.wrap(series, period)

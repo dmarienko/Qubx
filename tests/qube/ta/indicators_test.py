@@ -4,7 +4,7 @@ import pandas as pd
 # from qube.utils import reload_pyx_module
 # reload_pyx_module('src/qube/core/')
 
-from qube.core.series import (TimeSeries, sma, ema, tema, dema, kama, lag, compare, OHLCV)
+from qube.core.series import (TimeSeries, sma, ema, tema, dema, kama, lag, compare, highest, lowest, OHLCV)
 import tests.qube.ta.utils_for_testing as test
 
 
@@ -78,6 +78,19 @@ class TestIndicators:
         r = test.scols(xs1.to_series(), lag(xs1, 1).to_series(), names=['a', 'b'])
         assert len(c1.to_series()) > 0
         assert all(np.sign(r.a - r.b).dropna() == c1.to_series().dropna())
+
+    def test_indicators_highest_lowest(self):
+        _, _, data = self.generate_random_series()
+
+        xs = TimeSeries('close', '12Min')
+        hh = highest(xs, 13)
+        ll = lowest(xs, 13)
+        test.push(xs, data)
+
+        rh = xs.pd().rolling(13).max()
+        rl = xs.pd().rolling(13).min()
+        assert all(abs(hh.pd().dropna() - rh.dropna()) <= 1e-4)
+        assert all(abs(ll.pd().dropna() - rl.dropna()) <= 1e-4)
 
     def test_indicators_on_ohlc(self):
         ohlc = OHLCV('1Min')
