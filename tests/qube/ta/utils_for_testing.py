@@ -1,5 +1,5 @@
 import types
-from typing import Tuple, List
+from typing import Tuple, List, Union
 
 import numpy as np
 import pandas as pd
@@ -203,6 +203,50 @@ def kama(xs, period=10, period_fast=2, period_slow=30):
     return kama
 
 
+def __empty_smoother(x, *args, **kwargs):
+    return column_vector(x)
+
+
+def smooth(x, stype: Union[str, types.FunctionType], *args, **kwargs) -> pd.Series:
+    """
+    Smooth series using either given function or find it by name from registered smoothers
+    """
+    smoothers = {
+        'sma': sma, 'ema': ema, 'tema': tema, 'dema': dema,
+        'kama': kama, 
+        # 'zlema': zlema, 'jma': jma, 'wma': wma, 'mcginley': mcginley, 'hma': hma
+    }
+
+    f_sm = __empty_smoother
+    if isinstance(stype, str):
+        if stype in smoothers:
+            f_sm = smoothers.get(stype)
+        else:
+            raise ValueError(f"Smoothing method '{stype}' is not supported, supported methods: {list(smoothers.keys())}")
+
+    if isinstance(stype, types.FunctionType):
+        f_sm = stype
+
+    # smoothing
+    x_sm = f_sm(x, *args, **kwargs)
+    return x_sm if isinstance(x_sm, pd.Series) else pd.Series(x_sm.flatten(), index=x.index)
+
+
 def dema(x, n: int, init_mean=True):
     e1 = ema(x, n, init_mean=init_mean)
     return 2 * e1 - ema(e1, n, init_mean=init_mean)
+
+
+def rsi(x, periods, smoother=sma):
+    """
+    U = X_t - X_{t-1}, D = 0 when X_t > X_{t-1}
+    D = X_{t-1} - X_t, U = 0 when X_t < X_{t-1}
+    U = 0, D = 0,            when X_t = X_{t-1}
+
+    RSI = 100 * E[U, n] / (E[U, n] + E[D, n])
+    """
+    xx = pd.concat((x, x.shift(1)), axis=1, keys=['c', 'p'])
+    df = (xx.c - xx.p)
+    mu = smooth(df.where(df > 0, 0), smoother, periods)
+    md = smooth(abs(df.where(df < 0, 0)), smoother, periods)
+    return 100 * mu / (mu + md)

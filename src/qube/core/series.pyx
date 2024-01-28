@@ -3,9 +3,8 @@ import numpy as np
 cimport numpy as np
 from collections import deque
 from qube.utils import convert_tf_str_td64
-from cpython cimport array
-import array
 from cython cimport abs
+from typing import Union
 
 
 cpdef recognize_time(time):
@@ -20,12 +19,6 @@ cdef extern from "math.h":
 
 cpdef str time_to_str(long long t, str units = 'ns'):
     return str(np.datetime64(t, units)) #.isoformat()
-
-
-cdef double _fcmp(double a, double b):
-    if np.isnan(a) or np.isnan(b):
-        return np.nan
-    return +1 if a > b else -1 if a < b else 0
 
 
 cpdef str time_delta_to_str(long long d):
@@ -167,6 +160,9 @@ cdef class Indexed:
         self._is_empty = 1
 
 
+global _plot_func
+
+
 cdef class TimeSeries:
     cdef public long long timeframe
     cdef public Indexed times
@@ -237,6 +233,36 @@ cdef class TimeSeries:
             raise ValueError("Only positive shift (from past) period is allowed !")
         return lag(self, period)
 
+    def __add__(self, other: Union[TimeSeries, float, int]):
+        return plus(self, other)
+
+    def __sub__(self, other: Union[TimeSeries, float, int]):
+        return minus(self, other)
+
+    def __mul__(self, other: Union[TimeSeries, float, int]):
+        return mult(self, other)
+
+    def __truediv__(self, other: Union[TimeSeries, float, int]):
+        return divide(self, other)
+
+    def __lt__(self, other: Union[TimeSeries, float, int]):
+        return lt(self, other)
+
+    def __le__(self, other: Union[TimeSeries, float, int]):
+        return le(self, other)
+
+    def __gt__(self, other: Union[TimeSeries, float, int]):
+        return gt(self, other)
+
+    def __ge__(self, other: Union[TimeSeries, float, int]):
+        return ge(self, other)
+
+    def __eq__(self, other: Union[TimeSeries, float, int]):
+        return eq(self, other)
+
+    def __ne__(self, other: Union[TimeSeries, float, int]):
+        return ne(self, other)
+
     def to_records(self) -> dict:
         ts = [np.datetime64(t, 'ns') for t in self.times[::-1]]
         return dict(zip(ts, self.values[::-1]))
@@ -249,6 +275,9 @@ cdef class TimeSeries:
 
     def get_indicators(self) -> dict:
         return self.indicators
+
+    def plot(self, *args, **kwargs):
+        _timeseries_plot_func(self, *args, **kwargs)
 
     def __str__(self):
         nl = len(self)
@@ -266,6 +295,9 @@ cdef class TimeSeries:
                 r += f"  {time_to_str(self.times[n], 'ns')} {str(self[n])}\n"
 
         return r
+
+    def __repr__(self):
+        return repr(self.pd())
 
 
 def _wrap_indicator(series: TimeSeries, clz, *args, **kwargs):
@@ -626,23 +658,46 @@ def lag(series:TimeSeries, period: int):
 
 cdef class Compare(Indicator):
     cdef TimeSeries to_compare 
+    cdef double comparable_scalar
+    cdef short _cmp_src
 
-    def __init__(self, str name, TimeSeries original, TimeSeries comparable):
-        if comparable.timeframe != original.timeframe:
-            raise ValueError("Series must be of the same timeframe to compare !")
-        self.to_compare = comparable
+    def __init__(self, name: str,  original: TimeSeries, comparable: Union[TimeSeries, float, int]):
+        if isinstance(comparable, TimeSeries):
+            if comparable.timeframe != original.timeframe:
+                raise ValueError("Series must be of the same timeframe for performing operation !")
+            self.to_compare = comparable
+            self._cmp_src = 1
+        else:
+            self.comparable_scalar = comparable
+            self._cmp_src = 0
         super().__init__(name, original)
 
+    cdef double _operation(self, double a, double b):
+        if np.isnan(a) or np.isnan(b):
+            return np.nan
+        return +1 if a > b else -1 if a < b else 0
+
     def _initial_data_recalculate(self, TimeSeries series):
-        r = pd.concat((series.to_series(), self.to_compare.to_series()), axis=1)
-        for t, (a, b) in zip(r.index, r.values):
-            self.series._add_new_item(t.asm8, a)
-            self._add_new_item(t.asm8, _fcmp(a, b))
+        if self._cmp_src:
+            r = pd.concat((series.to_series(), self.to_compare.to_series()), axis=1)
+            for t, (a, b) in zip(r.index, r.values):
+                self.series._add_new_item(t.asm8, a)
+                self._add_new_item(t.asm8, self._operation(a, b))
+        else:
+            r = series.to_series()
+            for t, a in zip(r.index, r.values):
+                self.series._add_new_item(t.asm8, a)
+                self._add_new_item(t.asm8, self._operation(a, self.comparable_scalar))
 
     cpdef double calculate(self, long long time, double value, short new_item_started):
-        if len(self.to_compare) == 0 or len(self.series) == 0 or time != self.to_compare.times[0]:
-            return np.nan
-        return _fcmp(value, self.to_compare[0])
+        if self._cmp_src:
+            if len(self.to_compare) == 0 or len(self.series) == 0 or time != self.to_compare.times[0]:
+                return np.nan
+            return self._operation(value, self.to_compare[0])
+        else:
+            if len(self.to_compare) == 0:
+                return np.nan
+            return self._operation(value, self.comparable_scalar)
 
 
 def compare(series0:TimeSeries, series1:TimeSeries):
@@ -709,3 +764,159 @@ cdef class Lowest(Indicator):
 
 def lowest(series:TimeSeries, period:int):
     return Lowest.wrap(series, period)
+
+
+# - - - - TODO !!!!!!!
+cdef class Std(Indicator):
+    cdef int period
+
+    def __init__(self, str name, TimeSeries series, int period):
+        self.period = period
+        super().__init__(name, series)
+
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        pass
+
+
+def std(series:TimeSeries, period:int, mean=0):
+    return Std.wrap(series, period)
+# - - - - TODO !!!!!!!
+
+
+cdef class Plus(Compare):
+
+    def __init__(self, name: str, original:TimeSeries, comparable: Union[TimeSeries, float, int]):
+        super().__init__(name, original, comparable)
+
+    cdef double _operation(self, double a, double b):
+        return a + b
+
+
+cdef class Minus(Compare):
+
+    def __init__(self, name: str, original:TimeSeries, comparable: Union[TimeSeries, float, int]):
+        super().__init__(name, original, comparable)
+
+    cdef double _operation(self, double a, double b):
+        return a - b
+
+
+cdef class Mult(Compare):
+
+    def __init__(self, name: str, original:TimeSeries, comparable: Union[TimeSeries, float, int]):
+        super().__init__(name, original, comparable)
+
+    cdef double _operation(self, double a, double b):
+        return a * b
+
+
+cdef class Divide(Compare):
+
+    def __init__(self, name: str, original:TimeSeries, comparable: Union[TimeSeries, float, int]):
+        super().__init__(name, original, comparable)
+
+    cdef double _operation(self, double a, double b):
+        return a / b
+
+
+cdef class EqualTo(Compare):
+
+    def __init__(self, name: str, original:TimeSeries, comparable: Union[TimeSeries, float, int]):
+        super().__init__(name, original, comparable)
+
+    cdef double _operation(self, double a, double b):
+        return a == b
+
+
+cdef class NotEqualTo(Compare):
+
+    def __init__(self, name: str, original:TimeSeries, comparable: Union[TimeSeries, float, int]):
+        super().__init__(name, original, comparable)
+
+    cdef double _operation(self, double a, double b):
+        return a != b
+
+
+cdef class LessThan(Compare):
+
+    def __init__(self, name: str, original:TimeSeries, comparable: Union[TimeSeries, float, int]):
+        super().__init__(name, original, comparable)
+
+    cdef double _operation(self, double a, double b):
+        return a < b
+
+
+cdef class LessEqualThan(Compare):
+
+    def __init__(self, name: str, original:TimeSeries, comparable: Union[TimeSeries, float, int]):
+        super().__init__(name, original, comparable)
+
+    cdef double _operation(self, double a, double b):
+        return a <= b
+
+
+cdef class GreaterThan(Compare):
+
+    def __init__(self, name: str, original:TimeSeries, comparable: Union[TimeSeries, float, int]):
+        super().__init__(name, original, comparable)
+
+    cdef double _operation(self, double a, double b):
+        return a > b
+
+
+cdef class GreaterEqualThan(Compare):
+
+    def __init__(self, name: str, original:TimeSeries, comparable: Union[TimeSeries, float, int]):
+        super().__init__(name, original, comparable)
+
+    cdef double _operation(self, double a, double b):
+        return a >= b
+
+
+def plus(series0:TimeSeries, series1:Union[TimeSeries, float, int]):
+    return Plus.wrap(series0, series1)
+
+
+def minus(series0:TimeSeries, series1:Union[TimeSeries, float, int]):
+    return Minus.wrap(series0, series1)
+
+
+def mult(series0:TimeSeries, series1:Union[TimeSeries, float, int]):
+    return Mult.wrap(series0, series1)
+
+
+def divide(series0:TimeSeries, series1:Union[TimeSeries, float, int]):
+    return Divide.wrap(series0, series1)
+
+
+def eq(series0:TimeSeries, series1:Union[TimeSeries, float, int]):
+    return EqualTo.wrap(series0, series1)
+    
+
+def ne(series0:TimeSeries, series1:Union[TimeSeries, float, int]):
+    return NotEqualTo.wrap(series0, series1)
+
+
+def lt(series0:TimeSeries, series1:Union[TimeSeries, float, int]):
+    return LessThan.wrap(series0, series1)
+
+
+def le(series0:TimeSeries, series1:Union[TimeSeries, float, int]):
+    return LessEqualThan.wrap(series0, series1)
+
+
+def gt(series0:TimeSeries, series1:Union[TimeSeries, float, int]):
+    return GreaterThan.wrap(series0, series1)
+
+
+def ge(series0:TimeSeries, series1:Union[TimeSeries, float, int]):
+    return GreaterEqualThan.wrap(series0, series1)
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+# - this should be done in separate module -
+def _plot_mpl(series: TimeSeries, *args, **kwargs):
+    import matplotlib.pyplot as plt
+    plt.plot(series.pd(), *args, **kwargs)
+
+_timeseries_plot_func = _plot_mpl
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
