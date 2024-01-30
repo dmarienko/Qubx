@@ -1,2 +1,2 @@
-# Qube2exp
-Experiments with new Qube platform
+# Qube2
+New generation of Qube backtesting framework

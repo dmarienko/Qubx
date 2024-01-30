@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="1" failures="0" skipped="0" tests="1" time="0.866" timestamp="2024-01-22T12:36:30.008605" hostname="LAPTOP-O0L8A55Q"><testcase classname="" name="tests.qube.core.series_test" file="tests/qube/core/series_test.py" time="0.000"><error message="collection failure">ImportError while importing test module 'C:\Users\dmitr\devs\Qube2exp\tests\qube\core\series_test.py'.
-Hint: make sure your test modules/packages have valid Python names.
-Traceback:
-..\..\AppData\Local\Programs\Python\Python39\lib\importlib\__init__.py:127: in import_module
-    return _bootstrap._gcd_import(name[level:], package, level)
-tests\qube\core\series_test.py:6: in &lt;module&gt;
-    from tests.qube.ta.utils_for_testing import N, push
-E   ModuleNotFoundError: No module named 'tests.qube'</error></testcase></testsuite></testsuites>

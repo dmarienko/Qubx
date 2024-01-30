@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "Qube2"
 version = "0.0.1"
-description = "Qube2 experiments"
+description = "Qube2 framework"
 authors = ["Dmitry Marienko <dmitry@gmail.com>"]
 readme = "README.md"
 packages = [
     { include = "qube", from = "src" },
 ]
-repository = "https://github.com/dmarienko/Qube2exp"
+repository = "https://github.com/dmarienko/Qube2"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<4.0"
