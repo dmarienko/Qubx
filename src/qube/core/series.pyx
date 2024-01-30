@@ -263,6 +263,9 @@ cdef class TimeSeries:
     def __ne__(self, other: Union[TimeSeries, float, int]):
         return ne(self, other)
 
+    def __neg__(self):
+        return neg(self)
+
     def to_records(self) -> dict:
         ts = [np.datetime64(t, 'ns') for t in self.times[::-1]]
         return dict(zip(ts, self.values[::-1]))
@@ -659,17 +662,17 @@ def lag(series:TimeSeries, period: int):
 cdef class Compare(Indicator):
     cdef TimeSeries to_compare 
     cdef double comparable_scalar
-    cdef short _cmp_src
+    cdef short _cmp_to_series
 
     def __init__(self, name: str,  original: TimeSeries, comparable: Union[TimeSeries, float, int]):
         if isinstance(comparable, TimeSeries):
             if comparable.timeframe != original.timeframe:
                 raise ValueError("Series must be of the same timeframe for performing operation !")
             self.to_compare = comparable
-            self._cmp_src = 1
+            self._cmp_to_series = 1
         else:
             self.comparable_scalar = comparable
-            self._cmp_src = 0
+            self._cmp_to_series = 0
         super().__init__(name, original)
 
     cdef double _operation(self, double a, double b):
@@ -678,7 +681,7 @@ cdef class Compare(Indicator):
         return +1 if a > b else -1 if a < b else 0
 
     def _initial_data_recalculate(self, TimeSeries series):
-        if self._cmp_src:
+        if self._cmp_to_series:
             r = pd.concat((series.to_series(), self.to_compare.to_series()), axis=1)
             for t, (a, b) in zip(r.index, r.values):
                 self.series._add_new_item(t.asm8, a)
@@ -690,12 +693,12 @@ cdef class Compare(Indicator):
                 self._add_new_item(t.asm8, self._operation(a, self.comparable_scalar))
 
     cpdef double calculate(self, long long time, double value, short new_item_started):
-        if self._cmp_src:
+        if self._cmp_to_series:
             if len(self.to_compare) == 0 or len(self.series) == 0 or time != self.to_compare.times[0]:
                 return np.nan
             return self._operation(value, self.to_compare[0])
         else:
-            if len(self.to_compare) == 0:
+            if len(self.series) == 0:
                 return np.nan
             return self._operation(value, self.comparable_scalar)
 
@@ -873,6 +876,15 @@ cdef class GreaterEqualThan(Compare):
         return a >= b
 
 
+cdef class Neg(Indicator):
+
+    def __init__(self, name: str, series:TimeSeries):
+        super().__init__(name, series)
+
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        return -value
+
+
 def plus(series0:TimeSeries, series1:Union[TimeSeries, float, int]):
     return Plus.wrap(series0, series1)
 
@@ -912,11 +924,23 @@ def gt(series0:TimeSeries, series1:Union[TimeSeries, float, int]):
 def ge(series0:TimeSeries, series1:Union[TimeSeries, float, int]):
     return GreaterEqualThan.wrap(series0, series1)
 
+
+def neg(series: TimeSeries):
+    return Neg.wrap(series)
+
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 # - this should be done in separate module -
 def _plot_mpl(series: TimeSeries, *args, **kwargs):
     import matplotlib.pyplot as plt
-    plt.plot(series.pd(), *args, **kwargs)
+    include_indicators = kwargs.pop('with_indicators', False)
+    no_labels = kwargs.pop('no_labels', False)
+
+    plt.plot(series.pd(), *args, **kwargs, label=series.name)
+    if include_indicators:
+        for k, vi in series.get_indicators().items():
+            plt.plot(vi.pd(), label=k)
+    if not no_labels:
+        plt.legend(loc=2)
 
 _timeseries_plot_func = _plot_mpl
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
