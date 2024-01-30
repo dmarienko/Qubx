@@ -104,3 +104,38 @@ class TestIndicators:
 
         # - TODO: fix this behaviour (nan) ! 
         assert test.N(s2s) == s1.to_series()
+
+    def test_bsf_calcs(self):
+        _, _, data = self.generate_random_series(2000)
+
+        def test_i(ts: TimeSeries):
+            ds = ts - ts.shift(1)
+            a1 = sma(ds * (ds > 0), 14) 
+            a2 = ds 
+            return (a1 - a2) / (a1 + a2)
+
+        # - incremental calcs
+        ts_i = TimeSeries('close', '1h')
+        r1_i = test_i(ts_i)
+        test.push(ts_i, data)
+
+        # - calc on ready data
+        ts_p = TimeSeries('close', '1h')
+        test.push(ts_p, data)
+        r1_p = test_i(ts_p)
+
+        # - pandas 
+        ds = ts_i.pd().diff()
+        a1 = test.apply_to_frame(test.sma, ds * (ds > 0), 14)
+        a2 = ds
+        gauge =(a1 - a2) / (a1 + a2)
+
+        s1 = sum(abs(r1_p.pd() - gauge).dropna())
+        s2 = sum(abs(r1_i.pd() - gauge).dropna())
+        print(s1, s2)
+        assert s1 < 1e-12
+        assert s2 < 1e-12
+
+
+        
+
