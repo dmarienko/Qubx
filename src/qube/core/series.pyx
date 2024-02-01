@@ -221,9 +221,37 @@ cdef class TimeSeries:
 
         return self._is_new_item
 
+    # cpdef list _get_indicators_calculation_order(self):
+    #     queue = deque([self])
+    #     order = []
+    #     while len(queue) > 0:
+    #         cur_node = queue.popleft()
+    #         order.append(cur_node)
+    #         inds = cur_node.get_indicators()
+    #         if inds:
+    #             queue.extend(inds.values())
+    #     return order
+
+    cpdef list _process_indicators_in_calculation_order(
+        self, long long time, value, short new_item_started
+    ):
+        # - BSF variant (not working properly)
+        queue = deque([(value, self.get_indicators().values())])
+        s = ''
+        while len(queue) > 0:
+            v, inds = queue.popleft()
+            print(f"{s}~~~({v})~~~")
+            for i in inds: 
+                vo = i.update(time, v, new_item_started)
+                print(f"{s}\t{i.name} -> {vo}")
+                c_inds = i.get_indicators()
+                if c_inds:
+                    queue.extend([(vo, c_inds.values())])
+                    s += '  ' 
+
     cdef _update_indicators(self, long long time, value, short new_item_started):
-        for i in self.indicators.values():
-            i.update(time, value, new_item_started)
+        self._process_indicators_in_calculation_order(time, value, new_item_started)
+        # print('- ' * 15)
 
     def shift(self, int period):
         """
@@ -343,9 +371,6 @@ cdef class Indicator(TimeSeries):
             self.series._update_last_item(time, value)
             iv = self.calculate(time, value, new_item_started)
             self._update_last_item(time, iv)
-
-        # update attached indicators
-        self._update_indicators(time, iv, self._is_new_item)
 
         return iv
 
