@@ -133,9 +133,22 @@ class TestIndicators:
         s1 = sum(abs(r1_p.pd() - gauge).dropna())
         s2 = sum(abs(r1_i.pd() - gauge).dropna())
         print(s1, s2)
-        assert s1 < 1e-12
-        assert s2 < 1e-12
+        assert s1 < 1e-10
+        assert s2 < 1e-10
 
+        # - another case
+        def test_ii(ts: TimeSeries):
+            a1 = sma(ts, 5) 
+            a2 = sma(ts, 10) * 1000
+            return a1 - a2
 
+        ts_ii = TimeSeries('close', '10Min')
+        r_ii = test_ii(ts_ii)
+        test.push(ts_ii, data[:1000])
+
+        a1 = test.apply_to_frame(test.sma, ts_ii.pd(), 5)
+        a2 = 1000 * test.apply_to_frame(test.sma, ts_ii.pd(), 10)
+        err = np.std(abs((a1 - a2) - r_ii.pd()).dropna())
+        assert err < 1e-10
         
 

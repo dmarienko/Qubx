@@ -170,7 +170,8 @@ cdef class TimeSeries:
     cdef float max_series_length
     cdef unsigned short _is_new_item
     cdef public str name
-    cdef dict indicators
+    cdef dict indicators        # it's used for indicators caching
+    cdef list calculation_order # calculation order as list: [ (input_id, indicator_obj, indicator_id) ]
 
     def __init__(self, str name, timeframe, max_series_length=INFINITY) -> None:
         self.name = name
@@ -179,9 +180,17 @@ cdef class TimeSeries:
         self.times = Indexed(max_series_length)
         self.values = Indexed(max_series_length)
         self.indicators = dict()
+        self.calculation_order = []
 
     def __len__(self) -> int:
         return len(self.times)
+
+    def _lift_up(self, indicator: Indicator, indicator_input: TimeSeries):
+        # print(f"> Received: {indicator_input.name}[{id(indicator_input)}] -> {indicator.name}[{id(indicator)}]")
+        # collect indicators calculation order as list: [ (input_id, indicator_obj, indicator_id) ]
+        self.calculation_order.append((
+            id(indicator_input), indicator, id(indicator)
+        ))
 
     def __getitem__(self, idx):
         return self.values[idx]
@@ -221,37 +230,13 @@ cdef class TimeSeries:
 
         return self._is_new_item
 
-    # cpdef list _get_indicators_calculation_order(self):
-    #     queue = deque([self])
-    #     order = []
-    #     while len(queue) > 0:
-    #         cur_node = queue.popleft()
-    #         order.append(cur_node)
-    #         inds = cur_node.get_indicators()
-    #         if inds:
-    #             queue.extend(inds.values())
-    #     return order
-
-    cpdef list _process_indicators_in_calculation_order(
-        self, long long time, value, short new_item_started
-    ):
-        # - BSF variant (not working properly)
-        queue = deque([(value, self.get_indicators().values())])
-        s = ''
-        while len(queue) > 0:
-            v, inds = queue.popleft()
-            print(f"{s}~~~({v})~~~")
-            for i in inds: 
-                vo = i.update(time, v, new_item_started)
-                print(f"{s}\t{i.name} -> {vo}")
-                c_inds = i.get_indicators()
-                if c_inds:
-                    queue.extend([(vo, c_inds.values())])
-                    s += '  ' 
-
     cdef _update_indicators(self, long long time, value, short new_item_started):
-        self._process_indicators_in_calculation_order(time, value, new_item_started)
-        # print('- ' * 15)
+        mem = dict()              # store calculated values during this update
+        mem[id(self)] = value     # initail value - new data from itself
+        for input, indicator, iid in self.calculation_order:
+            if input not in mem:
+                raise ValueError("> No input data - something wrong in calculation order !")
+            mem[iid] = indicator.update(time, mem[input], new_item_started)
 
     def shift(self, int period):
         """
@@ -344,6 +329,7 @@ def _wrap_indicator(series: TimeSeries, clz, *args, **kwargs):
 
 cdef class Indicator(TimeSeries):
     cdef TimeSeries series
+    cdef TimeSeries parent
 
     def __init__(self, str name, TimeSeries series):
         if not name:
@@ -354,9 +340,14 @@ cdef class Indicator(TimeSeries):
 
         # - we need to make a empty copy and fill it 
         self.series = TimeSeries(series.name, series.timeframe, series.max_series_length)
+        self.parent = series 
+        self._lift_up(self, series)
 
         # - recalculate indicator on data as if it would being streamed
         self._initial_data_recalculate(series)
+
+    def _lift_up(self, indicator: Indicator, indicator_input: TimeSeries):
+        self.parent._lift_up(indicator, indicator_input)
 
     def _initial_data_recalculate(self, TimeSeries series):
         for t, v in zip(series.times[::-1], series.values[::-1]):
