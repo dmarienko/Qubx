@@ -4,7 +4,8 @@ from typing import Tuple, List, Union
 import numpy as np
 import pandas as pd
 
-from qube.core.series import TimeSeries, recognize_time
+from qube.core.series import TimeSeries
+from qube.core.utils import recognize_time
 from pytest import approx
 
 

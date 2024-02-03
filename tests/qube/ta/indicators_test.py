@@ -1,10 +1,8 @@
 import numpy as np
 import pandas as pd
 
-# from qube.utils import reload_pyx_module
-# reload_pyx_module('src/qube/core/')
-
-from qube.core.series import (TimeSeries, sma, ema, tema, dema, kama, lag, compare, highest, lowest, OHLCV)
+from qube.core.series import (TimeSeries, lag, compare, OHLCV)
+from qube.ta.indicators import (sma, ema, tema, dema, kama, highest, lowest)
 import tests.qube.ta.utils_for_testing as test
 
 
@@ -93,7 +91,7 @@ class TestIndicators:
         assert all(abs(ll.pd().dropna() - rl.dropna()) <= 1e-4)
 
     def test_indicators_on_ohlc(self):
-        ohlc = OHLCV('1Min')
+        ohlc = OHLCV('TEST', '1Min')
         s1 = sma(ohlc.close, 5)
         test.push(ohlc, MIN1_UPDATES, 1)
         print(ohlc.to_series())

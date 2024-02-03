@@ -65,13 +65,5 @@ if runtime_env() in ['notebook', 'shell']:
                    {red("╹")}       
 """
         )
-        # print(f'''
-        #    {green("   .+-------+")} 
-        #    {green(" .' :     .'|")}   {yellow("QUBE2")} | {cyan("Quantitative Backtesting Environment")}
-        #    {green("+-------+'  |")}  
-        #    {green("|   : ") + red("*") + green(" |   |")}   (c) 2024,  ver. {magenta(version.rstrip())}
-        #    {green("|  ,+---|---+")} 
-        #    {green("|.'     | .' ")}   
-        #    {green("+-------+'   ")} ''')
         qube.QubeMagics.__already_initialized__ = True
 

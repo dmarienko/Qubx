@@ -24,7 +24,7 @@ class TestCoreSeries:
         assert all(ts.to_series().values == np.array([2,3,5,7,-12,12,12]))
 
     def test_ohlc_series(self):
-        ohlc = OHLCV('1Min')
+        ohlc = OHLCV('BTCUSDT', '1Min')
         push(ohlc, [
             ('2024-01-01 00:00', 9), ('2024-01-01 00:00', 1),
             ('2024-01-01 00:01', 2), ('2024-01-01 00:01', 3),   ('2024-01-01 00:01', 2),

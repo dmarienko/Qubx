@@ -1,6 +1,19 @@
 from os.path import basename, exists, dirname, join, expanduser
 import glob
 from typing import Optional
+from pathlib import Path
+
+
+def version() -> str:
+    # - check current version
+    version = 'Dev'
+    try: 
+        import importlib_metadata
+        version = importlib_metadata.version('qube2')
+    except:
+        pass
+
+    return version
 
 
 def pyx_reload(path: str):
@@ -15,15 +28,25 @@ def pyx_reload(path: str):
             import pyximport
             pyximport.install(setup_args={'include_dirs': np.get_include()}, reload_support=True, language_level=3)
             pyximport.load_module(f_name, path, language_level=3, pyxbuild_dir=expanduser("~/.pyxbld"))
-            # print(" > Reloaded %s" % path)
+            if version().lower() == 'dev':
+                print(f"\t{green('>>>')} [{green('dev')}] : module {blue(f_name)} reloaded")
     else:
         raise ValueError("Path '%s' not found !" % path)
 
 
 def reload_pyx_module(module_dir: Optional[str]=None):
-    _module_dir = dirname(__file__) if module_dir is None else module_dir
-    for _m in glob.glob(join(_module_dir, '*.pyx')):
-        pyx_reload(_m)
+    from os.path import abspath
+    _module_dir = abspath(dirname(__file__) if module_dir is None else module_dir)
+    # print(abspath(_module_dir))
+    for f in Path(_module_dir).iterdir():
+        if f.suffix == '.pyx':
+            pyx_reload(str(f))
+        if f.is_dir():
+            for _m in glob.glob(join(f, '*.pyx')):
+                pyx_reload(_m)
+
+    # for _m in glob.glob(join(_module_dir, '*.pyx')):
+        # pyx_reload(_m)
 
 
 def runtime_env():
