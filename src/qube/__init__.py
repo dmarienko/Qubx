@@ -1,5 +1,41 @@
 from qube.utils import set_mpl_theme, runtime_env, reload_pyx_module
+reload_pyx_module('.')
 
+from loguru import logger
+import sys, stackprinter
+
+
+def formatter(record):
+    end = record["extra"].get("end", "\n")
+    fmt = "<lvl>{message}</lvl>%s" % end
+    if record["level"].name in {"WARNING", "SNAKY"}:
+        fmt = "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - %s" % fmt
+
+    prefix = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [ <level>%s</level> ] " % record["level"].icon
+
+    if record["exception"] is not None:
+        # stackprinter.set_excepthook(style='darkbg2')
+        record["extra"]["stack"] = stackprinter.format(record["exception"], style="darkbg")
+        fmt += "\n{extra[stack]}\n"
+
+    if record["level"].name in {"TEXT"}:
+        prefix = ""
+
+    return prefix + fmt
+
+
+config = {
+    "handlers": [
+        {"sink": sys.stdout, "format": "{time} - {message}"},
+    ],
+    "extra": {"user": "someone"},
+}
+
+
+logger.configure(**config)
+logger.remove(None)
+logger.add(sys.stdout, format=formatter, colorize=True)
+logger = logger.opt(colors=True)
 
 # registering magic for jupyter notebook
 if runtime_env() in ['notebook', 'shell']:

@@ -76,7 +76,7 @@ def floor_t64(time: Union[np.datetime64, datetime], dt: Union[np.timedelta64, in
     return time - (time - UNIX_T0) % dt
 
 
-def infer_series_frequency(series: Union[List, pd.DataFrame, pd.Series, pd.DatetimeIndex]):
+def infer_series_frequency(series: Union[List, pd.DataFrame, pd.Series, pd.DatetimeIndex]) -> np.timedelta64:
     """
     Infer frequency of given timeseries
 

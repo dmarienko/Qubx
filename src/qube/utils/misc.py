@@ -1,6 +1,7 @@
+from collections import OrderedDict, namedtuple
 from os.path import basename, exists, dirname, join, expanduser
 import glob
-from typing import Optional
+from typing import Optional, Union
 from pathlib import Path
 
 
@@ -16,37 +17,44 @@ def version() -> str:
     return version
 
 
-def pyx_reload(path: str):
-    """
-    Reload specified cython module
-    path must have .pyx extension
-    """
-    if exists(path):
-        f_name, f_ext = basename(path).split('.')
-        if f_ext == 'pyx':
-            import numpy as np
-            import pyximport
-            pyximport.install(setup_args={'include_dirs': np.get_include()}, reload_support=True, language_level=3)
-            pyximport.load_module(f_name, path, language_level=3, pyxbuild_dir=expanduser("~/.pyxbld"))
-            if version().lower() == 'dev':
-                print(f"\t{green('>>>')} [{green('dev')}] : module {blue(f_name)} reloaded")
-    else:
-        raise ValueError("Path '%s' not found !" % path)
+# def pyx_reload(path: str):
+#     """
+#     Reload specified cython module
+#     path must have .pyx extension
+#     """
+#     if exists(path):
+#         f_name, f_ext = basename(path).split('.')
+#         if f_ext == 'pyx':
+#             import numpy as np
+#             import pyximport
+#             import importlib
 
+#             print(f"\t{green('>>>')} installing for {path}")
+#             _, pxi = pyximport.install(setup_args={'include_dirs': np.get_include()}, 
+#                               build_dir=expanduser("~/.pyxbld"),
+#                               reload_support=True, language_level=3)
+#             # pyximport.load_module(f_name, path, language_level=3, pyxbuild_dir=expanduser("~/.pyxbld"))
+#             print(pxi)
+#             if version().lower() == 'dev':
+#                 print(f"\t{green('>>>')} [{green('dev')}] : module {blue(f_name)} reloaded")
+#     else:
+#         raise ValueError("Path '%s' not found !" % path)
+
+
+from ._pyxreloader import pyx_install_loader
 
 def reload_pyx_module(module_dir: Optional[str]=None):
-    from os.path import abspath
-    _module_dir = abspath(dirname(__file__) if module_dir is None else module_dir)
-    # print(abspath(_module_dir))
-    for f in Path(_module_dir).iterdir():
-        if f.suffix == '.pyx':
-            pyx_reload(str(f))
-        if f.is_dir():
-            for _m in glob.glob(join(f, '*.pyx')):
-                pyx_reload(_m)
+    if version().lower() == 'dev':
+        pyx_install_loader()
 
-    # for _m in glob.glob(join(_module_dir, '*.pyx')):
-        # pyx_reload(_m)
+    # from os.path import abspath
+    # _module_dir = abspath(dirname(__file__) if module_dir is None else module_dir)
+    # for f in Path(_module_dir).iterdir():
+    #     if f.suffix == '.pyx':
+    #         pyx_reload(str(f))
+    #     if f.is_dir():
+    #         for _m in glob.glob(join(f, '*.pyx')):
+    #             pyx_reload(_m)
 
 
 def runtime_env():
@@ -130,3 +138,112 @@ red, green, yellow, blue, magenta, cyan, white = (
     __wrap_with_color('36'),
     __wrap_with_color('37'),
 )
+
+
+class Struct:
+    """
+    Dynamic structure (similar to matlab's struct it allows to add new properties dynamically)
+
+    >>> a = Struct(x=1, y=2)
+    >>> a.z = 'Hello'
+    >>> print(a)
+
+    Struct(x=1, y=2, z='Hello')
+    
+    >>> Struct(a=234, b=Struct(c=222)).to_dict()
+    
+    {'a': 234, 'b': {'c': 222}}
+
+    >>> Struct({'a': 555}, a=123, b=Struct(c=222)).to_dict()
+
+    {'a': 123, 'b': {'c': 222}}
+    """
+
+    def __init__(self, *args, **kwargs):
+        _odw = OrderedDict(**kwargs)
+        if args:
+            if isinstance(args[0], dict):
+                _odw = OrderedDict(Struct.dict2struct(args[0]).to_dict()) | _odw
+            elif isinstance(args[0], Struct):
+                _odw = args[0].to_dict() | _odw
+        self.__initialize(_odw.keys(), _odw.values())
+
+    def __initialize(self, fields, values):
+        self._fields = list(fields)
+        self._meta = namedtuple('Struct', ' '.join(fields))
+        self._inst = self._meta(*values)
+
+    def fields(self) -> list:
+        return self._fields
+
+    def __getitem__(self, idx: int):
+        return getattr(self._inst, self._fields[idx])
+
+    def __getattr__(self, k):
+        return getattr(self._inst, k)
+
+    def __or__(self, other: Union[dict, 'Struct']):
+        if isinstance(other, dict):
+            other = Struct.dict2struct(other)
+        elif not isinstance(other, Struct):
+            raise ValueError(f"Can't union with object of {type(other)} type ")
+        for f in other.fields():
+            self.__setattr__(f, other.__getattr__(f))
+        return self
+
+    def __dir__(self):
+        return self._fields
+
+    def __repr__(self):
+        return self._inst.__repr__()
+
+    def __setattr__(self, k, v):
+        if k not in ['_inst', '_meta', '_fields']:
+            new_vals = {**self._inst._asdict(), **{k: v}}
+            self.__initialize(new_vals.keys(), new_vals.values())
+        else:
+            super().__setattr__(k, v)
+
+    def __getstate__(self):
+        return self._inst._asdict()
+
+    def __setstate__(self, state):
+        self.__init__(**state)
+
+    def __ms2d(self, m) -> dict:
+        r = {}
+        for f in m._fields:
+            v = m.__getattr__(f)
+            r[f] = self.__ms2d(v) if isinstance(v, Struct) else v
+        return r
+
+    def to_dict(self) -> dict:
+        """
+        Return this structure as dictionary
+        """
+        return self.__ms2d(self)
+
+    def copy(self) -> 'Struct':
+        """
+        Returns copy of this structure
+        """
+        return Struct(self.to_dict())
+
+    @staticmethod
+    def dict2struct(d: dict) -> 'Struct':
+        """
+        Convert dictionary to structure
+        >>> s = dict2struct({'f_1_0': 1, 'z': {'x': 1, 'y': 2}})
+        >>> print(s.z.x)
+        1
+        """
+        m = Struct()
+        for k, v in d.items():
+            # skip if key is not valid identifier
+            if not k.isidentifier():
+                print(f"Struct> {k} doesn't look like as identifier - skip it")
+                continue
+            if isinstance(v, dict):
+                v = Struct.dict2struct(v)
+            m.__setattr__(k, v)
+        return m

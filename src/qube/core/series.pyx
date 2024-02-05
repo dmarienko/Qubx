@@ -59,9 +59,6 @@ cdef class RollingSum:
 
 
 cdef class Indexed:
-    # cdef list values
-    # cdef float max_series_length
-    # cdef unsigned short _is_empty
 
     def __init__(self, max_series_length=INFINITY):
         self.max_series_length = max_series_length
@@ -140,7 +137,7 @@ cdef class TimeSeries:
         self.values.update_last(value)
         self._is_new_item = False
 
-    def update(self, long long time, double value) -> short:
+    def update(self, long long time, double value) -> bool:
         item_start_time = floor_t64(time, self.timeframe)
 
         if not self.times:
@@ -289,7 +286,7 @@ cdef class Indicator(TimeSeries):
         for t, v in zip(series.times[::-1], series.values[::-1]):
             self.update(t, v, True)
 
-    def update(self, long long time, value, short new_item_started) -> any:
+    def update(self, long long time, value, short new_item_started) -> object:
         if new_item_started or len(self) == 0:
             self.series._add_new_item(time, value)
             iv = self.calculate(time, value, new_item_started)
@@ -301,7 +298,7 @@ cdef class Indicator(TimeSeries):
 
         return iv
 
-    def calculate(self, long long time, value, short new_item_started) -> any:
+    def calculate(self, long long time, value, short new_item_started) -> object:
         raise ValueError("Indicator must implement calculate() method")
 
     @classmethod
