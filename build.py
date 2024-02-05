@@ -1,0 +1,265 @@
+import datetime
+import itertools
+import os
+import platform
+import shutil
+import subprocess
+import sysconfig
+
+from pathlib import Path
+import os
+import numpy as np
+import toml
+from Cython.Build import build_ext
+from Cython.Build import cythonize
+from Cython.Compiler import Options
+from Cython.Compiler.Version import version as cython_compiler_version
+from setuptools import Distribution
+from setuptools import Extension
+
+
+BUILD_MODE = os.getenv("BUILD_MODE", "release")
+PROFILE_MODE = bool(os.getenv("PROFILE_MODE", ""))
+ANNOTATION_MODE = bool(os.getenv("ANNOTATION_MODE", ""))
+BUILD_DIR = "build/optimized"
+COPY_TO_SOURCE = os.getenv("COPY_TO_SOURCE", "true") == "true"
+
+################################################################################
+#  CYTHON BUILD
+################################################################################
+# https://cython.readthedocs.io/en/latest/src/userguide/source_files_and_compilation.html
+
+Options.docstrings = True  # Include docstrings in modules
+Options.fast_fail = True  # Abort the compilation on the first error occurred
+Options.annotate = ANNOTATION_MODE  # Create annotated HTML files for each .pyx
+if ANNOTATION_MODE:
+    Options.annotate_coverage_xml = "coverage.xml"
+Options.fast_fail = True  # Abort compilation on first error
+Options.warning_errors = True  # Treat compiler warnings as errors
+Options.extra_warnings = True
+
+CYTHON_COMPILER_DIRECTIVES = {
+    "language_level": "3",
+    "cdivision": True,  # If division is as per C with no check for zero (35% speed up)
+    "nonecheck": True,  # Insert extra check for field access on C extensions
+    "embedsignature": True,  # If docstrings should be embedded into C signatures
+    "profile": PROFILE_MODE,  # If we're debugging or profiling
+    "linetrace": PROFILE_MODE,  # If we're debugging or profiling
+    "warn.maybe_uninitialized": True,
+}
+
+
+def _build_extensions() -> list[Extension]:
+    # Regarding the compiler warning: #warning "Using deprecated NumPy API,
+    # disable it with " "#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION"
+    # https://stackoverflow.com/questions/52749662/using-deprecated-numpy-api
+    # From the Cython docs: "For the time being, it is just a warning that you can ignore."
+    define_macros: list[tuple[str, str | None]] = [
+        ("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION"),
+    ]
+    if PROFILE_MODE or ANNOTATION_MODE:
+        # Profiling requires special macro directives
+        define_macros.append(("CYTHON_TRACE", "1"))
+
+    extra_compile_args = []
+    extra_link_args = []
+    # extra_link_args = RUST_LIBS
+
+    if platform.system() != "Windows":
+        # Suppress warnings produced by Cython boilerplate
+        extra_compile_args.append("-Wno-unreachable-code")
+        if BUILD_MODE == "release":
+            extra_compile_args.append("-O2")
+            extra_compile_args.append("-pipe")
+
+    if platform.system() == "Windows":
+        extra_link_args += [
+            "AdvAPI32.Lib",
+            "bcrypt.lib",
+            "Crypt32.lib",
+            "Iphlpapi.lib",
+            "Kernel32.lib",
+            "ncrypt.lib",
+            "Netapi32.lib",
+            "ntdll.lib",
+            "Ole32.lib",
+            "OleAut32.lib",
+            "Pdh.lib",
+            "PowrProf.lib",
+            "Psapi.lib",
+            "schannel.lib",
+            "secur32.lib",
+            "Shell32.lib",
+            "User32.Lib",
+            "UserEnv.Lib",
+            "WS2_32.Lib",
+        ]
+
+    print("Creating C extension modules...")
+    print(f"define_macros={define_macros}")
+    print(f"extra_compile_args={extra_compile_args}")
+
+    return [
+        Extension(
+            name=str(pyx.relative_to(".")).replace(os.path.sep, ".")[:-4],
+            sources=[str(pyx)],
+            include_dirs=[np.get_include()], #, *RUST_INCLUDES],
+            define_macros=define_macros,
+            language="c",
+            extra_link_args=extra_link_args,
+            extra_compile_args=extra_compile_args,
+        ) for pyx in itertools.chain(Path("src/qube").rglob("*.pyx"))
+    ]
+
+
+def _build_distribution(extensions: list[Extension]) -> Distribution:
+    nthreads = os.cpu_count() or 1
+    if platform.system() == "Windows":
+        nthreads = min(nthreads, 60)
+    print(f"nthreads={nthreads}")
+
+    distribution = Distribution(
+        {
+            "name": "qube",
+            "ext_modules": cythonize(
+                module_list=extensions,
+                compiler_directives=CYTHON_COMPILER_DIRECTIVES,
+                nthreads=nthreads,
+                build_dir=BUILD_DIR,
+                gdb_debug=PROFILE_MODE,
+            ),
+            "zip_safe": False,
+        },
+    )
+    return distribution
+
+
+def _copy_build_dir_to_project(cmd: build_ext) -> None:
+    # Copy built extensions back to the project tree
+    for output in cmd.get_outputs():
+        relative_extension = Path(output).relative_to(cmd.build_lib)
+        if not Path(output).exists():
+            continue
+
+        # Copy the file and set permissions
+        shutil.copyfile(output, relative_extension)
+        mode = relative_extension.stat().st_mode
+        mode |= (mode & 0o444) >> 2
+        relative_extension.chmod(mode)
+
+    print("Copied all compiled dynamic library files into source")
+
+
+def _strip_unneeded_symbols() -> None:
+    try:
+        print("Stripping unneeded symbols from binaries...")
+        for so in itertools.chain(Path("nautilus_trader").rglob("*.so")):
+            if platform.system() == "Linux":
+                strip_cmd = ["strip", "--strip-unneeded", so]
+            elif platform.system() == "Darwin":
+                strip_cmd = ["strip", "-x", so]
+            else:
+                raise RuntimeError(f"Cannot strip symbols for platform {platform.system()}")
+            subprocess.run(
+                strip_cmd,  # type: ignore [arg-type] # noqa
+                check=True,
+                capture_output=True,
+            )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Error when stripping symbols.\n{e}") from e
+
+
+def build() -> None:
+    """
+    Construct the extensions and distribution.
+    """
+    # _build_rust_libs()
+    # _copy_rust_dylibs_to_project()
+
+    if True: #not PYO3_ONLY:
+        # Create C Extensions to feed into cythonize()
+        extensions = _build_extensions()
+        distribution = _build_distribution(extensions)
+
+        # Build and run the command
+        print("Compiling C extension modules...")
+        cmd: build_ext = build_ext(distribution)
+        # if PARALLEL_BUILD:
+            # cmd.parallel = os.cpu_count()
+        cmd.ensure_finalized()
+        cmd.run()
+
+        if COPY_TO_SOURCE:
+            # Copy the build back into the source tree for development and wheel packaging
+            _copy_build_dir_to_project(cmd)
+
+    if BUILD_MODE == "release" and platform.system() in ("Linux", "Darwin"):
+        # Only strip symbols for release builds
+        _strip_unneeded_symbols()
+
+
+if __name__ == "__main__":
+    qube_platform = toml.load("pyproject.toml")["tool"]["poetry"]["version"]
+    print("\033[36m")
+    print("=====================================================================")
+    print(f"Nautilus Builder {qube_platform}")
+    print("=====================================================================\033[0m")
+    print(f"System: {platform.system()} {platform.machine()}")
+    # print(f"Clang:  {_get_clang_version()}")
+    # print(f"Rust:   {_get_rustc_version()}")
+    print(f"Python: {platform.python_version()}")
+    print(f"Cython: {cython_compiler_version}")
+    print(f"NumPy:  {np.__version__}\n")
+
+    print(f"BUILD_MODE={BUILD_MODE}")
+    print(f"BUILD_DIR={BUILD_DIR}")
+    print(f"PROFILE_MODE={PROFILE_MODE}")
+    print(f"ANNOTATION_MODE={ANNOTATION_MODE}")
+    # print(f"PARALLEL_BUILD={PARALLEL_BUILD}")
+    print(f"COPY_TO_SOURCE={COPY_TO_SOURCE}")
+    # print(f"PYO3_ONLY={PYO3_ONLY}\n")
+
+    print("Starting build...")
+    ts_start = datetime.datetime.now(datetime.timezone.utc)
+    build()
+    print(f"Build time: {datetime.datetime.now(datetime.timezone.utc) - ts_start}")
+    print("\033[32m" + "Build completed" + "\033[0m")
+
+# # See if Cython is installed
+# try:
+#     from Cython.Build import cythonize
+# # Do nothing if Cython is not available
+# except ImportError:
+#     # Got to provide this function. Otherwise, poetry will fail
+#     def build(setup_kwargs):
+#         pass
+
+# # Cython is installed. Compile
+# else:
+#     from setuptools import Extension
+#     from setuptools.dist import Distribution
+#     from distutils.command.build_ext import build_ext
+
+#     # This function will be executed in setup.py:
+#     def build(setup_kwargs):
+#         # The file you want to compile
+#         extensions = [
+#             "src/qube/core/series.pyx",
+#             "src/qube/core/utils.pyx",
+#             "src/qube/ta/indicators.pyx",
+#         ]
+
+#         # gcc arguments hack: enable optimizations
+#         os.environ['CFLAGS'] = '-O3'
+
+#         # Build
+#         import numpy as np
+#         setup_kwargs.update({
+#             'ext_modules': cythonize(
+#                 extensions,
+#                 language_level=3,
+#                 compiler_directives={'linetrace': True},
+#                 include_path=[np.get_include()]
+#             ),
+#             'cmdclass': {'build_ext': build_ext}
+#         })

@@ -17,44 +17,12 @@ def version() -> str:
     return version
 
 
-# def pyx_reload(path: str):
-#     """
-#     Reload specified cython module
-#     path must have .pyx extension
-#     """
-#     if exists(path):
-#         f_name, f_ext = basename(path).split('.')
-#         if f_ext == 'pyx':
-#             import numpy as np
-#             import pyximport
-#             import importlib
-
-#             print(f"\t{green('>>>')} installing for {path}")
-#             _, pxi = pyximport.install(setup_args={'include_dirs': np.get_include()}, 
-#                               build_dir=expanduser("~/.pyxbld"),
-#                               reload_support=True, language_level=3)
-#             # pyximport.load_module(f_name, path, language_level=3, pyxbuild_dir=expanduser("~/.pyxbld"))
-#             print(pxi)
-#             if version().lower() == 'dev':
-#                 print(f"\t{green('>>>')} [{green('dev')}] : module {blue(f_name)} reloaded")
-#     else:
-#         raise ValueError("Path '%s' not found !" % path)
-
-
 from ._pyxreloader import pyx_install_loader
 
-def reload_pyx_module(module_dir: Optional[str]=None):
+def install_pyx_recompiler_for_dev():
     if version().lower() == 'dev':
+        print(f" >  [{green('dev')}] {red('installed cython rebuilding hook')}")
         pyx_install_loader()
-
-    # from os.path import abspath
-    # _module_dir = abspath(dirname(__file__) if module_dir is None else module_dir)
-    # for f in Path(_module_dir).iterdir():
-    #     if f.suffix == '.pyx':
-    #         pyx_reload(str(f))
-    #     if f.is_dir():
-    #         for _m in glob.glob(join(f, '*.pyx')):
-    #             pyx_reload(_m)
 
 
 def runtime_env():

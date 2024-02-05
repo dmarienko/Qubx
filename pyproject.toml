@@ -8,6 +8,11 @@ packages = [
     { include = "qube", from = "src" },
 ]
 repository = "https://github.com/dmarienko/Qube2"
+include = [
+    # Compiled extensions must be included in the wheel distributions
+    { path = "src/**/*.so", format = "wheel" },
+    { path = "src/**/*.pyd", format = "wheel" },
+]
 
 [tool.poetry.dependencies]
 python = ">=3.9,<4.0"
@@ -28,12 +33,17 @@ cython = "*"
 pre-commit = "^2.20.0"
 pytest = "^7.1.3"
 
-[project.optional-dependencies]
-numba = "^0.57.1"
+#[project.optional-dependencies]
+#numba = "^0.57.1"
 
 [build-system]
-requires = ["poetry-core"]
+requires = ["poetry-core", "setuptools", "numpy>=1.26.3", "cython==3.0.8", "toml>=0.10.2",]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.build]
+script = "build.py"
+generate-setup-file = false
+
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.1.3"

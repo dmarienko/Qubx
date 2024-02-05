@@ -1,5 +1,5 @@
-from qube.utils import set_mpl_theme, runtime_env, reload_pyx_module
-reload_pyx_module('.')
+from qube.utils import set_mpl_theme, runtime_env, install_pyx_recompiler_for_dev
+install_pyx_recompiler_for_dev()
 
 from loguru import logger
 import sys, stackprinter
