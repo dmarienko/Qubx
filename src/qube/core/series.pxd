@@ -65,3 +65,20 @@ cdef class OHLCV(TimeSeries):
     cpdef short update(OHLCV self, long long time, double price, double volume=*)
 
     cpdef _update_indicators(OHLCV self, long long time, object value, short new_item_started)
+
+
+cdef class Trade:
+    cdef public long long time
+    cdef public double price
+    cdef public double size
+    cdef public short taker
+
+
+cdef class Quote:
+    cdef public long long time
+    cdef public bid
+    cdef public ask
+    cdef public bid_size
+    cdef public ask_size
+
+    cpdef double mid_price(Quote self)

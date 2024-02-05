@@ -3,7 +3,7 @@ import numpy as np
 cimport numpy as np
 from cython cimport abs
 from typing import Union
-from qube.core.utils import recognize_time, time_to_str, time_delta_to_str, recognize_timeframe
+from qube.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
 
 
 cdef extern from "math.h":
@@ -25,6 +25,19 @@ cdef inline long long floor_t64(long long time, long long dt):
     Floor timestamp by dt
     """
     return time - time % dt
+
+
+cpdef long long time_as_nsec(time):
+    """
+    Tries to recognize input time and convert it to nanosec
+    """
+    if isinstance(time, np.datetime64):
+        return time.astype('<M8[ns]').item()
+    elif isinstance(time, pd.Timestamp):
+        return time.asm8
+    elif isinstance(time, str):
+        return np.datetime64(time).astype('<M8[ns]').item()
+    return time
 
 
 cdef class RollingSum:
@@ -525,6 +538,36 @@ def ge(series0:TimeSeries, series1:Union[TimeSeries, float, int]):
 
 def neg(series: TimeSeries):
     return Neg.wrap(series)
+
+
+cdef class Trade:
+    def __init__(self, time, double price, double size, short taker=-1):
+        self.time = time_as_nsec(time)
+        self.price = price
+        self.size = size
+        self.taker = taker
+
+    def __repr__(self):
+        return "[%s]\t%.5f (%.1f) <%s>" % ( 
+            time_to_str(self.time, 'ns'), self.price, self.size, 
+            'take' if self.taker == 1 else 'make' if self.taker == 0 else '???'
+        ) 
+
+cdef class Quote:
+    def __init__(self, time, double bid, double ask, double bid_size, double ask_size):
+        self.time = time_as_nsec(time)
+        self.bid = bid
+        self.ask = ask
+        self.bid_size = bid_size
+        self.ask_size = ask_size
+
+    cpdef double mid_price(self):
+        return 0.5 * (self.ask + self.bid)
+
+    def __repr__(self):
+        return "[%s]\t%.5f (%.1f) | %.5f (%.1f)" % (
+            time_to_str(self.time, 'ns'), self.bid, self.bid_size, self.ask, self.ask_size
+        )
 
 
 cdef class Bar:
