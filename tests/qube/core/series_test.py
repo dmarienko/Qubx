@@ -1,8 +1,7 @@
 import numpy as np
-# from qube.utils import reload_pyx_module
-# reload_pyx_module('src/qube/core/')
 
-from qube.core.series import TimeSeries, OHLCV, recognize_time
+from qube.core.series import TimeSeries, OHLCV
+from qube.core.utils import recognize_time
 from tests.qube.ta.utils_for_testing import N, push
 
 

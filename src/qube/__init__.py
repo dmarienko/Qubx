@@ -2,7 +2,8 @@ from qube.utils import set_mpl_theme, runtime_env, install_pyx_recompiler_for_de
 install_pyx_recompiler_for_dev()
 
 from loguru import logger
-import sys, stackprinter
+import os, sys, stackprinter
+from qube.core.lookups import InstrumentsLookup
 
 
 def formatter(record):
@@ -25,9 +26,7 @@ def formatter(record):
 
 
 config = {
-    "handlers": [
-        {"sink": sys.stdout, "format": "{time} - {message}"},
-    ],
+    "handlers": [ {"sink": sys.stdout, "format": "{time} - {message}"}, ],
     "extra": {"user": "someone"},
 }
 
@@ -36,6 +35,8 @@ logger.configure(**config)
 logger.remove(None)
 logger.add(sys.stdout, format=formatter, colorize=True)
 logger = logger.opt(colors=True)
+
+lookup = InstrumentsLookup()
 
 # registering magic for jupyter notebook
 if runtime_env() in ['notebook', 'shell']:

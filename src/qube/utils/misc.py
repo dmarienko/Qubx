@@ -1,6 +1,6 @@
+import glob, os
 from collections import OrderedDict, namedtuple
 from os.path import basename, exists, dirname, join, expanduser
-import glob
 from typing import Optional, Union
 from pathlib import Path
 
@@ -46,6 +46,16 @@ def runtime_env():
             return 'unknown'  # Other type (?)
     except (NameError, ImportError):
         return 'python'  # Probably standard Python interpreter
+
+_QUBE_FLDR = None
+
+def get_local_qube_folder() -> str:
+    global _QUBE_FLDR
+
+    if _QUBE_FLDR is None:
+        _QUBE_FLDR = makedirs(os.getenv('QUBESTORAGE', os.path.expanduser('~/.qube')))
+
+    return _QUBE_FLDR
 
 
 def add_project_to_system_path(project_folder:str = '~/projects'):
@@ -215,3 +225,10 @@ class Struct:
                 v = Struct.dict2struct(v)
             m.__setattr__(k, v)
         return m
+
+
+def makedirs(path: str, *args) -> str:
+    path = os.path.expanduser(os.path.join(*[path, *args]))
+    if not exists(path):
+        os.makedirs(path)
+    return path
