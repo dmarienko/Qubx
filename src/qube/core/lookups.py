@@ -1,7 +1,7 @@
 import glob, re
 import json, os, dataclasses
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from qube.core.basics import Instrument, FuturesInfo
 from qube.utils.marketdata.binance import get_binance_symbol_info_for_type
@@ -59,6 +59,27 @@ class InstrumentsLookup:
                 logger.warning(ex)
 
         return data_exists
+
+    def find(self, exchange: str, base: str, quote: str) -> Optional[Instrument]:
+        for i in self.lookup.values():
+            if i.exchange == exchange and (
+                (i.base == base and i.quote == quote) or (i.base == quote and i.quote == base)
+            ):
+                return i
+        return None
+    
+    def find_aux_instrument_for(self, instrument: Instrument, base_currency: str) -> Optional[Instrument]:
+        """
+        Tries to find aux instrument (for conversions to funded currency)
+        for example: 
+            ETHBTC -> BTCUSDT for base_currency USDT
+            EURGBP -> GBPUSD for base_currency USD
+            ...
+        """
+        base_currency = base_currency.upper()
+        if instrument.quote != base_currency and instrument._aux_instrument is None:
+            return self.find(instrument.exchange, instrument.quote, base_currency)
+        return instrument._aux_instrument
 
     def __getitem__(self, spath: str) -> List[Instrument]:
         res = []
