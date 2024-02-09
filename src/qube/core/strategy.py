@@ -18,8 +18,8 @@ class Event:
     type: int               # ??
     instrument: Instrument
 
-DataListener = Callable[[Instrument, int]]
-ExchListener = Callable[[Instrument, int]]
+DataListener = Callable[[Instrument, int], None]
+ExchListener = Callable[[Instrument, int], None]
 
 class DataProvider:
     def add_data_listener(self, listener: DataListener):

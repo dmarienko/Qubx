@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Callable, Dict, List, Optional, Union
 import numpy as np
+import math
 from dataclasses import dataclass, field
+from qube.core.series import Quote, Trade, time_as_nsec
 from qube.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
 
 
@@ -83,7 +85,9 @@ class TransactionCostsCalculator:
         self.maker = maker
 
     def get_execution_fees(self, instrument: Instrument, exec_price: float, amount: float, crossed_market=False, conversion_rate=1.0):
-        if not instrument.is_futures:
+        if instrument.is_futures:
+            amount = amount * instrument.futures_info.contract_size
+        else:
             amount = amount * exec_price
 
         if crossed_market:
@@ -100,6 +104,7 @@ class TransactionCostsCalculator:
     def __repr__(self):
         return f'<TCC: {self.maker * 100:.4f} / {self.taker * 100:.4f}>'
 
+
 ZERO_COSTS = TransactionCostsCalculator(0.0, 0.0)
 
 
@@ -115,26 +120,108 @@ class Position:
     cost_funds: float = 0.0                     # position cost in basic currency
     commissions: float = 0.0                    # cumulative commissions paid for this position
 
-    last_update_time: Optional[dt_64] = None    # when price updated or position changed
+    last_update_time: Optional[int] = None      # when price updated or position changed
     last_update_price: Optional[float] = None   # last update price (actually instrument's price) in quoted currency
+
+    # - helpers for position formatting
+    _formatter: str
+    _prc_formatter: str
 
     def __init__(self, instrument: Instrument, tcc: TransactionCostsCalculator, 
                  quantity=0.0, average_price=0.0, aux_price=1.0, 
                  ) -> None:
         self.instrument = instrument
         self.tcc = tcc
+        
+        # - size/price formaters
+        self._formatter = f'[{instrument.exchange}:{instrument.symbol}] %s %8.{instrument.price_precision}f %s %8.2f $%.2f / %.{instrument.price_precision}f'
+        self._prc_formatter = f"%.{instrument.price_precision}f"
 
         if quantity != 0.0 and average_price > 0.0:
             self.quantity = quantity
             raise ValueError("[TODO] Position: restore state by quantity and avg price !!!!")
 
+    def _price(self, update: Union[Quote, Trade]) -> float:
+        if isinstance(update, Quote):
+            return update.bid if np.sign(self.quantity) > 0 else update.ask
+        elif isinstance(update, Trade):
+            return update.price
+        raise ValueError(f"Unknown update type: {type(update)}")
+
+    def update_position(self, timestamp: dt_64, position: float, exec_price: float, aggressive=True, conversion_rate:float=1) -> float:
+        # - realized PnL of this fill
+        deal_pnl = 0
+        quantity = self.quantity
+
+        if quantity != position:
+            pos_change = position - quantity
+            direction = np.sign(pos_change)
+            prev_direction = np.sign(quantity)
+
+            # how many shares are closed/open
+            qty_closing = min(abs(self.quantity), abs(pos_change)) * direction if prev_direction != direction else 0
+            qty_opening = pos_change if prev_direction == direction else pos_change - qty_closing
+
+            # if self.instrument.is_futures:
+                # qty_closing /= exec_price
+                # qty_opening /= exec_price
+                # quantity /= exec_price
+
+            new_cost = self.cost_quoted + qty_opening * exec_price
+
+            # if we have closed some shares
+            if self.quantity != 0:
+                pe = self.cost_quoted / quantity
+                new_cost += qty_closing * pe 
+                deal_pnl = qty_closing * (pe - exec_price)
+
+                if self.instrument.is_futures:
+                    deal_pnl *= pe
+
+            self.cost_quoted = new_cost
+            self.quantity = position
+
+            # convert current position's cost to funds currency
+            self.cost_funds = self.cost_quoted / conversion_rate
+
+            # convert PnL to fund currency
+            self.r_pnl += deal_pnl / conversion_rate
+
+            # update pnl
+            self._update_market_price(time_as_nsec(timestamp), exec_price, conversion_rate)
+
+            # calculate transaction costs
+            comms = self.tcc.get_execution_fees(self.instrument, exec_price, pos_change, aggressive, conversion_rate)
+            self.commissions += comms
+
+        return deal_pnl
+
+    def update_market_price(self, price: Union[Quote, Trade], conversion_rate:float=1) -> float:
+        return self._update_market_price(price.time, self._price(price), conversion_rate)
+
+    def _update_market_price(self, timestamp: dt_64, price: float, conversion_rate:float) -> float:
+        self.last_update_time = timestamp
+        self.last_update_price = price
+
+        self.market_value = 0
+        if not np.isnan(self.last_update_price):
+            self.market_value = self.quantity * self.last_update_price
+            _qty_in_base = 1.0
+            if self.instrument.is_futures:
+                _qty_in_base = self.instrument.futures_info.contract_size * self.quantity / self.cost_quoted if self.cost_quoted != 0.0 else 0.0
+
+            self.pnl = _qty_in_base * (self.market_value - self.cost_quoted) / conversion_rate + self.r_pnl
+
+        # calculate mkt value in funded currency
+        self.market_value_funds = self.market_value / conversion_rate
+        return self.pnl
+
+
+    @staticmethod
+    def _t2s(t) -> str:
+        return np.datetime64(t, 'ns').astype('datetime64[ms]').item().strftime('%Y-%m-%d %H:%M:%S.%f') if t else '---'
+
     def __str__(self):
-        _t_str = ''
-        if self.last_update_time:
-            _t_str = time_to_str(self.last_update_time, 'ns')
-            _t_str = str(self.last_update_time)
-        _p_str = "???" if self.last_update_price is None else ('%.5f' % self.last_update_price)
-        _c_str = "$%.2f" % self.cost_funds
-        return '[%s]  %s   %.0f   %s   %.2f  $%.2f / %s' % (
-            self.instrument.symbol, _t_str, self.quantity, _p_str, self.pnl, self.market_value, _c_str)
+        _p_str = (self._prc_formatter % self.last_update_price) if self.last_update_price else "---"
+        return self._formatter % (Position._t2s(self.last_update_time), self.quantity, _p_str, self.pnl, self.market_value_funds, self.cost_funds)
     
