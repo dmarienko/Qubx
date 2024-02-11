@@ -138,7 +138,8 @@ class Position:
         self.tcc = tcc
         
         # - size/price formaters
-        self._formatter = f'[{instrument.exchange}:{instrument.symbol}] %s %8.{instrument.price_precision}f %s %8.2f $%.2f / %.{instrument.price_precision}f'
+        #                  time                                                     qty                             pos_avg_px              pnl  mkt_price mkt_value
+        self._formatter = f'%s [{instrument.exchange}:{instrument.symbol}] %8.{instrument.size_precision}f %8.{instrument.price_precision}f %+8.2f | %s  %10.2f'
         self._prc_formatter = f"%.{instrument.price_precision}f"
         if instrument.is_futures:
             self._qty_multiplier = instrument.futures_info.contract_size
@@ -211,7 +212,6 @@ class Position:
             self.market_value_funds = self.market_value / conversion_rate
         return self.pnl
 
-
     def __update_position(self, timestamp: dt_64, position: float, exec_price: float, aggressive=True, conversion_rate:float=1) -> float:
         # - realized PnL of this fill
         deal_pnl = 0
@@ -275,12 +275,11 @@ class Position:
         self.market_value_funds = self.market_value / conversion_rate
         return self.pnl
 
-
     @staticmethod
     def _t2s(t) -> str:
         return np.datetime64(t, 'ns').astype('datetime64[ms]').item().strftime('%Y-%m-%d %H:%M:%S.%f') if t else '---'
 
     def __str__(self):
-        _p_str = (self._prc_formatter % self.last_update_price) if self.last_update_price else "---"
-        return self._formatter % (Position._t2s(self.last_update_time), self.quantity, _p_str, self.pnl, self.market_value_funds, self.position_avg_price_funds)
+        _mkt_price = (self._prc_formatter % self.last_update_price) if self.last_update_price else "---"
+        return self._formatter % (Position._t2s(self.last_update_time), self.quantity, self.position_avg_price_funds,self.pnl, _mkt_price,  self.market_value_funds)
     
