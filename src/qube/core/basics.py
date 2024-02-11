@@ -120,12 +120,16 @@ class Position:
     cost_funds: float = 0.0                     # position cost in basic currency
     commissions: float = 0.0                    # cumulative commissions paid for this position
 
+    position_avg_price: float = 0.0             # average position price
+    position_avg_price_funds: float = 0.0       # average position price
+
     last_update_time: Optional[int] = None      # when price updated or position changed
     last_update_price: Optional[float] = None   # last update price (actually instrument's price) in quoted currency
 
-    # - helpers for position formatting
+    # - helpers for position processing 
     _formatter: str
     _prc_formatter: str
+    _qty_multiplier: float = 1.0
 
     def __init__(self, instrument: Instrument, tcc: TransactionCostsCalculator, 
                  quantity=0.0, average_price=0.0, aux_price=1.0, 
@@ -136,6 +140,8 @@ class Position:
         # - size/price formaters
         self._formatter = f'[{instrument.exchange}:{instrument.symbol}] %s %8.{instrument.price_precision}f %s %8.2f $%.2f / %.{instrument.price_precision}f'
         self._prc_formatter = f"%.{instrument.price_precision}f"
+        if instrument.is_futures:
+            self._qty_multiplier = instrument.futures_info.contract_size
 
         if quantity != 0.0 and average_price > 0.0:
             self.quantity = quantity
@@ -162,10 +168,63 @@ class Position:
             qty_closing = min(abs(self.quantity), abs(pos_change)) * direction if prev_direction != direction else 0
             qty_opening = pos_change if prev_direction == direction else pos_change - qty_closing
 
-            # if self.instrument.is_futures:
-                # qty_closing /= exec_price
-                # qty_opening /= exec_price
-                # quantity /= exec_price
+            # - extract realized pnl part
+            if qty_closing != 0:
+                deal_pnl = qty_closing * (self.position_avg_price - exec_price)
+                quantity += qty_closing
+                # - reset average price to 0 if smaller than minimal price change to avoid cumulative error
+                if abs(quantity) < self.instrument.min_size_step:
+                    quantity = 0.0
+                    self.position_avg_price = 0.0
+                                                                # print(' C :', qty_closing, exec_price, self.position_avg_price, '->', deal_pnl, 'QTY', quantity)
+
+            if qty_opening != 0:
+                qa_open, qas = abs(qty_opening), abs(quantity)
+                self.position_avg_price = (qa_open * exec_price + qas * self.position_avg_price) / (qas + qa_open)
+                                                                # print(' O :', qty_opening, exec_price, self.position_avg_price)
+
+            # - update position and position's price
+            self.position_avg_price_funds = self.position_avg_price / conversion_rate
+            self.quantity = position
+
+            # - convert PnL to fund currency
+            self.r_pnl += deal_pnl / conversion_rate
+
+            # - update pnl
+            self._update_market_price(time_as_nsec(timestamp), exec_price, conversion_rate)
+
+            # - calculate transaction costs
+            comms = self.tcc.get_execution_fees(self.instrument, exec_price, pos_change, aggressive, conversion_rate)
+            self.commissions += comms
+
+        return deal_pnl
+
+    def _update_market_price(self, timestamp: dt_64, price: float, conversion_rate:float) -> float:
+        self.last_update_time = timestamp
+        self.last_update_price = price
+
+        if not np.isnan(self.last_update_price):
+            self.pnl = self.quantity * (price - self.position_avg_price) / conversion_rate + self.r_pnl
+            self.market_value = self.quantity * self.last_update_price * self._qty_multiplier
+
+            # calculate mkt value in funded currency
+            self.market_value_funds = self.market_value / conversion_rate
+        return self.pnl
+
+
+    def __update_position(self, timestamp: dt_64, position: float, exec_price: float, aggressive=True, conversion_rate:float=1) -> float:
+        # - realized PnL of this fill
+        deal_pnl = 0
+        quantity = self.quantity
+
+        if quantity != position:
+            pos_change = position - quantity
+            direction = np.sign(pos_change)
+            prev_direction = np.sign(quantity)
+
+            # how many shares are closed/open
+            qty_closing = min(abs(self.quantity), abs(pos_change)) * direction if prev_direction != direction else 0
+            qty_opening = pos_change if prev_direction == direction else pos_change - qty_closing
 
             new_cost = self.cost_quoted + qty_opening * exec_price
 
@@ -199,7 +258,7 @@ class Position:
     def update_market_price(self, price: Union[Quote, Trade], conversion_rate:float=1) -> float:
         return self._update_market_price(price.time, self._price(price), conversion_rate)
 
-    def _update_market_price(self, timestamp: dt_64, price: float, conversion_rate:float) -> float:
+    def __update_market_price(self, timestamp: dt_64, price: float, conversion_rate:float) -> float:
         self.last_update_time = timestamp
         self.last_update_price = price
 
@@ -223,5 +282,5 @@ class Position:
 
     def __str__(self):
         _p_str = (self._prc_formatter % self.last_update_price) if self.last_update_price else "---"
-        return self._formatter % (Position._t2s(self.last_update_time), self.quantity, _p_str, self.pnl, self.market_value_funds, self.cost_funds)
+        return self._formatter % (Position._t2s(self.last_update_time), self.quantity, _p_str, self.pnl, self.market_value_funds, self.position_avg_price_funds)
     
