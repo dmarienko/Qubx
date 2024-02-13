@@ -2,6 +2,8 @@ import pandas as pd
 from dataclasses import dataclass
 from typing import List, Union
 from qube import lookup
+
+from tests.qube.ta.utils_for_testing import N
 from qube.core.basics import Instrument, Position, TransactionCostsCalculator, ZERO_COSTS
 from qube.core.series import time_as_nsec, Trade, Quote
 
@@ -11,21 +13,25 @@ class Deal:
     time: int
     position: int
     exec_price: float
-    def __init__(self, time, pos, price):
+    aggr: bool
+    def __init__(self, time, pos, price, agressive=True):
         self.time = time_as_nsec(time)
         self.position = pos
         self.exec_price = price
+        self.aggr = agressive
 
-def run_deals_updates(p: Position, qs: List[Union[Deal, Trade, Quote]]) -> pd.Series:
+def run_deals_updates(p: Position, qs: List[Union[Deal, Trade, Quote]]) -> dict:
     pnls = {}
     for q in qs:
         if isinstance(q, Deal): 
-            pnls[pd.Timestamp(q.time, unit='ns')] = p.update_position(q.time, q.position, q.exec_price)
-            print(p, '\t<-(exec)-')
+            pnls[pd.Timestamp(q.time, unit='ns')] = p.update_position(q.time, q.position, q.exec_price, aggressive=q.aggr)
+            print(p, f'\t<-(exec -> {q.position})-')
         else: 
-            pnls[pd.Timestamp(q.time, unit='ns')] = p.update_market_price(q)
-            print(p)
+            pnls[pd.Timestamp(q.time, unit='ns')] = p.update_market_price(q); print(p)
     return pd.Series(pnls)
+
+
+pos_round = lambda s, p, i: (p * round(s/p, i.size_precision), p, round(s/p, i.size_precision))
 
 
 class TestBasics:
@@ -42,8 +48,6 @@ class TestBasics:
     def test_spot_positions(self):
         tcc = TransactionCostsCalculator(0.04/100, 0.04/100)
         i, s = lookup['BINANCE:BTCUSDT'][0], 1
-        # i, s = lookup['BINANCE.UM:BTCUSDT'][0], 100
-        # i, s = lookup['BINANCE.CM:BTCUSD_PERP'][0], 1
         D = '2024-01-01 '; qs = [
             Quote(D+'12:00:00', 45000, 45000.5, 100, 50),
             Deal( D+'12:00:30', s, 45010),
@@ -66,4 +70,46 @@ class TestBasics:
         print(pnls)
         assert p.commissions == (1*45010+2*45015+1*45020+2*45010+45020+45100)*0.04/100
         assert p.pnl == -60
+
+    def test_futures_positions(self):
+        D = '2024-01-01 '
+        fi = lookup['BINANCE.UM:BTCUSDT'][0]
+        pos = Position(fi, TransactionCostsCalculator(0.02/100, 0.05/100))
+        q1 = pos_round(239.9, 47980, fi)[2]
+        q2 = q1 + pos_round(143.6, 47860, fi)[2]
+        q3 = q2 - pos_round(300, 48050, fi)[2]
+        rpnls = run_deals_updates(pos, [
+            Deal(D+'00:00', q1, 47980, False),
+            Deal(D+'00:10', q2, 47860, False),
+            Trade(D+'00:15', 47984.7, 1),
+            Deal(D+'00:20', q3, 48050, False),
+            Deal(D+'00:30', 0, 48158.7, True),
+        ])
+        assert N(rpnls.values) == [0.0, 0.0, 0.3976, 0.69, 0.4474]
+        assert N(pos.pnl) == 1.1374
+        assert N(pos.commissions) == 0.04815870 + 0.05766 + 0.028716 + 0.04798
+
+        D = '2024-01-01 '
+        i = lookup['BINANCE.UM:BTCUSDT'][0]
+        px0 = Position(i, ZERO_COSTS)
+
+        run_deals_updates(px0, [
+            Deal( D+'12:00:00', 1000/45000.0, 45000.0),
+            Deal( D+'12:01:00', 1000/45000.0 + 1000/46000.0, 46000.0),
+            Deal( D+'12:03:00', 0, 47000.0),
+            Trade( D+'12:04:00', 47000.0, 0),
+            Trade( D+'12:06:00', 48000.0, 0),
+        ])
+
+        px1 = Position(i, ZERO_COSTS)
+        px2 = Position(i, ZERO_COSTS)
+        run_deals_updates(px1, [
+            Deal( D+'12:00:00', 1000/45000, 45000),
+            Deal( D+'12:03:00', 0, 47000),
+        ])
+        run_deals_updates(px2, [
+            Deal( D+'12:01:00', 1000/46000, 46000),
+            Deal( D+'12:03:00', 0, 47000),
+        ])
+        assert px0.total_pnl() ==  N(px1.total_pnl() + px2.total_pnl())
 
