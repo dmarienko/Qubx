@@ -5,6 +5,7 @@ import pyarrow as pa
 from pyarrow import csv
 
 from qube.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
+from qube.utils.time import infer_series_frequency
 
 
 def _recognize_t(t: Union[int, str], defaultvalue, timeunit) -> int:
@@ -84,6 +85,13 @@ class QuotesDataProcessor(DataProcessor):
         return None
 
 
+class OhlcvToQuotesDataProcessor(DataProcessor):
+    """
+    Process OHLC and restore Quotes
+    """
+    pass
+
+
 class OhlcvDataProcessor(DataProcessor):
     """
     Process data and convert it to TimeSeries
@@ -95,17 +103,22 @@ class OhlcvDataProcessor(DataProcessor):
         self._low_idx = _find_column_index_in_list(fieldnames, 'low')
         self._close_idx = _find_column_index_in_list(fieldnames, 'close')
         self._volume_idx = None
-        # self._timeframe = 0
+        self._timeframe = None
 
         try:
             self._volume_idx = _find_column_index_in_list(fieldnames, 'volume', 'vol')
         except:
             pass
 
-        # TODO: ---- name and tieframe !
-        self.ohlc = OHLCV('Test1', '1Min')
+        self.ohlc = None
 
     def process_data(self, data: list) -> Optional[Iterable]:
+        if self._timeframe is None:
+            self._timeframe = infer_series_frequency(data[self._time_idx])
+
+            # TODO: ---- name ------ !
+            self.ohlc = OHLCV('Test1', self._timeframe)
+
         self.ohlc.append_data(
             data[self._time_idx],
             data[self._open_idx], data[self._high_idx], 
