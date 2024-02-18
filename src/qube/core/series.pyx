@@ -108,6 +108,10 @@ cdef class Indexed:
             self.append(v)
         self._is_empty = 0
 
+    def set_values(self, new_values: list):
+        self._is_empty = False
+        self.values = new_values
+
     def clear(self):
         self.values.clear()
         self._is_empty = 1
@@ -232,7 +236,8 @@ cdef class TimeSeries:
         return dict(zip(ts, self.values[::-1]))
 
     def to_series(self):
-        return pd.Series(self.to_records(), name=self.name, dtype=float)
+        return pd.Series(self.values.values, index=pd.DatetimeIndex(self.times.values), name=self.name, dtype=float)
+        # return pd.Series(self.to_records(), name=self.name, dtype=float)
 
     def pd(self):
         return self.to_series()
@@ -609,6 +614,32 @@ cdef class OHLCV(TimeSeries):
         self.close = TimeSeries('close', timeframe, max_series_length)
         self.volume = TimeSeries('volume', timeframe, max_series_length)
 
+    cpdef object append_data(self, 
+                    np.ndarray times, 
+                    np.ndarray opens,
+                    np.ndarray highs,
+                    np.ndarray lows,
+                    np.ndarray closes,
+                    np.ndarray volumes,
+                ):
+        cdef long long t
+        cdef short _conv
+
+        _conv = 0
+        if not isinstance(times[0].item(), long):
+            _conv = 1
+
+        for i in range(len(times)):
+            if _conv:
+                t = times[i].astype('datetime64[ns]').item()
+            else:
+                t = times[i].item()
+
+            self._add_new_item(t, 
+                Bar(t, opens[i], highs[i], lows[i], closes[i], volumes[i]))
+        return self
+
+
     def _add_new_item(self, long long time, Bar value):
         self.times.add(time)
         self.values.add(value)
@@ -666,15 +697,21 @@ cdef class OHLCV(TimeSeries):
         self.low._update_indicators(time, value.low, new_item_started)
         self.volume._update_indicators(time, value.volume, new_item_started)
 
+    def to_series(self) -> pd.DataFrame:
+        df = pd.DataFrame({
+            'open': self.open.to_series(),
+            'high': self.high.to_series(),
+            'low': self.low.to_series(),
+            'close': self.close.to_series(),
+            'volume': self.volume.to_series(),
+        })
+        df.index.name = 'timestamp'
+        return df
+
     def to_records(self) -> dict:
         ts = [np.datetime64(t, 'ns') for t in self.times[::-1]]
         bs = [v.to_dict(skip_time=True) for v in self.values[::-1]]
         return dict(zip(ts, bs))
-
-    def to_series(self):
-        df = pd.DataFrame.from_dict(self.to_records(), orient='index')
-        df.index.name = 'timestamp'
-        return df
 
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 

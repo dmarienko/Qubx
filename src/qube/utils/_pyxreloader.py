@@ -1,10 +1,8 @@
+import importlib, glob, imp, os, sys
 from importlib.abc import MetaPathFinder
 from importlib.util import spec_from_file_location
 from importlib.machinery import ExtensionFileLoader, SourceFileLoader
-import importlib
-import glob
-import imp
-import os, sys
+from typing import List
 
 PYX_EXT = ".pyx"
 PYXDEP_EXT = ".pyxdep"
@@ -173,7 +171,7 @@ class PyxImportLoader(ExtensionFileLoader):
 
     def create_module(self, spec):
         try:
-            # print("CREATING MODULE")
+            # print(f"CREATING MODULE: {spec.name} -> {spec.origin}")
             so_path = build_module(spec.name, pyxfilename=spec.origin, user_setup_args=self._setup_args, pyxbuild_dir=self._pyxbuild_dir,
                                    inplace=self._inplace, language_level=self._language_level, reload_support=self._reload_support)
             self.path = so_path
@@ -197,7 +195,7 @@ class PyxImportLoader(ExtensionFileLoader):
 
     def exec_module(self, module):
         try:
-            # print("EXEC MODULE")
+            # print(f"EXEC MODULE: {module}")
             return super().exec_module(module)
         except Exception as failure_exc:
             import traceback
@@ -208,7 +206,8 @@ class PyxImportLoader(ExtensionFileLoader):
 
 class CustomPyxImportMetaFinder(MetaPathFinder):
 
-    def __init__(self, extension=PYX_EXT, setup_args=None, pyxbuild_dir=None, inplace=False, language_level=None, reload_support=True):
+    def __init__(self, modules_to_check: List[str], extension=PYX_EXT, setup_args=None, pyxbuild_dir=None, inplace=False, language_level=None, reload_support=True):
+        self.valid_modules = modules_to_check
         self.pyxbuild_dir = pyxbuild_dir
         self.inplace = inplace
         self.language_level = language_level
@@ -217,6 +216,14 @@ class CustomPyxImportMetaFinder(MetaPathFinder):
         self.reload_support = reload_support
 
     def find_spec(self, fullname, path, target=None):
+        def _is_valid(module):
+            if not self.valid_modules:
+                return True
+            for m in self.valid_modules:
+                if module.startswith(m):
+                    return True
+            return False
+
         if not path:
             path = [os.getcwd()]  # top level import --
         if "." in fullname:
@@ -234,6 +241,9 @@ class CustomPyxImportMetaFinder(MetaPathFinder):
             if not os.path.exists(filename):
                 continue
 
+            if not _is_valid(fullname):
+                continue
+
             return spec_from_file_location(
                 fullname, filename,
                 loader=PyxImportLoader(filename, self.setup_args, self.pyxbuild_dir, self.inplace, self.language_level, self.reload_support),
@@ -244,7 +254,7 @@ class CustomPyxImportMetaFinder(MetaPathFinder):
 
 __pyx_finder_installed = False
 
-def pyx_install_loader():
+def pyx_install_loader(modules_to_check: List[str]):
     import numpy as np
     import pyximport
     global __pyx_finder_installed
@@ -253,6 +263,7 @@ def pyx_install_loader():
         build_dir = os.path.expanduser("~/.pyxbld")
         setup_args = {'include_dirs': np.get_include()}
         sys.meta_path.insert(0, CustomPyxImportMetaFinder(
+            modules_to_check,
             PYX_EXT, setup_args=setup_args, pyxbuild_dir=build_dir, 
             language_level=3, reload_support=True
         ))

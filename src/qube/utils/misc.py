@@ -22,7 +22,7 @@ from ._pyxreloader import pyx_install_loader
 def install_pyx_recompiler_for_dev():
     if version().lower() == 'dev':
         print(f" >  [{green('dev')}] {red('installed cython rebuilding hook')}")
-        pyx_install_loader()
+        pyx_install_loader(['qube.core', 'qube.ta', 'qube.data', 'qube.strategies'])
 
 
 def runtime_env():

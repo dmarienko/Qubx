@@ -6,8 +6,8 @@ cdef np.ndarray nans(int dims)
 
 
 cdef class Indexed:
-    cdef list values
-    cdef float max_series_length
+    cdef public list values
+    cdef public float max_series_length
     cdef unsigned short _is_empty
 
 
@@ -65,6 +65,16 @@ cdef class OHLCV(TimeSeries):
     cpdef short update(OHLCV self, long long time, double price, double volume=*)
 
     cpdef _update_indicators(OHLCV self, long long time, object value, short new_item_started)
+
+    cpdef object append_data(
+        OHLCV self, 
+        np.ndarray times, 
+        np.ndarray opens,
+        np.ndarray highs, 
+        np.ndarray lows,
+        np.ndarray closes, 
+        np.ndarray volumes
+    )
 
 
 cdef class Trade:
