@@ -96,6 +96,10 @@ class OhlcvDataProcessor(DataProcessor):
     """
     Process data and convert it to TimeSeries
     """
+    def __init__(self, name: str) -> None:
+        super().__init__()
+        self._name = name
+
     def start_processing(self, fieldnames: List[str]):
         self._time_idx = _find_column_index_in_list(fieldnames, 'time', 'timestamp', 'datetime', 'date')
         self._open_idx = _find_column_index_in_list(fieldnames, 'open')
@@ -114,10 +118,10 @@ class OhlcvDataProcessor(DataProcessor):
 
     def process_data(self, data: list) -> Optional[Iterable]:
         if self._timeframe is None:
-            self._timeframe = infer_series_frequency(data[self._time_idx])
+            self._timeframe = infer_series_frequency(data[self._time_idx]).astype('timedelta64[s]')
 
-            # TODO: ---- name ------ !
-            self.ohlc = OHLCV('Test1', self._timeframe)
+            # - create instance after first data received
+            self.ohlc = OHLCV(self._name, self._timeframe)
 
         self.ohlc.append_data(
             data[self._time_idx],
@@ -164,21 +168,31 @@ class CsvDataReader(DataReader):
             parse_options=csv.ParseOptions(ignore_empty_lines=True),
             convert_options=convert_options
         )
-        fieldnames =  table.column_names
+        fieldnames =  table.column_names  
 
         # - try to find range to load  
         start_idx, stop_idx = 0, table.num_rows
         try:
             _time_field_idx = _find_column_index_in_list(fieldnames, 'time', 'timestamp', 'datetime', 'date')
-            time_unit = table.field(_time_field_idx).type.unit
+            _time_type = table.field(_time_field_idx).type
+            time_unit = _time_type.unit if hasattr(_time_type, 'unit') else 's'
             time_data = table[_time_field_idx]
+
+            # - check if need convert time to primitive types (i.e. Date32 -> timestamp[x])
+            _time_cast_function = lambda xs: xs
+            if _time_type != pa.timestamp(time_unit):
+                _time_cast_function = lambda xs: xs.cast(pa.timestamp(time_unit)) 
+                time_data = _time_cast_function(time_data)
 
             t_0 = _recognize_t(start, None, time_unit)
             t_1 = _recognize_t(stop, None, time_unit)
 
-            # - what range is requested
+            # - check requested range
             if t_0:
                 start_idx = self.__find_time_idx(time_data, t_0)
+                if start_idx >= table.num_rows:
+                    # no data for requested start date
+                    return None
 
             if t_1:
                 stop_idx = self.__find_time_idx(time_data, t_1)
@@ -192,7 +206,10 @@ class CsvDataReader(DataReader):
         selected_table = table.slice(start_idx, length)
         n_chunks = selected_table[table.column_names[0]].num_chunks
         for n in range(n_chunks):
-            data = [selected_table[k].chunk(n).to_numpy() for k in range(selected_table.num_columns)]
+            data = [
+                # - in some cases we need to convert time index to primitive type
+                _time_cast_function(selected_table[k].chunk(n)).to_numpy() if k == _time_field_idx else selected_table[k].chunk(n).to_numpy()
+                for k in range(selected_table.num_columns)]
             self._processor.process_data(data)
         return self._processor.get_result()
             
