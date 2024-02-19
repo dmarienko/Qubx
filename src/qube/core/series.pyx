@@ -558,6 +558,7 @@ cdef class Trade:
             'take' if self.taker == 1 else 'make' if self.taker == 0 else '???'
         ) 
 
+
 cdef class Quote:
     def __init__(self, time, double bid, double ask, double bid_size, double ask_size):
         self.time = time_as_nsec(time)
@@ -624,10 +625,28 @@ cdef class OHLCV(TimeSeries):
                 ):
         cdef long long t
         cdef short _conv
+        cdef short _upd_inds, _has_vol
+        cdef Bar b 
 
+        # - check if volume data presented
+        _has_vol = len(volumes) > 0
+
+        # - check if need to convert time to nanosec
         _conv = 0
         if not isinstance(times[0].item(), long):
             _conv = 1
+
+        # - check if need to update any indicators
+        _upd_inds = 0
+        if (
+            len(self.indicators) > 0 or 
+            len(self.open.indicators) > 0 or 
+            len(self.high.indicators) > 0 or
+            len(self.low.indicators) > 0 or 
+            len(self.close.indicators) > 0 or
+            len(self.volume.indicators) > 0
+        ):
+            _upd_inds = 1
 
         for i in range(len(times)):
             if _conv:
@@ -635,10 +654,13 @@ cdef class OHLCV(TimeSeries):
             else:
                 t = times[i].item()
 
-            self._add_new_item(t, 
-                Bar(t, opens[i], highs[i], lows[i], closes[i], volumes[i]))
-        return self
+            b = Bar(t, opens[i], highs[i], lows[i], closes[i], volumes[i] if _has_vol else 0)
+            self._add_new_item(t, b)
 
+            if _upd_inds:
+                self._update_indicators(t, b, True)
+
+        return self
 
     def _add_new_item(self, long long time, Bar value):
         self.times.add(time)
@@ -687,6 +709,15 @@ cdef class OHLCV(TimeSeries):
         self._update_indicators(bar_start_time, self[0], False)
 
         return self._is_new_item
+
+    # - TODO: need to check if it's safe to drop value series (series of Bar) to avoid duplicating data
+    # def __getitem__(self, idx):
+    #     if isinstance(idx, slice):
+    #         return [
+    #             Bar(self.times[i], self.open[i], self.high[i], self.low[i], self.close[i], self.volume[i])
+    #             for i in range(*idx.indices(len(self.times)))
+    #         ]
+    #     return Bar(self.times[idx], self.open[idx], self.high[idx], self.low[idx], self.close[idx], self.volume[idx])
 
     cpdef _update_indicators(self, long long time, value, short new_item_started):
         TimeSeries._update_indicators(self, time, value, new_item_started)

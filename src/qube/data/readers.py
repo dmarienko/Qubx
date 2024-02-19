@@ -1,11 +1,20 @@
 from typing import List, Union, Optional, Iterable, Any
 from os.path import exists
 import numpy as np
+import pandas as pd
 import pyarrow as pa
 from pyarrow import csv
 
+from qube import logger
 from qube.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
 from qube.utils.time import infer_series_frequency
+
+_DT = lambda x: pd.Timedelta(x).to_numpy().item()
+D1, H1 = _DT('1D'), _DT('1H')
+
+DEFAULT_DAILY_SESSION = (_DT('00:00:00.100'), _DT('23:59:59.900'))
+STOCK_DAILY_SESSION = (_DT('9:30:00.100'), _DT('15:59:59.900'))
+CME_FUTURES_DAILY_SESSION = (_DT('8:30:00.100'), _DT('15:14:59.900'))
 
 
 def _recognize_t(t: Union[int, str], defaultvalue, timeunit) -> int:
@@ -28,7 +37,7 @@ def _find_column_index_in_list(xs, *args):
 
 class DataProcessor:
     """
-    Common interface for data processor and default aggregator implementation
+    Common interface for data processor with default aggregating into list implementation
     """
     def __init__(self) -> None:
         self.buffer = {}
@@ -79,22 +88,118 @@ class QuotesDataProcessor(DataProcessor):
         bidvol = columns_data[self._bidvol_idx]
         askvol = columns_data[self._askvol_idx]
         for i in range(len(tms)):
-            self.buffer.append(
-                Quote(tms[i], bids[i], asks[i], bidvol[i], askvol[i])
-            )
+            self.buffer.append(Quote(tms[i], bids[i], asks[i], bidvol[i], askvol[i]))
         return None
 
 
-class OhlcvToQuotesDataProcessor(DataProcessor):
+class QuotesFromOHLCVDataProcessor(DataProcessor):
     """
-    Process OHLC and restore Quotes
+    Process OHLC and generate Quotes (+ Trades) from it
     """
-    pass
+    def __init__(self, trades: bool=False, 
+                 default_bid_size=1e9,  # default bid/ask is big
+                 default_ask_size=1e9,  # default bid/ask is big
+                 daily_session_start_end=DEFAULT_DAILY_SESSION,
+                 spread=0.0,
+                ) -> None:
+        super().__init__()
+        self._trades = trades
+        self._bid_size = default_bid_size
+        self._ask_size = default_ask_size
+        self._s2 = spread / 2.0
+        self._d_session_start = daily_session_start_end[0]
+        self._d_session_end = daily_session_start_end[1]
+
+    def start_processing(self, fieldnames: List[str]):
+        self._time_idx = _find_column_index_in_list(fieldnames, 'time', 'timestamp', 'datetime', 'date')
+        self._open_idx = _find_column_index_in_list(fieldnames, 'open')
+        self._high_idx = _find_column_index_in_list(fieldnames, 'high')
+        self._low_idx = _find_column_index_in_list(fieldnames, 'low')
+        self._close_idx = _find_column_index_in_list(fieldnames, 'close')
+        self._volume_idx = None
+        self._timeframe = None
+
+        try:
+            self._volume_idx = _find_column_index_in_list(fieldnames, 'volume', 'vol')
+        except:
+            pass
+
+        self.buffer = []
+
+    def process_data(self, data: list) -> Optional[Iterable]:
+        s2 = self._s2
+        if self._timeframe is None:
+            _freq = infer_series_frequency(data[self._time_idx])
+            self._timeframe = _freq.astype('timedelta64[s]')
+
+            # - timestamps when we emit simulated quotes
+            dt = _freq.astype('timedelta64[ns]').item()
+            if dt < D1:
+                self._t_start = dt // 10
+                self._t_mid1 = dt // 2 - dt // 10
+                self._t_mid2 = dt // 2 + dt // 10
+                self._t_end = dt - dt // 10
+            else:
+                self._t_start = self._d_session_start
+                self._t_mid1 = dt // 2 - H1
+                self._t_mid2 = dt // 2 + H1
+                self._t_end = self._d_session_end
+
+        # - input data
+        times = data[self._time_idx]
+        opens = data[self._open_idx]
+        highs = data[self._high_idx]
+        lows = data[self._low_idx]
+        closes = data[self._close_idx]
+        volumes = data[self._volume_idx] if self._volume_idx else None
+        if volumes is None and self._trades:
+            logger.warning("Input OHLC data doesn't contain volume information so trades can't be emulated !")
+            self._trades = False
+
+        for i in range(len(times)):
+            ti, o, h, l, c = times[i].astype('datetime64[ns]'), opens[i], highs[i], lows[i], closes[i]
+
+            if self._trades:
+                rv = volumes[i] / (h - l) 
+
+            # - opening quote
+            self.buffer.append(Quote(ti + self._t_start, o - s2, o + s2, self._bid_size, self._ask_size))
+
+            if c >= o:
+                if self._trades:
+                    self.buffer.append(Trade(ti + self._t_start, o - s2, rv * (o - l))) # sell 1
+                self.buffer.append(Quote(ti + self._t_mid1, l - s2, l + s2, self._bid_size, self._ask_size))
+
+                if self._trades:
+                    self.buffer.append(Trade(ti + self._t_mid1, l + s2, rv * (c - o)))  # buy 1
+                self.buffer.append(Quote(ti + self._t_mid2, h - s2, h + s2, self._bid_size, self._ask_size))
+
+                if self._trades:
+                    self.buffer.append(Trade(ti + self._t_mid2, h - s2, rv * (h - c)))  # sell 2
+            else:
+                if self._trades:
+                    self.buffer.append(Trade(ti + self._t_start, o + s2, rv * (h - o))) # buy 1
+                self.buffer.append(Quote(ti + self._t_mid1, h - s2, h + s2, self._bid_size, self._ask_size))
+
+                if self._trades:
+                    self.buffer.append(Trade(ti + self._t_mid1, h - s2, rv * (o - c))) # sell 1
+                self.buffer.append(Quote(ti + self._t_mid2, l - s2, l + s2, self._bid_size, self._ask_size))
+
+                if self._trades:
+                    self.buffer.append(Trade(ti + self._t_mid2, l + s2, rv * (c - l))) # buy 2
+
+            # - closing quote
+            self.buffer.append(Quote(ti + self._t_end, c - s2, c + s2, self._bid_size, self._ask_size))
+
+        return None
+
+    def get_result(self) -> Any:
+        return self.buffer
 
 
 class OhlcvDataProcessor(DataProcessor):
     """
-    Process data and convert it to TimeSeries
+    Process data and convert it to Qube OHLCV timeseries 
     """
     def __init__(self, name: str) -> None:
         super().__init__()
@@ -125,9 +230,8 @@ class OhlcvDataProcessor(DataProcessor):
 
         self.ohlc.append_data(
             data[self._time_idx],
-            data[self._open_idx], data[self._high_idx], 
-            data[self._low_idx], data[self._close_idx], 
-            data[self._volume_idx] 
+            data[self._open_idx], data[self._high_idx], data[self._low_idx], data[self._close_idx], 
+            data[self._volume_idx] if self._volume_idx else []
         )
         return None
 
