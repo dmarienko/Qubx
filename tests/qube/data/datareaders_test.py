@@ -1,7 +1,7 @@
 import numpy as np
 
-# from qube.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
-from qube.data.readers import CsvDataReader, QuotesDataProcessor, OhlcvDataProcessor
+from qube.core.series import OHLCV, Quote, Trade
+from qube.data.readers import CsvDataReader, QuotesDataProcessor, OhlcvDataProcessor, QuotesFromOHLCVDataProcessor
 
 T = lambda t: np.datetime64(t, 'ns')
 
@@ -40,5 +40,20 @@ class TestDataReaders:
         assert T(d4.times[-1]) == T('2000-01-03')
         assert T(d4.times[0]) == T('2000-12-29')
 
+    def test_simulated_quotes_trades(self):
+        r0 = CsvDataReader('tests/data/csv/BTCUSDT_ohlcv_M1.csv.gz', QuotesFromOHLCVDataProcessor(trades=True))
+        r1 = CsvDataReader('tests/data/csv/BTCUSDT_ohlcv_M1.csv.gz', OhlcvDataProcessor('original'))
+
+        tick_data = r0.read()
+        ohlc_data = r1.read()
+
+        restored_ohlc = OHLCV('restored', '1Min')
+        for t in tick_data:
+            if isinstance(t, Trade):
+                restored_ohlc.update(t.time, t.price, t.size)
+            else:
+                restored_ohlc.update(t.time, t.mid_price())
+
+        assert all((restored_ohlc.pd() - ohlc_data.pd()) < 1e-10)
 
 
