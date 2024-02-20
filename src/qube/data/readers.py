@@ -7,7 +7,7 @@ from pyarrow import csv
 
 from qube import logger
 from qube.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
-from qube.utils.time import infer_series_frequency
+from qube.utils.time import infer_series_frequency, handle_start_stop
 
 _DT = lambda x: pd.Timedelta(x).to_numpy().item()
 D1, H1 = _DT('1D'), _DT('1H')
@@ -18,7 +18,7 @@ CME_FUTURES_DAILY_SESSION = (_DT('8:30:00.100'), _DT('15:14:59.900'))
 
 
 def _recognize_t(t: Union[int, str], defaultvalue, timeunit) -> int:
-    if isinstance(t, str):
+    if isinstance(t, (str, pd.Timestamp)):
         try:
             return np.datetime64(t, timeunit)
         except:
@@ -239,6 +239,72 @@ class OhlcvDataProcessor(DataProcessor):
         return self.ohlc
 
 
+class OhlcvPandasDataProcessor(DataProcessor):
+    """
+    Process data and convert it to pandas OHLCV dataframes 
+    """
+    def __init__(self) -> None:
+        super().__init__()
+
+    def start_processing(self, fieldnames: List[str]):
+        self._time_idx = _find_column_index_in_list(fieldnames, 'time', 'timestamp', 'datetime', 'date')
+        self._open_idx = _find_column_index_in_list(fieldnames, 'open')
+        self._high_idx = _find_column_index_in_list(fieldnames, 'high')
+        self._low_idx = _find_column_index_in_list(fieldnames, 'low')
+        self._close_idx = _find_column_index_in_list(fieldnames, 'close')
+        self._volume_idx = None
+        self._timeframe = None
+
+        try:
+            self._volume_idx = _find_column_index_in_list(fieldnames, 'volume', 'vol')
+        except:
+            pass
+
+        # self.ohlc = pd.DataFrame()
+
+        self._time = np.array([], dtype=np.datetime64)
+        self._open = np.array([])
+        self._high = np.array([])
+        self._low = np.array([])
+        self._close = np.array([])
+        self._volume = np.array([])
+
+    def process_data(self, data: list) -> Optional[Iterable]:
+        # p = pd.DataFrame({
+        #     'open': data[self._open_idx], 
+        #     'high': data[self._high_idx], 
+        #     'low': data[self._low_idx], 
+        #     'close': data[self._close_idx], 
+        #     'volume': data[self._volume_idx] if self._volume_idx else []},
+        #     index = data[self._time_idx]
+        # )
+        # self.ohlc = pd.concat((self.ohlc, p), axis=0, sort=True, copy=True)
+        self._time = np.concatenate((self._time, data[self._time_idx]))
+        self._open = np.concatenate((self._open, data[self._open_idx]))
+        self._high = np.concatenate((self._high, data[self._high_idx]))
+        self._low = np.concatenate((self._low, data[self._low_idx]))
+        self._close = np.concatenate((self._close, data[self._close_idx]))
+        if self._volume_idx:
+            self._volume = np.concatenate((self._volume, data[self._volume_idx]))
+
+        return None
+
+    def get_result(self) -> Any:
+        # self.ohlc.index.name = 'time'
+        # return self.ohlc
+
+        return pd.DataFrame(
+            {
+                'open': self._open, 
+                'high': self._high, 
+                'low': self._low, 
+                'close': self._close, 
+                'volume': self._volume if self._volume_idx else []
+            },
+            index = self._time
+        ).sort_index()
+ 
+
 class CsvDataReader(DataReader):
     """
     CSV data file reader
@@ -288,8 +354,8 @@ class CsvDataReader(DataReader):
                 _time_cast_function = lambda xs: xs.cast(pa.timestamp(time_unit)) 
                 time_data = _time_cast_function(time_data)
 
-            t_0 = _recognize_t(start, None, time_unit)
-            t_1 = _recognize_t(stop, None, time_unit)
+            # - preprocessing start and stop
+            t_0, t_1 = handle_start_stop(start, stop, convert=lambda x: _recognize_t(x, None, time_unit))
 
             # - check requested range
             if t_0:
@@ -300,10 +366,12 @@ class CsvDataReader(DataReader):
 
             if t_1:
                 stop_idx = self.__find_time_idx(time_data, t_1)
-                if stop_idx < 0:
+                if stop_idx < 0 or stop_idx < start_idx:
                     stop_idx = table.num_rows
-        except:
-            pass
+
+        except Exception as exc:
+            logger.warning(exc)
+            logger.info('loading whole file')
 
         length = (stop_idx - start_idx + 1)
         self._processor.start_processing(fieldnames)

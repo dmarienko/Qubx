@@ -1,7 +1,7 @@
 import numpy as np
 
 from qube.core.series import OHLCV, Quote, Trade
-from qube.data.readers import CsvDataReader, QuotesDataProcessor, OhlcvDataProcessor, QuotesFromOHLCVDataProcessor
+from qube.data.readers import CsvDataReader, QuotesDataProcessor, OhlcvDataProcessor, QuotesFromOHLCVDataProcessor, OhlcvPandasDataProcessor
 
 T = lambda t: np.datetime64(t, 'ns')
 
@@ -55,5 +55,11 @@ class TestDataReaders:
                 restored_ohlc.update(t.time, t.mid_price())
 
         assert all((restored_ohlc.pd() - ohlc_data.pd()) < 1e-10)
+
+    def test_pandas_processor(self):
+        r0 = CsvDataReader('tests/data/csv/BTCUSDT_ohlcv_M1.csv.gz', OhlcvPandasDataProcessor())
+        d = r0.read('2024-02-01', '1d')
+        assert len(d) == 1441
+
 
 

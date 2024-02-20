@@ -100,3 +100,46 @@ def infer_series_frequency(series: Union[List, pd.DataFrame, pd.Series, pd.Datet
     idx = np.concatenate((np.where(diff)[0], [len(values)]))
     freqs = dict(zip(values[idx[:-1]], np.diff(idx)))
     return np.timedelta64(max(freqs, key=freqs.get))
+
+
+def handle_start_stop(s: Optional[str], e: Optional[str], convert=str) -> tuple:
+    """
+    Process start/stop times
+
+        handle_start_stop('2020-01-01', '2020-02-01') # 2020-01-01, 2020-02-01
+        handle_start_stop('2020-02-01', '2020-01-01') # 2020-01-01, 2020-02-01
+        handle_start_stop('2020-01-01', '1w')         # 2020-01-01, 2020-01-01 + 1week
+        handle_start_stop('1w', '2020-01-01')         # 2020-01-01 - 1week, '2020-01-01'
+        handle_start_stop('2020-01-01', '-1w')        # 2020-01-01 - 1week, 2020-01-01,
+        handle_start_stop(None, '2020-01-01')         # None, '2020-01-01'
+        handle_start_stop('2020-01-01', None)         # '2020-01-01', None 
+        handle_start_stop(None, None)                 # None, None 
+
+    """
+    def _h_time_like(x):
+        try: 
+            return pd.Timestamp(x), False
+        except:
+            try: return pd.Timedelta(x), True
+            except: pass
+        return None, None
+
+    t0, d0 = _h_time_like(s) if s else (None, False)
+    t1, d1 = _h_time_like(e) if e else (None, False)
+    converts = lambda xs: [convert(xs[0]) if xs[0] else None, convert(xs[1]) if xs[1] else None]
+
+    if not t1 and not t0: return None, None
+    
+    if d0 and d1: raise ValueError("Start and stop can't both be deltas !")
+
+    if d0:
+        if not t1: raise ValueError("First argument is delta but stop time is not defined !")
+        return converts(sorted([t1 - abs(t0), t1]))
+    if d1:
+        if not t0: raise ValueError("Second argument is delta but start time is not defined !")
+        return converts(sorted([t0, t0 + t1]))
+
+    if t0 and t1:
+        return converts(sorted([t0, t1]))
+
+    return converts([t0, t1])
