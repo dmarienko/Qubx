@@ -345,27 +345,27 @@ class CsvDataReader(DataReader):
         try:
             _time_field_idx = _find_column_index_in_list(fieldnames, 'time', 'timestamp', 'datetime', 'date')
             _time_type = table.field(_time_field_idx).type
-            time_unit = _time_type.unit if hasattr(_time_type, 'unit') else 's'
-            time_data = table[_time_field_idx]
+            _time_unit = _time_type.unit if hasattr(_time_type, 'unit') else 's'
+            _time_data = table[_time_field_idx]
 
             # - check if need convert time to primitive types (i.e. Date32 -> timestamp[x])
             _time_cast_function = lambda xs: xs
-            if _time_type != pa.timestamp(time_unit):
-                _time_cast_function = lambda xs: xs.cast(pa.timestamp(time_unit)) 
-                time_data = _time_cast_function(time_data)
+            if _time_type != pa.timestamp(_time_unit):
+                _time_cast_function = lambda xs: xs.cast(pa.timestamp(_time_unit)) 
+                _time_data = _time_cast_function(_time_data)
 
             # - preprocessing start and stop
-            t_0, t_1 = handle_start_stop(start, stop, convert=lambda x: _recognize_t(x, None, time_unit))
+            t_0, t_1 = handle_start_stop(start, stop, convert=lambda x: _recognize_t(x, None, _time_unit))
 
             # - check requested range
             if t_0:
-                start_idx = self.__find_time_idx(time_data, t_0)
+                start_idx = self.__find_time_idx(_time_data, t_0)
                 if start_idx >= table.num_rows:
                     # no data for requested start date
                     return None
 
             if t_1:
-                stop_idx = self.__find_time_idx(time_data, t_1)
+                stop_idx = self.__find_time_idx(_time_data, t_1)
                 if stop_idx < 0 or stop_idx < start_idx:
                     stop_idx = table.num_rows
 
