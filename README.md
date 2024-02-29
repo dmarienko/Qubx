@@ -1,2 +1,10 @@
-# Qube2
-New generation of Qube backtesting framework
+# Qubx
+
+### Next generation of Qube quantitative backtesting framework (QUBX)
+```          
+   /////\    
+  /////  \   
+  \\\\\  /   
+   \\\\\/    (c) 2024, by M.D.E
+```                                          
+

@@ -2,7 +2,7 @@ import numpy as np
 cimport numpy as np
 from collections import deque
 
-from qube.core.series cimport TimeSeries, Indicator, RollingSum, nans
+from qubx.core.series cimport TimeSeries, Indicator, RollingSum, nans
 
 
 cdef extern from "math.h":

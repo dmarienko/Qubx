@@ -4,7 +4,7 @@
 from typing import Callable, Dict, List, Optional, Union
 import numpy as np
 from dataclasses import dataclass
-from qube.core.basics import ZERO_COSTS, Instrument, Position, Signal, TransactionCostsCalculator, dt_64
+from qubx.core.basics import ZERO_COSTS, Instrument, Position, Signal, TransactionCostsCalculator, dt_64
 
 E_TIMER = 1
 E_QUOTE = 2

@@ -5,7 +5,7 @@ import numpy as np
 
 from numpy.lib.stride_tricks import as_strided as stride
 
-from qube.utils.misc import Struct
+from qubx.utils.misc import Struct
 
 
 def drop_duplicated_indexes(df, keep='first'):

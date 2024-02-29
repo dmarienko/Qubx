@@ -3,9 +3,9 @@ Here stuff we want to have in every Jupyter notebook after calling %qube magic
 """
 import importlib_metadata
 
-import qube
-from qube.utils import runtime_env
-from qube.utils.misc import add_project_to_system_path
+import qubx
+from qubx.utils import runtime_env
+from qubx.utils.misc import add_project_to_system_path
 
 
 def np_fmt_short():
@@ -37,7 +37,7 @@ if runtime_env() in ['notebook', 'shell']:
     # - - - - Learn stuff - - - -
     # - - - - Charting stuff - - - -
     from matplotlib import pyplot as plt
-    from qube.utils.charting.mpl_helpers import fig, subplot, sbp
+    from qubx.utils.charting.mpl_helpers import fig, subplot, sbp
     # - - - - Utils - - - -
 
     # - setup short numpy output format
@@ -53,8 +53,8 @@ if runtime_env() in ['notebook', 'shell']:
         version = 'Dev'
 
     # some new logo
-    if not hasattr(qube.QubeMagics, '__already_initialized__'):
-        from qube.utils.misc import (green, yellow, cyan, magenta, white, blue, red)
+    if not hasattr(qubx.QubxMagics, '__already_initialized__'):
+        from qubx.utils.misc import (green, yellow, cyan, magenta, white, blue, red)
 
         print(
         f"""
@@ -65,5 +65,5 @@ if runtime_env() in ['notebook', 'shell']:
                    {red("╹")}       
 """
         )
-        qube.QubeMagics.__already_initialized__ = True
+        qubx.QubxMagics.__already_initialized__ = True
 

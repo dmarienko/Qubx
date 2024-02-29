@@ -7,10 +7,10 @@ from typing import Any, Callable, Dict, List
 from binance.client import Client, HistoricalKlinesType, BinanceAPIException
 import requests
 
-from qube import logger
-from qube.utils.misc import makedirs, get_local_qube_folder
+from qubx import logger
+from qubx.utils.misc import makedirs, get_local_qubx_folder
 
-DEFALT_LOCAL_FILE_STORAGE = makedirs(get_local_qube_folder(), 'data/export/binance_trades/')
+DEFALT_LOCAL_FILE_STORAGE = makedirs(get_local_qubx_folder(), 'data/export/binance_trades/')
 
 _DEFAULT_MARKET_DATA_DB = 'md'
 BINANCE_DATA_STORAGE = "https://s3-ap-northeast-1.amazonaws.com"

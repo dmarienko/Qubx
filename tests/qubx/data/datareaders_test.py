@@ -1,7 +1,7 @@
 import numpy as np
 
-from qube.core.series import OHLCV, Quote, Trade
-from qube.data.readers import CsvDataReader, QuotesDataProcessor, OhlcvDataProcessor, QuotesFromOHLCVDataProcessor, OhlcvPandasDataProcessor
+from qubx.core.series import OHLCV, Quote, Trade
+from qubx.data.readers import CsvDataReader, QuotesDataProcessor, OhlcvDataProcessor, QuotesFromOHLCVDataProcessor, OhlcvPandasDataProcessor
 
 T = lambda t: np.datetime64(t, 'ns')
 

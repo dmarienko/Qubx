@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "Qube2"
+name = "Qubx"
 version = "0.0.1"
-description = "Qube2 framework"
+description = "Qubx - quantitative trading framework"
 authors = ["Dmitry Marienko <dmitry@gmail.com>"]
 readme = "README.md"
 packages = [
-    { include = "qube", from = "src" },
+    { include = "qubx", from = "src" },
 ]
-repository = "https://github.com/dmarienko/Qube2"
+repository = "https://github.com/dmarienko/Qubx"
 include = [
     # Compiled extensions must be included in the wheel distributions
     { path = "src/**/*.so", format = "wheel" },

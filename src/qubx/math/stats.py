@@ -1,5 +1,5 @@
 import numpy as np
-from qube.utils import sbp
+from qubx.utils import sbp
 
 
 def percentile_rank(x: np.ndarray, v, pctls=np.arange(1, 101)):

@@ -3,8 +3,8 @@ from typing import Callable, Dict, List, Optional, Union
 import numpy as np
 import math
 from dataclasses import dataclass, field
-from qube.core.series import Quote, Trade, time_as_nsec
-from qube.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
+from qubx.core.series import Quote, Trade, time_as_nsec
+from qubx.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
 
 
 dt_64 = np.datetime64

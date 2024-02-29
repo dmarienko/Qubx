@@ -108,7 +108,7 @@ def _build_extensions() -> list[Extension]:
             language="c",
             extra_link_args=extra_link_args,
             extra_compile_args=extra_compile_args,
-        ) for pyx in itertools.chain(Path("src/qube").rglob("*.pyx"))
+        ) for pyx in itertools.chain(Path("src/qubx").rglob("*.pyx"))
     ]
 
 
@@ -120,7 +120,7 @@ def _build_distribution(extensions: list[Extension]) -> Distribution:
 
     distribution = Distribution(
         {
-            "name": "qube",
+            "name": "qubx",
             "ext_modules": cythonize(
                 module_list=extensions,
                 compiler_directives=CYTHON_COMPILER_DIRECTIVES,
@@ -199,10 +199,10 @@ def build() -> None:
 
 
 if __name__ == "__main__":
-    qube_platform = toml.load("pyproject.toml")["tool"]["poetry"]["version"]
+    qubx_platform = toml.load("pyproject.toml")["tool"]["poetry"]["version"]
     print("\033[36m")
     print("=====================================================================")
-    print(f"Nautilus Builder {qube_platform}")
+    print(f"Qubx Builder {qubx_platform}")
     print("=====================================================================\033[0m")
     print(f"System: {platform.system()} {platform.machine()}")
     # print(f"Clang:  {_get_clang_version()}")
@@ -244,9 +244,9 @@ if __name__ == "__main__":
 #     def build(setup_kwargs):
 #         # The file you want to compile
 #         extensions = [
-#             "src/qube/core/series.pyx",
-#             "src/qube/core/utils.pyx",
-#             "src/qube/ta/indicators.pyx",
+#             "src/qubx/core/series.pyx",
+#             "src/qubx/core/utils.pyx",
+#             "src/qubx/ta/indicators.pyx",
 #         ]
 
 #         # gcc arguments hack: enable optimizations

@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
 
-from qube.core.series import (TimeSeries, lag, compare, OHLCV)
-from qube.ta.indicators import (sma, ema, tema, dema, kama, highest, lowest)
-import tests.qube.ta.utils_for_testing as test
+from qubx.core.series import (TimeSeries, lag, compare, OHLCV)
+from qubx.ta.indicators import (sma, ema, tema, dema, kama, highest, lowest)
+import tests.qubx.ta.utils_for_testing as test
 
 
 MIN1_UPDATES = [

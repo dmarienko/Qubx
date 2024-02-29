@@ -1,9 +1,9 @@
-from qube.utils import set_mpl_theme, runtime_env, install_pyx_recompiler_for_dev
+from qubx.utils import set_mpl_theme, runtime_env, install_pyx_recompiler_for_dev
 install_pyx_recompiler_for_dev()
 
 from loguru import logger
 import os, sys, stackprinter
-from qube.core.lookups import InstrumentsLookup
+from qubx.core.lookups import InstrumentsLookup
 
 
 def formatter(record):
@@ -44,20 +44,20 @@ if runtime_env() in ['notebook', 'shell']:
     from IPython import get_ipython
 
     @magics_class
-    class QubeMagics(Magics):
+    class QubxMagics(Magics):
         # process data manager
         __manager = None
 
         @line_magic
-        def qubed(self, line: str):
-            self.qube_setup('dark')
+        def qubxd(self, line: str):
+            self.qubx_setup('dark')
 
         @line_magic
-        def qubel(self, line: str):
-            self.qube_setup('light')
+        def qubxl(self, line: str):
+            self.qubx_setup('light')
 
         @line_magic
-        def qube_setup(self, line: str):
+        def qubx_setup(self, line: str):
             """
             QUBE framework initialization
             """
@@ -160,5 +160,5 @@ if runtime_env() in ['notebook', 'shell']:
                     p.terminate()
 
 
-    # registering magic here
-    get_ipython().register_magics(QubeMagics)
+    # - registering magic here
+    get_ipython().register_magics(QubxMagics)

@@ -1,11 +1,11 @@
 import pandas as pd
 from dataclasses import dataclass
 from typing import List, Union
-from qube import lookup
+from qubx import lookup
 
-from tests.qube.ta.utils_for_testing import N
-from qube.core.basics import Instrument, Position, TransactionCostsCalculator, ZERO_COSTS
-from qube.core.series import time_as_nsec, Trade, Quote
+from tests.qubx.ta.utils_for_testing import N
+from qubx.core.basics import Instrument, Position, TransactionCostsCalculator, ZERO_COSTS
+from qubx.core.series import time_as_nsec, Trade, Quote
 
 
 @dataclass

@@ -1,8 +1,8 @@
 import numpy as np
 
-from qube.core.series import TimeSeries, OHLCV
-from qube.core.utils import recognize_time
-from tests.qube.ta.utils_for_testing import N, push
+from qubx.core.series import TimeSeries, OHLCV
+from qubx.core.utils import recognize_time
+from tests.qubx.ta.utils_for_testing import N, push
 
 
 class TestCoreSeries:

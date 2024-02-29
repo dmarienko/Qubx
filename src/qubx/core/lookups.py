@@ -3,10 +3,10 @@ import json, os, dataclasses
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from qube.core.basics import Instrument, FuturesInfo
-from qube.utils.marketdata.binance import get_binance_symbol_info_for_type
-from qube import logger
-from qube.utils.misc import makedirs, get_local_qube_folder
+from qubx.core.basics import Instrument, FuturesInfo
+from qubx.utils.marketdata.binance import get_binance_symbol_info_for_type
+from qubx import logger
+from qubx.utils.misc import makedirs, get_local_qubx_folder
 
 
 class _InstrumentEncoder(json.JSONEncoder):
@@ -39,7 +39,7 @@ class InstrumentsLookup:
     lookup: Dict[str, Instrument]
     path: str
 
-    def __init__(self, path: str=makedirs(get_local_qube_folder(), 'instruments')) -> None:
+    def __init__(self, path: str=makedirs(get_local_qubx_folder(), 'instruments')) -> None:
         self.path = path
         if not self.load():
             self.refresh()

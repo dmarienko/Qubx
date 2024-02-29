@@ -3,7 +3,7 @@ import numpy as np
 cimport numpy as np
 from cython cimport abs
 from typing import Union
-from qube.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
+from qubx.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
 
 
 cdef extern from "math.h":

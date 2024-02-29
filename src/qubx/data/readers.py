@@ -5,9 +5,9 @@ import pandas as pd
 import pyarrow as pa
 from pyarrow import csv
 
-from qube import logger
-from qube.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
-from qube.utils.time import infer_series_frequency, handle_start_stop
+from qubx import logger
+from qubx.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
+from qubx.utils.time import infer_series_frequency, handle_start_stop
 
 _DT = lambda x: pd.Timedelta(x).to_numpy().item()
 D1, H1 = _DT('1D'), _DT('1H')

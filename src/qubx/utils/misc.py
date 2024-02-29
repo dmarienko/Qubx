@@ -22,7 +22,7 @@ from ._pyxreloader import pyx_install_loader
 def install_pyx_recompiler_for_dev():
     if version().lower() == 'dev':
         print(f" >  [{green('dev')}] {red('installed cython rebuilding hook')}")
-        pyx_install_loader(['qube.core', 'qube.ta', 'qube.data', 'qube.strategies'])
+        pyx_install_loader(['qubx.core', 'qubx.ta', 'qubx.data', 'qubx.strategies'])
 
 
 def runtime_env():
@@ -47,15 +47,15 @@ def runtime_env():
     except (NameError, ImportError):
         return 'python'  # Probably standard Python interpreter
 
-_QUBE_FLDR = None
+_QUBX_FLDR = None
 
-def get_local_qube_folder() -> str:
-    global _QUBE_FLDR
+def get_local_qubx_folder() -> str:
+    global _QUBX_FLDR
 
-    if _QUBE_FLDR is None:
-        _QUBE_FLDR = makedirs(os.getenv('QUBESTORAGE', os.path.expanduser('~/.qube')))
+    if _QUBX_FLDR is None:
+        _QUBX_FLDR = makedirs(os.getenv('QUBXSTORAGE', os.path.expanduser('~/.qubx')))
 
-    return _QUBE_FLDR
+    return _QUBX_FLDR
 
 
 def add_project_to_system_path(project_folder:str = '~/projects'):

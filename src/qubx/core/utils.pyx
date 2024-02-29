@@ -1,4 +1,4 @@
-from qube.utils import convert_tf_str_td64
+from qubx.utils import convert_tf_str_td64
 import numpy as np
 cimport numpy as np
 
