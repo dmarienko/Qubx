@@ -1,4 +1,4 @@
-from typing import Dict, Union
+from typing import Callable, Dict, Optional, Union
 from datetime import timedelta
 import pandas as pd
 import numpy as np
@@ -204,3 +204,113 @@ def select_column_and_join(data: Dict[str, pd.DataFrame], column: str) -> pd.Dat
         raise ValueError('Data must be passed as dictionary of pandas dataframes')
 
     return pd.concat([data[k][column] for k in data.keys()], axis=1, keys=data.keys())
+
+
+def merge_columns_by_op(x: pd.DataFrame, y: pd.DataFrame, op):
+    """
+    Merge 2 dataframes into one and performing operation on intersected columns
+    
+    merge_columns_by_op(
+        pd.DataFrame({'A': [1,2,3], 'B': [100,200,300]}), 
+        pd.DataFrame({'B': [5,6,7], 'C': [10,20,30]}), 
+        lambda x,y: x + y 
+    )
+    
+        B 	    A   C
+    0 	105 	1 	10
+    1 	206 	2 	20
+    2 	307 	3 	30
+    
+    """
+    if x is None or x.empty: return y
+    if y is None: return x
+    r = []
+    uc = set(x.columns & y.columns)
+    for c in uc:
+        r.append(op(x[c], y[c]))
+
+    for c in set(x.columns) - uc:
+        r.append(x[c])
+
+    for c in set(y.columns) - uc:
+        r.append(y[c])
+
+    return scols(*r)
+
+
+def bands_signals(
+        prices: pd.DataFrame, 
+        score: pd.DataFrame, 
+        entry, exit, stop: Optional[float]=np.inf,
+        entry_method='cross-out', # 'cross-in', 'revert-to-band'
+        position_sizes_fn=lambda time, score, prices, side: np.zeros(len(p))
+    ) -> pd.DataFrame:
+    """
+    Generate trading signals using score and entry / exit thresholds
+    """
+    if not isinstance(prices, pd.DataFrame):
+        raise ValueError('Prices must be a pandas DataFrame')
+
+    _as_series = lambda xs, index, name: pd.Series(xs, index=index, name=name) if isscalar(xs) else xs
+
+    # - entry function
+    ent_fn: Callable[[float, float, float, float], int] = lambda t, s2, s1, s0: 0
+
+    match entry_method:
+        case 'cross-in':
+            ent_fn = lambda t, s2, s1, s0:\
+                +1 if (s2 < -t and s1 <= -t and s0 > -t) else\
+                -1 if (s2 > +t and s1 >= +t and s0 < +t) else\
+                 0
+
+        case 'cross-out':
+            ent_fn = lambda t, s2, s1, s0:\
+                +1 if (s2 >= -t and s1 >= -t and s0 < -t) else\
+                -1 if (s2 <= +t and s1 <= +t and s0 > +t) else\
+                 0
+
+        case 'revert-to-band':
+            ent_fn = lambda t, s2, s1, s0:\
+                +1 if (s1 <= -t and s0 < -t and s0 > s1) else\
+                -1 if (s1 >= +t and s0 > +t and s0 < s1) else\
+                 0
+
+        case _:
+            raise ValueError(f'Unknown entry_method: {entry_method}, supported methods are: cross-out, cross-in, revert-to-band')
+    
+    entry = abs(_as_series(entry, score.index, 'entry'))
+    exit = _as_series(exit, score.index, 'exit')
+    stop = abs(_as_series(stop, score.index, 'stop'))
+
+    mx = scols(prices, scols(score.rename('score'), entry, exit, stop), keys=['price', 'service']).dropna()
+    px:pd.DataFrame = mx['price']
+    sx:pd.DataFrame = mx['service']
+    P0 = np.zeros(px.shape[1]) # zero position
+
+    signals = {}
+    pos = 0
+    s1, s2 = np.nan, np.nan
+
+    for t, pi, (s0, en, ex, stp) in zip(px.index, px.values, sx.values):
+        if pos == 0: # no positions yet
+            # - only if there are at least 2 past scores available
+            if not np.isnan(s1) and not np.isnan(s2):
+                if (side := ent_fn(en, s2, s1, s0)) != 0:
+                    signals[t] = position_sizes_fn(t, s0, pi, side)
+                    pos = side  # - sell or buy spread 
+
+        elif pos == -1:
+            # - check for stop or exit
+            if s0 >= +stp or s0 <= +ex:
+                signals[t] = P0
+                pos = 0
+
+        elif pos == +1:
+            # - check for stop or exit
+            if s0 <= -stp or s0 >= -ex:
+                signals[t] = P0
+                pos = 0
+
+        s1, s2 = s0, s1
+
+    return pd.DataFrame.from_dict(signals, orient='index', columns=px.columns)
