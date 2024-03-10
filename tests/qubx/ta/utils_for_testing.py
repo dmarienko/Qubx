@@ -196,9 +196,9 @@ def kama(xs, period=10, period_fast=2, period_slow=30):
 
     #KAMA
     kama=np.zeros_like(xs)
-    kama[period-1] = xs[period-1]
+    kama[period-1] = xs.iloc[period-1]
     for i in range(period, len(xs)):
-        kama[i] = kama[i-1] + sc[i] * (xs[i] - kama[i-1])
+        kama[i] = kama[i-1] + sc.iloc[i] * (xs.iloc[i] - kama[i-1])
     kama[kama==0]=np.nan
 
     return kama
@@ -251,3 +251,21 @@ def rsi(x, periods, smoother=sma):
     mu = smooth(df.where(df > 0, 0), smoother, periods)
     md = smooth(abs(df.where(df < 0, 0)), smoother, periods)
     return 100 * mu / (mu + md)
+
+
+def stochastic(x, period, smooth_period, smoother='sma'):
+    """
+    Classical stochastic oscillator indicator
+    :param x: series or OHLC dataframe
+    :param period: indicator's period
+    :param smooth_period: period of smoothing
+    :param smoother: smoothing method (sma by default)
+    :return: K and D series as DataFrame
+    """
+    hi, li, xi = x, x, x
+
+    hh = hi.rolling(period).max()
+    ll = li.rolling(period).min()
+    k = 100 * (xi - ll) / (hh - ll)
+    d = smooth(k, smoother, smooth_period)
+    return scols(k, d, names=['K', 'D'])

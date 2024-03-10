@@ -3,6 +3,7 @@ import pandas as pd
 
 from qubx.core.series import (TimeSeries, lag, compare, OHLCV)
 from qubx.ta.indicators import (sma, ema, tema, dema, kama, highest, lowest)
+from qubx.data.readers import CsvDataReader, QuotesDataProcessor, OhlcvDataProcessor, QuotesFromOHLCVDataProcessor
 import tests.qubx.ta.utils_for_testing as test
 
 
@@ -149,4 +150,22 @@ class TestIndicators:
         err = np.std(abs((a1 - a2) - r_ii.pd()).dropna())
         assert err < 1e-10
         
+    def test_on_formed_only(self):
+        r0 = CsvDataReader('tests/data/csv/quotes.csv', QuotesDataProcessor())
+        ticks = r0.read()
 
+        s0 = TimeSeries('T0', '1Min')
+        control = TimeSeries('T0', '1Min')
+
+        # this indicator is being calculated on streamed data
+        m0 = sma(s0, 3)
+
+        for q in ticks:
+            s0.update(q.time, 0.5*(q.ask + q.bid))
+            control.update(q.time, 0.5*(q.ask + q.bid))
+
+        # calculate indicator on already formed series
+        m1 = sma(control, 3)
+        mx = test.scols(s0, m0, m1, names=['series', 'streamed', 'finished']).dropna()
+
+        assert test.N(mx.streamed) == mx.finished

@@ -10,7 +10,7 @@ from qubx.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
 from qubx.utils.time import infer_series_frequency, handle_start_stop
 
 _DT = lambda x: pd.Timedelta(x).to_numpy().item()
-D1, H1 = _DT('1D'), _DT('1H')
+D1, H1 = _DT('1D'), _DT('1h')
 
 DEFAULT_DAILY_SESSION = (_DT('00:00:00.100'), _DT('23:59:59.900'))
 STOCK_DAILY_SESSION = (_DT('9:30:00.100'), _DT('15:59:59.900'))
