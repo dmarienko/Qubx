@@ -134,9 +134,7 @@ cdef class TimeSeries:
     def __len__(self) -> int:
         return len(self.times)
 
-    def _lift_up(self, indicator: Indicator, indicator_input: TimeSeries):
-        # print(f"> Received: {indicator_input.name}[{id(indicator_input)}] -> {indicator.name}[{id(indicator)}]")
-        # collect indicators calculation order as list: [ (input_id, indicator_obj, indicator_id) ]
+    def _on_attach_indicator(self, indicator: Indicator, indicator_input: TimeSeries):
         self.calculation_order.append((
             id(indicator_input), indicator, id(indicator)
         ))
@@ -292,13 +290,13 @@ cdef class Indicator(TimeSeries):
         # - we need to make a empty copy and fill it 
         self.series = TimeSeries(series.name, series.timeframe, series.max_series_length)
         self.parent = series 
-        self._lift_up(self, series)
+        self._on_attach_indicator(self, series)
 
         # - recalculate indicator on data as if it would being streamed
         self._initial_data_recalculate(series)
 
-    def _lift_up(self, indicator: Indicator, indicator_input: TimeSeries):
-        self.parent._lift_up(indicator, indicator_input)
+    def _on_attach_indicator(self, indicator: Indicator, indicator_input: TimeSeries):
+        self.parent._on_attach_indicator(indicator, indicator_input)
 
     def _initial_data_recalculate(self, TimeSeries series):
         for t, v in zip(series.times[::-1], series.values[::-1]):
