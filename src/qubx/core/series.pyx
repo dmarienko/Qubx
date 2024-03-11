@@ -290,6 +290,8 @@ cdef class Indicator(TimeSeries):
         # - we need to make a empty copy and fill it 
         self.series = TimeSeries(series.name, series.timeframe, series.max_series_length)
         self.parent = series 
+        
+        # - notify the parent series that indicator has been attached
         self._on_attach_indicator(self, series)
 
         # - recalculate indicator on data as if it would being streamed
