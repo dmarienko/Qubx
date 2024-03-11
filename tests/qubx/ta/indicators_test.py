@@ -150,7 +150,7 @@ class TestIndicators:
         err = np.std(abs((a1 - a2) - r_ii.pd()).dropna())
         assert err < 1e-10
         
-    def test_on_formed_only(self):
+    def test_on_ready_series(self):
         r0 = CsvDataReader('tests/data/csv/quotes.csv', QuotesDataProcessor())
         ticks = r0.read()
 
@@ -169,3 +169,19 @@ class TestIndicators:
         mx = test.scols(s0, m0, m1, names=['series', 'streamed', 'finished']).dropna()
 
         assert test.N(mx.streamed) == mx.finished
+
+    def test_on_formed_only(self):
+        r0 = CsvDataReader('tests/data/csv/quotes.csv', QuotesDataProcessor())
+        ticks = r0.read()
+
+        # - ask to calculate indicators on closed bars only
+        s0 = TimeSeries('T0', '30Sec', process_every_update=False)
+        m0 = ema(s0, 5)
+        for q in ticks: s0.update(q.time, 0.5*(q.ask + q.bid))
+
+        # - prepare series
+        s1 = TimeSeries('T0', '30Sec')
+        for q in ticks: s1.update(q.time, 0.5*(q.ask + q.bid))
+
+        # - indicator on already formed series must be equal to calculated on bars
+        assert np.nansum((ema(s1, 5) - m0).pd()) == 0
