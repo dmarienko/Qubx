@@ -20,6 +20,9 @@ cdef class TimeSeries:
     cdef public str name
     cdef dict indicators        # it's used for indicators caching
     cdef list calculation_order # calculation order as list: [ (input_id, indicator_obj, indicator_id) ]
+    cdef double _process_every_update
+    cdef double _last_bar_update_value
+    cdef long long _last_bar_update_time
 
     cdef _update_indicators(TimeSeries self, long long time, object value, short new_item_started)
 

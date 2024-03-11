@@ -122,7 +122,10 @@ global _plot_func
 
 cdef class TimeSeries:
 
-    def __init__(self, str name, timeframe, max_series_length=INFINITY) -> None:
+    def __init__(
+        self, str name, timeframe, max_series_length=INFINITY, 
+        process_every_update=True, # calculate indicators on every update (tick) - by default
+    ) -> None:
         self.name = name
         self.max_series_length = max_series_length
         self.timeframe = recognize_timeframe(timeframe)
@@ -130,6 +133,11 @@ cdef class TimeSeries:
         self.values = Indexed(max_series_length)
         self.indicators = dict()
         self.calculation_order = []
+
+        # - processing every update
+        self._process_every_update = process_every_update
+        self._last_bar_update_value = np.nan
+        self._last_bar_update_time = -1
 
     def __len__(self) -> int:
         return len(self.times)
@@ -165,15 +173,28 @@ cdef class TimeSeries:
             # - add new item
             self._add_new_item(item_start_time, value)
 
-            # - update indicators
-            self._update_indicators(item_start_time, value, True)
+            # - if it's needed to process every tick in indicator
+            if self._process_every_update:
+                self._update_indicators(item_start_time, value, True)
+            else:
+                # - it's required to update indicators only on closed (formed) bar
+                self._update_indicators(self._last_bar_update_time, self._last_bar_update_value, True)
+
+            # - store last data
+            self._last_bar_update_time = item_start_time
+            self._last_bar_update_value = value
 
             return self._is_new_item
         else:
             self._update_last_item(item_start_time, value)
 
         # - update indicators by new data
-        self._update_indicators(item_start_time, value, False)
+        if self._process_every_update:
+            self._update_indicators(item_start_time, value, False)
+
+        # - store last data
+        self._last_bar_update_time = item_start_time
+        self._last_bar_update_value = value
 
         return self._is_new_item
 
