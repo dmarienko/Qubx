@@ -159,28 +159,42 @@ class InstrumentsLookup:
 _DEFAULT_FEES = """
 [binance]
 # SPOT (maker, taker)
-spot_vip0_usdt = 0.1000,0.1000
-spot_vip1_usdt = 0.0900,0.1000
-spot_vip2_usdt = 0.0800,0.1000
-spot_vip3_usdt = 0.0420,0.0600
-spot_vip4_usdt = 0.0420,0.0540
-spot_vip5_usdt = 0.0360,0.0480
-spot_vip6_usdt = 0.0300,0.0420
-spot_vip7_usdt = 0.0240,0.0360
-spot_vip8_usdt = 0.0180,0.0300
-spot_vip9_usdt = 0.0120,0.0240
+vip0_usdt = 0.1000,0.1000
+vip1_usdt = 0.0900,0.1000
+vip2_usdt = 0.0800,0.1000
+vip3_usdt = 0.0420,0.0600
+vip4_usdt = 0.0420,0.0540
+vip5_usdt = 0.0360,0.0480
+vip6_usdt = 0.0300,0.0420
+vip7_usdt = 0.0240,0.0360
+vip8_usdt = 0.0180,0.0300
+vip9_usdt = 0.0120,0.0240
 
 # UM futures (maker, taker)
-um_vip0_usdt = 0.0200,0.0500
-um_vip1_usdt = 0.0160,0.0400
-um_vip2_usdt = 0.0140,0.0350
-um_vip3_usdt = 0.0120,0.0320
-um_vip4_usdt = 0.0100,0.0300
-um_vip5_usdt = 0.0080,0.0270
-um_vip6_usdt = 0.0060,0.0250
-um_vip7_usdt = 0.0040,0.0220
-um_vip8_usdt = 0.0020,0.0200
-um_vip9_usdt = 0.0000,0.0170
+[binance.um]
+vip0_usdt = 0.0200,0.0500
+vip1_usdt = 0.0160,0.0400
+vip2_usdt = 0.0140,0.0350
+vip3_usdt = 0.0120,0.0320
+vip4_usdt = 0.0100,0.0300
+vip5_usdt = 0.0080,0.0270
+vip6_usdt = 0.0060,0.0250
+vip7_usdt = 0.0040,0.0220
+vip8_usdt = 0.0020,0.0200
+vip9_usdt = 0.0000,0.0170
+
+# CM futures (maker, taker)
+[binance.cm]
+vip0 = 0.0200,0.0500
+vip1 = 0.0160,0.0400
+vip2 = 0.0140,0.0350
+vip3 = 0.0120,0.0320
+vip4 = 0.0100,0.0300
+vip5 = 0.0080,0.0270
+vip6 = 0.0060,0.0250
+vip7 = 0.0040,0.0220
+vip8 = 0.0020,0.0200
+vip9 = 0.0000,0.0170
 
 [bitmex]
 tierb_xbt=0.02,0.075
