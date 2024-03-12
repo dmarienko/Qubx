@@ -80,9 +80,26 @@ class Signal:
 
 
 class TransactionCostsCalculator:
-    def __init__(self, maker: float, taker: float):
-        self.maker = maker
-        self.taker = taker
+    """
+    A class for calculating transaction costs for a trading strategy.
+    Attributes
+    ----------
+    name : str
+        The name of the transaction costs calculator.
+    maker : float
+        The maker fee, as a percentage of the transaction value.
+    taker : float
+        The taker fee, as a percentage of the transaction value.
+
+    """
+    name: str
+    maker: float
+    taker: float
+
+    def __init__(self, name: str, maker: float, taker: float):
+        self.name = name
+        self.maker = maker / 100.0
+        self.taker = taker / 100.0
 
     def get_execution_fees(self, instrument: Instrument, exec_price: float, amount: float, crossed_market=False, conversion_rate=1.0):
         if crossed_market:
@@ -97,10 +114,10 @@ class TransactionCostsCalculator:
         return 0.0
 
     def __repr__(self):
-        return f'<TCC: {self.maker * 100:.4f} / {self.taker * 100:.4f}>'
+        return f'<{self.name}: {self.maker * 100:.4f} / {self.taker * 100:.4f}>'
 
 
-ZERO_COSTS = TransactionCostsCalculator(0.0, 0.0)
+ZERO_COSTS = TransactionCostsCalculator('Zero', 0.0, 0.0)
 
 
 class Position:

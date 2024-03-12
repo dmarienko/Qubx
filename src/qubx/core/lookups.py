@@ -2,11 +2,15 @@ import glob, re
 import json, os, dataclasses
 from datetime import datetime
 from typing import Dict, List, Optional
+import configparser
 
-from qubx.core.basics import Instrument, FuturesInfo
+from qubx.core.basics import Instrument, FuturesInfo, TransactionCostsCalculator
 from qubx.utils.marketdata.binance import get_binance_symbol_info_for_type
 from qubx import logger
 from qubx.utils.misc import makedirs, get_local_qubx_folder
+
+_DEF_INSTRUMENTS_FOLDER = "instruments"
+_DEF_FEES_FOLDER = "fees"
 
 
 class _InstrumentEncoder(json.JSONEncoder):
@@ -36,24 +40,24 @@ class _InstrumentDecoder(json.JSONDecoder):
 
 
 class InstrumentsLookup:
-    lookup: Dict[str, Instrument]
-    path: str
+    _lookup: Dict[str, Instrument]
+    _path: str
 
-    def __init__(self, path: str=makedirs(get_local_qubx_folder(), 'instruments')) -> None:
-        self.path = path
+    def __init__(self, path: str=makedirs(get_local_qubx_folder(), _DEF_INSTRUMENTS_FOLDER)) -> None:
+        self._path = path
         if not self.load():
             self.refresh()
         self.load()
 
     def load(self) -> bool:
-        self.lookup = {}
+        self._lookup = {}
         data_exists = False
-        for fs in glob.glob(self.path + '/*.json'):
+        for fs in glob.glob(self._path + '/*.json'):
             try:
                 with open(fs, 'r') as f:
                     instrs = json.load(f, cls=_InstrumentDecoder)
                     for i in instrs:  
-                        self.lookup[f"{i.exchange}:{i.symbol}"] = i
+                        self._lookup[f"{i.exchange}:{i.symbol}"] = i
                     data_exists = True
             except Exception as ex:
                 logger.warning(ex)
@@ -61,7 +65,7 @@ class InstrumentsLookup:
         return data_exists
 
     def find(self, exchange: str, base: str, quote: str) -> Optional[Instrument]:
-        for i in self.lookup.values():
+        for i in self._lookup.values():
             if i.exchange == exchange and (
                 (i.base == base and i.quote == quote) or (i.base == quote and i.quote == base)
             ):
@@ -84,7 +88,7 @@ class InstrumentsLookup:
     def __getitem__(self, spath: str) -> List[Instrument]:
         res = []
         c = re.compile(spath)
-        for k, v in self.lookup.items():
+        for k, v in self._lookup.items():
             if re.match(c, k):
                 res.append(v)
         return res
@@ -92,7 +96,7 @@ class InstrumentsLookup:
     def refresh(self):
         for mn in dir(self):
             if mn.startswith('_update_'):
-                getattr(self, mn)(self.path)
+                getattr(self, mn)(self._path)
 
     def _update_kraken(self, path: str):
         # TODO
@@ -150,3 +154,128 @@ class InstrumentsLookup:
             with open(os.path.join(path, f'{exchange}.json'), 'w') as f:
                 json.dump(instruments, f, cls=_InstrumentEncoder)
   
+
+# - TODO: need to find better way to extract actual data !!
+_DEFAULT_FEES = """
+[binance]
+# SPOT (maker, taker)
+spot_vip0_usdt = 0.1000,0.1000
+spot_vip1_usdt = 0.0900,0.1000
+spot_vip2_usdt = 0.0800,0.1000
+spot_vip3_usdt = 0.0420,0.0600
+spot_vip4_usdt = 0.0420,0.0540
+spot_vip5_usdt = 0.0360,0.0480
+spot_vip6_usdt = 0.0300,0.0420
+spot_vip7_usdt = 0.0240,0.0360
+spot_vip8_usdt = 0.0180,0.0300
+spot_vip9_usdt = 0.0120,0.0240
+
+# UM futures (maker, taker)
+um_vip0_usdt = 0.0200,0.0500
+um_vip1_usdt = 0.0160,0.0400
+um_vip2_usdt = 0.0140,0.0350
+um_vip3_usdt = 0.0120,0.0320
+um_vip4_usdt = 0.0100,0.0300
+um_vip5_usdt = 0.0080,0.0270
+um_vip6_usdt = 0.0060,0.0250
+um_vip7_usdt = 0.0040,0.0220
+um_vip8_usdt = 0.0020,0.0200
+um_vip9_usdt = 0.0000,0.0170
+
+[bitmex]
+tierb_xbt=0.02,0.075
+tierb_usdt=-0.015,0.075
+tieri_xbt=0.01,0.05
+tieri_usdt=-0.015,0.05
+tiert_xbt=0.0,0.04
+tiert_usdt=-0.015,0.04
+tierm_xbt=0.0,0.035
+tierm_usdt=-0.015,0.035
+tiere_xbt=0.0,0.03
+tiere_usdt=-0.015,0.03
+tierx_xbt=0.0,0.025
+tierx_usdt=-0.015,0.025
+tierd_xbt=-0.003,0.024
+tierd_usdt=-0.015,0.024
+tierw_xbt=-0.005,0.023
+tierw_usdt=-0.015,0.023
+tierk_xbt=-0.008,0.022
+tierk_usdt=-0.015,0.022
+tiers_xbt=-0.01,0.0175
+tiers_usdt=-0.015,0.02
+
+[dukas]
+regular=0.0035,0.0035
+premium=0.0017,0.0017
+"""
+
+
+class FeesLookup:
+    """
+    Fees lookup
+    """
+    _lookup: Dict[str, TransactionCostsCalculator]
+    _path: str
+
+    def __init__(self, path: str=makedirs(get_local_qubx_folder(), _DEF_FEES_FOLDER)) -> None:
+        self._path = path
+        if not self.load():
+            self.refresh()
+        self.load()
+
+    def load(self) -> bool:
+        self._lookup = {}
+        data_exists = False
+        parser = configparser.ConfigParser()
+        # - load all avaliable configs
+        for fs in glob.glob(self._path + '/*.ini'):
+            parser.read(fs)
+            data_exists = True
+
+        for exch in parser.sections():
+            for spec, info in parser[exch].items():
+                try:
+                    maker, taker = info.split(',')
+                    self._lookup[f"{exch}_{spec}"] = (float(maker), float(taker))
+                except:
+                    logger.warning(f'Wrong spec format for {exch}: "{info}". Should be spec=maker,taker')
+
+        return data_exists
+
+    def __getitem__(self, spath: str) -> List[Instrument]:
+        res = []
+        c = re.compile(spath)
+        for k, v in self._lookup.items():
+            if re.match(c, k):
+                res.append((k,v))
+        return res
+    
+    def refresh(self):
+        with open(os.path.join(self._path, 'default.ini'), 'w') as f:
+            f.write(_DEFAULT_FEES)
+
+    def find(self, exchange: str, spec: str) -> Optional[TransactionCostsCalculator]:
+        key = f"{exchange}_{spec}"
+        vals = self._lookup.get(key)
+        return TransactionCostsCalculator(key, *self._lookup.get(key)) if vals is not None else None
+
+    def __repr__(self) -> str:
+        s = "Name:\t\t\t(maker, taker)\n"
+        for k, v in self._lookup.items():
+            s += f"{k.ljust(25)}: {v}\n"
+        return s
+
+
+@dataclasses.dataclass(frozen=True)
+class GlobalLookup:
+    instruments: InstrumentsLookup
+    fees: FeesLookup
+
+    def find_fees(self, exchange: str, spec: str) -> Optional[TransactionCostsCalculator]:
+        return self.fees.find(exchange, spec)
+
+    def find_aux_instrument_for(self, instrument: Instrument, base_currency: str) -> Optional[Instrument]:
+        return self.instruments.find_aux_instrument_for(instrument, base_currency)
+
+    def find_instrument(self, exchange: str, base: str, quote: str) -> Optional[Instrument]:
+        return self.instruments.find(exchange, base, quote)

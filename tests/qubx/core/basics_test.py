@@ -37,8 +37,8 @@ pos_round = lambda s, p, i: (p * round(s/p, i.size_precision), p, round(s/p, i.s
 class TestBasics:
 
     def test_lookup(self):
-        s0 = lookup['BINANCE:ETH.*']
-        s1 = lookup['DUKAS:EURGBP']
+        s0 = lookup.instruments['BINANCE:ETH.*']
+        s1 = lookup.instruments['DUKAS:EURGBP']
         assert (
             lookup.find_aux_instrument_for(s0[0], 'USDT').symbol, 
             lookup.find_aux_instrument_for(s0[1], 'USDT'), 
@@ -46,8 +46,8 @@ class TestBasics:
         ) == ('BTCUSDT', None, 'GBPUSD')
 
     def test_spot_positions(self):
-        tcc = TransactionCostsCalculator(0.04/100, 0.04/100)
-        i, s = lookup['BINANCE:BTCUSDT'][0], 1
+        tcc = TransactionCostsCalculator('SPOT', 0.04, 0.04)
+        i, s = lookup.instruments['BINANCE:BTCUSDT'][0], 1
         D = '2024-01-01 '; qs = [
             Quote(D+'12:00:00', 45000, 45000.5, 100, 50),
             Deal( D+'12:00:30', s, 45010),
@@ -73,8 +73,8 @@ class TestBasics:
 
     def test_futures_positions(self):
         D = '2024-01-01 '
-        fi = lookup['BINANCE.UM:BTCUSDT'][0]
-        pos = Position(fi, TransactionCostsCalculator(0.02/100, 0.05/100))
+        fi = lookup.instruments['BINANCE.UM:BTCUSDT'][0]
+        pos = Position(fi, TransactionCostsCalculator('UM', 0.02, 0.05))
         q1 = pos_round(239.9, 47980, fi)[2]
         q2 = q1 + pos_round(143.6, 47860, fi)[2]
         q3 = q2 - pos_round(300, 48050, fi)[2]
@@ -90,7 +90,7 @@ class TestBasics:
         assert N(pos.commissions) == 0.04815870 + 0.05766 + 0.028716 + 0.04798
 
         D = '2024-01-01 '
-        i = lookup['BINANCE.UM:BTCUSDT'][0]
+        i = lookup.instruments['BINANCE.UM:BTCUSDT'][0]
         px0 = Position(i, ZERO_COSTS)
 
         run_deals_updates(px0, [

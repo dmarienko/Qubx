@@ -3,7 +3,7 @@ install_pyx_recompiler_for_dev()
 
 from loguru import logger
 import os, sys, stackprinter
-from qubx.core.lookups import InstrumentsLookup
+from qubx.core.lookups import FeesLookup, GlobalLookup, InstrumentsLookup
 
 
 def formatter(record):
@@ -36,7 +36,9 @@ logger.remove(None)
 logger.add(sys.stdout, format=formatter, colorize=True)
 logger = logger.opt(colors=True)
 
-lookup = InstrumentsLookup()
+# - global lookup helper
+lookup = GlobalLookup(InstrumentsLookup(), FeesLookup())
+
 
 # registering magic for jupyter notebook
 if runtime_env() in ['notebook', 'shell']:
