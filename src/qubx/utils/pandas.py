@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Optional, Union
+from typing import Callable, Dict, Iterable, Optional, Union
 from datetime import timedelta
 import pandas as pd
 import numpy as np
@@ -6,6 +6,96 @@ import numpy as np
 from numpy.lib.stride_tricks import as_strided as stride
 
 from qubx.utils.misc import Struct
+
+
+def rolling_forward_test_split(x: pd.Series | pd.DataFrame, training_period: int, test_period: int, units: str = None):
+    """
+    Split data into training and testing **rolling** periods.
+     
+    Example:
+
+    >>> for train_idx, test_idx in rolling_forward_test_split(np.array(range(15)), 5, 3):
+    >>>     print('Train:', train_idx, ' Test:', test_idx)
+
+    > Train: [1 2 3 4 5]  Test: [6 7 8]
+      Train: [4 5 6 7 8]  Test: [9 10 11]
+      Train: [7 8 9 10 11]  Test: [12 13 14]
+
+    Also it allows splitting using calendar periods (see units for that).
+    Example of 2w / 1w splitting:
+
+    >>> Y = pd.Series(np.arange(30), index=pd.date_range('2000-01-01', periods=30))
+    >>> for train_idx, test_idx in rolling_forward_test_split(Y, 2, 1, units='W'):
+    >>>     print('Train:', Y.loc[train_idx], '\\n Test:', Y.loc[test_idx])
+
+    :param x: data 
+    :param training_period: number observations for learning period 
+    :param test_period: number observations for learning period  
+    :param units: period units if training_period and test_period is the period date: {'H', 'D', 'W', 'M', 'Q', 'Y'}
+    :return:  
+    """
+    # unit formats from pd.TimeDelta and formats for pd.resample
+    units_format = {'H': 'H', 'D': 'D', 'W': 'W', 'M': 'MS', 'Q': 'QS', 'Y': 'AS'}
+
+    if units:
+        if units.upper() not in units_format:
+            raise ValueError(
+                'Wrong value for "units" parameter. Only %s values are valid' % ','.join(units_format.keys()))
+        else:
+            if not isinstance(x, (pd.Series, pd.DataFrame)) or not isinstance(x.index, pd.DatetimeIndex):
+                raise ValueError('Data must be passed as pd.DataFrame or pd.Series when "units" specified')
+
+            if isinstance(x, pd.Series):
+                x = x.to_frame()
+
+            resampled = x.resample(units_format[units.upper()]).mean().index
+            resampled = resampled - pd.DateOffset(seconds=1)
+
+            for i in range(0, len(resampled), test_period):
+                if len(resampled) - 1 < i + training_period or resampled[i + training_period] > x.index[-1]:
+                    # no data for next training period
+                    break
+                training_df = x[resampled[i]:resampled[i + training_period]]
+                whole_period = i + training_period + test_period
+                if len(resampled) - 1 < whole_period or resampled[whole_period] > x.index[-1]:
+                    # if there is not all data for test period or it's just last month,
+                    # we don't need restrict the end date
+                    test_df = x[resampled[i + training_period]:]
+                else:
+                    test_df = x[resampled[i + training_period]:resampled[whole_period]]
+
+                if training_df.empty or test_df.empty:
+                    continue
+                yield (np.array(training_df.index), np.array(test_df.index))
+    else:
+        n_obs = x.shape[0]
+        i_shift = (n_obs - training_period - test_period) % test_period
+        for i in range(i_shift + training_period, n_obs, test_period):
+            yield (np.array(range(i - training_period, i)), np.array(range(i, i + test_period)))
+
+
+def generate_equal_date_ranges(start: str | pd.Timestamp, end: str | pd.Timestamp, freq: int, units: str) -> Iterable:
+    """
+    Generator for date ranges:
+    
+    for s,e in generate_equal_date_ranges('2019-01-01', '2022-05-17', 1, 'Y'):
+        print(s, e)
+    ------------------
+    2019-01-01 2019-12-31
+    2020-01-01 2020-12-31
+    2021-01-01 2021-12-31
+    2022-01-01 2022-05-17
+    """
+    _as_f = lambda x: pd.Timestamp(x).strftime('%Y-%m-%d')
+
+    # - for case when end - start < freq it won't got into the loop
+    b = [start, start] if _as_f(start) > _as_f(end) else [start, end]
+
+    for a, b in rolling_forward_test_split(
+        pd.Series(0, pd.date_range(start, end)), freq, freq, units=units):
+        yield _as_f(a[0]), _as_f(a[-1])
+        
+    yield _as_f(b[0]), _as_f(b[-1])
 
 
 def drop_duplicated_indexes(df, keep='first'):
