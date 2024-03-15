@@ -29,6 +29,9 @@ class IDataProvider:
     def add_data_listener(self, listener: DataListener):
         pass
 
+    def subscribe(self, instruments: List[Instrument]):
+        pass
+
     def request_historical_data(self, 
                                 instruments: List[Instrument], 
                                 timeframe: str,

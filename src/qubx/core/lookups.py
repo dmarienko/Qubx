@@ -3,6 +3,7 @@ import json, os, dataclasses
 from datetime import datetime
 from typing import Dict, List, Optional
 import configparser
+import stackprinter
 
 from qubx.core.basics import Instrument, FuturesInfo, TransactionCostsCalculator
 from qubx.utils.marketdata.binance import get_binance_symbol_info_for_type
@@ -25,9 +26,10 @@ class _InstrumentEncoder(json.JSONEncoder):
 class _InstrumentDecoder(json.JSONDecoder):
     def _preprocess(d, ks):
         fi = d.get(ks)
+        _preproc = lambda x: x[:x.find('.')] if x.endswith('Z') else x
         if fi:
-            fi['delivery_date'] = datetime.strptime(fi.get('delivery_date', '5000-01-01T00:00:00'),'%Y-%m-%dT%H:%M:%S')
-            fi['onboard_date'] = datetime.strptime(fi.get('onboard_date', '1970-01-01T00:00:00'),'%Y-%m-%dT%H:%M:%S')
+            fi['delivery_date'] = datetime.strptime(_preproc(fi.get('delivery_date', '5000-01-01T00:00:00')),'%Y-%m-%dT%H:%M:%S')
+            fi['onboard_date'] = datetime.strptime(_preproc(fi.get('onboard_date', '1970-01-01T00:00:00')),'%Y-%m-%dT%H:%M:%S')
         return d | {ks: FuturesInfo(**fi) if fi else None}
 
     def decode(self, json_string):
@@ -60,18 +62,28 @@ class InstrumentsLookup:
                         self._lookup[f"{i.exchange}:{i.symbol}"] = i
                     data_exists = True
             except Exception as ex:
+                stackprinter.show_current_exception()
                 logger.warning(ex)
 
         return data_exists
 
-    def find(self, exchange: str, base: str, quote: str) -> Optional[Instrument]:
+    def find(self, exchange: str, base: str, quote: str, margin: Optional[str]=None) -> Optional[Instrument]:
         for i in self._lookup.values():
             if i.exchange == exchange and (
                 (i.base == base and i.quote == quote) or (i.base == quote and i.quote == base)
             ):
-                return i
+                if margin is not None and i.margin_symbol is not None:
+                    if i.margin_symbol == margin:
+                        return i
+                else:
+                    return i
         return None
     
+    def _save_to_json(self, path, instruments: List[Instrument]):
+        with open(path, 'w') as f:
+            json.dump(instruments, f, cls=_InstrumentEncoder)
+        logger.info(f'Saved {len(instruments)} to {path}')
+
     def find_aux_instrument_for(self, instrument: Instrument, base_currency: str) -> Optional[Instrument]:
         """
         Tries to find aux instrument (for conversions to funded currency)
@@ -99,8 +111,56 @@ class InstrumentsLookup:
                 getattr(self, mn)(self._path)
 
     def _update_kraken(self, path: str):
-        # TODO
-        pass
+        import ccxt as cx
+        kf = cx.krakenfutures()
+        ks = cx.kraken()
+        f_mkts = kf.load_markets()
+        s_mkts = ks.load_markets()
+
+        # - process futures
+        f_instruments = []
+        for _, v in f_mkts.items():
+            info = v['info']
+            # - we skip index as it's not traded
+            if v['index']: continue
+            maint_margin=0
+            required_margin=0
+            if 'marginLevels' in info:
+                margins = info['marginLevels'][0]
+                maint_margin=float(margins['maintenanceMargin'])
+                required_margin=float(margins['initialMargin'])
+            f_instruments.append(
+                Instrument(
+                    v['symbol'], v['type'], 'KRAKEN.F', v['base'], v['quote'], v['settle'],
+                    min_tick=float(info['tickSize']),
+                    min_size_step=float(v['precision']['price']),
+                    min_size=v['precision']['amount'],
+                    futures_info=FuturesInfo(
+                        contract_type=info['type'],
+                        contract_size=float(info['contractSize']),
+                        onboard_date=info['openingDate'],
+                        delivery_date=v['expiryDatetime'] if 'expiryDatetime' in info else "2100-01-01T00:00:00",
+                        maint_margin=maint_margin, required_margin=required_margin,
+                    )
+                )
+            )
+        # - drop to file
+        self._save_to_json(os.path.join(path, 'kraken.f.json'), f_instruments)
+
+        # - process spots
+        s_instruments = []
+        for _, v in s_mkts.items():
+            info = v['info']
+            s_instruments.append(
+                Instrument(
+                    v['symbol'], v['type'], 'KRAKEN', v['base'], v['quote'], v['settle'],
+                    min_tick=float(info['tick_size']), 
+                    min_size_step=float(v['precision']['price']), 
+                    min_size=float(v['precision']['amount']),
+                )
+            )
+        # - drop to file
+        self._save_to_json(os.path.join(path, 'kraken.json'), s_instruments)
 
     def _update_dukas(self, path: str):
         instruments = [
@@ -113,9 +173,7 @@ class InstrumentsLookup:
             Instrument('EURGBP', 'FX', 'DUKAS', 'EUR', 'GBP', 'USD', 0.00001, 1, 1000),
             # TODO: addd all or find how to get it from site
         ]
-        logger.info(f'Updates {len(instruments)} for DUKASCOPY')
-        with open(os.path.join(path, f'dukas.json'), 'w') as f:
-            json.dump(instruments, f, cls=_InstrumentEncoder)
+        self._save_to_json(os.path.join(path, 'dukas.json'), instruments)
 
     def _update_binance(self, path: str):
         infos = get_binance_symbol_info_for_type(['UM', 'CM', 'SPOT'])
@@ -148,12 +206,8 @@ class InstrumentsLookup:
                         min_size=size_step,    # TODO: not sure about minimal position for Binance
                         futures_info=fut_info
                 ))
-
-            logger.info(f'Loaded {len(instruments)} for {exchange}')
-
-            with open(os.path.join(path, f'{exchange}.json'), 'w') as f:
-                json.dump(instruments, f, cls=_InstrumentEncoder)
-  
+            # - store to file
+            self._save_to_json(os.path.join(path, f'{exchange}.json'), instruments)
 
 # - TODO: need to find better way to extract actual data !!
 _DEFAULT_FEES = """
