@@ -194,7 +194,7 @@ def load_binance_kl_history(symbol: str, start: str, stop: str = 'now',
     return data
 
 
-def update_binance_data_storage(quoted_in=['USDT'], market='futures', data_storage=DEFALT_LOCAL_CSV_STORAGE):
+def update_binance_data_storage(coins=[], quoted_in=['USDT'], market='futures', data_storage=DEFALT_LOCAL_CSV_STORAGE):
     """
     Fetch data from the Binance data storage and save it as local csv files
     TODO: csv is just temporary solution and we need to keep data in DB
@@ -203,6 +203,8 @@ def update_binance_data_storage(quoted_in=['USDT'], market='futures', data_stora
     if market.lower() == 'futures':
         for sy in info['binance.um']['symbols']:
             if sy['quoteAsset'] in quoted_in:
+                if coins and sy['baseAsset'] not in coins:
+                    continue
                 symbol = sy['symbol'] 
                 start = pd.Timestamp(sy['onboardDate'], unit='ms')
                 data = load_binance_kl_history(symbol, start.strftime('%Y-%m-%d'), instr_type='futures', instr_subtype='um')
@@ -218,6 +220,8 @@ def update_binance_data_storage(quoted_in=['USDT'], market='futures', data_stora
         client = Client()
         for sy in info['binance']['symbols']:
             if sy['quoteAsset'] in quoted_in:
+                if coins and sy['baseAsset'] not in coins:
+                    continue
                 symbol = sy['symbol'] 
                 # - some dirty way to get historical data start for spot
                 d = client.get_historical_klines(
