@@ -1,7 +1,8 @@
 import glob, os
-from collections import OrderedDict, namedtuple
+from collections import OrderedDict, defaultdict, namedtuple
 from os.path import basename, exists, dirname, join, expanduser
-from typing import Optional, Union
+import time
+from typing import Dict, Optional, Union
 from pathlib import Path
 
 
@@ -232,3 +233,52 @@ def makedirs(path: str, *args) -> str:
     if not exists(path):
         os.makedirs(path)
     return path
+
+
+class Stopwatch:
+    """
+    Stopwatch timer for performance 
+    """
+    starts: Dict[str, int] = {} 
+    counts: Dict[str, int] = defaultdict(lambda: 0)
+    latencies: Dict[str, int] = {} 
+    
+    def __new__(cls):
+        if not hasattr(cls, 'instance'):
+            cls.instance = super(Stopwatch, cls).__new__(cls)
+        return cls.instance
+    
+    def start(self, scope: Optional[str]=None):
+        self.starts[scope] = time.perf_counter_ns()
+        self.counts[scope] += 1
+        
+    def stop(self, scope: Optional[str]=None) -> Optional[int]:
+        t = time.perf_counter_ns()
+        s = self.starts.get(scope, None)
+        lat = None
+        if s:
+            lat = t - s
+            n = self.counts[scope]
+            self.latencies[scope] = (lat * (n - 1) + self.latencies.get(scope, lat)) // n
+            del self.starts[scope]
+        return lat
+
+    def latency_sec(self, scope: str) -> float:
+        return self.latencies.get(scope, 0) / 1e9
+
+    def watch(self, scope='global'):
+        def _decorator(func):
+            info = scope + '.' + func.__name__
+            def wrapper(*args, **kwargs):
+                self.start(info)
+                output = func(*args, **kwargs)
+                self.stop(info)
+                return output
+            return wrapper
+        return _decorator
+
+    def __str__(self) -> str:
+        r = ""
+        for l in self.latencies.keys():
+            r += f"\n\t<w>{l}</w> took <r>{self.latency_sec(l):.7f}</r> secs"
+        return r
