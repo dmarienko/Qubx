@@ -276,6 +276,11 @@ class Stopwatch:
                 return output
             return wrapper
         return _decorator
+    
+    def reset(self):
+        self.starts.clear()
+        self.counts.clear()
+        self.latencies.clear()
 
     def __str__(self) -> str:
         r = ""
