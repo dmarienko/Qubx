@@ -85,6 +85,7 @@ cdef class Trade:
     cdef public double price
     cdef public double size
     cdef public short taker
+    cdef public long long trade_id
 
 
 cdef class Quote:

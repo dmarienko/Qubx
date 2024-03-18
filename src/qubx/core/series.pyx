@@ -567,16 +567,18 @@ def neg(series: TimeSeries):
 
 
 cdef class Trade:
-    def __init__(self, time, double price, double size, short taker=-1):
+    def __init__(self, time, double price, double size, short taker=-1, long long trade_id=0):
         self.time = time_as_nsec(time)
         self.price = price
         self.size = size
         self.taker = taker
+        self.trade_id = trade_id
 
     def __repr__(self):
-        return "[%s]\t%.5f (%.1f) <%s>" % ( 
+        return "[%s]\t%.5f (%.1f) <%s> %s" % ( 
             time_to_str(self.time, 'ns'), self.price, self.size, 
-            'take' if self.taker == 1 else 'make' if self.taker == 0 else '???'
+            'take' if self.taker == 1 else 'make' if self.taker == 0 else '???',
+            str(self.trade_id) if self.trade_id > 0 else ''
         ) 
 
 
