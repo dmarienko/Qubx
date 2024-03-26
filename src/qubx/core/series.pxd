@@ -51,9 +51,10 @@ cdef class Bar:
     cdef public double high
     cdef public double low
     cdef public double close
-    cdef public double volume
+    cdef public double volume          # total volume (in quote asset)
+    cdef public double bought_volume   # volume bought (in quote asset) if presented
 
-    cpdef Bar update(Bar self, double price, double volume)
+    cpdef Bar update(Bar self, double price, double volume, double bought_volume=*)
 
     cpdef dict to_dict(Bar self, unsigned short skip_time=*)
 

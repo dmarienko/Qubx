@@ -601,27 +601,34 @@ cdef class Quote:
 
 cdef class Bar:
 
-    def __init__(self, long long time, double open, double high, double low, double close, double volume) -> None:
+    def __init__(self, long long time, double open, double high, double low, double close, double volume, double bought_volume=0) -> None:
+        self.time = time
         self.open = open
         self.high = high
         self.low = low
         self.close = close
         self.volume = volume
+        self.bought_volume = bought_volume
 
-    cpdef Bar update(self, double price, double volume):
+    cpdef Bar update(self, double price, double volume, double bought_volume=0):
         self.close = price
         self.high = max(price, self.high)
         self.low = min(price, self.low)
         self.volume += volume
+        self.bought_volume += bought_volume
         return self
 
     cpdef dict to_dict(self, unsigned short skip_time=0):
         if skip_time:
             return {
-                'open': self.open, 'high': self.high, 'low': self.low, 'close': self.close, 'volume': self.volume,
+                'open': self.open, 'high': self.high, 'low': self.low, 'close': self.close,
+                'volume': self.volume, 'bought_volume': self.bought_volume,
             }
         return {
-            'timestamp': np.datetime64(self.time, 'ns'), 'open': self.open, 'high': self.high, 'low': self.low, 'close': self.close, 'volume': self.volume,
+            'timestamp': np.datetime64(self.time, 'ns'), 
+            'open': self.open, 'high': self.high, 'low': self.low, 'close': self.close, 
+            'volume': self.volume,
+            'bought_volume': self.bought_volume,
         }
 
     def __repr__(self):
