@@ -1,20 +1,19 @@
-from typing import List
+from typing import Any, Dict, List, Optional
 import ccxt.pro as cxp
 from ccxt.base.decimal_to_precision import ROUND_UP
 from ccxt.base.exchange import Exchange
 from ccxt.async_support.base.ws.client import Client
 from ccxt.async_support.base.ws.cache import ArrayCacheByTimestamp
+import pandas as pd
 
-from threading import Thread, Event, Lock
-from queue import Queue
-# from multiprocessing import Queue #as Queue
-
-
+from qubx import logger
 from qubx.core.basics import Instrument, dt_64
-from qubx.core.strategy import IDataProvider
+from qubx.core.strategy import IDataProvider, CtrlChannel
+from qubx.core.series import TimeSeries, Bar
 
 
 _aliases = {
+    'binance': 'binanceqv',
     'binance.um': 'binanceusdm',
     'binance.cm': 'binancecoinm',
     'kraken.f': 'kreakenfutures'
@@ -87,45 +86,104 @@ class BinanceQV(cxp.binance):
         self.ohlcvs[symbol] = self.safe_value(self.ohlcvs, symbol, {})
         stored = self.safe_value(self.ohlcvs[symbol], timeframe)
         if stored is None:
-            limit = self.safe_integer(self.options, 'OHLCVLimit', 1000)
+            limit = self.safe_integer(self.options, 'OHLCVLimit', 2)
             stored = ArrayCacheByTimestamp(limit)
-            self.ohlcvs[symbol][timeframe] = stored
+            # self.ohlcvs[symbol][timeframe] = stored
         stored.append(parsed)
         client.resolve(stored, messageHash)
 
+# - register custom wrappers
+cxp.binanceqv = BinanceQV
+cxp.exchanges.append('binanceqv')
 
-class CommChannel:
-    control: Event
-    queue: Queue
-    name: str
-    lock: Lock
 
-    def __init__(self, name: str):
-        self.name = name
-        self.control = Event()
-        self.queue = Queue()
-        self.lock = Lock()
+import asyncio
+from threading import Thread
+
+class AsyncioThread(Thread):
+    def __init__(self, channel: CtrlChannel):
+        self.result = None
+        self.channel = channel
+        self.loops = []
+        super().__init__()
+
+    def add(self, func, *args, **kwargs) -> 'AsyncioThread':
+        self.loops.append(func(self.channel, *args, **kwargs))
+        return self
+
+    async def run_loop(self):
+        self.result = await asyncio.gather(*self.loops)
+
+    def run(self):
+        self.channel.control.set()
+        asyncio.run(self.run_loop())
 
     def stop(self):
-        if self.control.is_set():
-            self.control.clear()
-
-    def start(self):
-        self.control.set()
+        self.channel.control.clear()
+        self.channel.queue.put((None, None)) # send sentinel
 
 
-class CCXT_connector(IDataProvider):
+class CCXTConnector(IDataProvider):
     exch: Exchange
+    subsriptions: Dict[str, AsyncioThread]
 
     def __init__(self, exchange: str):
-        exch = _aliases.get(exchange.lower(), exchange.lower())
+        exchange = exchange.lower()
+        exch = _aliases.get(exchange, exchange)
         if exch not in cxp.exchanges:
-            raise ValueError(f"Exchange {exchange} is not supported by CCXT!")
+            raise ValueError(f"Exchange {exchange} -> {exch} is not supported by CCXT!")
         self.exch = getattr(cxp, exch)()
+        self.subsriptions = {}
 
-    def request_historical_data(self, 
-                                instruments: List[Instrument], 
-                                timeframe: str, 
-                                start: str | int | dt_64, 
-                                stop: str | int | dt_64):
-        data = self.exch.fetch_ohlcv('PF_ETHUSD', '1m', since=since, limit=limit)
+    def subscribe(self, subscription_type: str, symbols: List[str], 
+                  timeframe:Optional[str]=None, nback:int=0) -> CtrlChannel:
+        self._check_subscription(subscription_type.lower())
+
+        match sbscr := subscription_type.lower():
+            case 'ohlc':
+                if timeframe is None:
+                    raise ValueError("timeframe must not be None for OHLC subscription")
+
+                r = AsyncioThread(comm:=CtrlChannel('OHLC'))
+                for s in symbols:
+                    r.add(self.listen_to_ohlcv, s, timeframe, nback)
+
+                self.subsriptions[sbscr] = r
+                r.start()
+                return comm
+
+            case 'trades':
+                pass
+            case 'quotes':
+                pass
+        return None
+
+    def _check_subscription(self, subscription_type):
+        if subscription_type in self.subsriptions:
+            self.subsriptions[subscription_type].stop()
+            del self.subsriptions[subscription_type]
+
+    def prefetch_ohlcs(self, symbol: str, timeframe: str, nbarsback: int):
+        assert nbarsback > 1
+        start = ((pd.Timestamp('now', tz='UTC') - nbarsback * pd.Timedelta(timeframe)).asm8.item()//1000000) if nbarsback > 1 else None 
+        ohlcv = self.exch.fetch_ohlcv(symbol, timeframe, since=start, limit=nbarsback + 1)
+        return ohlcv
+
+    async def listen_to_ohlcv(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
+        # - check if we need to load initial 'snapshot'
+        if nbarsback > 1:
+            ohlcv = await self.prefetch_ohlcs(symbol, timeframe, nbarsback)
+            for oh in ohlcv:
+                channel.queue.put((symbol, Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
+
+        while channel.control.is_set():
+            try:
+                ohlcv = await self.exch.watch_ohlcv(symbol, timeframe)
+                for oh in ohlcv:
+                    channel.queue.put((symbol, Bar(oh[0] * 1000000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
+
+            except Exception as e:
+                # print(type(e).__name__, str(e), flush=True)
+                logger.error(str(e))
+                await self.exch.close()
+                raise e

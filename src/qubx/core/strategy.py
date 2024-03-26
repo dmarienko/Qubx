@@ -4,6 +4,11 @@
 from typing import Any, Callable, Dict, List, Optional, Union
 import numpy as np
 from dataclasses import dataclass
+
+from threading import Thread, Event, Lock
+from queue import Queue
+# from multiprocessing import Queue #as Queue
+
 from qubx import lookup
 from qubx.core.lookups import InstrumentsLookup
 from qubx.core.basics import ZERO_COSTS, Instrument, Position, Signal, TransactionCostsCalculator, dt_64
@@ -16,7 +21,7 @@ E_HIST_DATA_READY = 100
 E_HIST_DATA_ERROR = -100
 
 @dataclass
-class Event:
+class TriggerEvent:
     time: dt_64
     type: int               # ??
     instrument: Instrument
@@ -25,12 +30,35 @@ DataListener = Callable[[Instrument, int], None]
 ExecutionListener = Callable[[Instrument, int], None]
 
 
+class CtrlChannel:
+    """
+    Controlled data communication channel
+    """
+    control: Event
+    queue: Queue     # we need something like disruptor here (Queue is temporary)
+    name: str
+    lock: Lock
+
+    def __init__(self, name: str):
+        self.name = name
+        self.control = Event()
+        self.queue = Queue()
+        self.lock = Lock()
+
+    def stop(self):
+        if self.control.is_set():
+            self.control.clear()
+
+    def start(self):
+        self.control.set()
+
+
 class IDataProvider:
     def add_data_listener(self, listener: DataListener):
         pass
 
-    def subscribe(self, instruments: List[Instrument]):
-        pass
+    def subscribe(self, subscription_type: str, symbols: List[str]) -> CtrlChannel:
+        return None
 
     def request_historical_data(self, 
                                 instruments: List[Instrument], 
@@ -70,7 +98,7 @@ class IStrategy:
     def on_init(self):
         pass
 
-    def process_event(self, time: dt_64, event: Event) -> Optional[List[Signal]]:
+    def process_event(self, time: dt_64, event: TriggerEvent) -> Optional[List[Signal]]:
         return None
 
  
