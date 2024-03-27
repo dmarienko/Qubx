@@ -153,7 +153,7 @@ def _copy_build_dir_to_project(cmd: build_ext) -> None:
 def _strip_unneeded_symbols() -> None:
     try:
         print("Stripping unneeded symbols from binaries...")
-        for so in itertools.chain(Path("nautilus_trader").rglob("*.so")):
+        for so in itertools.chain(Path("src/qubx").rglob("*.so")):
             if platform.system() == "Linux":
                 strip_cmd = ["strip", "--strip-unneeded", so]
             elif platform.system() == "Darwin":
