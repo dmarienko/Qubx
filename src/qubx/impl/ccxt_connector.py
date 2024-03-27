@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Dict, List, Optional
 import ccxt.pro as cxp
 from ccxt.base.decimal_to_precision import ROUND_UP
@@ -103,6 +104,7 @@ cxp.exchanges.append('binanceqv')
 class CCXTConnector(IDataProvider, IExchangeServiceProvider):
     exch: Exchange
     subsriptions: Dict[str, AsyncioThreadRunner]
+    _ch_market_data: CtrlChannel
 
     def __init__(self, exchange: str):
         super().__init__()
@@ -112,6 +114,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
             raise ValueError(f"Exchange {exchange} -> {exch} is not supported by CCXT!")
         self.exch = getattr(cxp, exch)()
         self.subsriptions: Dict[str, AsyncioThreadRunner] = {}
+        self._ch_market_data = CtrlChannel(exch + '.marketdata')
 
     def subscribe(self, subscription_type: str, symbols: List[str], 
                   timeframe:Optional[str]=None, 
@@ -124,11 +127,10 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                 if timeframe is None:
                     raise ValueError("timeframe must not be None for OHLC data subscription")
 
+                # convert to exchange format
                 tframe = self._get_exch_timeframe(timeframe)
-                if tframe is None:
-                    raise ValueError(f"timeframe {timeframe} is not supported by {self.get_name()}")
 
-                r = AsyncioThreadRunner(self.ch_data)
+                r = AsyncioThreadRunner(self.get_communication_channel())
                 for s in symbols:
                     r.add(self._listen_to_ohlcv, s, tframe, nback)
                 self.subsriptions[sbscr] = r
@@ -142,21 +144,39 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
         return None
 
+    def get_communication_channel(self) -> CtrlChannel:
+        return self._ch_market_data
+
     def _check_subscription(self, subscription_type):
         if subscription_type in self.subsriptions:
             self.subsriptions[subscription_type].stop()
             del self.subsriptions[subscription_type]
 
-    def _prefetch_ohlcs(self, symbol: str, timeframe: str, nbarsback: int):
+    def _fetch_ohlcs(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
         assert nbarsback > 1
         start = ((pd.Timestamp('now', tz='UTC') - nbarsback * pd.Timedelta(timeframe)).asm8.item()//1000000) if nbarsback > 1 else None 
         ohlcv = self.exch.fetch_ohlcv(symbol, timeframe, since=start, limit=nbarsback + 1)
         return ohlcv
 
+    async def _fetch_ohlcs_a(self, symbol: str, timeframe: str, nbarsback: int):
+        assert nbarsback > 1
+        start = ((pd.Timestamp('now', tz='UTC') - nbarsback * pd.Timedelta(timeframe)).asm8.item()//1000000) if nbarsback > 1 else None 
+        print("START fetching ...")
+        return await self.exch.fetch_ohlcv(symbol, timeframe, since=start, limit=nbarsback + 1)
+
+    def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> Optional[List[Bar]]:
+        assert nbarsback > 1
+        loop = asyncio.get_event_loop()
+        r = loop.run_until_complete(self._fetch_ohlcs_a(symbol, self._get_exch_timeframe(timeframe), nbarsback))
+        if len(r) > 0:
+            return [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in r]
+
     async def _listen_to_ohlcv(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
         # - check if we need to load initial 'snapshot'
+        # print("START _listen_to_ohlcv ...")
+
         if nbarsback > 1:
-            ohlcv = await self._prefetch_ohlcs(symbol, timeframe, nbarsback)
+            ohlcv = await self._fetch_ohlcs(None, symbol, timeframe, nbarsback)
             for oh in ohlcv:
                 channel.queue.put((symbol, Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
 
@@ -167,7 +187,6 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                     channel.queue.put((symbol, Bar(oh[0] * 1000000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
 
             except Exception as e:
-                # print(type(e).__name__, str(e), flush=True)
                 logger.error(str(e))
                 await self.exch.close()
                 raise e
@@ -189,4 +208,9 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         if timeframe is not None:
             _t = re.match('(\d+)(\w+)', timeframe)
             timeframe = f"{_t[1]}{_t[2][0].lower()}" if _t and len(_t.groups()) > 1 else timeframe
-        return self.exch.find_timeframe(timeframe)
+
+        tframe = self.exch.find_timeframe(timeframe)
+        if tframe is None:
+            raise ValueError(f"timeframe {timeframe} is not supported by {self.get_name()}")
+
+        return tframe

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import asyncio
 from threading import Thread, Event, Lock
 from queue import Queue
+
+import pandas as pd
 # from multiprocessing import Queue #as Queue
 
 from qubx import lookup, logger
@@ -57,7 +59,9 @@ class CtrlChannel:
 
 
 class AsyncioThreadRunner(Thread):
-    def __init__(self, channel: CtrlChannel):
+    channel: Optional[CtrlChannel]
+
+    def __init__(self, channel: Optional[CtrlChannel]):
         self.result = None
         self.channel = channel
         self.loops = []
@@ -71,21 +75,22 @@ class AsyncioThreadRunner(Thread):
         self.result = await asyncio.gather(*self.loops)
 
     def run(self):
-        self.channel.control.set()
+        if self.channel:
+            self.channel.control.set()
         asyncio.run(self.run_loop())
 
     def stop(self):
-        self.channel.control.clear()
-        self.channel.queue.put((None, None)) # send sentinel
+        if self.channel:
+            self.channel.control.clear()
+            self.channel.queue.put((None, None)) # send sentinel
 
 
 class IDataProvider:
-    ch_data: CtrlChannel
-
-    def __init__(self):
-        self.ch_data = CtrlChannel('marketdata') 
 
     def subscribe(self, subscription_type: str, symbols: List[str], **kwargs) -> AsyncioThreadRunner:
+        return None
+
+    def get_communication_channel(self) -> CtrlChannel:
         return None
 
 
@@ -116,24 +121,31 @@ class IStrategy:
  
 class StrategyContext:
     strategy: IStrategy 
-    exchange: IExchangeServiceProvider
-    mktdata: IDataProvider
+    exchange_service: IExchangeServiceProvider
+    data_provider: IDataProvider
     instruments: List[Instrument]
     positions: Dict[str, Position]
 
+    _t_mdata_processor: Optional[AsyncioThreadRunner] = None
+    _t_mdata_subscriber: Optional[AsyncioThreadRunner] = None
+
     def __init__(
             self, 
-            strategy: IStrategy, 
-            config: Optional[Dict[str, Any]],
-            mktdata: IDataProvider,
-            exchange: IExchangeServiceProvider, 
+
+            # - strategy with parameters
+            strategy: IStrategy, config: Optional[Dict[str, Any]],
+
+            # - data provider and exchange service
+            data_provider: IDataProvider,
+            exchange_service: IExchangeServiceProvider, 
             instruments: List[Instrument],
+
             # - need account class for holding all this data ?
             fees_spec: str, base_currency: str,
 
             # - context's parameters
-            market_data_subscription:str='ohlc',
-            subscription_params: Dict[str,Any] = None,
+            md_subscription_type:str='ohlc',
+            md_subscription_params: Dict[str,Any] = None,
 
         ) -> None:
 
@@ -143,32 +155,21 @@ class StrategyContext:
             self.strategy = strategy()
         self.populate_parameters_to_strategy(self.strategy, **config)
 
-        self.exchange = exchange
-        self.mktdata = mktdata
+        # - other initialization
+        self.exchange_service = exchange_service
+        self.data_provider = data_provider
         self.config = config
         self.base_currency = base_currency
         self.fees_spec = fees_spec
-
-        self.instruments = []
+        self.md_subscription_type = md_subscription_type
+        self.md_subscription_params = md_subscription_params
+        self.instruments = instruments
         self.positions = {}
 
-
-        # - get actual positions from exchange
-        symbols = []
-        for instr in instruments:
-            # process instruments - need to find convertors etc
-            self._create_synced_position(instr)
-            symbols.append(instr.symbol)
-
-        # - subscribe to market data
-        subscription_params = {} if subscription_params is None else subscription_params
-        logger.info(f"Subscribing on {market_data_subscription} data using {subscription_params} for \n\t{symbols} ")
-        mdrunner = self.mktdata.subscribe(market_data_subscription, symbols, **subscription_params)
-
-    def _market_data_processor(self):
+    async def _market_data_processor(self, channel: CtrlChannel):
         self.sers = {}
         logger.info("Start listening to market data")
-        channel = self.mktdata.ch_data
+
         while channel.control.is_set():
             s, data = channel.queue.get()
 
@@ -193,7 +194,7 @@ class StrategyContext:
         symb = instrument.symbol
 
         if instrument not in self.instruments:
-            self.positions[symb] = self.exchange.sync_position(
+            self.positions[symb] = self.exchange_service.sync_position(
                 Position(instrument, self.get_tcc(instrument))
             )
             self.instruments.append(instrument)
@@ -205,15 +206,47 @@ class StrategyContext:
                 instrument._aux_instrument = aux
                 self.instruments.append(aux)
                 aux_pos = Position(aux, self.get_tcc(aux))
-                self.positions[aux.symbol] = self.exchange.sync_position(aux_pos)
+                self.positions[aux.symbol] = self.exchange_service.sync_position(aux_pos)
         
         return self.positions.get(symb)
 
     def get_tcc(self, instrument: Instrument) -> TransactionCostsCalculator:
-        tcc = lookup.fees.find(self.exchange.get_name().lower(), self.fees_spec)
+        tcc = lookup.fees.find(self.exchange_service.get_name().lower(), self.fees_spec)
         if tcc is None:
             raise ValueError(f"Can't find fees calculator using given schema: '{self.fees_spec}' for {instrument}!")
         return tcc 
+
+    def start(self):
+        if self._t_mdata_processor:
+            raise ValueError("Context is already started !")
+
+        # - get actual positions from exchange
+        for instr in self.instruments:
+            # process instruments - need to find convertors etc
+            self._create_synced_position(instr)
+        
+        symbols = [i.symbol for i in self.instruments]
+
+        # - create incoming market data processing
+        self._t_mdata_processor = AsyncioThreadRunner(self.data_provider.get_communication_channel())
+        self._t_mdata_processor.add(self._market_data_processor)
+
+        # - subscribe to market data
+        md_subscription_params = {} if self.md_subscription_params is None else self.md_subscription_params
+        logger.info(f"Subscribing on {self.md_subscription_type} data using {md_subscription_params} for \n\t{symbols} ")
+
+        self._t_mdata_subscriber = self.data_provider.subscribe(self.md_subscription_type, symbols, **md_subscription_params)
+        self._t_mdata_processor.start()
+        logger.info("Market data processor started")
+
+        self._t_mdata_subscriber.start()
+        logger.info("Market data ubscribers started")
+
+    def stop(self):
+        self._t_mdata_subscriber.stop()
+        self._t_mdata_processor.stop()
+        self._t_mdata_processor = None
+        self._t_mdata_subscriber = None
 
     def populate_parameters_to_strategy(self, strategy: IStrategy, **kwargs):
         for k,v in kwargs.items():
