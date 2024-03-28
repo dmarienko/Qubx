@@ -19,39 +19,10 @@ from qubx.core.basics import Instrument, Position, Signal, TransactionCostsCalcu
 from qubx.core.series import TimeSeries, Trade, Quote, Bar
 
 
-class TriggerType(Enum):
-    BAR = 1
-    TIME = 3
-    QUOTE = 4
-    TRADE = 5
-    ORDERBOOK = 6
-
-    _bar_timeframe: Optional[str] = None
-    _inside_bar_delay: Optional[pd.Timedelta] = None
-    _scheduled_time: Optional[str] = None
-
-    def delay(self, delay: str) -> Self:
-        if self != TriggerType.BAR:
-            raise RuntimeError("'delay' can be set only for BAR trigger")
-        self._inside_bar_delay = pd.Timedelta(delay)
-        return self
-
-    def timeframe(self, tframe: str) -> Self:
-        if self != TriggerType.BAR and self != TriggerType.TIME:
-            raise RuntimeError("'timeframe' can be set either for BAR or TIME triggers")
-        self._bar_timeframe = tframe
-        return self
-
-    def time(self, time: str) -> Self:
-        if self != TriggerEvent.TIME:
-            raise RuntimeError("'time' can be set only for TIME trigger")
-        self._scheduled_time = time
-
-
 @dataclass
 class TriggerEvent:
     time: dt_64
-    type: TriggerType
+    type: str
     instrument: Optional[Instrument]
     data: Optional[Any] 
 
@@ -142,6 +113,12 @@ class IStrategy:
     def on_stop(self, ctx: 'StrategyContext'):
         pass
 
+
+def _dict_with_exc(dct, f):
+    if f not in dct:
+        raise ValueError(f"Configuration {dct} must contain field '{f}'")
+    return dct[f]
+
  
 class StrategyContext:
     strategy: IStrategy 
@@ -152,6 +129,12 @@ class StrategyContext:
 
     _t_mdata_processor: Optional[AsyncioThreadRunner] = None
     _t_mdata_subscriber: Optional[AsyncioThreadRunner] = None
+
+    _market_data_subcription_type: str = None
+    _market_data_subcription_params: dict = dict()
+    _trig_interval_in_bar_nsec: int
+    _trigger: str
+
 
     def __init__(self, 
             # - strategy with parameters
@@ -168,10 +151,9 @@ class StrategyContext:
             fees_spec: str, base_currency: str,
             # - - - - - - - - - - - - - - - - - - - - -
 
-            # - context's parameters
-            trigger_on: TriggerType, 
-            md_subscription_type:str='ohlc',
-            md_subscription_params: Dict[str,Any] = None,
+            # - context's parameters - - - - - - - - - -
+            trigger: Dict[str, Any],
+            md_subscription: Dict[str,Any] = dict(type='ohlc', timeframe='1Min'),
             # - - - - - - - - - - - - - - - - - - - - -
 
         ) -> None:
@@ -188,43 +170,67 @@ class StrategyContext:
         self.config = config
         self.base_currency = base_currency
         self.fees_spec = fees_spec
-        self.md_subscription_type = md_subscription_type
-        self.md_subscription_params = md_subscription_params
         self.instruments = instruments
         self.positions = {}
+ 
+        # process trigger configuration
+        self._check_trigger_config(trigger)
 
-        # - check how it's configured to be triggered
-        self.trigger = trigger_on
-        self._trig_interval_in_bar_nsec = 0
-        match trigger_on:
-
-            case TriggerType.BAR:
-                if trigger_on._bar_timeframe is None:
-                    raise ValueError(f"Timeframe is required for {trigger_on.name} trigger: use TriggerType.timeframe(...)")
-
-                if trigger_on._inside_bar_delay is None:
-                    raise ValueError(f"Delay is required for {trigger_on.name} trigger: use TriggerType.delay(...)")
-
-                if abs(trigger_on._inside_bar_delay) > pd.Timedelta(trigger_on._bar_timeframe):
-                    raise ValueError(f"Delay must be less or equal to bar's timeframe for {trigger_on.name} trigger: you set delay {trigger_on._inside_bar_delay} for {trigger_on._bar_timeframe}")
-
-                # for positive delay - trigger strategy when this interval passed after new bar's open
-                if trigger_on._inside_bar_delay >= pd.Timedelta(0): 
-                    self._trig_interval_in_bar_nsec = trigger_on._inside_bar_delay.asm8.item()
-                # for negative delay - trigger strategy when time is closer to bar's closing time more than this interval
-                else:
-                    self._trig_interval_in_bar_nsec = (pd.Timedelta(trigger_on._bar_timeframe) + trigger_on._inside_bar_delay).asm8.item()
-
-            case TriggerType.TIME:
-                if trigger_on._scheduled_time is None:
-                    raise ValueError(f"Scheduled time is required for {trigger_on.name} type of trigger: use TriggerType.time(...)")
-                raise ValueError(f"{trigger_on} NOT IMPLEMENTED")
-
-            case _:
-                raise ValueError(f"{trigger_on} NOT IMPLEMENTED")
+        # process market data configuration
+        self._check_market_data_config(md_subscription)
 
         # - states 
         self._is_initilized = False
+
+    def _check_market_data_config(self, md_config: dict):
+        self._market_data_subcription_type = _dict_with_exc(md_config, 'type').lower()
+        match self._market_data_subcription_type:
+            case 'ohlc':
+                self._market_data_subcription_params = {
+                    'timeframe': _dict_with_exc(md_config, 'timeframe'),
+                    'nback': md_config.get('nback', 1), 
+                }
+                pass
+            case 'trade' | 'trades' | 'tas':
+                pass
+            case 'quote' | 'quotes':
+                pass
+            case 'ob' | 'orderbook':
+                pass
+
+    def _check_trigger_config(self, trigger_config: dict):
+        # - check how it's configured to be triggered
+        self._trig_interval_in_bar_nsec = 0
+        self._trigger = _dict_with_exc(trigger_config, 'type').lower()
+        match self._trigger:
+            case 'bar': 
+                _bar_timeframe = pd.Timedelta(_dict_with_exc(trigger_config, 'timeframe'))
+                _inside_bar_delay = pd.Timedelta(_dict_with_exc(trigger_config, 'delay'))
+
+                if abs(pd.Timedelta(_inside_bar_delay)) > pd.Timedelta(_bar_timeframe):
+                    raise ValueError(f"Delay must be less or equal to bar's timeframe for {self._trigger} trigger: you set delay {_inside_bar_delay} for {_bar_timeframe}")
+
+                # for positive delay - trigger strategy when this interval passed after new bar's open
+                if _inside_bar_delay >= pd.Timedelta(0): 
+                    self._trig_interval_in_bar_nsec = _inside_bar_delay.asm8.item()
+                # for negative delay - trigger strategy when time is closer to bar's closing time more than this interval
+                else:
+                    self._trig_interval_in_bar_nsec = (_bar_timeframe + _inside_bar_delay).asm8.item()
+
+            case 'time': 
+                raise ValueError(f"{self._trigger} NOT IMPLEMENTED")
+
+            case 'quote': 
+                raise ValueError(f"{self._trigger} NOT IMPLEMENTED")
+
+            case 'trade': 
+                raise ValueError(f"{self._trigger} NOT IMPLEMENTED")
+
+            case 'orderbook' | 'ob': 
+                raise ValueError(f"{self._trigger} NOT IMPLEMENTED")
+
+            case _: 
+                raise ValueError(f"Wrong trigger type {self._trigger}")
 
     async def _market_data_processor(self, channel: CtrlChannel):
         self.sers = {}
@@ -250,7 +256,7 @@ class StrategyContext:
 
                 # - test
                 t = self.exchange_service.time()
-                self.strategy.on_event(self, TriggerEvent(t, TriggerType.E_OHLC_BAR, s, self.sers[s]))
+                self.strategy.on_event(self, TriggerEvent(t, 'bar', s, self.sers[s]))
 
         logger.info("Stop market data listening")
 
@@ -296,26 +302,26 @@ class StrategyContext:
         self._t_mdata_processor.add(self._market_data_processor)
 
         # - subscribe to market data
-        md_subscription_params = {} if self.md_subscription_params is None else self.md_subscription_params
-        logger.info(f"Subscribing on {self.md_subscription_type} data using {md_subscription_params} for \n\t{symbols} ")
-        self._t_mdata_subscriber = self.data_provider.subscribe(self.md_subscription_type, symbols, **md_subscription_params)
+        logger.info(f"Subscribing to {self._market_data_subcription_type} updates using {self._market_data_subcription_params} for \n\t{symbols} ")
+        self._t_mdata_subscriber = self.data_provider.subscribe(self._market_data_subcription_type, symbols, **self._market_data_subcription_params)
 
-        # - initialize on very first data (???)
+        # - initialize strategy
         if not self._is_initilized:
             self.strategy.on_start(self)
             self._is_initilized = True
 
         self._t_mdata_processor.start()
-        logger.info("Market data processor started")
+        logger.info("> Data processor started")
 
         self._t_mdata_subscriber.start()
-        logger.info("Market data ubscribers started")
+        logger.info("> Market data subscribtions started")
 
     def stop(self):
-        self._t_mdata_subscriber.stop()
-        self._t_mdata_processor.stop()
-        self._t_mdata_processor = None
-        self._t_mdata_subscriber = None
+        if self._t_mdata_subscriber:
+            self._t_mdata_subscriber.stop()
+            self._t_mdata_processor.stop()
+            self._t_mdata_processor = None
+            self._t_mdata_subscriber = None
 
     def populate_parameters_to_strategy(self, strategy: IStrategy, **kwargs):
         for k,v in kwargs.items():
