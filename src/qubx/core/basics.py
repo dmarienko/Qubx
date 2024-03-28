@@ -8,6 +8,7 @@ from qubx.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
 
 
 dt_64 = np.datetime64
+td_64 = np.timedelta64
 
 
 @dataclass

@@ -1,4 +1,5 @@
 import asyncio
+from collections import defaultdict
 from typing import Any, Dict, List, Optional
 import ccxt.pro as cxp
 from ccxt.base.decimal_to_precision import ROUND_UP
@@ -105,6 +106,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
     exch: Exchange
     subsriptions: Dict[str, AsyncioThreadRunner]
     _ch_market_data: CtrlChannel
+    _last_quotes: Dict[str, Optional[Quote]]
 
     def __init__(self, exchange: str):
         super().__init__()
@@ -115,6 +117,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         self.exch = getattr(cxp, exch)()
         self.subsriptions: Dict[str, AsyncioThreadRunner] = {}
         self._ch_market_data = CtrlChannel(exch + '.marketdata')
+        self._last_quotes = defaultdict(lambda: None)
 
     def subscribe(self, subscription_type: str, symbols: List[str], 
                   timeframe:Optional[str]=None, 
@@ -140,6 +143,9 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                 raise ValueError("TODO")
 
             case 'quotes':
+                raise ValueError("TODO")
+
+            case _:
                 raise ValueError("TODO")
 
         return None
@@ -173,8 +179,6 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
     async def _listen_to_ohlcv(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
         # - check if we need to load initial 'snapshot'
-        # print("START _listen_to_ohlcv ...")
-
         if nbarsback > 1:
             ohlcv = await self._fetch_ohlcs(None, symbol, timeframe, nbarsback)
             for oh in ohlcv:
@@ -203,6 +207,9 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
     def get_name(self) -> str:
         return self.exch.name 
+
+    def get_quote(self, symbol: str) -> Optional[Quote]:
+        return self._last_quotes[symbol]
 
     def _get_exch_timeframe(self, timeframe: str):
         if timeframe is not None:

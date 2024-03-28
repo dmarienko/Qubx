@@ -1,6 +1,8 @@
 """
  # All interfaces related to strategy etc
 """
+from collections import defaultdict
+import traceback
 from typing import Any, Callable, Dict, List, Optional, Union, Self
 import numpy as np
 from dataclasses import dataclass
@@ -15,8 +17,16 @@ import pandas as pd
 
 from qubx import lookup, logger
 from qubx.core.lookups import InstrumentsLookup
-from qubx.core.basics import Instrument, Position, Signal, TransactionCostsCalculator, dt_64
-from qubx.core.series import TimeSeries, Trade, Quote, Bar
+from qubx.core.basics import Instrument, Position, Signal, TransactionCostsCalculator, dt_64, td_64
+from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
+from qubx.utils.time import convert_tf_str_td64
+
+
+@dataclass
+class EventFromExchange:
+    time: dt_64
+    type: str
+    data: Optional[Any] 
 
 
 @dataclass
@@ -100,6 +110,12 @@ class IExchangeServiceProvider:
     def get_name(self) -> str:
         raise ValueError("get_name is not implemented")
 
+    def schedule_trigger(self, trigger_id: str, when: str):
+        raise ValueError("schedule_trigger is not implemented")
+
+    def get_quote(self, symbol: str) -> Optional[Quote]:
+        pass
+
 
 class IStrategy:
     ctx: 'StrategyContext'
@@ -119,8 +135,77 @@ def _dict_with_exc(dct, f):
         raise ValueError(f"Configuration {dct} must contain field '{f}'")
     return dct[f]
 
+
+class OhlcvsHolder: 
+    _min_timeframe: dt_64
+    _last_bar: Dict[str, Optional[Bar]]
+    _ohlcvs: Dict[str, Dict[td_64, OHLCV]]
+
+    def __init__(self, minimal_timeframe: str) -> None:
+        self._min_timeframe = convert_tf_str_td64(minimal_timeframe)
+        self._ohlcvs = dict()
+        self._last_bar = defaultdict(lambda: None)
+
+    def init_ohlcv(self, symbol: str, max_size=np.inf):
+        self._ohlcvs[symbol] = {self._min_timeframe: OHLCV(symbol, self._min_timeframe, max_size)}
+    
+    def get_ohlcv(self, symbol: str, timeframe: str, max_size=np.inf) -> OHLCV:
+        tf = convert_tf_str_td64(timeframe) 
+
+        if symbol not in self._ohlcvs:
+           self._ohlcvs[symbol] = {}
+
+        if tf not in self._ohlcvs[symbol]: 
+            # - check requested timeframe
+            new_ohlc = OHLCV(symbol, tf, max_size)
+            if tf < self._min_timeframe:
+                logger.warning(f"[{symbol}] Request for timeframe {timeframe} that is smaller then minimal {self._min_timeframe}")
+            else:
+                # - first try to resample from smaller frame
+                if (basis := self._ohlcvs[symbol].get(self._min_timeframe)):
+                    for b in basis[::-1]:
+                        new_ohlc.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume, b.bought_volume)
+                
+            self._ohlcvs[symbol][tf] = new_ohlc
+
+        return self._ohlcvs[symbol][tf]
+
+    def update_by_bar(self, symbol: str, bar: Bar):
+        _last_bar = self._last_bar[symbol]
+        v_tot_inc = bar.volume
+        v_buy_inc = bar.bought_volume
+
+        if _last_bar is not None:
+            if _last_bar.time == bar.time: # just current bar updated
+                v_tot_inc -= _last_bar.volume
+                v_buy_inc -= _last_bar.bought_volume
+
+            if _last_bar.time > bar.time: # update is too late - skip it
+                return
+
+        if symbol in self._ohlcvs:
+            self._last_bar[symbol] = bar
+            for ser in self._ohlcvs[symbol].values():
+                ser.update_by_bar(bar.time, bar.open, bar.high, bar.low, bar.close, v_tot_inc, v_buy_inc)
+
+    def update_by_quote(self, symbol: str, quote: Quote):
+        series = self._ohlcvs.get(symbol)
+        if series:
+            for ser in series.values():
+                ser.update(quote.time, quote.mid_price(), 0)
+
+    def update_by_trade(self, symbol: str, trade: Trade):
+        series = self._ohlcvs.get(symbol)
+        if series:
+            total_vol = trade.size 
+            bought_vol = total_vol if trade.taker >= 1 else 0.0 
+            for ser in series.values():
+                ser.update(trade.time, trade.price, total_vol, bought_vol)
+
  
 class StrategyContext:
+    MAX_NUMBER_OF_FAILURES = 10
+
     strategy: IStrategy 
     exchange_service: IExchangeServiceProvider
     data_provider: IDataProvider
@@ -132,10 +217,16 @@ class StrategyContext:
 
     _market_data_subcription_type: Optional[str] = None
     _market_data_subcription_params: dict = dict()
+
     _trig_interval_in_bar_nsec: int
-    _trigger: str
+    _trig_on_bar: bool = False
+    _trig_on_time: bool = False
+    _trig_on_quote: bool = False
+    _trig_on_trade: bool = False
+    _trig_on_book: bool = False
     _is_initilized: bool = False
 
+    _ohlcvs: OhlcvsHolder
 
     def __init__(self, 
             # - strategy with parameters
@@ -188,30 +279,38 @@ class StrategyContext:
         self._market_data_subcription_type = _dict_with_exc(md_config, 'type').lower()
         match self._market_data_subcription_type:
             case 'ohlc':
+                timeframe = _dict_with_exc(md_config, 'timeframe')
                 self._market_data_subcription_params = {
-                    'timeframe': _dict_with_exc(md_config, 'timeframe'),
+                    'timeframe': timeframe,
                     'nback': md_config.get('nback', 1), 
                 }
+                self._ohlcvs = OhlcvsHolder(timeframe) 
+
             case 'trade' | 'trades' | 'tas':
-                raise ValueError(f"TODO: TRADES MD - CHECK IT !")
+                self._ohlcvs = OhlcvsHolder('1Sec') 
+
             case 'quote' | 'quotes':
-                raise ValueError(f"TODO: QUOTES MD - CHECK IT !")
+                self._ohlcvs = OhlcvsHolder('1Sec') 
+
             case 'ob' | 'orderbook':
-                raise ValueError(f"TODO: ORDERBOOK MD - CHECK IT !")
+                self._ohlcvs = OhlcvsHolder('1Sec') 
+
             case _:
                 raise ValueError(f"{self._market_data_subcription_type} is not a valid value for market data subcription type !!!")
 
     def _check_how_to_trigger_strategy(self, trigger_config: dict):
         # - check how it's configured to be triggered
         self._trig_interval_in_bar_nsec = 0
-        self._trigger = _dict_with_exc(trigger_config, 'type').lower()
-        match self._trigger:
+
+        match (_trigger := _dict_with_exc(trigger_config, 'type').lower()):
             case 'bar': 
+                self._trig_on_bar = True
+
                 _bar_timeframe = pd.Timedelta(_dict_with_exc(trigger_config, 'timeframe'))
                 _inside_bar_delay = pd.Timedelta(_dict_with_exc(trigger_config, 'delay'))
 
                 if abs(pd.Timedelta(_inside_bar_delay)) > pd.Timedelta(_bar_timeframe):
-                    raise ValueError(f"Delay must be less or equal to bar's timeframe for {self._trigger} trigger: you set delay {_inside_bar_delay} for {_bar_timeframe}")
+                    raise ValueError(f"Delay must be less or equal to bar's timeframe for {_trigger} trigger: you set delay {_inside_bar_delay} for {_bar_timeframe}")
 
                 # for positive delay - trigger strategy when this interval passed after new bar's open
                 if _inside_bar_delay >= pd.Timedelta(0): 
@@ -221,47 +320,96 @@ class StrategyContext:
                     self._trig_interval_in_bar_nsec = (_bar_timeframe + _inside_bar_delay).asm8.item()
 
             case 'time': 
-                raise ValueError(f"{self._trigger} NOT IMPLEMENTED")
+                self._trig_on_time = True
+                _time_to_trigger = _dict_with_exc(trigger_config, 'when')
+
+                # - schedule periodic timer
+                self.exchange_service.schedule_trigger('time', _time_to_trigger)
 
             case 'quote': 
-                raise ValueError(f"{self._trigger} NOT IMPLEMENTED")
+                self._trig_on_quote = True
+                raise ValueError(f"{_trigger} NOT IMPLEMENTED")
 
             case 'trade': 
-                raise ValueError(f"{self._trigger} NOT IMPLEMENTED")
+                self._trig_on_trade = True
+                raise ValueError(f"{_trigger} NOT IMPLEMENTED")
 
             case 'orderbook' | 'ob': 
-                raise ValueError(f"{self._trigger} NOT IMPLEMENTED")
+                self._trig_on_book = True
+                raise ValueError(f"{_trigger} NOT IMPLEMENTED")
 
             case _: 
-                raise ValueError(f"Wrong trigger type {self._trigger}")
+                raise ValueError(f"Wrong trigger type {_trigger}")
 
-    async def _market_data_processor(self, channel: CtrlChannel):
-        self.sers = {}
-        logger.info("Start listening to market data")
+    async def _process_incoming_market_data(self, channel: CtrlChannel):
+        _fails_counter = 0 
+        logger.info("Start processing market data")
 
         while channel.control.is_set():
-            s, data = channel.queue.get()
+            _strategy_event: TriggerEvent = None
 
-            # TODO: processing quote
+            # - waiting for incoming market data
+            symbol, data = channel.queue.get()
+
+            # - processing quote
             if isinstance(data, Quote):
-                pass
+                _strategy_event = self._update_ctx_by_quote(symbol, data)
 
-            # TODO: processing trade
+            # - processing trade
             if isinstance(data, Trade):
-                pass
+                _strategy_event = self._update_ctx_by_trade(symbol, data)
 
-            # TODO: processing ohlc bars
+            # - processing ohlc bar
             if isinstance(data, Bar):
-                # print(f"{s} {pd.Timestamp(data.time, unit='ns')}: {data}", flush=True)
-                if s not in self.sers:
-                    self.sers[s] = {}
-                self.sers[s][data.time] = data
+                _strategy_event = self._update_ctx_by_bar(symbol, data)
 
-                # - test
-                t = self.exchange_service.time()
-                self.strategy.on_event(self, TriggerEvent(t, 'bar', s, self.sers[s]))
+            # - any events from exchange: may be timer, news, alt data, etc
+            if isinstance(data, EventFromExchange):
+                _strategy_event = self._update_ctx_by_bar(symbol, data)
 
-        logger.info("Stop market data listening")
+            if _strategy_event:
+                try:
+                    self.strategy.on_event(self, _strategy_event)
+                    _fails_counter = 0
+                except Exception as strat_error:
+                    # - TODO: probably we need some cooldown interval after exception to prevent flooding
+                    logger.error(f"[{self.time()}]: Strategy {self.strategy.__class__.__name__} raised an exception: {strat_error}")
+                    logger.error(traceback.format_exc())
+
+                    #  - we stop execution after let's say maximal number of errors in a row
+                    if (_fails_counter := _fails_counter + 1) >= StrategyContext.MAX_NUMBER_OF_FAILURES:
+                        logger.error("STRATEGY FAILURES IN THE ROW EXCEEDED MAX ALLOWED NUMBER - STOPPING ...")
+                        channel.stop()
+                        break
+
+        logger.info("Market data processing finished")
+
+    def _update_ctx_by_bar(self, symbol: str, bar: Bar) -> TriggerEvent:
+        self._ohlcvs.update_by_bar(symbol, bar)
+        if self._trig_on_bar:
+            return TriggerEvent(self.time(), 'bar', symbol, bar)
+        return None
+
+    def _update_ctx_by_trade(self, symbol: str, trade: Trade) -> TriggerEvent:
+        if self._trig_on_trade:
+            return TriggerEvent(self.time(), 'trade', symbol, trade)
+        return None
+
+    def _update_ctx_by_quote(self, symbol: str, quote: Quote) -> TriggerEvent:
+        # - TODO: here we can apply throttlings or filters
+        #  - let's say we can skip quotes if bid & ask is not changed
+        #  - or we can collect let's say N quotes before sending to strategy
+        if self._trig_on_quote:
+            return TriggerEvent(self.time(), 'quote', symbol, quote)
+        return None
+
+    def _update_ctx_by_exchange_event(self, symbol: str, event: EventFromExchange) -> TriggerEvent:
+        if self._trig_on_time and event.type == 'time':
+            return TriggerEvent(self.time(), 'time', symbol, event)
+        return None
+
+    def ohlc(self, instrument: str | Instrument, timeframe: str) -> OHLCV:
+        return self._ohlcvs.get_ohlcv(instrument if isinstance(instrument, str) else instrument.symbol, timeframe)
 
     def _create_synced_position(self, instrument: Instrument):
         symb = instrument.symbol
@@ -294,19 +442,20 @@ class StrategyContext:
             raise ValueError("Context is already started !")
 
         # - get actual positions from exchange
+        _symbols = []
         for instr in self.instruments:
             # process instruments - need to find convertors etc
+            self._ohlcvs.init_ohlcv(instr.symbol)
             self._create_synced_position(instr)
-        
-        symbols = [i.symbol for i in self.instruments]
+            _symbols.append(instr.symbol)
 
         # - create incoming market data processing
         self._t_mdata_processor = AsyncioThreadRunner(self.data_provider.get_communication_channel())
-        self._t_mdata_processor.add(self._market_data_processor)
+        self._t_mdata_processor.add(self._process_incoming_market_data)
 
         # - subscribe to market data
-        logger.info(f"Subscribing to {self._market_data_subcription_type} updates using {self._market_data_subcription_params} for \n\t{symbols} ")
-        self._t_mdata_subscriber = self.data_provider.subscribe(self._market_data_subcription_type, symbols, **self._market_data_subcription_params)
+        logger.info(f"Subscribing to {self._market_data_subcription_type} updates using {self._market_data_subcription_params} for \n\t{_symbols} ")
+        self._t_mdata_subscriber = self.data_provider.subscribe(self._market_data_subcription_type, _symbols, **self._market_data_subcription_params)
 
         # - initialize strategy
         if not self._is_initilized:
@@ -336,3 +485,6 @@ class StrategyContext:
 
     def time(self) -> dt_64:
         return self.exchange_service.time()
+
+    def quote(self, symbol: str) -> Optional[Quote]:
+        return self.exchange_service.get_quote(symbol)

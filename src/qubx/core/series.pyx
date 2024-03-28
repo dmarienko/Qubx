@@ -644,6 +644,7 @@ cdef class OHLCV(TimeSeries):
         self.low = TimeSeries('low', timeframe, max_series_length)
         self.close = TimeSeries('close', timeframe, max_series_length)
         self.volume = TimeSeries('volume', timeframe, max_series_length)
+        self.bvolume = TimeSeries('bvolume', timeframe, max_series_length)
 
     cpdef object append_data(self, 
                     np.ndarray times, 
@@ -652,6 +653,7 @@ cdef class OHLCV(TimeSeries):
                     np.ndarray lows,
                     np.ndarray closes,
                     np.ndarray volumes,
+                    np.ndarray bvolumes
                 ):
         cdef long long t
         cdef short _conv
@@ -660,6 +662,7 @@ cdef class OHLCV(TimeSeries):
 
         # - check if volume data presented
         _has_vol = len(volumes) > 0
+        _has_bvol = len(bvolumes) > 0
 
         # - check if need to convert time to nanosec
         _conv = 0
@@ -684,7 +687,9 @@ cdef class OHLCV(TimeSeries):
             else:
                 t = times[i].item()
 
-            b = Bar(t, opens[i], highs[i], lows[i], closes[i], volumes[i] if _has_vol else 0)
+            b = Bar(t, opens[i], highs[i], lows[i], closes[i], 
+                    volumes[i] if _has_vol else 0, 
+                    bvolumes[i] if _has_bvol else 0)
             self._add_new_item(t, b)
 
             if _upd_inds:
@@ -700,6 +705,7 @@ cdef class OHLCV(TimeSeries):
         self.low._add_new_item(time, value.low)
         self.close._add_new_item(time, value.close)
         self.volume._add_new_item(time, value.volume)
+        self.bvolume._add_new_item(time, value.bought_volume)
         self._is_new_item = True
 
     def _update_last_item(self, long long time, Bar value):
@@ -710,20 +716,21 @@ cdef class OHLCV(TimeSeries):
         self.low._update_last_item(time, value.low)
         self.close._update_last_item(time, value.close)
         self.volume._update_last_item(time, value.volume)
+        self.bvolume._update_last_item(time, value.bought_volume)
         self._is_new_item = False
 
-    cpdef short update(self, long long time, double price, double volume=0.0):
+    cpdef short update(self, long long time, double price, double volume=0.0, double bvolume=0.0):
         cdef Bar b
         bar_start_time = floor_t64(time, self.timeframe)
 
         if not self.times:
-            self._add_new_item(bar_start_time, Bar(bar_start_time, price, price, price, price, volume))
+            self._add_new_item(bar_start_time, Bar(bar_start_time, price, price, price, price, volume, bvolume))
 
             # Here we disable first notification because first item may be incomplete
             self._is_new_item = False
 
         elif time - self.times[0] >= self.timeframe:
-            b = Bar(bar_start_time, price, price, price, price, volume)
+            b = Bar(bar_start_time, price, price, price, price, volume, bvolume)
 
             # - add new item
             self._add_new_item(bar_start_time, b)
@@ -733,9 +740,44 @@ cdef class OHLCV(TimeSeries):
 
             return self._is_new_item
         else:
-            self._update_last_item(bar_start_time, self[0].update(price, volume))
+            self._update_last_item(bar_start_time, self[0].update(price, volume, bvolume))
 
         # - update indicators by new data
+        self._update_indicators(bar_start_time, self[0], False)
+
+        return self._is_new_item
+
+    cpdef short update_by_bar(self, long long time, double open, double high, double low, double close, double vol_incr=0.0, double b_vol_incr=0.0):
+        cdef Bar b
+        cdef Bar l_bar
+        bar_start_time = floor_t64(time, self.timeframe)
+
+        if not self.times:
+            self._add_new_item(bar_start_time, Bar(bar_start_time, open, high, low, close, vol_incr, b_vol_incr))
+
+            # Here we disable first notification because first item may be incomplete
+            self._is_new_item = False
+
+        elif time - self.times[0] >= self.timeframe:
+            b = Bar(bar_start_time, open, high, low, close, vol_incr, b_vol_incr)
+
+            # - add new item
+            self._add_new_item(bar_start_time, b)
+
+            # - update indicators
+            self._update_indicators(bar_start_time, b, True)
+
+            return self._is_new_item
+        else:
+            l_bar = self[0]
+            l_bar.high = max(high, l_bar.high)
+            l_bar.low = min(low, l_bar.low)
+            l_bar.close = close
+            l_bar.volume += vol_incr
+            l_bar.bought_volume += b_vol_incr
+            self._update_last_item(bar_start_time, l_bar)
+
+        # # - update indicators by new data
         self._update_indicators(bar_start_time, self[0], False)
 
         return self._is_new_item
@@ -764,7 +806,8 @@ cdef class OHLCV(TimeSeries):
             'high': self.high.to_series(),
             'low': self.low.to_series(),
             'close': self.close.to_series(),
-            'volume': self.volume.to_series(),
+            'volume': self.volume.to_series(),         # total volume
+            'bought_volume': self.bvolume.to_series(), # bought volume
         })
         df.index.name = 'timestamp'
         return df

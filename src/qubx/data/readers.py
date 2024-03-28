@@ -212,12 +212,16 @@ class OhlcvDataProcessor(DataProcessor):
         self._low_idx = _find_column_index_in_list(fieldnames, 'low')
         self._close_idx = _find_column_index_in_list(fieldnames, 'close')
         self._volume_idx = None
+        self._b_volume_idx = None
         self._timeframe = None
 
         try:
-            self._volume_idx = _find_column_index_in_list(fieldnames, 'volume', 'vol')
-        except:
-            pass
+            self._volume_idx = _find_column_index_in_list(fieldnames, 'quote_volume', 'volume', 'vol')
+        except: pass
+
+        try:
+            self._b_volume_idx = _find_column_index_in_list(fieldnames, 'taker_buy_volume', 'taker_buy_quote_volume', 'buy_volume')
+        except: pass
 
         self.ohlc = None
 
@@ -231,7 +235,8 @@ class OhlcvDataProcessor(DataProcessor):
         self.ohlc.append_data(
             data[self._time_idx],
             data[self._open_idx], data[self._high_idx], data[self._low_idx], data[self._close_idx], 
-            data[self._volume_idx] if self._volume_idx else []
+            data[self._volume_idx] if self._volume_idx else [],
+            data[self._b_volume_idx] if self._b_volume_idx else []
         )
         return None
 
@@ -253,12 +258,16 @@ class OhlcvPandasDataProcessor(DataProcessor):
         self._low_idx = _find_column_index_in_list(fieldnames, 'low')
         self._close_idx = _find_column_index_in_list(fieldnames, 'close')
         self._volume_idx = None
+        self._b_volume_idx = None
         self._timeframe = None
 
         try:
-            self._volume_idx = _find_column_index_in_list(fieldnames, 'volume', 'vol')
-        except:
-            pass
+            self._volume_idx = _find_column_index_in_list(fieldnames, 'quote_volume', 'volume', 'vol')
+        except: pass
+
+        try:
+            self._b_volume_idx = _find_column_index_in_list(fieldnames, 'taker_buy_volume', 'taker_buy_quote_volume', 'buy_volume')
+        except: pass
 
         # self.ohlc = pd.DataFrame()
 
@@ -268,6 +277,7 @@ class OhlcvPandasDataProcessor(DataProcessor):
         self._low = np.array([])
         self._close = np.array([])
         self._volume = np.array([])
+        self._bvolume = np.array([])
 
     def process_data(self, data: list) -> Optional[Iterable]:
         # p = pd.DataFrame({
@@ -286,6 +296,8 @@ class OhlcvPandasDataProcessor(DataProcessor):
         self._close = np.concatenate((self._close, data[self._close_idx]))
         if self._volume_idx:
             self._volume = np.concatenate((self._volume, data[self._volume_idx]))
+        if self._b_volume_idx:
+            self._bvolume = np.concatenate((self._bvolume, data[self._b_volume_idx]))
 
         return None
 
@@ -299,7 +311,8 @@ class OhlcvPandasDataProcessor(DataProcessor):
                 'high': self._high, 
                 'low': self._low, 
                 'close': self._close, 
-                'volume': self._volume if self._volume_idx else []
+                'volume': self._volume if self._volume_idx else [],
+                'taker_buy_quote_volume': self._bvolume if self._b_volume_idx else []
             },
             index = self._time
         ).sort_index()

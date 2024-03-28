@@ -65,8 +65,11 @@ cdef class OHLCV(TimeSeries):
     cdef public TimeSeries low
     cdef public TimeSeries close
     cdef public TimeSeries volume
+    cdef public TimeSeries bvolume
 
-    cpdef short update(OHLCV self, long long time, double price, double volume=*)
+    cpdef short update(OHLCV self, long long time, double price, double volume=*, double bvolume=*)
+
+    cpdef short update_by_bar(OHLCV self, long long time, double open, double high, double low, double close, double vol_incr=*, double b_vol_incr=*)
 
     cpdef _update_indicators(OHLCV self, long long time, object value, short new_item_started)
 
@@ -77,7 +80,8 @@ cdef class OHLCV(TimeSeries):
         np.ndarray highs, 
         np.ndarray lows,
         np.ndarray closes, 
-        np.ndarray volumes
+        np.ndarray volumes,
+        np.ndarray bvolumes
     )
 
 
@@ -91,9 +95,9 @@ cdef class Trade:
 
 cdef class Quote:
     cdef public long long time
-    cdef public bid
-    cdef public ask
-    cdef public bid_size
-    cdef public ask_size
+    cdef public double bid
+    cdef public double ask
+    cdef public double bid_size
+    cdef public double ask_size
 
     cpdef double mid_price(Quote self)
