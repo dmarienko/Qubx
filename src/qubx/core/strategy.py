@@ -130,10 +130,11 @@ class StrategyContext:
     _t_mdata_processor: Optional[AsyncioThreadRunner] = None
     _t_mdata_subscriber: Optional[AsyncioThreadRunner] = None
 
-    _market_data_subcription_type: str = None
+    _market_data_subcription_type: Optional[str] = None
     _market_data_subcription_params: dict = dict()
     _trig_interval_in_bar_nsec: int
     _trigger: str
+    _is_initilized: bool = False
 
 
     def __init__(self, 
@@ -168,21 +169,22 @@ class StrategyContext:
         self.exchange_service = exchange_service
         self.data_provider = data_provider
         self.config = config
-        self.base_currency = base_currency
-        self.fees_spec = fees_spec
         self.instruments = instruments
         self.positions = {}
- 
-        # process trigger configuration
-        self._check_trigger_config(trigger)
 
-        # process market data configuration
-        self._check_market_data_config(md_subscription)
+        self.base_currency = base_currency
+        self.fees_spec = fees_spec
+ 
+        # - process trigger configuration
+        self._check_how_to_trigger_strategy(trigger)
+
+        # - process market data configuration
+        self._check_how_to_listen_to_market_data(md_subscription)
 
         # - states 
         self._is_initilized = False
 
-    def _check_market_data_config(self, md_config: dict):
+    def _check_how_to_listen_to_market_data(self, md_config: dict):
         self._market_data_subcription_type = _dict_with_exc(md_config, 'type').lower()
         match self._market_data_subcription_type:
             case 'ohlc':
@@ -190,15 +192,16 @@ class StrategyContext:
                     'timeframe': _dict_with_exc(md_config, 'timeframe'),
                     'nback': md_config.get('nback', 1), 
                 }
-                pass
             case 'trade' | 'trades' | 'tas':
-                pass
+                raise ValueError(f"TODO: TRADES MD - CHECK IT !")
             case 'quote' | 'quotes':
-                pass
+                raise ValueError(f"TODO: QUOTES MD - CHECK IT !")
             case 'ob' | 'orderbook':
-                pass
+                raise ValueError(f"TODO: ORDERBOOK MD - CHECK IT !")
+            case _:
+                raise ValueError(f"{self._market_data_subcription_type} is not a valid value for market data subcription type !!!")
 
-    def _check_trigger_config(self, trigger_config: dict):
+    def _check_how_to_trigger_strategy(self, trigger_config: dict):
         # - check how it's configured to be triggered
         self._trig_interval_in_bar_nsec = 0
         self._trigger = _dict_with_exc(trigger_config, 'type').lower()
