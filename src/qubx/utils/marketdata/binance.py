@@ -1,11 +1,11 @@
+from typing import Any, Callable, Dict, List
 from os import unlink
 import numpy as np
 import pandas as pd
 from os.path import exists, join, split, basename
 from tqdm.notebook import tqdm
-from typing import Any, Callable, Dict, List
-from binance.client import Client, HistoricalKlinesType, BinanceAPIException
 import requests
+from collections import defaultdict
 
 from qubx import logger
 from qubx.utils.misc import makedirs, get_local_qubx_folder
@@ -29,6 +29,8 @@ def get_binance_symbol_info_for_type(market_types: List[str]) -> Dict[str, Dict[
     
     :param market_type: SPOT, FUTURES (UM) or COINSFUTURES (CM)
     """
+    from binance.client import Client
+
     client = Client()
     infos = {}
     for market_type in (market_types if not isinstance(market_types, str) else [market_types]):
@@ -199,7 +201,9 @@ def update_binance_data_storage(coins=[], quoted_in=['USDT'], market='futures', 
     Fetch data from the Binance data storage and save it as local csv files
     TODO: csv is just temporary solution and we need to keep data in DB
     """
+    from binance.client import Client, HistoricalKlinesType
     info = get_binance_symbol_info_for_type(['UM', 'CM', 'SPOT'])
+
     if market.lower() == 'futures':
         for sy in info['binance.um']['symbols']:
             if sy['quoteAsset'] in quoted_in:
@@ -236,3 +240,39 @@ def update_binance_data_storage(coins=[], quoted_in=['USDT'], market='futures', 
                     # z_del(path, dbname=_DEFAULT_MARKET_DATA_DB)
                     # z_save(path, data, dbname=_DEFAULT_MARKET_DATA_DB)
                     del data
+
+
+def load_binance_markets_info() -> Tuple[pd.DataFrame, Dict[str, pd.DataFrame]]:
+    """
+    Load binance market info using SPA (non-documented)
+    """
+    resp = requests.get('https://www.binance.com/bapi/asset/v2/public/asset-service/product/get-products?includeEtf=false')
+    data = resp.json()
+
+    market_caps = {}
+    m_tags = defaultdict(list)
+    for r in data['data']:
+        symb = r['s']
+        market_caps[symb] = {
+            'Symbol': symb, 
+            'MarketCap': float(r['cs']) * float(r['c']) / 1_000_000, 
+            'Coin': r['b'], 
+            'Quoted': r['q'], 
+            'Name': r['an'], 
+            'Tags': r['tags'], 
+        }
+        for t in r['tags']:
+            m_tags[t].append({
+                'Symbol': symb, 
+                'MarketCap': float(r['cs']) * float(r['c']) / 1_000_000, 
+                'Coin': r['b'], 
+                'Quoted': r['q'], 
+                'Name': r['an']
+        })
+    mktcap =  pd.DataFrame.from_dict(market_caps, orient='index').sort_values('MarketCap', ascending=False)
+
+    markets_tags = {}
+    for t, m in m_tags.items():
+        markets_tags[t.lower() if t else 'none'] = pd.DataFrame.from_records(m).sort_values('MarketCap', ascending=False)
+
+    return mktcap, markets_tags

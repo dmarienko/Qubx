@@ -404,3 +404,83 @@ def bands_signals(
         s1, s2 = s0, s1
 
     return pd.DataFrame.from_dict(signals, orient='index', columns=px.columns)
+
+
+def ohlc_resample(df: pd.DataFrame | pd.Series | dict, new_freq: str = '1H', vmpt: bool = False, resample_tz=None,
+                  non_ohlc_columns_aggregator='sum') -> pd.DataFrame | dict:
+    """
+    Resample OHLCV/tick series to new timeframe.
+
+    Example:
+    >>> d = pd.DataFrame({
+    >>>          'open' : np.random.randn(30),
+    >>>          'high' : np.random.randn(30),
+    >>>          'low' : np.random.randn(30),
+    >>>          'close' : np.random.randn(30)
+    >>>         }, index=pd.date_range('2000-01-01 00:00', freq='5Min', periods=30))
+    >>>
+    >>> ohlc_resample(d, '15Min')
+    >>>
+    >>> # if we need to resample quotes
+    >>> from qube.datasource import DataSource
+    >>> with DataSource('kdb::dukas') as ds:
+    >>>     quotes = ds.load_data(['EURUSD', 'GBPUSD'], '2018-05-07', '2018-05-11')
+    >>> ohlc_resample(quotes, '1Min', vmpt=True)
+
+    :param df: input ohlc or bid/ask quotes or dict
+    :param new_freq: how to resample rule (see pandas.DataFrame::resample)
+    :param vmpt: use volume weighted price for quotes (if false midprice will be used)
+    :param resample_tz: timezone for resample. For example, to create daily bars in the EET timezone
+    :param non_ohlc_columns_aggregator: how aggregate unknown columns
+    :return: resampled ohlc / dict
+    """
+    def __mx_rsmpl(d, freq: str, is_vmpt: bool = False, resample_tz=None) -> pd.DataFrame:
+        _cols = d.columns
+        _source_tz = d.index.tz
+
+        # if we have bid/ask frame
+        if 'ask' in _cols and 'bid' in _cols:
+            # if sizes are presented we can calc vmpt if needed
+            if is_vmpt and 'askvol' in _cols and 'bidvol' in _cols:
+                mp = (d.ask * d.bidvol + d.bid * d.askvol) / (d.askvol + d.bidvol)
+                return mp.resample(freq).agg('ohlc')
+
+            # if there is only asks and bids and we don't need vmpt
+            result = _tz_convert(d[['ask', 'bid']].mean(axis=1), resample_tz, _source_tz)
+            result = result.resample(freq).agg('ohlc')
+            # Convert timezone to back if it changed
+            return result if not resample_tz else result.tz_convert(_source_tz)
+
+        # for OHLC case or just simple series
+        if all([i in _cols for i in ['open', 'high', 'low', 'close']]) or isinstance(d, pd.Series):
+            ohlc_rules = {
+                'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last',
+                'ask_vol': 'sum', 'bid_vol': 'sum',
+                'volume': 'sum'
+            }
+            result = _tz_convert(d, resample_tz, _source_tz)
+            # result = result.resample(freq).apply(dict(i for i in ohlc_rules.items() if i[0] in d.columns)).dropna()
+            #  25-Oct-2022: we allow other columns to be included in transformation (just use last value)
+            result = result.resample(freq).apply({
+                c: ohlc_rules.get(c, non_ohlc_columns_aggregator) for c in d.columns
+            }).dropna()
+
+            # Convert timezone to back if it changed
+            return result if not resample_tz else result.tz_convert(_source_tz)
+
+        raise ValueError("Can't recognize structure of input data !")
+
+    def _tz_convert(df, tz, source_tz):
+        if tz:
+            if not source_tz:
+                df = df.tz_localize('GMT')
+            return df.tz_convert(tz)
+        else:
+            return df
+
+    if isinstance(df, (pd.DataFrame, pd.Series)):
+        return __mx_rsmpl(df, new_freq, vmpt, resample_tz)
+    elif isinstance(df, dict):
+        return {k: __mx_rsmpl(v, new_freq, vmpt, resample_tz) for k, v in df.items()}
+    else:
+        raise ValueError('Type [%s] is not supported in ohlc_resample' % str(type(df)))
