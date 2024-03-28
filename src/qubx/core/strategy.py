@@ -219,6 +219,7 @@ class StrategyContext:
     _market_data_subcription_params: dict = dict()
 
     _trig_interval_in_bar_nsec: int
+    _trig_bar_freq_nsec: int
     _trig_on_bar: bool = False
     _trig_on_time: bool = False
     _trig_on_quote: bool = False
@@ -318,6 +319,7 @@ class StrategyContext:
                 # for negative delay - trigger strategy when time is closer to bar's closing time more than this interval
                 else:
                     self._trig_interval_in_bar_nsec = (_bar_timeframe + _inside_bar_delay).asm8.item()
+                self._trig_bar_freq_nsec = _bar_timeframe.asm8.item()
 
             case 'time': 
                 self._trig_on_time = True
@@ -387,7 +389,9 @@ class StrategyContext:
     def _update_ctx_by_bar(self, symbol: str, bar: Bar) -> TriggerEvent:
         self._ohlcvs.update_by_bar(symbol, bar)
         if self._trig_on_bar:
-            return TriggerEvent(self.time(), 'bar', symbol, bar)
+            t = self.exchange_service.time().item()
+            if t % self._trig_bar_freq_nsec >= self._trig_interval_in_bar_nsec:
+                return TriggerEvent(self.time(), 'bar', symbol, bar)
         return None
 
     def _update_ctx_by_trade(self, symbol: str, trade: Trade) -> TriggerEvent:
