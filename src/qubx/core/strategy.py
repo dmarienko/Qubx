@@ -225,6 +225,7 @@ class StrategyContext:
     _trig_on_quote: bool = False
     _trig_on_trade: bool = False
     _trig_on_book: bool = False
+    _current_bar_trigger_processed: bool = False
     _is_initilized: bool = False
 
     _ohlcvs: OhlcvsHolder
@@ -390,8 +391,14 @@ class StrategyContext:
         self._ohlcvs.update_by_bar(symbol, bar)
         if self._trig_on_bar:
             t = self.exchange_service.time().item()
-            if t % self._trig_bar_freq_nsec >= self._trig_interval_in_bar_nsec:
-                return TriggerEvent(self.time(), 'bar', symbol, bar)
+            _time_to_trigger = t % self._trig_bar_freq_nsec >= self._trig_interval_in_bar_nsec
+            if _time_to_trigger: 
+                # we want to trigger only first one - not every
+                if not self._current_bar_trigger_processed:
+                    self._current_bar_trigger_processed = True
+                    return TriggerEvent(self.time(), 'bar', symbol, bar)
+            else:
+                self._current_bar_trigger_processed = False
         return None
 
     def _update_ctx_by_trade(self, symbol: str, trade: Trade) -> TriggerEvent:
@@ -463,8 +470,13 @@ class StrategyContext:
 
         # - initialize strategy
         if not self._is_initilized:
-            self.strategy.on_start(self)
-            self._is_initilized = True
+            try:
+                self.strategy.on_start(self)
+                self._is_initilized = True
+            except Exception as strat_error:
+                logger.error(f"Strategy {self.strategy.__class__.__name__} raised an exception in on_start: {strat_error}")
+                logger.error(traceback.format_exc())
+                return
 
         self._t_mdata_processor.start()
         logger.info("> Data processor started")
@@ -478,6 +490,11 @@ class StrategyContext:
             self._t_mdata_processor.stop()
             self._t_mdata_processor = None
             self._t_mdata_subscriber = None
+            try:
+                self.strategy.on_stop(self)
+            except Exception as strat_error:
+                logger.error(f"Strategy {self.strategy.__class__.__name__} raised an exception in on_stop: {strat_error}")
+                logger.error(traceback.format_exc())
 
     def populate_parameters_to_strategy(self, strategy: IStrategy, **kwargs):
         for k,v in kwargs.items():
