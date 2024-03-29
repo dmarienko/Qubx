@@ -229,6 +229,8 @@ class StrategyContext:
     _is_initilized: bool = False
 
     _ohlcvs: OhlcvsHolder
+    capital: float
+    leverage: float
 
     def __init__(self, 
             # - strategy with parameters
@@ -242,11 +244,11 @@ class StrategyContext:
             # - - - - - - - - - - - - - - - - - - - - -
 
             # - need account class for holding all this data ?
-            fees_spec: str, base_currency: str,
-            # - - - - - - - - - - - - - - - - - - - - -
+            capital: float, fees_spec: str, base_currency: str, leverage: float = 1.0,
 
+            # - - - - - - - - - - - - - - - - - - - - -
             # - context's parameters - - - - - - - - - -
-            trigger: Dict[str, Any],
+            trigger: Dict[str, Any] = dict(type='ohlc', timeframe='1Min', nback=60),
             md_subscription: Dict[str,Any] = dict(type='ohlc', timeframe='1Min'),
             # - - - - - - - - - - - - - - - - - - - - -
 
@@ -265,8 +267,11 @@ class StrategyContext:
         self.instruments = instruments
         self.positions = {}
 
+        # - need think about it
         self.base_currency = base_currency
         self.fees_spec = fees_spec
+        self.capital = capital
+        self.leverage = min(leverage, 1)
  
         # - process trigger configuration
         self._check_how_to_trigger_strategy(trigger)
@@ -448,7 +453,7 @@ class StrategyContext:
             raise ValueError(f"Can't find fees calculator using given schema: '{self.fees_spec}' for {instrument}!")
         return tcc 
 
-    def start(self):
+    def start(self, join=False):
         if self._t_mdata_processor:
             raise ValueError("Context is already started !")
 
@@ -483,6 +488,8 @@ class StrategyContext:
 
         self._t_mdata_subscriber.start()
         logger.info("> Market data subscribtions started")
+        if join:
+            self._t_mdata_subscriber.join()
 
     def stop(self):
         if self._t_mdata_subscriber:
@@ -509,3 +516,8 @@ class StrategyContext:
 
     def quote(self, symbol: str) -> Optional[Quote]:
         return self.exchange_service.get_quote(symbol)
+
+    def get_capital(self) -> float:
+        # TODO: here we need to get actual capital from account 
+        # return min(self.capital, self.exchange_service.get_available_capital())
+        return self.capital * self.leverage
