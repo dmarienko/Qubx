@@ -3,7 +3,7 @@
 """
 from collections import defaultdict
 import traceback
-from typing import Any, Callable, Dict, List, Optional, Union, Self
+from typing import Any, Callable, Dict, List, Optional, Union
 import numpy as np
 from dataclasses import dataclass
 from enum import Enum
