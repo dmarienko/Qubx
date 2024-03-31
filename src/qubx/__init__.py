@@ -1,5 +1,5 @@
-from qubx.utils import set_mpl_theme, runtime_env, install_pyx_recompiler_for_dev
-install_pyx_recompiler_for_dev()
+from qubx.utils import set_mpl_theme, runtime_env
+from qubx.utils.misc import install_pyx_recompiler_for_dev
 
 from loguru import logger
 import os, sys, stackprinter
@@ -52,21 +52,25 @@ if runtime_env() in ['notebook', 'shell']:
 
         @line_magic
         def qubxd(self, line: str):
-            self.qubx_setup('dark')
+            self.qubx_setup('dark' + ' ' + line)
 
         @line_magic
         def qubxl(self, line: str):
-            self.qubx_setup('light')
+            self.qubx_setup('light' + ' ' + line)
 
         @line_magic
         def qubx_setup(self, line: str):
             """
-            QUBE framework initialization
+            QUBX framework initialization
             """
             import os
+            args = [x.strip() for x in line.split(' ')]
+            
+            # setup cython dev hooks - only if 'dev' is passed as argument
+            if line and 'dev' in args: 
+                install_pyx_recompiler_for_dev()
 
             tpl_path = os.path.join(os.path.dirname(__file__), "_nb_magic.py")
-            # print("TPL:", tpl_path)
             with open(tpl_path, 'r', encoding="utf8") as myfile:
                 s = myfile.read()
 

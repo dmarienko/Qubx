@@ -11,7 +11,7 @@ def version() -> str:
     version = 'Dev'
     try: 
         import importlib_metadata
-        version = importlib_metadata.version('qube2')
+        version = importlib_metadata.version('qubx')
     except:
         pass
 
@@ -20,10 +20,16 @@ def version() -> str:
 
 from ._pyxreloader import pyx_install_loader
 
+
 def install_pyx_recompiler_for_dev():
-    if version().lower() == 'dev':
-        print(f" >  [{green('dev')}] {red('installed cython rebuilding hook')}")
-        pyx_install_loader(['qubx.core', 'qubx.ta', 'qubx.data', 'qubx.strategies'])
+    # if version().lower() == 'dev':
+    print(f" >  [{green('dev')}] {red('installing cython rebuilding hook')}")
+    pyx_install_loader([
+        'qubx.core', 
+        'qubx.ta', 
+        'qubx.data', 
+        'qubx.strategies'
+    ])
 
 
 def runtime_env():
