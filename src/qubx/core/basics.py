@@ -3,6 +3,12 @@ from typing import Callable, Dict, List, Optional, Union
 import numpy as np
 import math
 from dataclasses import dataclass, field
+
+import asyncio
+from threading import Thread, Event, Lock
+# from multiprocessing import Queue #as Queue
+from queue import Queue
+
 from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
 
@@ -240,3 +246,52 @@ class Position:
         _mkt_price = (self._prc_formatter % self.last_update_price) if self.last_update_price else "---"
         return self._formatter % (Position._t2s(self.last_update_time), self.quantity, self.position_avg_price_funds,self.pnl, _mkt_price,  self.market_value_funds)
     
+
+class CtrlChannel:
+    """
+    Controlled data communication channel
+    """
+    control: Event
+    queue: Queue     # we need something like disruptor here (Queue is temporary)
+    name: str
+    lock: Lock
+
+    def __init__(self, name: str):
+        self.name = name
+        self.control = Event()
+        self.queue = Queue()
+        self.lock = Lock()
+
+    def stop(self):
+        if self.control.is_set():
+            self.control.clear()
+
+    def start(self):
+        self.control.set()
+
+
+class AsyncioThreadRunner(Thread):
+    channel: Optional[CtrlChannel]
+
+    def __init__(self, channel: Optional[CtrlChannel]):
+        self.result = None
+        self.channel = channel
+        self.loops = []
+        super().__init__()
+
+    def add(self, func, *args, **kwargs) -> 'AsyncioThreadRunner':
+        self.loops.append(func(self.channel, *args, **kwargs))
+        return self
+
+    async def run_loop(self):
+        self.result = await asyncio.gather(*self.loops)
+
+    def run(self):
+        if self.channel:
+            self.channel.control.set()
+        asyncio.run(self.run_loop())
+
+    def stop(self):
+        if self.channel:
+            self.channel.control.clear()
+            self.channel.queue.put((None, None)) # send sentinel

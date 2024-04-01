@@ -8,16 +8,11 @@ import numpy as np
 from dataclasses import dataclass
 from enum import Enum
 
-import asyncio
-from threading import Thread, Event, Lock
-from queue import Queue
-
 import pandas as pd
-# from multiprocessing import Queue #as Queue
 
 from qubx import lookup, logger
 from qubx.core.lookups import InstrumentsLookup
-from qubx.core.basics import Instrument, Position, Signal, TransactionCostsCalculator, dt_64, td_64
+from qubx.core.basics import Instrument, Position, Signal, TransactionCostsCalculator, dt_64, td_64, AsyncioThreadRunner, CtrlChannel
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
 from qubx.utils.time import convert_tf_str_td64
 
@@ -35,56 +30,6 @@ class TriggerEvent:
     type: str
     instrument: Optional[Instrument]
     data: Optional[Any] 
-
-
-class CtrlChannel:
-    """
-    Controlled data communication channel
-    """
-    control: Event
-    queue: Queue     # we need something like disruptor here (Queue is temporary)
-    name: str
-    lock: Lock
-
-    def __init__(self, name: str):
-        self.name = name
-        self.control = Event()
-        self.queue = Queue()
-        self.lock = Lock()
-
-    def stop(self):
-        if self.control.is_set():
-            self.control.clear()
-
-    def start(self):
-        self.control.set()
-
-
-class AsyncioThreadRunner(Thread):
-    channel: Optional[CtrlChannel]
-
-    def __init__(self, channel: Optional[CtrlChannel]):
-        self.result = None
-        self.channel = channel
-        self.loops = []
-        super().__init__()
-
-    def add(self, func, *args, **kwargs) -> 'AsyncioThreadRunner':
-        self.loops.append(func(self.channel, *args, **kwargs))
-        return self
-
-    async def run_loop(self):
-        self.result = await asyncio.gather(*self.loops)
-
-    def run(self):
-        if self.channel:
-            self.channel.control.set()
-        asyncio.run(self.run_loop())
-
-    def stop(self):
-        if self.channel:
-            self.channel.control.clear()
-            self.channel.queue.put((None, None)) # send sentinel
 
 
 class IDataProvider:
