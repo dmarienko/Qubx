@@ -103,18 +103,18 @@ cxp.exchanges.append('binanceqv')
 
 
 class CCXTConnector(IDataProvider, IExchangeServiceProvider):
-    exch: Exchange
+    exchange: Exchange
     subsriptions: Dict[str, AsyncioThreadRunner]
     _ch_market_data: CtrlChannel
     _last_quotes: Dict[str, Optional[Quote]]
 
-    def __init__(self, exchange: str):
+    def __init__(self, exchange_id: str):
         super().__init__()
-        exchange = exchange.lower()
-        exch = _aliases.get(exchange, exchange)
+        exchange_id = exchange_id.lower()
+        exch = _aliases.get(exchange_id, exchange_id)
         if exch not in cxp.exchanges:
-            raise ValueError(f"Exchange {exchange} -> {exch} is not supported by CCXT!")
-        self.exch = getattr(cxp, exch)()
+            raise ValueError(f"Exchange {exchange_id} -> {exch} is not supported by CCXT!")
+        self.exchange = getattr(cxp, exch)()
         self.subsriptions: Dict[str, AsyncioThreadRunner] = {}
         self._ch_market_data = CtrlChannel(exch + '.marketdata')
         self._last_quotes = defaultdict(lambda: None)
@@ -161,14 +161,14 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
     def _fetch_ohlcs(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
         assert nbarsback > 1
         start = ((pd.Timestamp('now', tz='UTC') - nbarsback * pd.Timedelta(timeframe)).asm8.item()//1000000) if nbarsback > 1 else None 
-        ohlcv = self.exch.fetch_ohlcv(symbol, timeframe, since=start, limit=nbarsback + 1)
+        ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, since=start, limit=nbarsback + 1)
         return ohlcv
 
     async def _fetch_ohlcs_a(self, symbol: str, timeframe: str, nbarsback: int):
         assert nbarsback > 1
         start = ((pd.Timestamp('now', tz='UTC') - nbarsback * pd.Timedelta(timeframe)).asm8.item()//1000000) if nbarsback > 1 else None 
         print("START fetching ...")
-        return await self.exch.fetch_ohlcv(symbol, timeframe, since=start, limit=nbarsback + 1)
+        return await self.exchange.fetch_ohlcv(symbol, timeframe, since=start, limit=nbarsback + 1)
 
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> Optional[List[Bar]]:
         assert nbarsback > 1
@@ -186,13 +186,13 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
         while channel.control.is_set():
             try:
-                ohlcv = await self.exch.watch_ohlcv(symbol, timeframe)
+                ohlcv = await self.exchange.watch_ohlcv(symbol, timeframe)
                 for oh in ohlcv:
                     channel.queue.put((symbol, Bar(oh[0] * 1000000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
 
             except Exception as e:
                 logger.error(str(e))
-                await self.exch.close()
+                await self.exchange.close()
                 raise e
 
     def sync_position(self, position: Position) -> Position:
@@ -203,10 +203,10 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         """
         Returns current time in nanoseconds
         """
-        return np.datetime64(self.exch.microseconds() * 1000, 'ns')
+        return np.datetime64(self.exchange.microseconds() * 1000, 'ns')
 
     def get_name(self) -> str:
-        return self.exch.name 
+        return self.exchange.name 
 
     def get_quote(self, symbol: str) -> Optional[Quote]:
         return self._last_quotes[symbol]
@@ -216,7 +216,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
             _t = re.match('(\d+)(\w+)', timeframe)
             timeframe = f"{_t[1]}{_t[2][0].lower()}" if _t and len(_t.groups()) > 1 else timeframe
 
-        tframe = self.exch.find_timeframe(timeframe)
+        tframe = self.exchange.find_timeframe(timeframe)
         if tframe is None:
             raise ValueError(f"timeframe {timeframe} is not supported by {self.get_name()}")
 

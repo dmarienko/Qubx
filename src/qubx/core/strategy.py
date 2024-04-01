@@ -81,7 +81,7 @@ def _dict_with_exc(dct, f):
     return dct[f]
 
 
-class OhlcvsHolder: 
+class CachedMarketDataHolder: 
     _min_timeframe: dt_64
     _last_bar: Dict[str, Optional[Bar]]
     _ohlcvs: Dict[str, Dict[td_64, OHLCV]]
@@ -173,7 +173,7 @@ class StrategyContext:
     _current_bar_trigger_processed: bool = False
     _is_initilized: bool = False
 
-    _ohlcvs: OhlcvsHolder
+    _cache: CachedMarketDataHolder # market data cache
     capital: float
     leverage: float
 
@@ -236,16 +236,16 @@ class StrategyContext:
                     'timeframe': timeframe,
                     'nback': md_config.get('nback', 1), 
                 }
-                self._ohlcvs = OhlcvsHolder(timeframe) 
+                self._cache = CachedMarketDataHolder(timeframe) 
 
             case 'trade' | 'trades' | 'tas':
-                self._ohlcvs = OhlcvsHolder('1Sec') 
+                self._cache = CachedMarketDataHolder('1Sec') 
 
             case 'quote' | 'quotes':
-                self._ohlcvs = OhlcvsHolder('1Sec') 
+                self._cache = CachedMarketDataHolder('1Sec') 
 
             case 'ob' | 'orderbook':
-                self._ohlcvs = OhlcvsHolder('1Sec') 
+                self._cache = CachedMarketDataHolder('1Sec') 
 
             case _:
                 raise ValueError(f"{self._market_data_subcription_type} is not a valid value for market data subcription type !!!")
@@ -338,7 +338,7 @@ class StrategyContext:
         logger.info("Market data processing finished")
 
     def _update_ctx_by_bar(self, symbol: str, bar: Bar) -> TriggerEvent:
-        self._ohlcvs.update_by_bar(symbol, bar)
+        self._cache.update_by_bar(symbol, bar)
         if self._trig_on_bar:
             t = self.exchange_service.time().item()
             _time_to_trigger = t % self._trig_bar_freq_nsec >= self._trig_interval_in_bar_nsec
@@ -370,7 +370,7 @@ class StrategyContext:
         return None
 
     def ohlc(self, instrument: str | Instrument, timeframe: str) -> OHLCV:
-        return self._ohlcvs.get_ohlcv(instrument if isinstance(instrument, str) else instrument.symbol, timeframe)
+        return self._cache.get_ohlcv(instrument if isinstance(instrument, str) else instrument.symbol, timeframe)
 
     def _create_synced_position(self, instrument: Instrument):
         symb = instrument.symbol
@@ -406,7 +406,7 @@ class StrategyContext:
         _symbols = []
         for instr in self.instruments:
             # process instruments - need to find convertors etc
-            self._ohlcvs.init_ohlcv(instr.symbol)
+            self._cache.init_ohlcv(instr.symbol)
             self._create_synced_position(instr)
             _symbols.append(instr.symbol)
 
