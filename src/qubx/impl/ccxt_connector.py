@@ -56,6 +56,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         except RuntimeError:
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
+            print('-> NEW LOOP IS CREATED')
 
     def subscribe(self, subscription_type: str, symbols: List[str], 
                   timeframe:Optional[str]=None, 
@@ -142,9 +143,9 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
     def sync_position(self, position: Position) -> Position:
         # TODO: read positions from exchange !!!
-        b = self._run_async_task(self.exchange.fetch_balance(position.instrument.symbol), wait_result=True)
-        r = self._run_async_task(self.exchange.fetch_position(position.instrument.symbol), wait_result=True)
-        print(r)
+        # b = self._run_async_task(self.exchange.fetch_balance(position.instrument.symbol), wait_result=True)
+        # r = self._run_async_task(self.exchange.fetch_position(position.instrument.symbol), wait_result=True)
+        # print(r)
         return position
 
     def time(self) -> dt_64:
