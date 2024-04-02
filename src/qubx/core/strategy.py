@@ -376,7 +376,7 @@ class StrategyContext:
         for instrument in self.instruments:
             symb = instrument.symbol
 
-            if instrument not in self.positions:
+            if symb not in self.positions:
                 self.positions[symb] = self.exchange_service.sync_position(
                     Position(instrument, self.get_tcc(instrument))
                 )
