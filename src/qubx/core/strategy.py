@@ -40,6 +40,8 @@ class IDataProvider:
     def get_communication_channel(self) -> CtrlChannel:
         return None
 
+    def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> Optional[List[Bar]]:
+        pass
 
 class IExchangeServiceProvider:
     def sync_position(self, position: Position) -> Position:
@@ -158,9 +160,7 @@ class StrategyContext:
     positions: Dict[str, Position]
 
     _t_mdata_processor: Optional[AsyncioThreadRunner] = None
-    _t_mdata_subscriber: Optional[AsyncioThreadRunner] = None
-
-    _market_data_subcription_type: Optional[str] = None
+    _market_data_subcription_type:str = 'unknown'
     _market_data_subcription_params: dict = dict()
 
     _trig_interval_in_bar_nsec: int
@@ -372,25 +372,24 @@ class StrategyContext:
     def ohlc(self, instrument: str | Instrument, timeframe: str) -> OHLCV:
         return self._cache.get_ohlcv(instrument if isinstance(instrument, str) else instrument.symbol, timeframe)
 
-    def _create_synced_position(self, instrument: Instrument):
-        symb = instrument.symbol
+    def _create_synced_position(self):
+        for instrument in self.instruments:
+            symb = instrument.symbol
 
-        if instrument not in self.instruments:
-            self.positions[symb] = self.exchange_service.sync_position(
-                Position(instrument, self.get_tcc(instrument))
-            )
-            self.instruments.append(instrument)
+            if instrument not in self.positions:
+                self.positions[symb] = self.exchange_service.sync_position(
+                    Position(instrument, self.get_tcc(instrument))
+                )
+                self.instruments.append(instrument)
 
-            # check if we need any aux instrument for this one
-            # used to calculate PnL in base currency for crosses like ETH/BTC and USDT funded account
-            aux = lookup.find_aux_instrument_for(instrument, self.base_currency)
-            if aux is not None:
-                instrument._aux_instrument = aux
-                self.instruments.append(aux)
-                aux_pos = Position(aux, self.get_tcc(aux))
-                self.positions[aux.symbol] = self.exchange_service.sync_position(aux_pos)
-        
-        return self.positions.get(symb)
+                # check if we need any aux instrument for this one
+                # used to calculate PnL in base currency for crosses like ETH/BTC and USDT funded account
+                aux = lookup.find_aux_instrument_for(instrument, self.base_currency)
+                if aux is not None:
+                    instrument._aux_instrument = aux
+                    self.instruments.append(aux)
+                    aux_pos = Position(aux, self.get_tcc(aux))
+                    self.positions[aux.symbol] = self.exchange_service.sync_position(aux_pos)
 
     def get_tcc(self, instrument: Instrument) -> TransactionCostsCalculator:
         tcc = lookup.fees.find(self.exchange_service.get_name().lower(), self.fees_spec)
@@ -400,15 +399,17 @@ class StrategyContext:
 
     def start(self, join=False):
         if self._t_mdata_processor:
-            raise ValueError("Context is already started !")
+            raise ValueError("Strategy context is already started !")
 
         # - get actual positions from exchange
         _symbols = []
         for instr in self.instruments:
             # process instruments - need to find convertors etc
             self._cache.init_ohlcv(instr.symbol)
-            self._create_synced_position(instr)
             _symbols.append(instr.symbol)
+
+        # - update actual positions
+        self._create_synced_position()
 
         # - create incoming market data processing
         self._t_mdata_processor = AsyncioThreadRunner(self.data_provider.get_communication_channel())
@@ -416,7 +417,7 @@ class StrategyContext:
 
         # - subscribe to market data
         logger.info(f"Subscribing to {self._market_data_subcription_type} updates using {self._market_data_subcription_params} for \n\t{_symbols} ")
-        self._t_mdata_subscriber = self.data_provider.subscribe(self._market_data_subcription_type, _symbols, **self._market_data_subcription_params)
+        self.data_provider.subscribe(self._market_data_subcription_type, _symbols, **self._market_data_subcription_params)
 
         # - initialize strategy
         if not self._is_initilized:
@@ -430,23 +431,20 @@ class StrategyContext:
 
         self._t_mdata_processor.start()
         logger.info("> Data processor started")
-
-        self._t_mdata_subscriber.start()
-        logger.info("> Market data subscribtions started")
         if join:
-            self._t_mdata_subscriber.join()
+            self._t_mdata_processor.join()
 
     def stop(self):
-        if self._t_mdata_subscriber:
-            self._t_mdata_subscriber.stop()
+        if self._t_mdata_processor:
+            self.data_provider.get_communication_channel().stop()
             self._t_mdata_processor.stop()
-            self._t_mdata_processor = None
-            self._t_mdata_subscriber = None
             try:
                 self.strategy.on_stop(self)
             except Exception as strat_error:
                 logger.error(f"Strategy {self.strategy.__class__.__name__} raised an exception in on_stop: {strat_error}")
                 logger.error(traceback.format_exc())
+            self._t_mdata_processor = None
+            self._t_mdata_subscriber = None
 
     def populate_parameters_to_strategy(self, strategy: IStrategy, **kwargs):
         for k,v in kwargs.items():

@@ -12,4 +12,5 @@
         "reportMissingModuleSource": "none"
 
     },
+    "python.analysis.typeCheckingMode": "basic",
 }

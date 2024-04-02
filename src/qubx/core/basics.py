@@ -261,6 +261,7 @@ class CtrlChannel:
         self.control = Event()
         self.queue = Queue()
         self.lock = Lock()
+        self.start()
 
     def stop(self):
         if self.control.is_set():
