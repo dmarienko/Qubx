@@ -51,7 +51,11 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         self.subsriptions: Dict[str, List[str]] = defaultdict(list)
         self._ch_market_data = CtrlChannel(exch + '.marketdata')
         self._last_quotes = defaultdict(lambda: None)
-        self._loop = asyncio.get_running_loop()
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
 
     def subscribe(self, subscription_type: str, symbols: List[str], 
                   timeframe:Optional[str]=None, 
