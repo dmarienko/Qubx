@@ -34,34 +34,44 @@ class TriggerEvent:
 
 class IDataProvider:
 
-    def subscribe(self, subscription_type: str, symbols: List[str], **kwargs) -> AsyncioThreadRunner:
-        return None
+    def subscribe(self, subscription_type: str, symbols: List[str], **kwargs) -> bool:
+        raise NotImplementedError("subscribe")
 
     def get_communication_channel(self) -> CtrlChannel:
-        return None
+        raise NotImplementedError("get_communication_channel")
 
-    def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> Optional[List[Bar]]:
-        pass
+    def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar] | None:
+        raise NotImplementedError("get_historical_ohlcs")
+
 
 class IExchangeServiceProvider:
-    def sync_position(self, position: Position) -> Position:
-        return position
-        raise ValueError("sync_position is not implemented")
 
     def time(self) -> dt_64:
         """
         Returns current time
         """
-        raise ValueError("time is not implemented")
+        raise NotImplementedError("time is not implemented")
 
     def get_name(self) -> str:
-        raise ValueError("get_name is not implemented")
+        raise NotImplementedError("get_name is not implemented")
 
     def schedule_trigger(self, trigger_id: str, when: str):
-        raise ValueError("schedule_trigger is not implemented")
+        raise NotImplementedError("schedule_trigger is not implemented")
 
-    def get_quote(self, symbol: str) -> Optional[Quote]:
+    def get_quote(self, symbol: str) -> Quote | None:
         pass
+
+    def get_capital(self) -> float:
+        raise NotImplementedError("get_capital is not implemented")
+
+    def get_position(self, instrument: Instrument) -> Position:
+        raise NotImplementedError("get_position is not implemented")
+
+    def sync_position_and_orders(self, position: Position) -> Position:
+        raise NotImplementedError("sync_position is not implemented")
+
+    def get_base_currency(self) -> str:
+        raise NotImplementedError("get_basic_currency is not implemented")
 
 
 class IStrategy:
@@ -174,12 +184,10 @@ class StrategyContext:
     _is_initilized: bool = False
 
     _cache: CachedMarketDataHolder # market data cache
-    capital: float
-    leverage: float
 
     def __init__(self, 
             # - strategy with parameters
-            strategy: IStrategy, config: Optional[Dict[str, Any]],
+            strategy: IStrategy, config: Dict[str, Any] | None,
             # - - - - - - - - - - - - - - - - - - - - -
 
             # - data provider and exchange service
@@ -188,10 +196,6 @@ class StrategyContext:
             instruments: List[Instrument],
             # - - - - - - - - - - - - - - - - - - - - -
 
-            # - need account class for holding all this data ?
-            capital: float, fees_spec: str, base_currency: str, leverage: float = 1.0,
-
-            # - - - - - - - - - - - - - - - - - - - - -
             # - context's parameters - - - - - - - - - -
             trigger: Dict[str, Any] = dict(type='ohlc', timeframe='1Min', nback=60),
             md_subscription: Dict[str,Any] = dict(type='ohlc', timeframe='1Min'),
@@ -203,7 +207,7 @@ class StrategyContext:
         self.strategy = strategy
         if isinstance(strategy, type):
             self.strategy = strategy()
-        self.populate_parameters_to_strategy(self.strategy, **config)
+        self.populate_parameters_to_strategy(self.strategy, **config if config else {})
 
         # - other initialization
         self.exchange_service = exchange_service
@@ -211,12 +215,6 @@ class StrategyContext:
         self.config = config
         self.instruments = instruments
         self.positions = {}
-
-        # - need think about it
-        self.base_currency = base_currency
-        self.fees_spec = fees_spec
-        self.capital = capital
-        self.leverage = min(leverage, 1)
  
         # - process trigger configuration
         self._check_how_to_trigger_strategy(trigger)
@@ -375,31 +373,20 @@ class StrategyContext:
     def _create_synced_position(self):
         for instrument in self.instruments:
             symb = instrument.symbol
-
-            if symb not in self.positions:
-                self.positions[symb] = self.exchange_service.sync_position(
-                    Position(instrument, self.get_tcc(instrument))
-                )
-                self.instruments.append(instrument)
-
-                # check if we need any aux instrument for this one
-                # used to calculate PnL in base currency for crosses like ETH/BTC and USDT funded account
-                aux = lookup.find_aux_instrument_for(instrument, self.base_currency)
-                if aux is not None:
-                    instrument._aux_instrument = aux
-                    self.instruments.append(aux)
-                    aux_pos = Position(aux, self.get_tcc(aux))
-                    self.positions[aux.symbol] = self.exchange_service.sync_position(aux_pos)
-
-    def get_tcc(self, instrument: Instrument) -> TransactionCostsCalculator:
-        tcc = lookup.fees.find(self.exchange_service.get_name().lower(), self.fees_spec)
-        if tcc is None:
-            raise ValueError(f"Can't find fees calculator using given schema: '{self.fees_spec}' for {instrument}!")
-        return tcc 
+            self.positions[symb] = self.exchange_service.get_position(instrument)
+            # - check if we need any aux instrument for calculating pnl ?
+            aux = lookup.find_aux_instrument_for(instrument, self.exchange_service.get_base_currency())
+            if aux is not None:
+                instrument._aux_instrument = aux
+                self.instruments.append(aux)
+                self.positions[aux.symbol] = self.exchange_service.get_position(aux)
 
     def start(self, join=False):
-        if self._t_mdata_processor:
-            raise ValueError("Strategy context is already started !")
+        if self._is_initilized :
+            raise ValueError("Strategy is already started !")
+
+        # - create positions for instruments
+        self._create_synced_position()
 
         # - get actual positions from exchange
         _symbols = []
@@ -407,9 +394,6 @@ class StrategyContext:
             # process instruments - need to find convertors etc
             self._cache.init_ohlcv(instr.symbol)
             _symbols.append(instr.symbol)
-
-        # - update actual positions
-        self._create_synced_position()
 
         # - create incoming market data processing
         self._t_mdata_processor = AsyncioThreadRunner(self.data_provider.get_communication_channel())
@@ -444,7 +428,6 @@ class StrategyContext:
                 logger.error(f"Strategy {self.strategy.__class__.__name__} raised an exception in on_stop: {strat_error}")
                 logger.error(traceback.format_exc())
             self._t_mdata_processor = None
-            self._t_mdata_subscriber = None
 
     def populate_parameters_to_strategy(self, strategy: IStrategy, **kwargs):
         for k,v in kwargs.items():

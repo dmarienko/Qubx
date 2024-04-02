@@ -13,18 +13,17 @@ import re
 import numpy as np
 import pandas as pd
 
-from qubx import logger
-from qubx.core.basics import Instrument, Position, dt_64
+from qubx import logger, lookup
+from qubx.core.basics import Instrument, Position, Order, TransactionCostsCalculator, dt_64
 from qubx.core.strategy import IDataProvider, CtrlChannel, IExchangeServiceProvider
-from qubx.core.basics import Trade, Quote
-from qubx.core.series import TimeSeries, Bar
+from qubx.core.series import TimeSeries, Bar, Trade, Quote
 
 
 _aliases = {
     'binance': 'binanceqv',
     'binance.um': 'binanceusdm',
     'binance.cm': 'binancecoinm',
-    'kraken.f': 'kreakenfutures'
+    'kraken.f': 'krakenfutures'
 }
 
 # - register custom wrappers
@@ -36,11 +35,19 @@ cxp.exchanges.append('binanceqv')
 class CCXTConnector(IDataProvider, IExchangeServiceProvider):
     exchange: Exchange
     subsriptions: Dict[str, List[str]]
+
+    _positions: Dict[str, Position]
+    _base_currency: str
+    _fees_calculator: Optional[TransactionCostsCalculator] = None    # type: ignore
+    _total_capital_in_base: float = 0.0
+    _locked_capital_in_base: float = 0.0
+
     _ch_market_data: CtrlChannel
     _last_quotes: Dict[str, Optional[Quote]]
     _loop: AbstractEventLoop 
+    _orders: Dict[str, Order]                            # active orders
 
-    def __init__(self, exchange_id: str, **exchange_auth):
+    def __init__(self, exchange_id: str, base_currency: str, commissions: str|None = None, **exchange_auth):
         super().__init__()
         exchange_id = exchange_id.lower()
         exch = _aliases.get(exchange_id, exchange_id)
@@ -49,6 +56,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
         self.exchange = getattr(cxp, exch)(exchange_auth)
         self.subsriptions: Dict[str, List[str]] = defaultdict(list)
+        self._base_currency = base_currency
         self._ch_market_data = CtrlChannel(exch + '.marketdata')
         self._last_quotes = defaultdict(lambda: None)
         try:
@@ -56,12 +64,16 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         except RuntimeError:
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
-            print('-> NEW LOOP IS CREATED')
 
-    def subscribe(self, subscription_type: str, symbols: List[str], 
-                  timeframe:Optional[str]=None, 
-                  nback:int=0
-    ) -> bool:
+        # - positions
+        self._positions = {}
+
+        # - load all needed information
+        self._sync_account_info(commissions)
+
+        logger.info(f"{self.get_name().upper()} initialized - current time {self.time()}")
+
+    def subscribe(self, subscription_type: str, symbols: List[str], timeframe:Optional[str]=None, nback:int=0) -> bool:
         to_process = self._check_existing_subscription(subscription_type.lower(), symbols)
         if not to_process:
             logger.info(f"Symbols {symbols} already subscribed on {subscription_type} data")
@@ -75,7 +87,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                 # convert to exchange format
                 tframe = self._get_exch_timeframe(timeframe)
                 for s in to_process:
-                    self._run_async_task(self._listen_to_ohlcv(self.get_communication_channel(), s, tframe, nback))
+                    self._task_a(self._listen_to_ohlcv(self.get_communication_channel(), s, tframe, nback))
                     self.subsriptions[sbscr].append(s.lower())
                 logger.info(f'Subscribed on {sbscr} updates for {len(to_process)} symbols: \n\t\t{to_process}')
                 return True
@@ -109,14 +121,16 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> Optional[List[Bar]]:
         assert nbarsback > 1
-        r = self._run_async_task(self._fetch_ohlcs_a(symbol, self._get_exch_timeframe(timeframe), nbarsback), wait_result=True)
+        # we want to wait until initial snapshot is arrived so run it in sync mode
+        r = self._task_s(self._fetch_ohlcs_a(symbol, self._get_exch_timeframe(timeframe), nbarsback))
         if len(r) > 0:
             return [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in r]
 
     async def _listen_to_ohlcv(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
         # - check if we need to load initial 'snapshot'
         if nbarsback > 1:
-            ohlcv = asyncio.run(self._fetch_ohlcs_a(symbol, timeframe, nbarsback))
+            # ohlcv = asyncio.run(self._fetch_ohlcs_a(symbol, timeframe, nbarsback))
+            ohlcv = self._task_s(self._fetch_ohlcs_a(symbol, timeframe, nbarsback))
             for oh in ohlcv:
                 channel.queue.put((symbol, Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
 
@@ -135,18 +149,6 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                 logger.error(str(e))
                 await self.exchange.close()        # type: ignore
                 raise e
-
-    async def _init_account(self):
-        # TODO: 
-        # free_bal = await self.exchange.fetch_free_balance()
-        pass
-
-    def sync_position(self, position: Position) -> Position:
-        # TODO: read positions from exchange !!!
-        # b = self._run_async_task(self.exchange.fetch_balance(position.instrument.symbol), wait_result=True)
-        # r = self._run_async_task(self.exchange.fetch_position(position.instrument.symbol), wait_result=True)
-        # print(r)
-        return position
 
     def time(self) -> dt_64:
         """
@@ -171,11 +173,93 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
         return tframe
 
-    def _run_async_task(self, coro, wait_result: bool = False) -> Task | Any:
-        task = self._loop.create_task(coro)
-        if wait_result:
-            while not task.done():
-                ...
-                # await asyncio.sleep(0.01)
-            return task.result()
-        return task
+    def _task_a(self, coro) -> Task:
+        return self._loop.create_task(coro)
+
+    def _task_s(self, coro) -> Any:
+        return self._loop.run_until_complete(coro)
+
+    def close(self):
+        try:
+            self._task_s(self.exchange.close())
+        except Exception as e:
+            logger.error(e)
+
+    def _sync_account_info(self, default_commissions: str | None):
+        logger.info(f'Loading account data for {self.get_name()}')
+        self._balance = self._task_s(self.exchange.fetch_balance())
+        _info = self._balance.get('info')
+
+        # - check what we have on balance
+        for k, vol in self._balance['total'].items():
+            if k.lower() == self._base_currency.lower():
+                self._total_capital_in_base = vol
+                _free = self._balance['free'][self._base_currency]
+                self._locked_capital_in_base = self._total_capital_in_base - _free 
+
+        # - try to get account's commissions calculator or set default one
+        if _info:
+           _fees = _info.get('commissionRates')
+           if _fees:
+               self._fees_calculator = TransactionCostsCalculator('account', 100*float(_fees['maker']), 100*float(_fees['taker'])) 
+
+        if self._fees_calculator is None:
+            if default_commissions:
+                self._fees_calculator = lookup.fees.find(self.get_name().lower(), default_commissions)
+            else: 
+                raise ValueError("Can't get commissions level from account, but default commissions is not defined !")
+
+    def get_position(self, instrument: Instrument) -> Position:
+        symbol = instrument.symbol
+
+        if symbol not in self._positions:
+            position = Position(instrument, self._fees_calculator)  # type: ignore
+            current_amount = self._balance['total'].get(instrument.base)
+            if current_amount > 0:
+                position = self.sync_position_and_orders(position)
+            self._positions[symbol] = position
+
+        return self._positions[symbol] 
+
+    def get_capital(self) -> float:
+        # TODO: need to take in account leverage and funds currently locked 
+        return self._total_capital_in_base - self._locked_capital_in_base 
+
+    def _get_orders_from_exchange(self, symbol: str, days_before: int = 60):
+        t_orders_start_ms = ((self.time() - days_before * pd.Timedelta('1d')).asm8.item() // 1000000)
+        orders_data = self._task_s(self.exchange.fetch_orders(symbol, since=t_orders_start_ms))
+        orders: Dict[str, Order] = {}
+        for o in orders_data:
+            oi = o['info']
+            avg = o.get('average')
+            orders[oi['orderId']] = Order(
+                id=oi['orderId'],
+                type=oi['type'],
+                symbol=symbol,
+                time = pd.Timestamp(o['timestamp'], unit='ms'), # type: ignore
+                quantity = float(oi['origQty']), 
+                price= float(oi['price']), 
+                side = oi['side'],
+                status = oi['status'],
+                time_in_force = oi['timeInForce'],
+                client_id = oi['clientOrderId'],
+                cost = float(o['cost']),
+                executed_quantity = float(oi['executedQty']), 
+                executed_price = float(avg) if avg is not None else None, 
+            )
+        return dict(sorted(orders.items(), key=lambda x: x[1].time, reverse=False))
+
+    def sync_position_and_orders(self, position: Position) -> Position:
+        asset = position.instrument.base
+        symbol = position.instrument.symbol
+        total_amnts = self._balance['total']
+        vol_from_exch = total_amnts.get(asset, total_amnts.get(symbol, 0))
+
+        if vol_from_exch > 0:
+            print(vol_from_exch)
+            pass
+
+        return position
+
+    def get_base_currency(self) -> str:
+        return self._base_currency

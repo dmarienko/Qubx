@@ -127,6 +127,23 @@ class TransactionCostsCalculator:
 ZERO_COSTS = TransactionCostsCalculator('Zero', 0.0, 0.0)
 
 
+@dataclass
+class Order:
+    id: str
+    type: str
+    symbol: str
+    time: dt_64
+    quantity: float
+    price: float
+    side: str
+    status: str
+    time_in_force: str
+    client_id: str | None = None
+    cost: float = 0.0
+    executed_quantity: float = 0.0
+    executed_price: float | None = None
+
+
 class Position:
     instrument: Instrument                      # instrument for this poisition
     quantity: float = 0.0                       # quantity positive for long and negative for short
