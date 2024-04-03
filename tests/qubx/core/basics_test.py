@@ -27,7 +27,7 @@ def run_deals_updates(p: Position, qs: List[Union[Deal, Trade, Quote]]) -> dict:
             pnls[pd.Timestamp(q.time, unit='ns')] = p.update_position(q.time, q.position, q.exec_price, aggressive=q.aggr)
             print(p, f'\t<-(exec -> {q.position})-')
         else: 
-            pnls[pd.Timestamp(q.time, unit='ns')] = p.update_market_price(q); print(p)
+            pnls[pd.Timestamp(q.time, unit='ns')] = p.update_market_price_by_tick(q); print(p)
     return pd.Series(pnls)
 
 

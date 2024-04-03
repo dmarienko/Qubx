@@ -244,7 +244,7 @@ class Position:
             self.r_pnl += deal_pnl / conversion_rate
 
             # - update pnl
-            self._update_market_price(time_as_nsec(timestamp), exec_price, conversion_rate)
+            self.update_market_price(time_as_nsec(timestamp), exec_price, conversion_rate)
 
             # - calculate transaction costs
             comms = self.tcc.get_execution_fees(self.instrument, exec_price, pos_change, aggressive, conversion_rate)
@@ -252,10 +252,10 @@ class Position:
 
         return deal_pnl
 
-    def update_market_price(self, price: Union[Quote, Trade], conversion_rate:float=1) -> float:
-        return self._update_market_price(price.time, self._price(price), conversion_rate)
+    def update_market_price_by_tick(self, tick: Union[Quote, Trade], conversion_rate:float=1) -> float:
+        return self.update_market_price(tick.time, self._price(tick), conversion_rate)
 
-    def _update_market_price(self, timestamp: dt_64, price: float, conversion_rate:float) -> float:
+    def update_market_price(self, timestamp: dt_64, price: float, conversion_rate:float) -> float:
         self.last_update_time = timestamp # type: ignore
         self.last_update_price = price
 

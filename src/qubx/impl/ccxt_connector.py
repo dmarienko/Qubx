@@ -139,6 +139,8 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         while channel.control.is_set():
             try:
                 ohlcv = await self.exchange.watch_ohlcv(symbol, timeframe)        # type: ignore
+                # update positions by actual close price
+                self._update_position_price_for_symbol(symbol, ohlcv[-1][4])
                 for oh in ohlcv:
                     channel.queue.put((symbol, Bar(oh[0] * 1000000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
 
@@ -151,6 +153,10 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                 logger.error(str(e))
                 await self.exchange.close()        # type: ignore
                 raise e
+
+    def _update_position_price_for_symbol(self, symbol: str, price: float):
+        p = self._positions[symbol]
+        p.update_market_price(self.time(), price, 1)
 
     def time(self) -> dt_64:
         """
@@ -217,9 +223,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
         if symbol not in self._positions:
             position = Position(instrument, self._fees_calculator)  # type: ignore
-            current_amount = self._balance['total'].get(instrument.base)
-            if current_amount > 0:
-                position = self.sync_position_and_orders(position)
+            position = self.sync_position_and_orders(position)
             self._positions[symbol] = position
 
         return self._positions[symbol] 
@@ -269,13 +273,21 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                 vol_from_exch -= signed_amount
                 if vol_from_exch >= 0:
                     last_pos_orders.append(od)
+
+            # - store active order into local cache
             if od.status != 'FILLED' and od.status != 'CANCELED':
                 self._active_orders[oid] = od
 
+        # - actualize position
         position.reset()
-        for o in reversed(last_pos_orders):
-            signed_amount = +o.executed_quantity if o.side == 'BUY' else -o.executed_quantity
-            position.change_position_by(o.time.as_unit('ns').asm8, signed_amount, o.executed_price, aggressive=o.type=='MARKET')
+
+        if vol_from_exch > 0:
+            logger.warning(f"Couldn't restore full execution history for {symbol} symbol. Qubx will use zero position !")
+        else:
+            # - restore position
+            for o in reversed(last_pos_orders):
+                signed_amount = +o.executed_quantity if o.side == 'BUY' else -o.executed_quantity
+                position.change_position_by(o.time.as_unit('ns').asm8, signed_amount, o.executed_price, aggressive=o.type=='MARKET')
 
         return position
 
