@@ -31,6 +31,8 @@ from .exchange_customizations import BinanceQV
 cxp.binanceqv = BinanceQV            # type: ignore
 cxp.exchanges.append('binanceqv')
 
+ORDERS_HISTORY_LOOKBACK_DAYS = 30
+
 
 class CCXTConnector(IDataProvider, IExchangeServiceProvider):
     exchange: Exchange
@@ -45,7 +47,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
     _ch_market_data: CtrlChannel
     _last_quotes: Dict[str, Optional[Quote]]
     _loop: AbstractEventLoop 
-    _orders: Dict[str, Order]                            # active orders
+    _active_orders: Dict[str, Order]                            # active orders
 
     def __init__(self, exchange_id: str, base_currency: str, commissions: str|None = None, **exchange_auth):
         super().__init__()
@@ -157,7 +159,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         return np.datetime64(self.exchange.microseconds() * 1000, 'ns')
 
     def get_name(self) -> str:
-        return self.exchange.name 
+        return self.exchange.name  # type: ignore
 
     def get_quote(self, symbol: str) -> Optional[Quote]:
         return self._last_quotes[symbol]
@@ -188,6 +190,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
     def _sync_account_info(self, default_commissions: str | None):
         logger.info(f'Loading account data for {self.get_name()}')
         self._balance = self._task_s(self.exchange.fetch_balance())
+        self._active_orders = dict()
         _info = self._balance.get('info')
 
         # - check what we have on balance
@@ -255,9 +258,24 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         total_amnts = self._balance['total']
         vol_from_exch = total_amnts.get(asset, total_amnts.get(symbol, 0))
 
-        if vol_from_exch > 0:
-            print(vol_from_exch)
-            pass
+        # - get orders from exchange
+        orders = self._get_orders_from_exchange(position.instrument.symbol, ORDERS_HISTORY_LOOKBACK_DAYS)
+
+        # - get orders from exchange
+        last_pos_orders = []
+        for oid, od in reversed(orders.items()):
+            if od.status == 'FILLED' or od.status == 'PARTIALLY_FILLED':
+                signed_amount = +od.executed_quantity if od.side == 'BUY' else -od.executed_quantity
+                vol_from_exch -= signed_amount
+                if vol_from_exch >= 0:
+                    last_pos_orders.append(od)
+            if od.status != 'FILLED' and od.status != 'CANCELED':
+                self._active_orders[oid] = od
+
+        position.reset()
+        for o in reversed(last_pos_orders):
+            signed_amount = +o.executed_quantity if o.side == 'BUY' else -o.executed_quantity
+            position.change_position_by(o.time.as_unit('ns').asm8, signed_amount, o.executed_price, aggressive=o.type=='MARKET')
 
         return position
 

@@ -1,8 +1,14 @@
-import importlib, glob, imp, os, sys
+
+import importlib, glob, os, sys
 from importlib.abc import MetaPathFinder
 from importlib.util import spec_from_file_location
 from importlib.machinery import ExtensionFileLoader, SourceFileLoader
 from typing import List
+
+# - disable warn about deprecation of imp module: after dev stage _pyxreloader will be removed
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+import imp
 
 PYX_EXT = ".pyx"
 PYXDEP_EXT = ".pyxdep"

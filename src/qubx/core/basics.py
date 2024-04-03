@@ -183,12 +183,30 @@ class Position:
             self.quantity = quantity
             raise ValueError("[TODO] Position: restore state by quantity and avg price !!!!")
 
+    def reset(self):
+        """
+        Reset position to zero
+        """
+        self.quantity = 0.0
+        self.pnl = 0.0
+        self.r_pnl = 0.0
+        self.market_value = 0.0
+        self.market_value_funds = 0.0
+        self.position_avg_price = 0.0
+        self.position_avg_price_funds = 0.0
+        self.commissions = 0.0
+        self.last_update_time = None
+        self.last_update_price = None
+
     def _price(self, update: Union[Quote, Trade]) -> float:
         if isinstance(update, Quote):
             return update.bid if np.sign(self.quantity) > 0 else update.ask
         elif isinstance(update, Trade):
             return update.price
         raise ValueError(f"Unknown update type: {type(update)}")
+
+    def change_position_by(self, timestamp: dt_64, amount: float, exec_price: float, aggressive=True, conversion_rate:float=1) -> float:
+        return self.update_position(timestamp, self.quantity + amount, exec_price, aggressive=aggressive, conversion_rate=conversion_rate)
 
     def update_position(self, timestamp: dt_64, position: float, exec_price: float, aggressive=True, conversion_rate:float=1) -> float:
         # - realized PnL of this fill
@@ -238,7 +256,7 @@ class Position:
         return self._update_market_price(price.time, self._price(price), conversion_rate)
 
     def _update_market_price(self, timestamp: dt_64, price: float, conversion_rate:float) -> float:
-        self.last_update_time = timestamp
+        self.last_update_time = timestamp # type: ignore
         self.last_update_price = price
 
         if not np.isnan(price):
@@ -251,8 +269,8 @@ class Position:
 
     def total_pnl(self, conversion_rate:float=1.0) -> float:
         pnl = self.r_pnl
-        if not np.isnan(self.last_update_price):
-            pnl += self.quantity * (self.last_update_price - self.position_avg_price) / conversion_rate
+        if not np.isnan(self.last_update_price): # type: ignore
+            pnl += self.quantity * (self.last_update_price - self.position_avg_price) / conversion_rate # type: ignore
         return pnl
 
     @staticmethod

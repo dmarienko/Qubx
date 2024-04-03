@@ -444,6 +444,4 @@ class StrategyContext:
         return self.exchange_service.get_quote(symbol)
 
     def get_capital(self) -> float:
-        # TODO: here we need to get actual capital from account 
-        # return min(self.capital, self.exchange_service.get_available_capital())
-        return self.capital * self.leverage
+        return self.exchange_service.get_capital()
