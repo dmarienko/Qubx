@@ -135,14 +135,12 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
     async def _listen_to_ohlcv(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
         # - check if we need to load initial 'snapshot'
         if nbarsback > 1:
-            logger.info(f"{symbol}: requesting {nbarsback} ohlc {timeframe} bar ...")
             # ohlcv = asyncio.run(self._fetch_ohlcs_a(symbol, timeframe, nbarsback))
             ohlcv = self._task_s(self._fetch_ohlcs_a(symbol, timeframe, nbarsback))
             for oh in ohlcv:
                 channel.queue.put((symbol, Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
             logger.info(f"{symbol}: loaded {len(ohlcv)}")
 
-        logger.info(f"{symbol}: start listening to OHLC updates")
         while channel.control.is_set():
             try:
                 ohlcv = await self.exchange.watch_ohlcv(symbol, timeframe)        # type: ignore
