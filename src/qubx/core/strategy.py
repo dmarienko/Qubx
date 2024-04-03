@@ -430,12 +430,15 @@ class StrategyContext:
             self._t_mdata_processor = None
 
     def populate_parameters_to_strategy(self, strategy: IStrategy, **kwargs):
+        _log_info = ""
         for k,v in kwargs.items():
             if k.startswith('_'):
                 raise ValueError("Internal variable can't be set from external parameter !")
             if hasattr(strategy, k):
                 strategy.__dict__[k] = v
-                logger.info(f"Set {k} -> {v}")
+                _log_info += f"\n\tset {v} -> {k}"
+        if _log_info:
+            logger.info("Set strategy parameters:" + _log_info)
 
     def time(self) -> dt_64:
         return self.exchange_service.time()
