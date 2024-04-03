@@ -316,16 +316,20 @@ class AsyncioThreadRunner(Thread):
         super().__init__()
 
     def add(self, func, *args, **kwargs) -> 'AsyncioThreadRunner':
-        self.loops.append(func(self.channel, *args, **kwargs))
+        # self.loops.append(func(self.channel, *args, **kwargs))
+        self.f = func
+        self.ar = args
+        self.kw = kwargs
         return self
 
-    async def run_loop(self):
-        self.result = await asyncio.gather(*self.loops)
+    # async def run_loop(self):
+        # self.result = await asyncio.gather(*self.loops)
 
     def run(self):
         if self.channel:
             self.channel.control.set()
-        asyncio.run(self.run_loop())
+        # asyncio.run(self.run_loop())
+        self.f(self.channel, *self.ar, **self.kw)
 
     def stop(self):
         if self.channel:

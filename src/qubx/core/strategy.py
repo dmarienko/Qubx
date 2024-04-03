@@ -292,12 +292,13 @@ class StrategyContext:
             case _: 
                 raise ValueError(f"Wrong trigger type {_trigger}")
 
-    async def _process_incoming_market_data(self, channel: CtrlChannel):
+    # async def _process_incoming_market_data(self, channel: CtrlChannel):
+    def _process_incoming_market_data(self, channel: CtrlChannel):
         _fails_counter = 0 
         logger.info("Start processing market data")
 
         while channel.control.is_set():
-            _strategy_event: TriggerEvent = None
+            _strategy_event: TriggerEvent | None = None
 
             # - waiting for incoming market data
             symbol, data = channel.queue.get()
@@ -335,7 +336,7 @@ class StrategyContext:
 
         logger.info("Market data processing finished")
 
-    def _update_ctx_by_bar(self, symbol: str, bar: Bar) -> TriggerEvent:
+    def _update_ctx_by_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
         self._cache.update_by_bar(symbol, bar)
         if self._trig_on_bar:
             t = self.exchange_service.time().item()
@@ -349,12 +350,12 @@ class StrategyContext:
                 self._current_bar_trigger_processed = False
         return None
 
-    def _update_ctx_by_trade(self, symbol: str, trade: Trade) -> TriggerEvent:
+    def _update_ctx_by_trade(self, symbol: str, trade: Trade) -> TriggerEvent | None:
         if self._trig_on_trade:
             return TriggerEvent(self.time(), 'trade', symbol, trade)
         return None
 
-    def _update_ctx_by_quote(self, symbol: str, quote: Quote) -> TriggerEvent:
+    def _update_ctx_by_quote(self, symbol: str, quote: Quote) -> TriggerEvent | None:
         # - TODO: here we can apply throttlings or filters
         #  - let's say we can skip quotes if bid & ask is not changed
         #  - or we can collect let's say N quotes before sending to strategy
@@ -362,7 +363,7 @@ class StrategyContext:
             return TriggerEvent(self.time(), 'quote', symbol, quote)
         return None
 
-    def _update_ctx_by_exchange_event(self, symbol: str, event: EventFromExchange) -> TriggerEvent:
+    def _update_ctx_by_exchange_event(self, symbol: str, event: EventFromExchange) -> TriggerEvent | None:
         if self._trig_on_time and event.type == 'time':
             return TriggerEvent(self.time(), 'time', symbol, event)
         return None

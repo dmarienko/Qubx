@@ -78,6 +78,12 @@ class InstrumentsLookup:
                 else:
                     return i
         return None
+
+    def find_symbol(self, exchange: str, symbol: str) -> Optional[Instrument]:
+        for i in self._lookup.values():
+            if (i.exchange == exchange) and (i.symbol == symbol):
+                return i
+        return None
     
     def _save_to_json(self, path, instruments: List[Instrument]):
         with open(path, 'w') as f:
@@ -369,3 +375,6 @@ class GlobalLookup:
 
     def find_instrument(self, exchange: str, base: str, quote: str) -> Optional[Instrument]:
         return self.instruments.find(exchange, base, quote)
+
+    def find_symbol(self, exchange: str, symbol: str) -> Optional[Instrument]:
+        return self.instruments.find_symbol(exchange, symbol)

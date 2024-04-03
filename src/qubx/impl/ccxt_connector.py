@@ -51,21 +51,25 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
     def __init__(self, exchange_id: str, base_currency: str, commissions: str|None = None, **exchange_auth):
         super().__init__()
+        
         exchange_id = exchange_id.lower()
         exch = _aliases.get(exchange_id, exchange_id)
         if exch not in cxp.exchanges:
             raise ValueError(f"Exchange {exchange_id} -> {exch} is not supported by CCXT!")
+
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            logger.info("started new event loop")
+            # exchange_auth |= {'asyncio_loop':self._loop}
 
         self.exchange = getattr(cxp, exch)(exchange_auth)
         self.subsriptions: Dict[str, List[str]] = defaultdict(list)
         self._base_currency = base_currency
         self._ch_market_data = CtrlChannel(exch + '.marketdata')
         self._last_quotes = defaultdict(lambda: None)
-        try:
-            self._loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
 
         # - positions
         self._positions = {}
@@ -131,11 +135,14 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
     async def _listen_to_ohlcv(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
         # - check if we need to load initial 'snapshot'
         if nbarsback > 1:
+            logger.info(f"{symbol}: requesting {nbarsback} ohlc {timeframe} bar ...")
             # ohlcv = asyncio.run(self._fetch_ohlcs_a(symbol, timeframe, nbarsback))
             ohlcv = self._task_s(self._fetch_ohlcs_a(symbol, timeframe, nbarsback))
             for oh in ohlcv:
                 channel.queue.put((symbol, Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
+            logger.info(f"{symbol}: loaded {len(ohlcv)}")
 
+        logger.info(f"{symbol}: start listening to OHLC updates")
         while channel.control.is_set():
             try:
                 ohlcv = await self.exchange.watch_ohlcv(symbol, timeframe)        # type: ignore
