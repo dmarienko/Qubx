@@ -437,9 +437,9 @@ class StrategyContext:
                 raise ValueError("Internal variable can't be set from external parameter !")
             if hasattr(strategy, k):
                 strategy.__dict__[k] = v
-                _log_info += f"\n\tset {v} -> {k}"
+                _log_info += f"\n\tset <green>{k}</green> <- <red>{v}</red>"
         if _log_info:
-            logger.info("Set strategy parameters:" + _log_info)
+            logger.info("Setup strategy parameters:" + _log_info)
 
     def time(self) -> dt_64:
         return self.exchange_service.time()

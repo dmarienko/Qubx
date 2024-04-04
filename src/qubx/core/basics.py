@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Callable, Dict, List, Optional, Union
 import numpy as np
+import pandas as pd
 import math
 from dataclasses import dataclass, field
 
@@ -128,6 +129,14 @@ ZERO_COSTS = TransactionCostsCalculator('Zero', 0.0, 0.0)
 
 
 @dataclass
+class Deal:
+    time: dt_64
+    amount: float         # signed traded amount: positive for buy and negative for selling
+    price: float
+    aggressive: bool
+
+
+@dataclass
 class Order:
     id: str
     type: str
@@ -140,8 +149,8 @@ class Order:
     time_in_force: str
     client_id: str | None = None
     cost: float = 0.0
-    executed_quantity: float = 0.0
-    executed_price: float | None = None
+    # - use execution report
+    execution: Deal | None = None
 
 
 class Position:
@@ -198,7 +207,7 @@ class Position:
         self.last_update_time = np.nan
         self.last_update_price = np.nan
 
-    def _price(self, update: Union[Quote, Trade]) -> float:
+    def _price(self, update: Quote | Trade) -> float:
         if isinstance(update, Quote):
             return update.bid if np.sign(self.quantity) > 0 else update.ask
         elif isinstance(update, Trade):
@@ -252,8 +261,12 @@ class Position:
 
         return deal_pnl
 
-    def update_market_price_by_tick(self, tick: Union[Quote, Trade], conversion_rate:float=1) -> float:
+    def update_market_price_by_tick(self, tick: Quote | Trade, conversion_rate:float=1) -> float:
         return self.update_market_price(tick.time, self._price(tick), conversion_rate)
+
+    def update_position_by_deal(self, deal: Deal, conversion_rate:float=1) -> float:
+        time = deal.time.as_unit('ns').asm8 if isinstance(deal.time, pd.Timestamp) else deal.time
+        return self.change_position_by(time, deal.amount, deal.price, deal.aggressive, conversion_rate)
 
     def update_market_price(self, timestamp: dt_64, price: float, conversion_rate:float) -> float:
         self.last_update_time = timestamp # type: ignore

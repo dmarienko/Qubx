@@ -9,6 +9,7 @@ import ccxt.pro as cxp
 from ccxt.base.decimal_to_precision import ROUND_UP
 from ccxt.base.exchange import Exchange
 from ccxt import NetworkError
+
 import re
 import numpy as np
 import pandas as pd
@@ -17,6 +18,7 @@ from qubx import logger, lookup
 from qubx.core.basics import Instrument, Position, Order, TransactionCostsCalculator, dt_64
 from qubx.core.strategy import IDataProvider, CtrlChannel, IExchangeServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
+from qubx.impl.utils import ccxt_convert_order_info
 
 
 _aliases = {
@@ -85,6 +87,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
             logger.info(f"Symbols {symbols} already subscribed on {subscription_type} data")
             return False
 
+        # - subscribe to market data updates
         match sbscr := subscription_type.lower():
             case 'ohlc':
                 if timeframe is None:
@@ -96,7 +99,6 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                     self._task_a(self._listen_to_ohlcv(self.get_communication_channel(), s, tframe, nback))
                     self.subsriptions[sbscr].append(s.lower())
                 logger.info(f'Subscribed on {sbscr} updates for {len(to_process)} symbols: \n\t\t{to_process}')
-                return True
 
             case 'trades':
                 raise ValueError("TODO")
@@ -107,7 +109,11 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
             case _:
                 raise ValueError("TODO")
 
-        return False
+        # - subscibe to executions reports
+        for s in to_process:
+            self._task_a(self._listen_to_execution_reports(self.get_communication_channel(), s))
+
+        return True
 
     def get_communication_channel(self) -> CtrlChannel:
         return self._ch_market_data
@@ -122,7 +128,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
     async def _fetch_ohlcs_a(self, symbol: str, timeframe: str, nbarsback: int):
         assert nbarsback > 1
-        start = ((pd.Timestamp('now', tz='UTC') - nbarsback * pd.Timedelta(timeframe)).asm8.item()//1000000) if nbarsback > 1 else None 
+        start = ((self.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item()//1000000) if nbarsback > 1 else None 
         return await self.exchange.fetch_ohlcv(symbol, timeframe, since=start, limit=nbarsback + 1)        # type: ignore
 
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> Optional[List[Bar]]:
@@ -131,6 +137,46 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         r = self._task_s(self._fetch_ohlcs_a(symbol, self._get_exch_timeframe(timeframe), nbarsback))
         if len(r) > 0:
             return [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in r]
+
+    def send_order(
+        self, symbol: str, order_side: str, order_type: str, amount: float, price: float | None = None, 
+        client_id: str | None = None, time_in_force: str='gtc'
+    ) -> Optional[Order]:
+        params={}
+
+        if order_type == 'limit':
+            params['timeInForce'] = time_in_force.upper()
+            if price is None:
+                raise ValueError('Price must be specified for limit order')
+
+        if client_id:
+            params['newClientOrderId'] = client_id
+
+        r: Dict[str, Any] | None = self._task_s(self.exchange.create_order(
+            symbol, order_type, order_side, amount, price, # type: ignore
+            params=params)
+        )
+
+        if r is not None:
+            return ccxt_convert_order_info(symbol, r) 
+
+        return None # TODO !!!
+
+    async def _listen_to_execution_reports(self, channel: CtrlChannel, symbol: str):
+        while channel.control.is_set():
+            try:
+                exec = await self.exchange.watch_orders(symbol)        # type: ignore
+                # print(f" >>>> {type(exec)} ||| Received execution: {exec}")
+                for e in exec:
+                    order = ccxt_convert_order_info(symbol, e)
+                    if order.execution is not None and symbol in self._positions:
+                        self._positions[symbol].update_position_by_deal(order.execution)
+                        print(f" >>>> execution : {order.execution}")
+                    else:
+                        print(f" >>>> order update : {order}")
+
+            except Exception as e:
+                logger.error(str(e))
 
     async def _listen_to_ohlcv(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
         # - check if we need to load initial 'snapshot'
@@ -177,7 +223,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
     def _get_exch_timeframe(self, timeframe: str):
         if timeframe is not None:
-            _t = re.match('(\d+)(\w+)', timeframe)
+            _t = re.match(r'(\d+)(\w+)', timeframe)
             timeframe = f"{_t[1]}{_t[2][0].lower()}" if _t and len(_t.groups()) > 1 else timeframe
 
         tframe = self.exchange.find_timeframe(timeframe)
@@ -194,7 +240,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
     def close(self):
         try:
-            self._task_s(self.exchange.close())
+            self._task_s(self.exchange.close()) # type: ignore
         except Exception as e:
             logger.error(e)
 
@@ -235,30 +281,15 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
     def get_capital(self) -> float:
         # TODO: need to take in account leverage and funds currently locked 
-        return self._total_capital_in_base - self._locked_capital_in_base 
+        return self._total_capital_in_base - self._locked_capital_in_base  
 
     def _get_orders_from_exchange(self, symbol: str, days_before: int = 60):
         t_orders_start_ms = ((self.time() - days_before * pd.Timedelta('1d')).asm8.item() // 1000000)
         orders_data = self._task_s(self.exchange.fetch_orders(symbol, since=t_orders_start_ms))
         orders: Dict[str, Order] = {}
         for o in orders_data:
-            oi = o['info']
-            avg = o.get('average')
-            orders[oi['orderId']] = Order(
-                id=oi['orderId'],
-                type=oi['type'],
-                symbol=symbol,
-                time = pd.Timestamp(o['timestamp'], unit='ms'), # type: ignore
-                quantity = float(oi['origQty']), 
-                price= float(oi['price']), 
-                side = oi['side'],
-                status = oi['status'],
-                time_in_force = oi['timeInForce'],
-                client_id = oi['clientOrderId'],
-                cost = float(o['cost']),
-                executed_quantity = float(oi['executedQty']), 
-                executed_price = float(avg) if avg is not None else None, 
-            )
+            order = ccxt_convert_order_info(symbol, o) 
+            orders[order.id] = order
         return dict(sorted(orders.items(), key=lambda x: x[1].time, reverse=False))
 
     def sync_position_and_orders(self, position: Position) -> Position:
@@ -271,16 +302,20 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         orders = self._get_orders_from_exchange(position.instrument.symbol, ORDERS_HISTORY_LOOKBACK_DAYS)
 
         # - get orders from exchange
-        last_pos_orders = []
+        last_pos_orders: List[Order] = []
         for oid, od in reversed(orders.items()):
-            if od.status == 'FILLED' or od.status == 'PARTIALLY_FILLED':
-                signed_amount = +od.executed_quantity if od.side == 'BUY' else -od.executed_quantity
-                vol_from_exch -= signed_amount
+            status = od.status.upper()
+            # side = od.side.upper()
+            # if status == 'CLOSED' or status == 'FILLED' or status == 'PARTIALLY_FILLED':
+            if od.execution is not None:
+                # signed_amount = +od.executed_quantity if side == 'BUY' else -od.executed_quantity
+                # vol_from_exch -= signed_amount
+                vol_from_exch -= od.execution.amount
                 if vol_from_exch >= 0:
                     last_pos_orders.append(od)
 
             # - store active order into local cache
-            if od.status != 'FILLED' and od.status != 'CANCELED':
+            if status != 'FILLED' and status != 'CANCELED' and status != 'CLOSED':
                 self._active_orders[oid] = od
 
         # - actualize position
@@ -291,8 +326,10 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         else:
             # - restore position
             for o in reversed(last_pos_orders):
-                signed_amount = +o.executed_quantity if o.side == 'BUY' else -o.executed_quantity
-                position.change_position_by(o.time.as_unit('ns').asm8, signed_amount, o.executed_price, aggressive=o.type=='MARKET')
+                # signed_amount = +o.executed_quantity if o.side.upper() == 'BUY' else -o.executed_quantity
+                # position.change_position_by(o.time.as_unit('ns').asm8, signed_amount, o.executed_price, aggressive=o.type.upper()=='MARKET')
+                position.update_position_by_deal(o.execution) # type: ignore
+                print(o.execution.price, o.execution.amount)
 
         return position
 
