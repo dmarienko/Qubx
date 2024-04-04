@@ -292,8 +292,8 @@ class StrategyContext:
             case _: 
                 raise ValueError(f"Wrong trigger type {_trigger}")
 
-    # async def _process_incoming_market_data(self, channel: CtrlChannel):
-    def _process_incoming_market_data(self, channel: CtrlChannel):
+    # def _process_incoming_market_data(self, channel: CtrlChannel):
+    async def _process_incoming_market_data(self, channel: CtrlChannel):
         _fails_counter = 0 
         logger.info("Start processing market data")
 

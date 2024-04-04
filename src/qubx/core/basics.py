@@ -156,8 +156,8 @@ class Position:
     position_avg_price_funds: float = 0.0       # average position price
     commissions: float = 0.0                    # cumulative commissions paid for this position
 
-    last_update_time: Optional[int] = None      # when price updated or position changed
-    last_update_price: Optional[float] = None   # last update price (actually instrument's price) in quoted currency
+    last_update_time: int = np.nan              # when price updated or position changed
+    last_update_price: float = np.nan           # last update price (actually instrument's price) in quoted currency
 
     # - helpers for position processing 
     _formatter: str
@@ -195,8 +195,8 @@ class Position:
         self.position_avg_price = 0.0
         self.position_avg_price_funds = 0.0
         self.commissions = 0.0
-        self.last_update_time = None
-        self.last_update_price = None
+        self.last_update_time = np.nan
+        self.last_update_price = np.nan
 
     def _price(self, update: Union[Quote, Trade]) -> float:
         if isinstance(update, Quote):
@@ -316,20 +316,20 @@ class AsyncioThreadRunner(Thread):
         super().__init__()
 
     def add(self, func, *args, **kwargs) -> 'AsyncioThreadRunner':
-        # self.loops.append(func(self.channel, *args, **kwargs))
-        self.f = func
-        self.ar = args
-        self.kw = kwargs
+        self.loops.append(func(self.channel, *args, **kwargs))
+        # self.f = func
+        # self.ar = args
+        # self.kw = kwargs
         return self
 
-    # async def run_loop(self):
-        # self.result = await asyncio.gather(*self.loops)
+    async def run_loop(self):
+        self.result = await asyncio.gather(*self.loops)
 
     def run(self):
         if self.channel:
             self.channel.control.set()
-        # asyncio.run(self.run_loop())
-        self.f(self.channel, *self.ar, **self.kw)
+        asyncio.run(self.run_loop())
+        # self.f(self.channel, *self.ar, **self.kw)
 
     def stop(self):
         if self.channel:
