@@ -139,10 +139,11 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
             return [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in r]
 
     def send_order(
-        self, symbol: str, order_side: str, order_type: str, amount: float, price: float | None = None, 
+        self, instrument: Instrument, order_side: str, order_type: str, amount: float, price: float | None = None, 
         client_id: str | None = None, time_in_force: str='gtc'
     ) -> Optional[Order]:
         params={}
+        symbol = instrument.symbol
 
         if order_type == 'limit':
             params['timeInForce'] = time_in_force.upper()
@@ -152,31 +153,100 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         if client_id:
             params['newClientOrderId'] = client_id
 
-        r: Dict[str, Any] | None = self._task_s(self.exchange.create_order(
-            symbol, order_type, order_side, amount, price, # type: ignore
-            params=params)
-        )
+        try:
+            r: Dict[str, Any] | None = self._task_s(self.exchange.create_order(
+                symbol, order_type, order_side, amount, price, # type: ignore
+                params=params)
+            )
+        except Exception as err:
+            logger.error(err)
+            # TODO - here need to rise exception !
+            return None
 
         if r is not None:
-            return ccxt_convert_order_info(symbol, r) 
+            order = ccxt_convert_order_info(symbol, r) 
+            logger.info(f"New order {order}")
+            return order
 
-        return None # TODO !!!
+        return None
+
+    def cancel_order(self, order_id: str) -> Order | None:
+        order = None
+        if order_id in self._active_orders:
+            order = self._active_orders[order_id]
+            try:
+                r = self._task_s(self.exchange.cancel_order(order_id, symbol=order.symbol))
+            except Exception as err:
+                logger.error(err)
+                raise err
+        return order
 
     async def _listen_to_execution_reports(self, channel: CtrlChannel, symbol: str):
         while channel.control.is_set():
             try:
                 exec = await self.exchange.watch_orders(symbol)        # type: ignore
-                # print(f" >>>> {type(exec)} ||| Received execution: {exec}")
                 for e in exec:
                     order = ccxt_convert_order_info(symbol, e)
-                    if order.execution is not None and symbol in self._positions:
-                        self._positions[symbol].update_position_by_deal(order.execution)
-                        print(f" >>>> execution : {order.execution}")
-                    else:
-                        print(f" >>>> order update : {order}")
-
-            except Exception as e:
+                    self._process_order_report(symbol, order)
+                    # - update client 
+                    channel.queue.put((symbol, order))
+            except NetworkError as e:
                 logger.error(str(e))
+                await asyncio.sleep(1)
+                continue
+
+            except Exception as err:
+                logger.error(str(err))
+
+    def _get_conversion_price(self, symbol: str) -> float:
+        # - TODO: <<<<<<< For cross instruments >>>>>
+        # _aux_instr = pos.instrument._aux_instrument
+        # if _aux_instr is not None:
+        #     logger.warning(f"_get_conversion_price is called for {symbol} but it's not implemented yet !!!")
+        #     _aux_conversion = self.get_quote(_aux_instr.symbol)
+            # if _aux_conversion is None:
+        return 1.0
+
+    def _process_order_report(self, symbol: str, order: Order):
+        pos = self._positions.get(symbol)
+
+        # - how to convert to account base currency
+        conversion_rate = self._get_conversion_price(symbol)
+
+        if order.execution is not None and pos is not None:
+            exec = order.execution
+            realized_pnl = pos.update_position_by_deal(exec, conversion_rate) 
+            deal_cost = exec.amount * exec.price / conversion_rate
+            # if order_cost > 0: # buy X from X/Y instrument: balance = (+X, -X * price of Y)
+            # and we do not account realized pnl here - it's already in deal cost 
+            self._total_capital_in_base -= deal_cost
+
+            logger.info(f"Order {order.id} -> {order.side} {symbol} {abs(exec.amount)} @ {exec.price} -> {realized_pnl:.2f} {self._base_currency}")
+        else:
+            logger.info(str(order))
+
+        # Update the active orders list
+        order_cost = order.quantity * order.price / conversion_rate
+        if order.status in ['CLOSED', 'CANCELED'] and order.id in self._active_orders:
+            del self._active_orders[order.id]
+
+            # - free locked capital
+            if order.status == 'CANCELED':
+                # ------------------------ ---- ------------------------
+                # ------------------------ TODO ------------------------
+                # ------------------------ ---- ------------------------
+                self._locked_capital_in_base -= order_cost
+                # ------------------------ ---- ------------------------
+        else:
+            # - lock capital
+            if order.status in ['NEW', 'OPEN']:
+                # ------------------------ ---- ------------------------
+                # ------------------------ TODO ------------------------
+                # ------------------------ ---- ------------------------
+                self._locked_capital_in_base += order_cost
+                # ------------------------ ---- ------------------------
+
+            self._active_orders[order.id] = order
 
     async def _listen_to_ohlcv(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
         # - check if we need to load initial 'snapshot'
@@ -185,7 +255,7 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
             ohlcv = self._task_s(self._fetch_ohlcs_a(symbol, timeframe, nbarsback))
             for oh in ohlcv:
                 channel.queue.put((symbol, Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
-            logger.info(f"{symbol}: loaded {len(ohlcv)}")
+            logger.info(f"{symbol}: loaded {len(ohlcv)} {timeframe} bars")
 
         while channel.control.is_set():
             try:
@@ -331,6 +401,12 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                 position.update_position_by_deal(o.execution) # type: ignore
 
         return position
+
+    def get_orders(self, symbol: str | None = None) -> List[Order]:
+        ols = list(self._active_orders.values())
+        if symbol is not None:
+            ols = list(filter(lambda x: x.symbol == symbol, ols))
+        return ols
 
     def get_base_currency(self) -> str:
         return self._base_currency

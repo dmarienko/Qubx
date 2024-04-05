@@ -151,6 +151,9 @@ class Order:
     cost: float = 0.0
     # - use execution report
     execution: Deal | None = None
+    
+    def __str__(self) -> str:
+        return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
 
 
 def round_down(x, n):

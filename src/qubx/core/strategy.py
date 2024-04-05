@@ -12,7 +12,7 @@ import pandas as pd
 
 from qubx import lookup, logger
 from qubx.core.lookups import InstrumentsLookup
-from qubx.core.basics import Instrument, Position, Signal, TransactionCostsCalculator, dt_64, td_64, AsyncioThreadRunner, CtrlChannel
+from qubx.core.basics import Instrument, Order, Position, Signal, TransactionCostsCalculator, dt_64, td_64, AsyncioThreadRunner, CtrlChannel
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
 from qubx.utils.time import convert_tf_str_td64
 
@@ -63,6 +63,16 @@ class IExchangeServiceProvider:
 
     def get_capital(self) -> float:
         raise NotImplementedError("get_capital is not implemented")
+
+    def send_order(self, instrument: Instrument, order_side: str, order_type: str, amount: float, price: float | None = None, 
+        client_id: str | None = None, time_in_force: str='gtc') -> Order | None:
+        raise NotImplementedError("send_order is not implemented")
+
+    def cancel_order(self, order_id: str) -> Order | None:
+        raise NotImplementedError("cancel_order is not implemented")
+
+    def get_orders(self, symbol: str | None = None) -> List[Order]:
+        raise NotImplementedError("get_orders is not implemented")
 
     def get_position(self, instrument: Instrument) -> Position:
         raise NotImplementedError("get_position is not implemented")
@@ -182,6 +192,7 @@ class StrategyContext:
     _trig_on_book: bool = False
     _current_bar_trigger_processed: bool = False
     _is_initilized: bool = False
+    _symb_to_instr: Dict[str, Instrument]
 
     _cache: CachedMarketDataHolder # market data cache
 
@@ -215,6 +226,9 @@ class StrategyContext:
         self.config = config
         self.instruments = instruments
         self.positions = {}
+
+        # - for fast access to instrument by it's symbol
+        self._symb_to_instr = {i.symbol: i for i in instruments}
  
         # - process trigger configuration
         self._check_how_to_trigger_strategy(trigger)
@@ -292,7 +306,6 @@ class StrategyContext:
             case _: 
                 raise ValueError(f"Wrong trigger type {_trigger}")
 
-    # def _process_incoming_market_data(self, channel: CtrlChannel):
     async def _process_incoming_market_data(self, channel: CtrlChannel):
         _fails_counter = 0 
         logger.info("Start processing market data")
@@ -318,6 +331,10 @@ class StrategyContext:
             # - any events from exchange: may be timer, news, alt data, etc
             if isinstance(data, EventFromExchange):
                 _strategy_event = self._update_ctx_by_bar(symbol, data)
+
+            # - orders update
+            if isinstance(data, Order):
+                _strategy_event = self._update_ctx_by_order(symbol, data)
 
             if _strategy_event:
                 try:
@@ -366,6 +383,11 @@ class StrategyContext:
     def _update_ctx_by_exchange_event(self, symbol: str, event: EventFromExchange) -> TriggerEvent | None:
         if self._trig_on_time and event.type == 'time':
             return TriggerEvent(self.time(), 'time', symbol, event)
+        return None
+
+    def _update_ctx_by_order(self, symbol: str, order: Order) -> TriggerEvent | None:
+        # TODO: !!!
+        # logger.info(f"Order {order.id} -> {order.side} {symbol} {abs(exec.amount)} @ {exec.price} -> {realized_pnl:.2f}")
         return None
 
     def ohlc(self, instrument: str | Instrument, timeframe: str) -> OHLCV:
@@ -444,7 +466,24 @@ class StrategyContext:
     def time(self) -> dt_64:
         return self.exchange_service.time()
 
-    def quote(self, symbol: str) -> Optional[Quote]:
+    def trade(self, instr_or_symbol: Instrument | str, amount:float, price: float|None=None, time_in_force='gtc') -> Order:
+        instrument: Instrument | None = self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
+        if instrument is None:
+            raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
+        size_adj = max(abs(round(amount, instrument.size_precision)), instrument.min_size)
+        side = 'buy' if amount > 0 else 'sell'
+        type = 'limit' if price is not None else 'market'
+        order = self.exchange_service.send_order(instrument, side, type, size_adj, price, time_in_force=time_in_force) 
+        return order
+
+    def cancel(self, instr_or_symbol: Instrument | str):
+        instrument: Instrument | None = self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
+        if instrument is None:
+            raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
+        for o in self.exchange_service.get_orders(instrument.symbol):
+            self.exchange_service.cancel_order(o.id)
+
+    def quote(self, symbol: str) -> Quote | None:
         return self.exchange_service.get_quote(symbol)
 
     def get_capital(self) -> float:
