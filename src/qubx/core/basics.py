@@ -153,6 +153,11 @@ class Order:
     execution: Deal | None = None
 
 
+def round_down(x, n):
+    dvz = 10**(-n)
+    return (int(x / dvz)) * dvz
+
+
 class Position:
     instrument: Instrument                      # instrument for this poisition
     quantity: float = 0.0                       # quantity positive for long and negative for short
@@ -172,9 +177,10 @@ class Position:
     _formatter: str
     _prc_formatter: str
     _qty_multiplier: float = 1.0
+    __pos_incr_qty: float = 0
 
     def __init__(self, instrument: Instrument, tcc: TransactionCostsCalculator, 
-                 quantity=0.0, average_price=0.0, aux_price=1.0, 
+                 quantity=0.0, pos_average_price=0.0, r_pnl=0.0
                  ) -> None:
         self.instrument = instrument
         self.tcc = tcc
@@ -186,11 +192,13 @@ class Position:
         self._formatter += f'%10.{instrument.price_precision}f %+10.4f | %s  %10.2f'
         self._prc_formatter = f"%.{instrument.price_precision}f"
         if instrument.is_futures:
-            self._qty_multiplier = instrument.futures_info.contract_size
+            self._qty_multiplier = instrument.futures_info.contract_size # type: ignore
 
-        if quantity != 0.0 and average_price > 0.0:
+        self.reset()
+        if quantity != 0.0 and pos_average_price > 0.0:
             self.quantity = quantity
-            raise ValueError("[TODO] Position: restore state by quantity and avg price !!!!")
+            self.position_avg_price = pos_average_price
+            self.r_pnl = r_pnl
 
     def reset(self):
         """
@@ -204,8 +212,9 @@ class Position:
         self.position_avg_price = 0.0
         self.position_avg_price_funds = 0.0
         self.commissions = 0.0
-        self.last_update_time = np.nan
+        self.last_update_time = np.nan # type: ignore
         self.last_update_price = np.nan
+        self.__pos_incr_qty = 0
 
     def _price(self, update: Quote | Trade) -> float:
         if isinstance(update, Quote):
@@ -239,11 +248,15 @@ class Position:
                 if abs(quantity) < self.instrument.min_size_step:
                     quantity = 0.0
                     self.position_avg_price = 0.0
+                    self.__pos_incr_qty = 0
 
             # - if it has something to add to position let's update price and cost
             if qty_opening != 0:
-                qa_open, qas = abs(qty_opening), abs(quantity)
-                self.position_avg_price = (qa_open * exec_price + qas * self.position_avg_price) / (qas + qa_open)
+                _abs_qty_open = abs(qty_opening)
+                pos_avg_price_raw = (_abs_qty_open * exec_price + self.__pos_incr_qty * self.position_avg_price) / (self.__pos_incr_qty + _abs_qty_open)
+                # - round position average price to be in line with how it's calculated by broker
+                self.position_avg_price = round_down(pos_avg_price_raw, self.instrument.price_precision)
+                self.__pos_incr_qty += _abs_qty_open
 
             # - update position and position's price
             self.position_avg_price_funds = self.position_avg_price / conversion_rate

@@ -235,8 +235,8 @@ class OhlcvDataProcessor(DataProcessor):
         self.ohlc.append_data(
             data[self._time_idx],
             data[self._open_idx], data[self._high_idx], data[self._low_idx], data[self._close_idx], 
-            data[self._volume_idx] if self._volume_idx else [],
-            data[self._b_volume_idx] if self._b_volume_idx else []
+            data[self._volume_idx] if self._volume_idx else np.empty(0),
+            data[self._b_volume_idx] if self._b_volume_idx else np.empty(0)
         )
         return None
 
@@ -302,20 +302,17 @@ class OhlcvPandasDataProcessor(DataProcessor):
         return None
 
     def get_result(self) -> Any:
-        # self.ohlc.index.name = 'time'
-        # return self.ohlc
+        rd = {
+            'open': self._open, 'high': self._high, 'low': self._low, 'close': self._close, 
+        }
 
-        return pd.DataFrame(
-            {
-                'open': self._open, 
-                'high': self._high, 
-                'low': self._low, 
-                'close': self._close, 
-                'volume': self._volume if self._volume_idx else [],
-                'taker_buy_quote_volume': self._bvolume if self._b_volume_idx else []
-            },
-            index = self._time
-        ).sort_index()
+        if self._volume_idx:
+            rd['volume'] = self._volume
+
+        if self._b_volume_idx:
+            rd['taker_buy_quote_volume'] = self._bvolume
+
+        return pd.DataFrame(rd, index = self._time).sort_index()
  
 
 class CsvDataReader(DataReader):
@@ -323,7 +320,7 @@ class CsvDataReader(DataReader):
     CSV data file reader
     """
 
-    def __init__(self, path: str, processor: DataProcessor=None, timestamp_parsers=None) -> None:
+    def __init__(self, path: str, processor: DataProcessor|None=None, timestamp_parsers=None) -> None:
         if not exists(path):
             raise ValueError(f"CSV file not found at {path}")
         super().__init__(processor)
