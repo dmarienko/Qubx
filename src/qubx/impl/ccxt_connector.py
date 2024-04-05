@@ -329,7 +329,6 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                 # signed_amount = +o.executed_quantity if o.side.upper() == 'BUY' else -o.executed_quantity
                 # position.change_position_by(o.time.as_unit('ns').asm8, signed_amount, o.executed_price, aggressive=o.type.upper()=='MARKET')
                 position.update_position_by_deal(o.execution) # type: ignore
-                print(o.execution.price, o.execution.amount)
 
         return position
 

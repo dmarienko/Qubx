@@ -20,7 +20,7 @@ class Deal:
         self.exec_price = price
         self.aggr = agressive
 
-def run_deals_updates(p: Position, qs: List[Union[Deal, Trade, Quote]]) -> dict:
+def run_deals_updates(p: Position, qs: List[Union[Deal, Trade, Quote]]) -> pd.Series:
     pnls = {}
     for q in qs:
         if isinstance(q, Deal): 
@@ -70,6 +70,34 @@ class TestBasics:
         print(pnls)
         assert p.commissions == (1*45010+2*45015+1*45020+2*45010+45020+45100)*0.04/100
         assert p.pnl == -60
+
+    def test_average_price(self):
+        p = Position(lookup.find_symbol('BINANCE', 'ACAUSDT'), lookup.find_fees('binance', 'vip0_usdt')) # type: ignore
+        for _p, _s in [
+            (0.1763, 35.96),
+            (0.1762, 14.04),
+            (0.1716,50.0),
+            (0.165,50.0),
+            (0.1534,-40.0),
+            (0.1612,50.0),
+            (0.1606,-50.0),
+            (0.1611,51.0),
+            (0.1621,50.0),
+        ]: 
+            p.change_position_by(0, _s, _p)
+        p.update_market_price(0, 0.1538, 1)
+        assert p.position_avg_price == 0.1661#, p.r_pnl, p.pnl - p.r_pnl, p.commissions, p.market_value
+
+        p.change_position_by(0, -211, 0.1620)
+        assert p.position_avg_price == 0.0
+
+        for _p, _s in [
+            (0.1620,-100.0),
+            (0.1630,-100.0),
+            (0.1640, -100.0),
+            (0.1620, 100.0),]:
+            p.change_position_by(0, _s, _p)
+        assert p.position_avg_price == 0.1630
 
     def test_futures_positions(self):
         D = '2024-01-01 '
