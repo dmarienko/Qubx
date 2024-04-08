@@ -230,6 +230,18 @@ vip7_usdt = 0.0240,0.0360
 vip8_usdt = 0.0180,0.0300
 vip9_usdt = 0.0120,0.0240
 
+# SPOT (maker, taker)
+vip0_bnb = 0.0750,0.0750
+vip1_bnb = 0.0675,0.0750
+vip2_bnb = 0.0600,0.0750
+vip3_bnb = 0.0315,0.0450
+vip4_bnb = 0.0315,0.0405
+vip5_bnb = 0.0270,0.0360
+vip6_bnb = 0.0225,0.0315
+vip7_bnb = 0.0180,0.0270
+vip8_bnb = 0.0135,0.0225
+vip9_bnb = 0.0090,0.0180
+
 # UM futures (maker, taker)
 [binance.um]
 vip0_usdt = 0.0200,0.0500

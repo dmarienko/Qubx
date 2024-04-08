@@ -134,6 +134,8 @@ class Deal:
     amount: float         # signed traded amount: positive for buy and negative for selling
     price: float
     aggressive: bool
+    fee_amount: float | None = None
+    fee_currency: str | None = None
 
 
 @dataclass
@@ -283,6 +285,8 @@ class Position:
     def update_position_by_deal(self, deal: Deal, conversion_rate:float=1) -> float:
         time = deal.time.as_unit('ns').asm8 if isinstance(deal.time, pd.Timestamp) else deal.time
         return self.change_position_by(time, deal.amount, deal.price, deal.aggressive, conversion_rate)
+        # - deal contains cumulative amount
+        # return self.update_position(time, deal.amount, deal.price, deal.aggressive, conversion_rate)
 
     def update_market_price(self, timestamp: dt_64, price: float, conversion_rate:float) -> float:
         self.last_update_time = timestamp # type: ignore

@@ -1,4 +1,7 @@
-from qubx.impl.utils import ccxt_convert_order_info
+import pandas as pd
+from qubx import lookup
+from qubx.core.basics import Deal, Instrument, Position
+from qubx.impl.utils import ccxt_convert_deal_info, ccxt_convert_order_info, ccxt_restore_position_from_deals
 
 C1 = {'info': {'e': 'executionReport', 'E': 1712231084293, 's': 'ACAUSDT', 'c': 'x-R4BD3S8238819a3237ee3b4e56266c', 'S': 'BUY', 'o': 'MARKET', 'f': 'GTC', 'q': '50.00000000', 'p': '0.00000000', 'P': '0.00000000', 'F': '0.00000000', 'g': -1, 'C': '', 'x': 'NEW', 'X': 'NEW', 'r': 'NONE', 'i': 149024288, 'l': '0.00000000', 'z': '0.00000000', 'L': '0.00000000', 'n': '0', 'N': None, 'T': 1712231084293, 't': -1, 'I': 315492989, 'w': True, 'm': False, 'M': False, 'O': 1712231084293, 'Z': '0.00000000', 'Y': '0.00000000', 'Q': '0.00000000', 'W': 1712231084293, 'V': 'EXPIRE_MAKER'}, 'symbol': 'ACA/USDT', 'id': '149024288', 'clientOrderId': 'x-R4BD3S8238819a3237ee3b4e56266c', 'timestamp': 1712231084293, 'datetime': '2024-04-04T11:44:44.293Z', 'lastTradeTimestamp': None, 'lastUpdateTimestamp': 1712231084293, 'type': 'market', 'timeInForce': 'GTC', 'postOnly': False, 'reduceOnly': None, 'side': 'buy', 'price': None, 'stopPrice': 0.0, 'triggerPrice': 0.0, 'amount': 50.0, 'cost': 0.0, 'average': None, 'filled': 0.0, 'remaining': 50.0, 'status': 'open', 'fee': None, 'trades': [], 'fees': [], 'takeProfitPrice': None, 'stopLossPrice': None}
 
@@ -167,6 +170,67 @@ class TestStrats:
                 print(o.execution)
             if o.status.upper() == 'CLOSED':
                 print(o.quantity, o.execution.amount)
+    
+    def test_ccxt_hist_trades_conversion(self):
+        raw = {
+            'info': {
+                'symbol': 'RAYUSDT', 'id': '56324015', 'orderId': '536752004', 'orderListId': '-1', 'price': '2.11290000', 'qty': '2.40000000', 'quoteQty': '5.07096000', 'commission': '0.00000648', 'commissionAsset': 'BNB', 'time': '1712497717270', 'isBuyer': True, 'isMaker': False, 'isBestMatch': True}, 
+            'timestamp': 1712497717270, 
+            'datetime': '2024-04-07T13:48:37.270Z', 
+            'symbol': 'RAY/USDT', 
+            'id': '56324015', 
+            'order': '536752004', 
+            'type': None, 
+            'side': 'buy', 
+            'takerOrMaker': 'taker', 
+            'price': 2.1129, 
+            'amount': 2.4, 
+            'cost': 5.07096, 
+            'fee': {'cost': 6.48e-06, 'currency': 'BNB'}, 
+            'fees': [
+                {'cost': 6.48e-06, 'currency': 'BNB'}
+            ]
+        }
+        print(ccxt_convert_deal_info(raw))
+
+    def test_position_restoring_from_deals(self):
+        deals = [
+            Deal(time=pd.Timestamp('2024-04-07 13:04:36.975000'), amount=0.5, price=180.84, aggressive=True, fee_amount=0.00011542, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-07 13:09:22.644000'), amount=-0.5, price=181.12, aggressive=True, fee_amount=0.00011562, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-07 13:48:37.611000'), amount=0.11, price=181.67, aggressive=True, fee_amount=2.544e-05, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-07 13:48:37.611000'), amount=0.11, price=181.68, aggressive=True, fee_amount=2.544e-05, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-07 13:48:37.611000'), amount=0.11, price=181.69, aggressive=True, fee_amount=2.544e-05, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-07 13:48:37.611000'), amount=0.22, price=181.69, aggressive=True, fee_amount=5.09e-05, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-07 14:12:34.624000'), amount=-0.55, price=181.29, aggressive=True, fee_amount=0.00012728, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-07 14:16:46.048000'), amount=0.7, price=181.32, aggressive=True, fee_amount=0.00016175, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-07 14:17:47.396000'), amount=-0.7, price=181.36, aggressive=True, fee_amount=0.00016176, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-07 14:18:25.864000'), amount=0.13, price=181.36, aggressive=True, fee_amount=3.005e-05, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-07 14:18:25.864000'), amount=0.11, price=181.36, aggressive=True, fee_amount=2.543e-05, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-07 14:18:25.864000'), amount=0.76, price=181.36, aggressive=True, fee_amount=0.00076, fee_currency='SOL'), # type: ignore
+        ]
+
+        instr1: Instrument = lookup.find_symbol('BINANCE', 'SOLUSDT') # type: ignore
+        pos1 = Position(instr1, lookup.find_fees('binance', 'vip0_bnb')) # type: ignore
+        vol1 = 0.99924
+
+        pos1 = ccxt_restore_position_from_deals(pos1, vol1, deals)
+        assert pos1.quantity == vol1
+
+        deals = [
+            Deal(time=pd.Timestamp('2024-04-07 12:40:41.717000'), amount=0.154, price=587.1, aggressive=True, fee_amount=0.0001155, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-07 12:41:59.307000'), amount=-0.153, price=586.6, aggressive=True, fee_amount=0.00011472, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-07 13:44:45.991000'), amount=-0.199, price=588.5, aggressive=True, fee_amount=0.00014922, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-08 12:45:49.738000'), amount=0.025, price=594.1, aggressive=True, fee_amount=1.875e-05, fee_currency='BNB'), # type: ignore
+            Deal(time=pd.Timestamp('2024-04-08 12:48:37.543000'), amount=0.011, price=594.0, aggressive=True, fee_amount=8.25e-06, fee_currency='BNB'), # type: ignore
+        ]
+
+        instr2 = lookup.find_symbol('BINANCE', 'BNBUSDT') # type: ignore
+        pos2 = Position(instr2, lookup.find_fees('binance', 'vip0_bnb')) # type: ignore
+        vol2 = 0.035973
+
+        pos2 = ccxt_restore_position_from_deals(pos2, vol2, deals);
+        assert pos2.quantity == vol2
+
 
 
 

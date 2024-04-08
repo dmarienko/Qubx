@@ -15,10 +15,10 @@ import numpy as np
 import pandas as pd
 
 from qubx import logger, lookup
-from qubx.core.basics import Instrument, Position, Order, TransactionCostsCalculator, dt_64
+from qubx.core.basics import Instrument, Position, Order, TransactionCostsCalculator, dt_64, Deal
 from qubx.core.strategy import IDataProvider, CtrlChannel, IExchangeServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
-from qubx.impl.utils import ccxt_convert_order_info
+from qubx.impl.utils import ccxt_convert_order_info, ccxt_convert_deal_info, ccxt_restore_position_from_deals
 
 
 _aliases = {
@@ -353,14 +353,33 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         # TODO: need to take in account leverage and funds currently locked 
         return self._total_capital_in_base - self._locked_capital_in_base  
 
-    def _get_orders_from_exchange(self, symbol: str, days_before: int = 60):
+    def _get_open_orders_from_exchange(self, symbol: str, days_before: int = 60) -> Dict[str, Order]:
+        """
+        We need only open orders to restore list of active ones in connector 
+        method returns open orders sorted by creation time in ascending order
+        """
         t_orders_start_ms = ((self.time() - days_before * pd.Timedelta('1d')).asm8.item() // 1000000)
-        orders_data = self._task_s(self.exchange.fetch_orders(symbol, since=t_orders_start_ms))
+        # orders_data = self._task_s(self.exchange.fetch_orders(symbol, since=t_orders_start_ms))
+        orders_data = self._task_s(self.exchange.fetch_open_orders(symbol, since=t_orders_start_ms))
         orders: Dict[str, Order] = {}
         for o in orders_data:
             order = ccxt_convert_order_info(symbol, o) 
             orders[order.id] = order
+        if orders: 
+            logger.info(f"{symbol} - loaded {len(orders)} open orders")
         return dict(sorted(orders.items(), key=lambda x: x[1].time, reverse=False))
+
+    def _get_deals_from_exchange(self, symbol: str, days_before: int = 60) -> List[Deal]:
+        """
+        Load trades for given symbol
+        method returns account's trades sorted by creation time in reversed order (latest - first)
+        """
+        t_orders_start_ms = ((self.time() - days_before * pd.Timedelta('1d')).asm8.item() // 1000000)
+        deals_data = self._task_s(self.exchange.fetch_my_trades(symbol, since=t_orders_start_ms))
+        deals: List[Deal] = [ccxt_convert_deal_info(o) for o in deals_data]
+        if deals:
+            return list(sorted(deals, key=lambda x: x.time, reverse=False))
+        return list()
 
     def sync_position_and_orders(self, position: Position) -> Position:
         asset = position.instrument.base
@@ -369,36 +388,16 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         vol_from_exch = total_amnts.get(asset, total_amnts.get(symbol, 0))
 
         # - get orders from exchange
-        orders = self._get_orders_from_exchange(position.instrument.symbol, ORDERS_HISTORY_LOOKBACK_DAYS)
+        orders = self._get_open_orders_from_exchange(position.instrument.symbol, ORDERS_HISTORY_LOOKBACK_DAYS)
+        for oid, od in orders.items():
+            self._active_orders[oid] = od
 
-        # - get orders from exchange
-        last_pos_orders: List[Order] = []
-        for oid, od in reversed(orders.items()):
-            status = od.status.upper()
-            # side = od.side.upper()
-            # if status == 'CLOSED' or status == 'FILLED' or status == 'PARTIALLY_FILLED':
-            if od.execution is not None:
-                # signed_amount = +od.executed_quantity if side == 'BUY' else -od.executed_quantity
-                # vol_from_exch -= signed_amount
-                vol_from_exch -= od.execution.amount
-                if vol_from_exch >= 0:
-                    last_pos_orders.append(od)
+        # - get deals from exchange if position is not zero
+        if vol_from_exch != 0:
+            deals = self._get_deals_from_exchange(symbol)
 
-            # - store active order into local cache
-            if status != 'FILLED' and status != 'CANCELED' and status != 'CLOSED':
-                self._active_orders[oid] = od
-
-        # - actualize position
-        position.reset()
-
-        if vol_from_exch > 0:
-            logger.warning(f"Couldn't restore full execution history for {symbol} symbol. Qubx will use zero position !")
-        else:
-            # - restore position
-            for o in reversed(last_pos_orders):
-                # signed_amount = +o.executed_quantity if o.side.upper() == 'BUY' else -o.executed_quantity
-                # position.change_position_by(o.time.as_unit('ns').asm8, signed_amount, o.executed_price, aggressive=o.type.upper()=='MARKET')
-                position.update_position_by_deal(o.execution) # type: ignore
+            # - actualize position
+            position = ccxt_restore_position_from_deals(position, vol_from_exch, deals);
 
         return position
 

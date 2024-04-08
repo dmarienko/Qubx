@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Iterable, Optional, Union
+from typing import Callable, Dict, Iterable, Optional, Union, List
 from datetime import timedelta
 import pandas as pd
 import numpy as np
@@ -179,7 +179,7 @@ def srows(*xs, keep='all', sort=True) -> Union[pd.DataFrame, pd.Series]:
     return r
 
 
-def retain_columns_and_join(data: dict, columns) -> pd.DataFrame:
+def retain_columns_and_join(data: Dict[str, pd.DataFrame], columns: str | List[str]) -> pd.DataFrame:
     """
     Retains given columns from every value of data dictionary and concatenate them into single data frame
 
@@ -406,7 +406,7 @@ def bands_signals(
     return pd.DataFrame.from_dict(signals, orient='index', columns=px.columns)
 
 
-def ohlc_resample(df: pd.DataFrame | pd.Series | dict, new_freq: str = '1H', vmpt: bool = False, resample_tz=None,
+def ohlc_resample(df: pd.DataFrame | pd.Series | Dict[str, pd.DataFrame], new_freq: str = '1h', vmpt: bool = False, resample_tz=None,
                   non_ohlc_columns_aggregator='sum') -> pd.DataFrame | dict:
     """
     Resample OHLCV/tick series to new timeframe.

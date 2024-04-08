@@ -84,6 +84,13 @@ class IExchangeServiceProvider:
         raise NotImplementedError("get_basic_currency is not implemented")
 
 
+class PositionsTracker:
+    ctx: 'StrategyContext'
+
+    def __init__(self, ctx: 'StrategyContext') -> None:
+        self.ctx = ctx
+    
+
 class IStrategy:
     ctx: 'StrategyContext'
 
@@ -94,6 +101,9 @@ class IStrategy:
         return None
 
     def on_stop(self, ctx: 'StrategyContext'):
+        pass
+
+    def tracker(self, ctx: 'StrategyContext') -> PositionsTracker | None:
         pass
 
 
@@ -218,6 +228,10 @@ class StrategyContext:
         self.strategy = strategy
         if isinstance(strategy, type):
             self.strategy = strategy()
+        self.strategy.ctx = self
+        # TODO: - trackers - - - - - - - - - - - - -
+        # - here we need to instantiate trackers 
+        # - need to think how to do it properly !!!
         self.populate_parameters_to_strategy(self.strategy, **config if config else {})
 
         # - other initialization
