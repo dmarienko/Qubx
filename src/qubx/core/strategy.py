@@ -113,6 +113,10 @@ def _dict_with_exc(dct, f):
     return dct[f]
 
 
+def _round_down_at_min_qty(x: float, min_size: float) -> float:
+    return (int(x / min_size)) * min_size
+
+
 class CachedMarketDataHolder: 
     _min_timeframe: dt_64
     _last_bar: Dict[str, Optional[Bar]]
@@ -484,9 +488,15 @@ class StrategyContext:
         instrument: Instrument | None = self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
         if instrument is None:
             raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
-        size_adj = max(abs(round(amount, instrument.size_precision)), instrument.min_size)
+
+        # - adjust size
+        size_adj = _round_down_at_min_qty(abs(amount), instrument.min_size)
+        if size_adj == 0:
+            raise ValueError(f"Attempt to trade size {abs(amount)} less than minimal allowed {instrument.min_size} !")
+
         side = 'buy' if amount > 0 else 'sell'
         type = 'limit' if price is not None else 'market'
+        logger.info(f"sending {type} {side} for {size_adj} of {instrument.symbol} ...")
         order = self.exchange_service.send_order(instrument, side, type, size_adj, price, time_in_force=time_in_force) 
         return order
 

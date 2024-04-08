@@ -185,11 +185,14 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         while channel.control.is_set():
             try:
                 exec = await self.exchange.watch_orders(symbol)        # type: ignore
+                _msg = f"\nexecs_{symbol} = [\n"
                 for e in exec:
+                    _msg += '\t' + str(e) + ',\n'
                     order = ccxt_convert_order_info(symbol, e)
                     self._process_order_report(symbol, order)
                     # - update client 
                     channel.queue.put((symbol, order))
+                logger.info(_msg + "]\n")
             except NetworkError as e:
                 logger.error(str(e))
                 await asyncio.sleep(1)
@@ -215,7 +218,12 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
 
         if order.execution is not None and pos is not None:
             exec = order.execution
-            realized_pnl = pos.update_position_by_deal(exec, conversion_rate) 
+            # realized_pnl = pos.update_position_by_deal(exec, conversion_rate) 
+
+            # - TODO !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            time = exec.time.as_unit('ns').asm8 if isinstance(exec.time, pd.Timestamp) else exec.time
+            realized_pnl = pos.update_position(time, exec.amount, exec.price, exec.aggressive, conversion_rate)
+
             deal_cost = exec.amount * exec.price / conversion_rate
             # if order_cost > 0: # buy X from X/Y instrument: balance = (+X, -X * price of Y)
             # and we do not account realized pnl here - it's already in deal cost 
