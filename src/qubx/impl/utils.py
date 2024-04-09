@@ -19,15 +19,15 @@ def ccxt_convert_order_info(symbol: str, raw: Dict[str,Any]) -> Order:
     if status == 'open':
         status = ri.get('status', status)  # for filled / part_filled ?
 
-    avg = raw.get('average')
-    exec_amount = float(ri.get('executedQty', raw.get('filled')))
-    exec_price = float(avg) if avg is not None else None
+    # avg = raw.get('average')
+    # exec_amount = float(ri.get('executedQty', raw.get('filled')))
+    # exec_price = float(avg) if avg is not None else None
 
-    if exec_amount > 0 and exec_price is not None:
-        aggressive = _type == 'MARKET'
-        _S = -1 if side == 'SELL' else +1
-        trade_time = pd.Timestamp(raw['lastTradeTimestamp'], unit='ms')
-        deal = Deal(trade_time, _S * exec_amount, exec_price, aggressive)
+    # if exec_amount > 0 and exec_price is not None:
+    #     aggressive = _type == 'MARKET'
+    #     _S = -1 if side == 'SELL' else +1
+    #     trade_time = pd.Timestamp(raw['lastTradeTimestamp'], unit='ms')
+    #     deal = Deal(trade_time, _S * exec_amount, exec_price, aggressive)
 
     # print(f"D['{symbol}'].append({raw})")
     return Order(
@@ -42,7 +42,7 @@ def ccxt_convert_order_info(symbol: str, raw: Dict[str,Any]) -> Order:
         time_in_force = raw['timeInForce'],
         client_id = raw['clientOrderId'],
         cost = float(raw['cost']),
-        execution=deal
+        # execution=deal
     )
 
 
@@ -53,6 +53,8 @@ def ccxt_convert_deal_info(raw: Dict[str,Any]) -> Deal:
         fee_amount = float(raw['fee']['cost'])
         fee_currency = raw['fee']['currency']
     return Deal(
+        id=raw['id'],
+        order_id=raw['order'],
         time = pd.Timestamp(raw['timestamp'], unit='ms'), # type: ignore
         amount=float(raw['amount']) * (-1 if raw['side'] == 'sell' else +1),
         price=float(raw['price']),
@@ -60,6 +62,17 @@ def ccxt_convert_deal_info(raw: Dict[str,Any]) -> Deal:
         fee_amount=fee_amount,
         fee_currency=fee_currency,
     )
+
+
+def ccxt_extract_deals_from_exec(report: Dict[str,Any]) -> List[Deal]:
+    """
+    Small helper for extracting deals (trades) from CCXT execution report
+    """
+    deals = list()
+    if (trades := report.get('trades')):
+        for t in trades:
+            deals.append(ccxt_convert_deal_info(t))
+    return deals
 
 
 def ccxt_restore_position_from_deals(

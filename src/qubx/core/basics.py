@@ -130,7 +130,9 @@ ZERO_COSTS = TransactionCostsCalculator('Zero', 0.0, 0.0)
 
 @dataclass
 class Deal:
-    time: dt_64
+    id: str | int         # trade id
+    order_id: str | int   # order's id
+    time: dt_64           # time of trade
     amount: float         # signed traded amount: positive for buy and negative for selling
     price: float
     aggressive: bool
@@ -151,8 +153,6 @@ class Order:
     time_in_force: str
     client_id: str | None = None
     cost: float = 0.0
-    # - use execution report
-    execution: Deal | None = None
     
     def __str__(self) -> str:
         return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
@@ -308,7 +308,7 @@ class Position:
 
     @staticmethod
     def _t2s(t) -> str:
-        return np.datetime64(t, 'ns').astype('datetime64[ms]').item().strftime('%Y-%m-%d %H:%M:%S') if t else '---'
+        return np.datetime64(t, 'ns').astype('datetime64[ms]').item().strftime('%Y-%m-%d %H:%M:%S') if not np.isnan(t) else '???'
 
     def __str__(self):
         _mkt_price = (self._prc_formatter % self.last_update_price) if self.last_update_price else "---"

@@ -163,13 +163,9 @@ class TestStrats:
         print('#' * 50)
 
         # - historical records
-        pos = 0
         for h in HIST:
             o = ccxt_convert_order_info(h['info']['symbol'], h)
-            if o.execution:
-                print(o.execution)
-            if o.status.upper() == 'CLOSED':
-                print(o.quantity, o.execution.amount)
+            print(o)
     
     def test_ccxt_hist_trades_conversion(self):
         raw = {
@@ -195,18 +191,18 @@ class TestStrats:
 
     def test_position_restoring_from_deals(self):
         deals = [
-            Deal(time=pd.Timestamp('2024-04-07 13:04:36.975000'), amount=0.5, price=180.84, aggressive=True, fee_amount=0.00011542, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-07 13:09:22.644000'), amount=-0.5, price=181.12, aggressive=True, fee_amount=0.00011562, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-07 13:48:37.611000'), amount=0.11, price=181.67, aggressive=True, fee_amount=2.544e-05, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-07 13:48:37.611000'), amount=0.11, price=181.68, aggressive=True, fee_amount=2.544e-05, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-07 13:48:37.611000'), amount=0.11, price=181.69, aggressive=True, fee_amount=2.544e-05, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-07 13:48:37.611000'), amount=0.22, price=181.69, aggressive=True, fee_amount=5.09e-05, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-07 14:12:34.624000'), amount=-0.55, price=181.29, aggressive=True, fee_amount=0.00012728, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-07 14:16:46.048000'), amount=0.7, price=181.32, aggressive=True, fee_amount=0.00016175, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-07 14:17:47.396000'), amount=-0.7, price=181.36, aggressive=True, fee_amount=0.00016176, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-07 14:18:25.864000'), amount=0.13, price=181.36, aggressive=True, fee_amount=3.005e-05, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-07 14:18:25.864000'), amount=0.11, price=181.36, aggressive=True, fee_amount=2.543e-05, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-07 14:18:25.864000'), amount=0.76, price=181.36, aggressive=True, fee_amount=0.00076, fee_currency='SOL'), # type: ignore
+            Deal('0', 1, time=pd.Timestamp('2024-04-07 13:04:36.975000'), amount=0.5, price=180.84, aggressive=True, fee_amount=0.00011542, fee_currency='BNB'), # type: ignore
+            Deal('1', 1, time=pd.Timestamp('2024-04-07 13:09:22.644000'), amount=-0.5, price=181.12, aggressive=True, fee_amount=0.00011562, fee_currency='BNB'), # type: ignore
+            Deal('2', 1, time=pd.Timestamp('2024-04-07 13:48:37.611000'), amount=0.11, price=181.67, aggressive=True, fee_amount=2.544e-05, fee_currency='BNB'), # type: ignore
+            Deal('3', 1, time=pd.Timestamp('2024-04-07 13:48:37.611000'), amount=0.11, price=181.68, aggressive=True, fee_amount=2.544e-05, fee_currency='BNB'), # type: ignore
+            Deal('4', 1, time=pd.Timestamp('2024-04-07 13:48:37.611000'), amount=0.11, price=181.69, aggressive=True, fee_amount=2.544e-05, fee_currency='BNB'), # type: ignore
+            Deal('5', 1, time=pd.Timestamp('2024-04-07 13:48:37.611000'), amount=0.22, price=181.69, aggressive=True, fee_amount=5.09e-05, fee_currency='BNB'), # type: ignore
+            Deal('6', 1, time=pd.Timestamp('2024-04-07 14:12:34.624000'), amount=-0.55, price=181.29, aggressive=True, fee_amount=0.00012728, fee_currency='BNB'), # type: ignore
+            Deal('7', 1, time=pd.Timestamp('2024-04-07 14:16:46.048000'), amount=0.7, price=181.32, aggressive=True, fee_amount=0.00016175, fee_currency='BNB'), # type: ignore
+            Deal('8', 1, time=pd.Timestamp('2024-04-07 14:17:47.396000'), amount=-0.7, price=181.36, aggressive=True, fee_amount=0.00016176, fee_currency='BNB'), # type: ignore
+            Deal('9', 1, time=pd.Timestamp('2024-04-07 14:18:25.864000'), amount=0.13, price=181.36, aggressive=True, fee_amount=3.005e-05, fee_currency='BNB'), # type: ignore
+            Deal('a', 1, time=pd.Timestamp('2024-04-07 14:18:25.864000'), amount=0.11, price=181.36, aggressive=True, fee_amount=2.543e-05, fee_currency='BNB'), # type: ignore
+            Deal('b', 1, time=pd.Timestamp('2024-04-07 14:18:25.864000'), amount=0.76, price=181.36, aggressive=True, fee_amount=0.00076, fee_currency='SOL'), # type: ignore
         ]
 
         instr1: Instrument = lookup.find_symbol('BINANCE', 'SOLUSDT') # type: ignore
@@ -217,11 +213,11 @@ class TestStrats:
         assert pos1.quantity == vol1
 
         deals = [
-            Deal(time=pd.Timestamp('2024-04-07 12:40:41.717000'), amount=0.154, price=587.1, aggressive=True, fee_amount=0.0001155, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-07 12:41:59.307000'), amount=-0.153, price=586.6, aggressive=True, fee_amount=0.00011472, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-07 13:44:45.991000'), amount=-0.199, price=588.5, aggressive=True, fee_amount=0.00014922, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-08 12:45:49.738000'), amount=0.025, price=594.1, aggressive=True, fee_amount=1.875e-05, fee_currency='BNB'), # type: ignore
-            Deal(time=pd.Timestamp('2024-04-08 12:48:37.543000'), amount=0.011, price=594.0, aggressive=True, fee_amount=8.25e-06, fee_currency='BNB'), # type: ignore
+            Deal('0', 2, time=pd.Timestamp('2024-04-07 12:40:41.717000'), amount=0.154, price=587.1, aggressive=True, fee_amount=0.0001155, fee_currency='BNB'), # type: ignore
+            Deal('1', 2, time=pd.Timestamp('2024-04-07 12:41:59.307000'), amount=-0.153, price=586.6, aggressive=True, fee_amount=0.00011472, fee_currency='BNB'), # type: ignore
+            Deal('2', 2, time=pd.Timestamp('2024-04-07 13:44:45.991000'), amount=-0.199, price=588.5, aggressive=True, fee_amount=0.00014922, fee_currency='BNB'), # type: ignore
+            Deal('3', 2, time=pd.Timestamp('2024-04-08 12:45:49.738000'), amount=0.025, price=594.1, aggressive=True, fee_amount=1.875e-05, fee_currency='BNB'), # type: ignore
+            Deal('4', 2, time=pd.Timestamp('2024-04-08 12:48:37.543000'), amount=0.011, price=594.0, aggressive=True, fee_amount=8.25e-06, fee_currency='BNB'), # type: ignore
         ]
 
         instr2 = lookup.find_symbol('BINANCE', 'BNBUSDT') # type: ignore
