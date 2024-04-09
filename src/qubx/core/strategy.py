@@ -207,6 +207,8 @@ class StrategyContext:
     _current_bar_trigger_processed: bool = False
     _is_initilized: bool = False
     _symb_to_instr: Dict[str, Instrument]
+    __strategy_id: str
+    __order_id: int 
 
     _cache: CachedMarketDataHolder # market data cache
 
@@ -233,9 +235,12 @@ class StrategyContext:
         if isinstance(strategy, type):
             self.strategy = strategy()
         self.strategy.ctx = self
+
         # TODO: - trackers - - - - - - - - - - - - -
         # - here we need to instantiate trackers 
         # - need to think how to do it properly !!!
+
+        # - set strategy custom parameters 
         self.populate_parameters_to_strategy(self.strategy, **config if config else {})
 
         # - other initialization
@@ -256,6 +261,8 @@ class StrategyContext:
 
         # - states 
         self._is_initilized = False
+        self.__strategy_id = self.strategy.__class__.__name__ + "_"
+        self.__order_id = self.time().item() // 100_000_000
 
     def _check_how_to_listen_to_market_data(self, md_config: dict):
         self._market_data_subcription_type = _dict_with_exc(md_config, 'type').lower()
@@ -484,6 +491,10 @@ class StrategyContext:
     def time(self) -> dt_64:
         return self.exchange_service.time()
 
+    def _generate_order_client_id(self, symbol: str) -> str:
+        self.__order_id += 1
+        return self.__strategy_id + symbol + '_' + str(self.__order_id)
+
     def trade(self, instr_or_symbol: Instrument | str, amount:float, price: float|None=None, time_in_force='gtc') -> Order:
         instrument: Instrument | None = self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
         if instrument is None:
@@ -497,7 +508,8 @@ class StrategyContext:
         side = 'buy' if amount > 0 else 'sell'
         type = 'limit' if price is not None else 'market'
         logger.info(f"sending {type} {side} for {size_adj} of {instrument.symbol} ...")
-        order = self.exchange_service.send_order(instrument, side, type, size_adj, price, time_in_force=time_in_force) 
+        client_id = self._generate_order_client_id(instrument.symbol)
+        order = self.exchange_service.send_order(instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id) 
         return order
 
     def cancel(self, instr_or_symbol: Instrument | str):
