@@ -5,6 +5,7 @@ from asyncio.tasks import Task
 from asyncio.events import AbstractEventLoop
 from collections import defaultdict
 import stackprinter
+import traceback
 
 import ccxt.pro as cxp
 from ccxt.base.decimal_to_precision import ROUND_UP
@@ -159,13 +160,13 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                 params=params)
             )
         except Exception as err:
-            logger.error(err)
-            # TODO - here need to rise exception !
+            logger.error(f"(CCXTConnector) send_order exception : {err}")
+            logger.error(traceback.format_exc())
             raise err
 
         if r is not None:
             order = ccxt_convert_order_info(symbol, r) 
-            logger.info(f"New order {order}")
+            logger.info(f"(CCXTConnector) New order {order}")
             return order
 
         return None
@@ -178,7 +179,8 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                 logger.info(f"Canceling order {order_id} ...")
                 r = self._task_s(self.exchange.cancel_order(order_id, symbol=order.symbol))
             except Exception as err:
-                logger.error(err)
+                logger.error(f"(CCXTConnector) cancel_order exception : {err}")
+                logger.error(traceback.format_exc())
                 raise err
         return order
 
@@ -194,11 +196,12 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                     channel.queue.put((symbol, order))
                 logger.info(_msg + "]\n")
             except NetworkError as e:
-                logger.error(str(e))
+                logger.error(f"(CCXTConnector) NetworkError in _listen_to_execution_reports : {e}")
                 await asyncio.sleep(1)
                 continue
 
             except Exception as err:
+                logger.error(f"(CCXTConnector) exception in _listen_to_execution_reports : {err}")
                 logger.error(stackprinter.format(err))
 
     def _process_execution_report(self, symbol: str, report: Dict[str, Any]) -> Order:
@@ -228,12 +231,13 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                     channel.queue.put((symbol, Bar(oh[0] * 1000000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
 
             except NetworkError as e:
-                logger.error(str(e))
+                logger.error(f"(CCXTConnector) NetworkError in _listen_to_ohlcv : {e}")
                 await asyncio.sleep(1)
                 continue
 
             except Exception as e:
                 # logger.error(str(e))
+                logger.error(f"(CCXTConnector) exception in _listen_to_ohlcv : {e}")
                 logger.error(stackprinter.format(e))
                 await self.exchange.close()        # type: ignore
                 raise e

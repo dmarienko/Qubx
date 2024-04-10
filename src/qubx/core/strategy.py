@@ -333,7 +333,7 @@ class StrategyContext:
 
     async def _process_incoming_market_data(self, channel: CtrlChannel):
         _fails_counter = 0 
-        logger.info("Start processing market data")
+        logger.info("(StrategyContext) Start processing market data")
 
         while channel.control.is_set():
             _strategy_event: TriggerEvent | None = None
@@ -376,7 +376,7 @@ class StrategyContext:
                         channel.stop()
                         break
 
-        logger.info("Market data processing finished")
+        logger.info("(StrategyContext) Market data processing finished")
 
     def _update_ctx_by_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
         self._cache.update_by_bar(symbol, bar)
@@ -448,7 +448,7 @@ class StrategyContext:
         self._t_mdata_processor.add(self._process_incoming_market_data)
 
         # - subscribe to market data
-        logger.info(f"Subscribing to {self._market_data_subcription_type} updates using {self._market_data_subcription_params} for \n\t{_symbols} ")
+        logger.info(f"(StrategyContext) Subscribing to {self._market_data_subcription_type} updates using {self._market_data_subcription_params} for \n\t{_symbols} ")
         self.data_provider.subscribe(self._market_data_subcription_type, _symbols, **self._market_data_subcription_params)
 
         # - initialize strategy
@@ -457,12 +457,12 @@ class StrategyContext:
                 self.strategy.on_start(self)
                 self._is_initilized = True
             except Exception as strat_error:
-                logger.error(f"Strategy {self.strategy.__class__.__name__} raised an exception in on_start: {strat_error}")
+                logger.error(f"(StrategyContext) Strategy {self.strategy.__class__.__name__} raised an exception in on_start: {strat_error}")
                 logger.error(traceback.format_exc())
                 return
 
         self._t_mdata_processor.start()
-        logger.info("> Data processor started")
+        logger.info("(StrategyContext) Data processor started")
         if join:
             self._t_mdata_processor.join()
 
@@ -473,7 +473,7 @@ class StrategyContext:
             try:
                 self.strategy.on_stop(self)
             except Exception as strat_error:
-                logger.error(f"Strategy {self.strategy.__class__.__name__} raised an exception in on_stop: {strat_error}")
+                logger.error(f"(StrategyContext) Strategy {self.strategy.__class__.__name__} raised an exception in on_stop: {strat_error}")
                 logger.error(traceback.format_exc())
             self._t_mdata_processor = None
 
@@ -486,7 +486,7 @@ class StrategyContext:
                 strategy.__dict__[k] = v
                 _log_info += f"\n\tset <green>{k}</green> <- <red>{v}</red>"
         if _log_info:
-            logger.info("Setup strategy parameters:" + _log_info)
+            logger.info("(StrategyContext) set strategy parameters:" + _log_info)
 
     def time(self) -> dt_64:
         return self.exchange_service.time()
@@ -507,7 +507,7 @@ class StrategyContext:
 
         side = 'buy' if amount > 0 else 'sell'
         type = 'limit' if price is not None else 'market'
-        logger.info(f"sending {type} {side} for {size_adj} of {instrument.symbol} ...")
+        logger.info(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} ...")
         client_id = self._generate_order_client_id(instrument.symbol)
         order = self.exchange_service.send_order(instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id) 
         return order
