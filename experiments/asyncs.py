@@ -82,6 +82,8 @@ class Conn:
 
     async def _listen_to_ohlcv(self, symbol: str):
         logger.info(f"(Con) start listening to ohlc : {symbol} | {id(self.exchange.asyncio_loop)}")
+        ohlcv_i = await self.exchange.fetch_ohlcv(symbol, '1m', limit=10)        # type: ignore
+        logger.info(f"Received initial snapshot : {len(ohlcv_i)}")
         while self.channel.control.is_set():
             try:
                 ohlcv = await self.exchange.watch_ohlcv(symbol, '1m')        # type: ignore

@@ -520,7 +520,7 @@ class StrategyContext:
             self.exchange_service.cancel_order(o.id)
 
     def quote(self, symbol: str) -> Quote | None:
-        return self.exchange_service.get_quote(symbol)
+        return self.data_provider.get_quote(symbol)
 
     def get_capital(self) -> float:
         return self.exchange_service.get_capital()

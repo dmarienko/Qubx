@@ -5,6 +5,15 @@ from qubx import logger
 from qubx.core.basics import Order, Deal, Position
 
 
+EXCH_ALIASES = {
+    "binance.um": "binanceusdm",
+    "binance.cm": "binancecoinm",
+    "kraken.f": "krakenfutures"
+}
+
+ALIASES = EXCH_ALIASES | { "binance": "binanceqv" }
+
+
 def ccxt_convert_order_info(symbol: str, raw: Dict[str,Any]) -> Order:
     """
     Convert CCXT excution record to Order object
@@ -19,17 +28,6 @@ def ccxt_convert_order_info(symbol: str, raw: Dict[str,Any]) -> Order:
     if status == 'open':
         status = ri.get('status', status)  # for filled / part_filled ?
 
-    # avg = raw.get('average')
-    # exec_amount = float(ri.get('executedQty', raw.get('filled')))
-    # exec_price = float(avg) if avg is not None else None
-
-    # if exec_amount > 0 and exec_price is not None:
-    #     aggressive = _type == 'MARKET'
-    #     _S = -1 if side == 'SELL' else +1
-    #     trade_time = pd.Timestamp(raw['lastTradeTimestamp'], unit='ms')
-    #     deal = Deal(trade_time, _S * exec_amount, exec_price, aggressive)
-
-    # print(f"D['{symbol}'].append({raw})")
     return Order(
         id=raw['id'],
         type=_type,
