@@ -7,6 +7,7 @@ from collections import defaultdict
 import stackprinter
 import traceback
 
+import ccxt
 import ccxt.pro as cxp
 from ccxt.base.decimal_to_precision import ROUND_UP
 from ccxt.base.exchange import Exchange
@@ -24,12 +25,13 @@ from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.impl.utils import ccxt_convert_order_info, ccxt_convert_deal_info, ccxt_extract_deals_from_exec, ccxt_restore_position_from_deals
 
 
-_aliases = {
-    'binance': 'binanceqv',
+_basic_aliases = {
     'binance.um': 'binanceusdm',
     'binance.cm': 'binancecoinm',
     'kraken.f': 'krakenfutures'
 }
+
+_aliases = _basic_aliases | { 'binance': 'binanceqv' }
 
 # - register custom wrappers
 from .exchange_customizations import BinanceQV
@@ -39,7 +41,82 @@ cxp.exchanges.append('binanceqv')
 ORDERS_HISTORY_LOOKBACK_DAYS = 30
 
 
-class CCXTConnector(IDataProvider, IExchangeServiceProvider):
+class CCXTSyncTradingConnector(IExchangeServiceProvider):
+    """
+    Synchronous variant of trading API
+    """
+    sync: Exchange
+
+    def __init__(self, exchange_id: str, **exchange_auth):
+        exchange_id = exchange_id.lower()
+        exch = _basic_aliases.get(exchange_id, exchange_id)
+
+        if exch not in ccxt.exchanges:
+            raise ValueError(f"Exchange {exchange_id} -> {exch} is not supported by CCXT!")
+
+        # - sync part: temporary solution
+        self.sync: Exchange = getattr(ccxt, exchange_id.lower())(exchange_auth)
+        logger.info(f"{exch.upper()} loading ...")
+        self.sync.load_markets()        
+        logger.info(f"{exch.upper()} initialized - current time {self.time()}")
+
+    def send_order(
+        self, instrument: Instrument, order_side: str, order_type: str, amount: float, price: float | None = None, 
+        client_id: str | None = None, time_in_force: str='gtc'
+    ) -> Optional[Order]:
+        params={}
+        symbol = instrument.symbol
+
+        if order_type == 'limit':
+            params['timeInForce'] = time_in_force.upper()
+            if price is None:
+                raise ValueError('Price must be specified for limit order')
+
+        if client_id:
+            params['newClientOrderId'] = client_id
+
+        try:
+            # r: Dict[str, Any] | None = self._task_s(self.exchange.create_order(
+            #     symbol, order_type, order_side, amount, price, # type: ignore
+            #     params=params)
+            # )
+            r: Dict[str, Any] | None = self.sync.create_order(
+                symbol, order_type, order_side, amount, price, # type: ignore
+                params=params)
+        except Exception as err:
+            logger.error(f"(CCXTSyncTradingConnector) send_order exception : {err}")
+            logger.error(traceback.format_exc())
+            raise err
+
+        if r is not None:
+            order = ccxt_convert_order_info(symbol, r) 
+            logger.info(f"(CCXTSyncTradingConnector) New order {order}")
+            return order
+
+        return None
+
+    def cancel_order(self, order_id: str) -> Order | None:
+        order = None
+        if order_id in self.acc._active_orders:
+            order = self.acc._active_orders[order_id]
+            try:
+                logger.info(f"Canceling order {order_id} ...")
+                # r = self._task_s(self.exchange.cancel_order(order_id, symbol=order.symbol))
+                r = self.sync.cancel_order(order_id, symbol=order.symbol)
+            except Exception as err:
+                logger.error(f"(CCXTSyncTradingConnector) cancel_order exception : {err}")
+                logger.error(traceback.format_exc())
+                raise err
+        return order
+
+    def time(self) -> dt_64:
+        """
+        Returns current time in nanoseconds
+        """
+        return np.datetime64(self.sync.microseconds() * 1000, 'ns')
+
+
+class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
     exchange: Exchange
     subsriptions: Dict[str, List[str]]
     acc: AccountProcessor
@@ -52,12 +129,12 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
     _loop: AbstractEventLoop 
 
     def __init__(self, exchange_id: str, base_currency: str, commissions: str|None = None, **exchange_auth):
-        super().__init__()
+        super().__init__(exchange_id, **exchange_auth)
         
         exchange_id = exchange_id.lower()
         exch = _aliases.get(exchange_id, exchange_id)
         if exch not in cxp.exchanges:
-            raise ValueError(f"Exchange {exchange_id} -> {exch} is not supported by CCXT!")
+            raise ValueError(f"Exchange {exchange_id} -> {exch} is not supported by CCXT.pro !")
 
         try:
             self._loop = asyncio.get_running_loop()
@@ -68,8 +145,9 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
             # exchange_auth |= {'asyncio_loop':self._loop}
 
         self.exchange = getattr(cxp, exch)(exchange_auth)
+        logger.info(f"{exch.upper()} loading ...")
+
         self.subsriptions: Dict[str, List[str]] = defaultdict(list)
-        # self._base_currency = base_currency
         self._ch_market_data = CtrlChannel(exch + '.marketdata')
         self._last_quotes = defaultdict(lambda: None)
 
@@ -139,51 +217,6 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
         if len(r) > 0:
             return [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in r]
 
-    def send_order(
-        self, instrument: Instrument, order_side: str, order_type: str, amount: float, price: float | None = None, 
-        client_id: str | None = None, time_in_force: str='gtc'
-    ) -> Optional[Order]:
-        params={}
-        symbol = instrument.symbol
-
-        if order_type == 'limit':
-            params['timeInForce'] = time_in_force.upper()
-            if price is None:
-                raise ValueError('Price must be specified for limit order')
-
-        if client_id:
-            params['newClientOrderId'] = client_id
-
-        try:
-            r: Dict[str, Any] | None = self._task_s(self.exchange.create_order(
-                symbol, order_type, order_side, amount, price, # type: ignore
-                params=params)
-            )
-        except Exception as err:
-            logger.error(f"(CCXTConnector) send_order exception : {err}")
-            logger.error(traceback.format_exc())
-            raise err
-
-        if r is not None:
-            order = ccxt_convert_order_info(symbol, r) 
-            logger.info(f"(CCXTConnector) New order {order}")
-            return order
-
-        return None
-
-    def cancel_order(self, order_id: str) -> Order | None:
-        order = None
-        if order_id in self.acc._active_orders:
-            order = self.acc._active_orders[order_id]
-            try:
-                logger.info(f"Canceling order {order_id} ...")
-                r = self._task_s(self.exchange.cancel_order(order_id, symbol=order.symbol))
-            except Exception as err:
-                logger.error(f"(CCXTConnector) cancel_order exception : {err}")
-                logger.error(traceback.format_exc())
-                raise err
-        return order
-
     async def _listen_to_execution_reports(self, channel: CtrlChannel, symbol: str):
         while channel.control.is_set():
             try:
@@ -241,12 +274,6 @@ class CCXTConnector(IDataProvider, IExchangeServiceProvider):
                 logger.error(stackprinter.format(e))
                 await self.exchange.close()        # type: ignore
                 raise e
-
-    def time(self) -> dt_64:
-        """
-        Returns current time in nanoseconds
-        """
-        return np.datetime64(self.exchange.microseconds() * 1000, 'ns')
 
     def get_name(self) -> str:
         return self.exchange.name  # type: ignore
