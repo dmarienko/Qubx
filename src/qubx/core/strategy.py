@@ -43,6 +43,9 @@ class IDataProvider:
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar] | None:
         raise NotImplementedError("get_historical_ohlcs")
 
+    def get_quote(self, symbol: str) -> Quote | None:
+        raise NotImplementedError("get_quote")
+
 
 class IExchangeServiceProvider:
 
@@ -57,9 +60,6 @@ class IExchangeServiceProvider:
 
     def schedule_trigger(self, trigger_id: str, when: str):
         raise NotImplementedError("schedule_trigger is not implemented")
-
-    def get_quote(self, symbol: str) -> Quote | None:
-        pass
 
     def get_capital(self) -> float:
         raise NotImplementedError("get_capital is not implemented")
@@ -76,9 +76,6 @@ class IExchangeServiceProvider:
 
     def get_position(self, instrument: Instrument) -> Position:
         raise NotImplementedError("get_position is not implemented")
-
-    def sync_position_and_orders(self, position: Position) -> Position:
-        raise NotImplementedError("sync_position is not implemented")
 
     def get_base_currency(self) -> str:
         raise NotImplementedError("get_basic_currency is not implemented")

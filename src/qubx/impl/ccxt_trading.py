@@ -101,7 +101,7 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
             return list(sorted(deals, key=lambda x: x.time, reverse=False))
         return list()
 
-    def sync_position_and_orders(self, position: Position) -> Position:
+    def _sync_position_and_orders(self, position: Position) -> Position:
         asset = position.instrument.base
         symbol = position.instrument.symbol
         total_amnts = self._balance['total']
@@ -125,7 +125,7 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
 
         if symbol not in self._positions:
             position = Position(instrument, self._fees_calculator)  # type: ignore
-            position = self.sync_position_and_orders(position)
+            position = self._sync_position_and_orders(position)
             self.acc.attach_positions(position)
 
         return self._positions[symbol] 
