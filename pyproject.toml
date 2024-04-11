@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Qubx"
-version = "0.0.5"
+version = "0.0.6"
 description = "Qubx - quantitative trading framework"
 authors = ["Dmitry Marienko <dmitry@gmail.com>"]
 readme = "README.md"
@@ -23,8 +23,6 @@ loguru = "^0.7.2"
 tqdm = "*"
 importlib-metadata = "*"
 stackprinter = "^0.2.10"
-#websocket-client = "^1.6.3"
-#websockets = "^11.0.3"
 pymongo = "^4.6.1"
 pydantic = "^1.10.2"
 python-dotenv = "^1.0.0"
