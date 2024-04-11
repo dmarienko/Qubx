@@ -1,4 +1,5 @@
-import sys, yaml, sys
+import click, sys, yaml, sys, time
+from os.path import exists, expanduser
 import yaml, configparser
 
 from qubx import lookup, logger, formatter
@@ -58,15 +59,16 @@ def get_account_auth(acc_name: str, accounts_cfg_file: str):
     return dict(parser[acc_name])
 
 
-def main_runner(config_file: str, accounts_cfg_file='accounts.cfg', *search_paths):
+def create_strategy_context(config_file: str, accounts_cfg_file: str, search_paths: list) -> StrategyContext | None:
     cfg = load_strategy_config(config_file)
     try:
         for p in search_paths:
-            add_project_to_system_path(p)
+            if exists(pe:=expanduser(p)):
+                add_project_to_system_path(pe)
         strategy = class_import(cfg.strategy)
     except Exception as err:
         logger.error(str(err))
-        return
+        return None
 
     logger.add(LOGFILE + cfg.name + "_{time}.log", format=formatter, rotation="100 MB", colorize=False)
 
@@ -75,7 +77,7 @@ def main_runner(config_file: str, accounts_cfg_file='accounts.cfg', *search_path
     if cfg.account is not None:
         acc_auth = get_account_auth(cfg.account, accounts_cfg_file)
         if acc_auth is None:
-            return
+            return None
 
     # - check connector
     conn = cfg.connector.lower()
@@ -86,33 +88,106 @@ def main_runner(config_file: str, accounts_cfg_file='accounts.cfg', *search_path
             raise ValueError(f"Connector {conn} is not supported yet !")
         
     logger.info(f""" - - - <blue>Qubx</blue> (ver. <red>{version()}</red>) - - -\n - Strategy: {strategy}\n - Config: {cfg.parameters} """)
-
     ctx = StrategyContext(
         strategy, cfg.parameters, connector, connector, 
-        instruments=cfg.instruments, md_subscription=cfg.md_subscr, trigger=cfg.strategy_trigger)
-    # ctx.start(join=True)
-    ctx.start()
+        instruments=cfg.instruments, md_subscription=cfg.md_subscr, trigger=cfg.strategy_trigger
+    )
+ 
     return ctx
 
-# @click.command()
-# @click.argument('filename', type=click.Path(exists=True))
 
-# def run(filename: str):
-    # main_runner(filename)
+def _run_in_jupyter(filename: str, accounts: str, paths: list):
+    try:
+        from jupyter_console.app import ZMQTerminalIPythonApp
+    except ModuleNotFoundError:
+        logger.error("Can't find ZMQTerminalIPythonApp module - try to install jupyter first")
+        return 
+    try:
+        import nest_asyncio
+    except ModuleNotFoundError:
+        logger.error("Can't find nest_asyncio module - try to install it first")
+        return 
 
-# import asyncio
+    class TerminalRunner(ZMQTerminalIPythonApp):
+        def __init__(self, **kwargs) -> None:
+            self.init_code = kwargs.pop('init_code')
+            super().__init__(**kwargs)
+        def init_banner(self):
+            pass
+        def initialize(self, argv=None):
+            super().initialize(argv=[])
+            self.shell.run_cell(self.init_code)
 
-# async def observe(ctx):
-#     while True:
-#         for p in ctx.positions.values():
-#             print('\t' + str(p))
-#         print('- ' * 40)
-#         try:
-#             await asyncio.sleep(10)
-#             print('\033[H')
-#         except KeyboardInterrupt:
-#             break
-#         except Exception:
-#             break
+    logger.info("Running in Jupyter console")
+    TerminalRunner.launch_instance(init_code=f"""
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+import pandas as pd
+import nest_asyncio; nest_asyncio.apply()
+from qubx.utils.misc import dequotify
+from qubx.utils.runner import create_strategy_context
 
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ctx = create_strategy_context('{filename}', '{accounts}', {paths})
+ctx.start()
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def orders(symbol=None):
+    return ctx.exchange_service.get_orders(symbol)
+
+def trade(symbol, qty, price=None, tif='gtc'):
+    return ctx.trade(symbol, qty, price, tif)
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def pnl_report():
+    from tabulate import tabulate
+    d = dict()
+    for s, p in ctx.positions.items():
+        d[dequotify(s)] = dict(Position=round(p.quantity, p.instrument.size_precision),  PnL=p.total_pnl(), AvgPrice=p.position_avg_price_funds, LastPrice=p.last_update_price)
+    d = pd.DataFrame.from_dict(d).T
+    # d = d[d['PnL'] != 0.0]
+    if d.empty:
+        print('-(no open positions yet)-')
+        return
+    d = d.sort_values('PnL' ,ascending=False)
+    d = pd.concat((d, pd.Series(dict(TOTAL=d['PnL'].sum()), name='PnL'))).fillna('')
+    print(tabulate(d, ['Position', 'PnL', 'AvgPrice', 'LastPrice'], tablefmt='rounded_grid'))
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+__exit = exit
+def exit():
+    ctx.stop(); __exit()
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+""")
+
+
+@click.command()
+@click.argument('filename', type=click.Path(exists=True))
+@click.option('--accounts', '-a', default='accounts.cfg', type=click.STRING, help='Live accounts configuration file')
+@click.option('--paths', '-p', multiple=True, default=['../', '~/projects/'], type=click.STRING, help='Live accounts configuration file')
+@click.option('--jupyter', '-j', is_flag=True, default=False, help='Run strategy in jupyter console', show_default=True)
+def run(filename: str, accounts: str, paths: list, jupyter: bool):
+    if jupyter:
+        _run_in_jupyter(filename, accounts, paths)
+        return
+    
+    # - create context
+    ctx = create_strategy_context(filename, accounts, paths)
+    if ctx is None:
+        return
+
+    # - run main loop
+    try:
+        ctx.start()
+
+        # - just wake up every 60 sec and check if it's OK 
+        while True: 
+            time.sleep(60)
+
+    except KeyboardInterrupt:
+        ctx.stop()
+        time.sleep(1)
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    run()
 

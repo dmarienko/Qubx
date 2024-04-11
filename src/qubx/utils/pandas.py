@@ -8,7 +8,7 @@ from numpy.lib.stride_tricks import as_strided as stride
 from qubx.utils.misc import Struct
 
 
-def rolling_forward_test_split(x: pd.Series | pd.DataFrame, training_period: int, test_period: int, units: str = None):
+def rolling_forward_test_split(x: pd.Series | pd.DataFrame, training_period: int, test_period: int, units: str | None = None ):
     """
     Split data into training and testing **rolling** periods.
      
@@ -98,7 +98,7 @@ def generate_equal_date_ranges(start: str | pd.Timestamp, end: str | pd.Timestam
     yield _as_f(b[0]), _as_f(b[-1])
 
 
-def drop_duplicated_indexes(df, keep='first'):
+def drop_duplicated_indexes(df: pd.DataFrame, keep='first'):
     """
     Drops duplicated indexes in dataframe/series
     Keeps either first or last occurence (parameter keep)
@@ -106,7 +106,7 @@ def drop_duplicated_indexes(df, keep='first'):
     return df[~df.index.duplicated(keep=keep)]
 
 
-def process_duplicated_indexes(data: Union[pd.DataFrame, pd.Series], ns=1) -> Union[pd.DataFrame, pd.Series]:
+def process_duplicated_indexes(data: pd.DataFrame | pd.Series, ns=1) -> pd.DataFrame | pd.Series:
     """
     Finds duplicated indexes in frame/series and add shift (in nS) to every repeating one
     :param data: time indexed dataframe/series

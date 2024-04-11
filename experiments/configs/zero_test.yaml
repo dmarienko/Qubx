@@ -1,14 +1,14 @@
 config:
-  strategy: aah.portfolios.cfm.teststrat.ZeroStrat
+  strategy: experiments.strats.teststrat.FlipFlopStrat
 
   parameters:
-    param1: 123
+    capital_invested: 100
+    trading_allowed: false
 
   execution:
     connector:        ccxt
     exchange:         binance   # spot
     account:          binance-mde
-    capital:          1000.0
 
     subscription:     # market data subscription
       type:           ohlc
@@ -20,6 +20,4 @@ config:
       timeframe:      '1Min'
       delay:          '-5Sec'
     
-    universe:          
-      - 'ACAUSDT' 
-      - 'BNBUSDT'
+    universe:         ['PEPEUSDT', 'SHIBUSDT', 'XVGUSDT', 'BOMEUSDT', 'CKBUSDT', 'GALAUSDT', 'LINKUSDT']
