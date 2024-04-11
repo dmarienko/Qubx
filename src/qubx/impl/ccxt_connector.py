@@ -1,3 +1,4 @@
+from threading import Thread
 from typing import Any, Dict, List, Optional
 
 import asyncio
@@ -8,7 +9,7 @@ import stackprinter
 
 import ccxt.pro as cxp
 from ccxt.base.exchange import Exchange
-from ccxt import NetworkError
+from ccxt import NetworkError, ExchangeClosedByUser
 
 import re
 import pandas as pd
@@ -17,7 +18,7 @@ from qubx import logger
 from qubx.core.basics import Instrument, Position, dt_64, Deal
 from qubx.core.strategy import IDataProvider, CtrlChannel, IExchangeServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
-from qubx.impl.utils import ALIASES
+from qubx.impl.utils import DATA_PROVIDERS_ALIASES
 
 from .ccxt_trading import CCXTSyncTradingConnector
 
@@ -28,33 +29,31 @@ cxp.exchanges.append('binanceqv')
 
 
 class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
-    exchange: Exchange
-    subsriptions: Dict[str, List[str]]
+    _exchange: Exchange
+    _subsriptions: Dict[str, List[str]]
 
     _ch_market_data: CtrlChannel
     _last_quotes: Dict[str, Optional[Quote]]
     _loop: AbstractEventLoop 
+    _thread_event_loop: Thread
 
     def __init__(self, exchange_id: str, base_currency: str | None = None, commissions: str|None = None, **exchange_auth):
         super().__init__(exchange_id, base_currency, commissions, **exchange_auth)
         
         exchange_id = exchange_id.lower()
-        exch = ALIASES.get(exchange_id, exchange_id)
+        exch = DATA_PROVIDERS_ALIASES.get(exchange_id, exchange_id)
         if exch not in cxp.exchanges:
             raise ValueError(f"Exchange {exchange_id} -> {exch} is not supported by CCXT.pro !")
 
-        try:
-            self._loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-            logger.info("started new event loop")
-            # exchange_auth |= {'asyncio_loop':self._loop}
+        # - create new even loop
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
 
-        self.exchange = getattr(cxp, exch)(exchange_auth)
-        self.subsriptions: Dict[str, List[str]] = defaultdict(list)
-        self._ch_market_data = CtrlChannel(exch + '.marketdata')
+        # - create exchange's instance
+        self._exchange = getattr(cxp, exch)(exchange_auth | {'asyncio_loop': self._loop})
+        self._ch_market_data = CtrlChannel(exch + '.marketdata', sent=(None, None))
         self._last_quotes = defaultdict(lambda: None)
+        self._subsriptions: Dict[str, List[str]] = defaultdict(list)
 
         logger.info(f"{self.get_name().upper()} initialized - current time {self.time()}")
 
@@ -73,8 +72,9 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
                 # convert to exchange format
                 tframe = self._get_exch_timeframe(timeframe)
                 for s in to_process:
-                    self._task_a(self._listen_to_ohlcv(self.get_communication_channel(), s, tframe, nback))
-                    self.subsriptions[sbscr].append(s.lower())
+                    # self._task_a(self._listen_to_ohlcv(self.get_communication_channel(), s, tframe, nback))
+                    asyncio.run_coroutine_threadsafe(self._listen_to_ohlcv(self.get_communication_channel(), s, tframe, nback), self._loop)
+                    self._subsriptions[sbscr].append(s.lower())
                 logger.info(f'Subscribed on {sbscr} updates for {len(to_process)} symbols: \n\t\t{to_process}')
 
             case 'trades':
@@ -88,7 +88,10 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
 
         # - subscibe to executions reports
         for s in to_process:
-            self._task_a(self._listen_to_execution_reports(self.get_communication_channel(), s))
+            asyncio.run_coroutine_threadsafe(self._listen_to_execution_reports(self.get_communication_channel(), s), self._loop)
+
+        self._thread_event_loop = Thread(target=self._loop.run_forever, args=(), daemon=True)
+        self._thread_event_loop.start()
 
         return True
 
@@ -96,29 +99,35 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
         return self._ch_market_data
 
     def _check_existing_subscription(self, subscription_type, symbols: List[str]) -> List[str]:
-        subscribed = self.subsriptions[subscription_type]
+        subscribed = self._subsriptions[subscription_type]
         to_subscribe = []
         for s in symbols: 
             if s not in subscribed:
                 to_subscribe.append(s)
         return to_subscribe
 
-    async def _fetch_ohlcs_a(self, symbol: str, timeframe: str, nbarsback: int):
-        assert nbarsback > 1
-        start = ((self.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item()//1000000) if nbarsback > 1 else None 
-        return await self.exchange.fetch_ohlcv(symbol, timeframe, since=start, limit=nbarsback + 1)        # type: ignore
+    def _time_msec_nbars_back(self, timeframe: str, nbarsback: int) -> int:
+        return (self.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
 
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> Optional[List[Bar]]:
-        assert nbarsback > 1
-        # we want to wait until initial snapshot is arrived so run it in sync mode
-        r = self._task_s(self._fetch_ohlcs_a(symbol, self._get_exch_timeframe(timeframe), nbarsback))
-        if len(r) > 0:
-            return [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in r]
+        assert nbarsback >= 1
+        since = self._time_msec_nbars_back(timeframe, nbarsback)
+
+        # - get this from sync 
+        res = self.sync.fetch_ohlcv(symbol, self._get_exch_timeframe(timeframe), since=since)
+        _arr = []  
+        for oh in res: # type: ignore
+            _arr.append(
+                Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) 
+                if len(oh) > 6 else 
+                Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[5]) 
+            )
+        return _arr
 
     async def _listen_to_execution_reports(self, channel: CtrlChannel, symbol: str):
         while channel.control.is_set():
             try:
-                exec = await self.exchange.watch_orders(symbol)        # type: ignore
+                exec = await self._exchange.watch_orders(symbol)        # type: ignore
                 _msg = f"\nexecs_{symbol} = [\n"
                 for report in exec:
                     _msg += '\t' + str(report) + ',\n'
@@ -126,10 +135,16 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
                     # - send update to client 
                     channel.queue.put((symbol, order))
                 logger.info(_msg + "]\n")
+
             except NetworkError as e:
                 logger.error(f"(CCXTConnector) NetworkError in _listen_to_execution_reports : {e}")
                 await asyncio.sleep(1)
                 continue
+
+            except ExchangeClosedByUser:
+                # - we closed connection so just stop it 
+                logger.info(f"(CCXTConnector) {symbol} execution reports listening has been stopped")
+                break
 
             except Exception as err:
                 logger.error(f"(CCXTConnector) exception in _listen_to_execution_reports : {err}")
@@ -137,16 +152,16 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
 
     async def _listen_to_ohlcv(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
         # - check if we need to load initial 'snapshot'
-        if nbarsback > 1:
-            # ohlcv = asyncio.run(self._fetch_ohlcs_a(symbol, timeframe, nbarsback))
-            ohlcv = self._task_s(self._fetch_ohlcs_a(symbol, timeframe, nbarsback))
+        if nbarsback >= 1:
+            start = self._time_msec_nbars_back(timeframe, nbarsback)
+            ohlcv = await self._exchange.fetch_ohlcv(symbol, timeframe, since=start, limit=nbarsback + 1)        # type: ignore
             for oh in ohlcv:
                 channel.queue.put((symbol, Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
             logger.info(f"{symbol}: loaded {len(ohlcv)} {timeframe} bars")
 
         while channel.control.is_set():
             try:
-                ohlcv = await self.exchange.watch_ohlcv(symbol, timeframe)        # type: ignore
+                ohlcv = await self._exchange.watch_ohlcv(symbol, timeframe)        # type: ignore
 
                 # - update positions by actual close price
                 self.update_position_price(symbol, ohlcv[-1][4])
@@ -159,11 +174,16 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
                 await asyncio.sleep(1)
                 continue
 
+            except ExchangeClosedByUser:
+                # - we closed connection so just stop it 
+                logger.info(f"(CCXTConnector) {symbol} OHLCV listening has been stopped")
+                break
+
             except Exception as e:
                 # logger.error(str(e))
                 logger.error(f"(CCXTConnector) exception in _listen_to_ohlcv : {e}")
                 logger.error(stackprinter.format(e))
-                await self.exchange.close()        # type: ignore
+                await self._exchange.close()        # type: ignore
                 raise e
 
     def get_quote(self, symbol: str) -> Optional[Quote]:
@@ -174,20 +194,14 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
             _t = re.match(r'(\d+)(\w+)', timeframe)
             timeframe = f"{_t[1]}{_t[2][0].lower()}" if _t and len(_t.groups()) > 1 else timeframe
 
-        tframe = self.exchange.find_timeframe(timeframe)
+        tframe = self._exchange.find_timeframe(timeframe)
         if tframe is None:
             raise ValueError(f"timeframe {timeframe} is not supported by {self.get_name()}")
 
         return tframe
 
-    def _task_a(self, coro) -> Task:
-        return self._loop.create_task(coro)
-
-    def _task_s(self, coro) -> Any:
-        return self._loop.run_until_complete(coro)
-
     def close(self):
         try:
-            self._task_s(self.exchange.close()) # type: ignore
+            self._loop.run_until_complete(self._exchange.close()) # type: ignore
         except Exception as e:
             logger.error(e)

@@ -5,13 +5,13 @@ from qubx import logger
 from qubx.core.basics import Order, Deal, Position
 
 
-EXCH_ALIASES = {
+EXCHANGE_ALIASES = {
     "binance.um": "binanceusdm",
     "binance.cm": "binancecoinm",
     "kraken.f": "krakenfutures"
 }
 
-ALIASES = EXCH_ALIASES | { "binance": "binanceqv" }
+DATA_PROVIDERS_ALIASES = EXCHANGE_ALIASES | { "binance": "binanceqv" }
 
 
 def ccxt_convert_order_info(symbol: str, raw: Dict[str,Any]) -> Order:

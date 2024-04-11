@@ -324,47 +324,18 @@ class CtrlChannel:
     name: str
     lock: Lock
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, sent=(None, None)):
         self.name = name
         self.control = Event()
         self.queue = Queue()
         self.lock = Lock()
+        self.sent = sent
         self.start()
 
     def stop(self):
         if self.control.is_set():
             self.control.clear()
+            self.queue.put(self.sent) # send sentinel
 
     def start(self):
         self.control.set()
-
-
-class AsyncioThreadRunner(Thread):
-    channel: Optional[CtrlChannel]
-
-    def __init__(self, channel: Optional[CtrlChannel]):
-        self.result = None
-        self.channel = channel
-        self.loops = []
-        super().__init__()
-
-    def add(self, func, *args, **kwargs) -> 'AsyncioThreadRunner':
-        self.loops.append(func(self.channel, *args, **kwargs))
-        # self.f = func
-        # self.ar = args
-        # self.kw = kwargs
-        return self
-
-    async def run_loop(self):
-        self.result = await asyncio.gather(*self.loops)
-
-    def run(self):
-        if self.channel:
-            self.channel.control.set()
-        asyncio.run(self.run_loop())
-        # self.f(self.channel, *self.ar, **self.kw)
-
-    def stop(self):
-        if self.channel:
-            self.channel.control.clear()
-            self.channel.queue.put((None, None)) # send sentinel

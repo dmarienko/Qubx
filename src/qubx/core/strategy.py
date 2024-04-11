@@ -2,6 +2,7 @@
  # All interfaces related to strategy etc
 """
 from collections import defaultdict
+from threading import Thread
 import traceback
 from typing import Any, Callable, Dict, List, Optional, Union
 import numpy as np
@@ -12,7 +13,7 @@ import pandas as pd
 
 from qubx import lookup, logger
 from qubx.core.lookups import InstrumentsLookup
-from qubx.core.basics import Instrument, Order, Position, Signal, TransactionCostsCalculator, dt_64, td_64, AsyncioThreadRunner, CtrlChannel
+from qubx.core.basics import Instrument, Order, Position, Signal, dt_64, td_64, CtrlChannel
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
 from qubx.utils.time import convert_tf_str_td64
 
@@ -190,9 +191,9 @@ class StrategyContext:
     instruments: List[Instrument]
     positions: Dict[str, Position]
 
-    _t_mdata_processor: Optional[AsyncioThreadRunner] = None
     _market_data_subcription_type:str = 'unknown'
     _market_data_subcription_params: dict = dict()
+    _thread_data_loop: Thread | None = None            # market data loop
 
     _trig_interval_in_bar_nsec: int
     _trig_bar_freq_nsec: int
@@ -328,7 +329,7 @@ class StrategyContext:
             case _: 
                 raise ValueError(f"Wrong trigger type {_trigger}")
 
-    async def _process_incoming_market_data(self, channel: CtrlChannel):
+    def _process_incoming_market_data(self, channel: CtrlChannel):
         _fails_counter = 0 
         logger.info("(StrategyContext) Start processing market data")
 
@@ -373,7 +374,7 @@ class StrategyContext:
                         channel.stop()
                         break
 
-        logger.info("(StrategyContext) Market data processing finished")
+        logger.info("(StrategyContext) Market data processing stopped")
 
     def _update_ctx_by_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
         self._cache.update_by_bar(symbol, bar)
@@ -415,7 +416,7 @@ class StrategyContext:
     def ohlc(self, instrument: str | Instrument, timeframe: str) -> OHLCV:
         return self._cache.get_ohlcv(instrument if isinstance(instrument, str) else instrument.symbol, timeframe)
 
-    def _create_synced_position(self):
+    def _create_and_update_positions(self):
         for instrument in self.instruments:
             symb = instrument.symbol
             self.positions[symb] = self.exchange_service.get_position(instrument)
@@ -431,7 +432,7 @@ class StrategyContext:
             raise ValueError("Strategy is already started !")
 
         # - create positions for instruments
-        self._create_synced_position()
+        self._create_and_update_positions()
 
         # - get actual positions from exchange
         _symbols = []
@@ -441,14 +442,19 @@ class StrategyContext:
             _symbols.append(instr.symbol)
 
         # - create incoming market data processing
-        self._t_mdata_processor = AsyncioThreadRunner(self.data_provider.get_communication_channel())
-        self._t_mdata_processor.add(self._process_incoming_market_data)
+        # self._thread_data_loop = AsyncioThreadRunner(self.data_provider.get_communication_channel())
+        self._thread_data_loop = Thread(
+            target=self._process_incoming_market_data, 
+            args=(self.data_provider.get_communication_channel(),), 
+            daemon=True
+        )
+        # self._thread_data_loop.add(self._process_incoming_market_data)
 
         # - subscribe to market data
         logger.info(f"(StrategyContext) Subscribing to {self._market_data_subcription_type} updates using {self._market_data_subcription_params} for \n\t{_symbols} ")
         self.data_provider.subscribe(self._market_data_subcription_type, _symbols, **self._market_data_subcription_params)
 
-        # - initialize strategy
+        # - initialize strategy (should we do that after any first market data received ?)
         if not self._is_initilized:
             try:
                 self.strategy.on_start(self)
@@ -458,21 +464,21 @@ class StrategyContext:
                 logger.error(traceback.format_exc())
                 return
 
-        self._t_mdata_processor.start()
-        logger.info("(StrategyContext) Data processor started")
-        if join:
-            self._t_mdata_processor.join()
+        self._thread_data_loop.start()
+        logger.info("(StrategyContext) Market data processor started")
+        # if join:
+            # self._thread_data_loop.join()
 
     def stop(self):
-        if self._t_mdata_processor:
+        if self._thread_data_loop:
             self.data_provider.get_communication_channel().stop()
-            self._t_mdata_processor.stop()
+            self._thread_data_loop.join()
             try:
                 self.strategy.on_stop(self)
             except Exception as strat_error:
                 logger.error(f"(StrategyContext) Strategy {self.strategy.__class__.__name__} raised an exception in on_stop: {strat_error}")
                 logger.error(traceback.format_exc())
-            self._t_mdata_processor = None
+            self._thread_data_loop = None
 
     def populate_parameters_to_strategy(self, strategy: IStrategy, **kwargs):
         _log_info = ""
