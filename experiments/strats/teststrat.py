@@ -48,7 +48,7 @@ class FlipFlopStrat(IStrategy):
         if self.trading_allowed:
             self._tracker.process_signals(signals)
         else:
-            logger.warning("Trading falg is disabled - no postions will be changed")
+            logger.warning("Trading is disabled - no postions will be changed")
 
         return None
 

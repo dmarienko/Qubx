@@ -366,7 +366,7 @@ class StrategyContext:
                 except Exception as strat_error:
                     # - TODO: probably we need some cooldown interval after exception to prevent flooding
                     logger.error(f"[{self.time()}]: Strategy {self.strategy.__class__.__name__} raised an exception: {strat_error}")
-                    logger.error(traceback.format_exc())
+                    logger.opt(colors=False).error(traceback.format_exc())
 
                     #  - we stop execution after let's say maximal number of errors in a row
                     if (_fails_counter := _fails_counter + 1) >= StrategyContext.MAX_NUMBER_OF_FAILURES:

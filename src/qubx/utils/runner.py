@@ -97,15 +97,18 @@ def create_strategy_context(config_file: str, accounts_cfg_file: str, search_pat
 
 
 def _run_in_jupyter(filename: str, accounts: str, paths: list):
+    """
+    Helper for run this in jupyter console
+    """
     try:
         from jupyter_console.app import ZMQTerminalIPythonApp
-    except ModuleNotFoundError:
-        logger.error("Can't find ZMQTerminalIPythonApp module - try to install jupyter first")
+    except ImportError:
+        logger.error("Can't find <red>ZMQTerminalIPythonApp</red> module - try to install jupyter package first")
         return 
     try:
         import nest_asyncio
-    except ModuleNotFoundError:
-        logger.error("Can't find nest_asyncio module - try to install it first")
+    except ImportError:
+        logger.error("Can't find <red>nest_asyncio</red> module - try to install it first")
         return 
 
     class TerminalRunner(ZMQTerminalIPythonApp):
@@ -123,8 +126,9 @@ def _run_in_jupyter(filename: str, accounts: str, paths: list):
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 import pandas as pd
 import nest_asyncio; nest_asyncio.apply()
-from qubx.utils.misc import dequotify
+from qubx.utils.misc import dequotify, quotify
 from qubx.utils.runner import create_strategy_context
+from qubx.utils.pandas import *
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 ctx = create_strategy_context('{filename}', '{accounts}', {paths})
