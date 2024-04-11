@@ -1,8 +1,8 @@
+from typing import Dict, Optional, Union, List
 import glob, os
 from collections import OrderedDict, defaultdict, namedtuple
 from os.path import basename, exists, dirname, join, expanduser
 import time
-from typing import Dict, Optional, Union
 from pathlib import Path
 
 
@@ -18,10 +18,9 @@ def version() -> str:
     return version
 
 
-from ._pyxreloader import pyx_install_loader
-
-
 def install_pyx_recompiler_for_dev():
+    from ._pyxreloader import pyx_install_loader
+
     # if version().lower() == 'dev':
     print(f" >  [{green('dev')}] {red('installing cython rebuilding hook')}")
     pyx_install_loader([
@@ -293,3 +292,29 @@ class Stopwatch:
         for l in self.latencies.keys():
             r += f"\n\t<w>{l}</w> took <r>{self.latency_sec(l):.7f}</r> secs"
         return r
+
+
+def quotify(sx: Union[str, List[str]], quote='USDT'):
+    """
+    Make XXX<quote> from anything if that anything doesn't end with <quote>
+    """
+    if isinstance(sx, str):
+        return (sx if sx.endswith(quote) else sx + quote).upper()
+    elif isinstance(sx, (list, set, tuple)):
+        return [quotify(s, quote) for s in sx]
+    raise ValueError("Can't process input data !")
+
+
+def dequotify(sx: Union[str, List[str]], quote='USDT'):
+    """
+    Turns XXX<quote> to XXX (reverse of quotify)
+    """
+    if isinstance(sx, str):
+        quote = quote.upper()
+        if (s:=sx.upper()).endswith(quote):
+            s = s.split(':')[1] if ':' in s else s # remove exch: if presented
+            return s.split(quote)[0]
+    elif isinstance(sx, (list, set, tuple)):
+        return [dequotify(s, quote) for s in sx]
+
+    raise ValueError("Can't process input data !")

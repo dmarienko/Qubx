@@ -1,0 +1,25 @@
+config:
+  strategy: aah.portfolios.cfm.teststrat.ZeroStrat
+
+  parameters:
+    param1: 123
+
+  execution:
+    connector:        ccxt
+    exchange:         binance   # spot
+    account:          binance-mde
+    capital:          1000.0
+
+    subscription:     # market data subscription
+      type:           ohlc
+      timeframe:      '1Min'
+      nback:          25
+
+    trigger:           # how to trigger strategy
+      type:           bar
+      timeframe:      '1Min'
+      delay:          '-5Sec'
+    
+    universe:          
+      - 'ACAUSDT' 
+      - 'BNBUSDT'

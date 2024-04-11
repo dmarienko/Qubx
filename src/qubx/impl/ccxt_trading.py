@@ -33,7 +33,10 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
     _fees_calculator: Optional[TransactionCostsCalculator] = None    # type: ignore
     _positions: Dict[str, Position]
 
-    def __init__(self, exchange_id: str, base_currency: str, commissions: str|None = None, **exchange_auth):
+    def __init__(self, exchange_id: str, base_currency: str | None, commissions: str|None = None, **exchange_auth):
+        if base_currency is None:
+            raise ValueError("Base currency is not specified !")
+
         exchange_id = exchange_id.lower()
         exch = EXCH_ALIASES.get(exchange_id, exchange_id)
 

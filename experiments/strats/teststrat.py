@@ -1,0 +1,70 @@
+from typing import List, Dict
+import pandas as pd
+import numpy as np
+from tabulate import tabulate
+
+from qubx import logger
+from qubx.core.strategy import IStrategy, TriggerEvent, StrategyContext
+from qubx.core.basics import Instrument, Position, Signal
+from qubx.utils.pandas import srows, scols, ohlc_resample, retain_columns_and_join
+from qubx.trackers import Capital, PortfolioRebalancerTracker
+from qubx.utils.misc import quotify, dequotify
+
+
+class FlipFlopStrat(IStrategy):
+    capital_invested: float = 100.0
+    trading_allowed: bool = False
+    _tracker: PortfolioRebalancerTracker
+
+    def on_start(self, ctx: StrategyContext):
+        logger.info(f"> Started with capital {self.capital_invested}")
+        self._tracker = self.tracker(ctx)  
+
+    def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
+        logger.info(f"{event.time} -> {event}")
+        ohlcs = self.ohlcs('5Min')
+
+        symbols_to_close, symbols_to_open = [], []
+        for s, p in ctx.positions.items():
+            if p.quantity != 0: symbols_to_close.append(s)
+            else: symbols_to_open.append(s)
+
+        if not symbols_to_close: # first run just open half from all universe
+            symbols_to_open = symbols_to_open[:len(symbols_to_open) // 2]
+
+        cap = self._tracker.estimate_capital_to_trade(symbols_to_close)
+        capital_per_symbol = np.clip(round(cap.capital / len(symbols_to_open)), 5, np.inf)
+
+        logger.info(f"\n>>> to close: {symbols_to_close}\n>>> to open: {symbols_to_open} | {capital_per_symbol} per symbol")
+
+        c_time = ctx.time()
+        to_open = pd.DataFrame({s: {c_time: capital_per_symbol / ohlcs[s].close.iloc[-1]} for s in symbols_to_open})
+        to_close = pd.DataFrame({s: {c_time: 0} for s in symbols_to_close})
+        signals = scols(to_close, to_open)
+
+        self.reporting(signals, cap)
+
+        # - process signals
+        if self.trading_allowed:
+            self._tracker.process_signals(signals)
+        else:
+            logger.warning("Trading falg is disabled - no postions will be changed")
+
+        return None
+
+    def ohlcs(self, timeframe:str) -> Dict[str, pd.DataFrame]:
+        return {s.symbol: self.ctx.ohlc(s, timeframe).pd() for s in self.ctx.instruments}
+
+    def on_stop(self, ctx: StrategyContext):
+        logger.info(f"> test is stopped")
+
+    def tracker(self, ctx: StrategyContext) -> PortfolioRebalancerTracker:
+        return PortfolioRebalancerTracker(ctx, self.capital_invested, 0)
+
+    def reporting(self, signals: pd.DataFrame, wealth: Capital):
+        _str_pos = tabulate(signals.tail(1), dequotify(list(signals.columns.values)), tablefmt='rounded_grid') # type: ignore
+        _mesg = '' 
+        if wealth.symbols_to_close:
+            _mesg = f'({wealth.released_amount:.2f} will be released from closing <red>{wealth.symbols_to_close}</red>)'
+        logger.info(f'Positions to process for {wealth.capital:.2f} {self.ctx.exchange_service.get_base_currency()} {_mesg}:\n<blue>{_str_pos}</blue>')
+    

@@ -35,7 +35,7 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
     _last_quotes: Dict[str, Optional[Quote]]
     _loop: AbstractEventLoop 
 
-    def __init__(self, exchange_id: str, base_currency: str, commissions: str|None = None, **exchange_auth):
+    def __init__(self, exchange_id: str, base_currency: str | None = None, commissions: str|None = None, **exchange_auth):
         super().__init__(exchange_id, base_currency, commissions, **exchange_auth)
         
         exchange_id = exchange_id.lower()
