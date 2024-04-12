@@ -124,6 +124,8 @@ def _run_in_jupyter(filename: str, accounts: str, paths: list):
     logger.info("Running in Jupyter console")
     TerminalRunner.launch_instance(init_code=f"""
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+import qubx
+%qubxd
 import pandas as pd
 import nest_asyncio; nest_asyncio.apply()
 from qubx.utils.misc import dequotify, quotify

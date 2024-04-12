@@ -12,8 +12,8 @@ config:
 
     subscription:     # market data subscription
       type:           ohlc
-      timeframe:      '1Min'
-      nback:          25
+      timeframe:      '15Min'
+      nback:          600
 
     trigger:           # how to trigger strategy
       type:           bar
