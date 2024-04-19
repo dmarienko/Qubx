@@ -159,8 +159,11 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
             r: Dict[str, Any] | None = self.sync.create_order(
                 symbol, order_type, order_side, amount, price, # type: ignore
                 params=params)
+        except ccxt.BadRequest as exc:
+            logger.error(f"(CCXTSyncTradingConnector::send_order) BAD REQUEST for {order_side} {amount} {order_type} for {symbol} : {exc}")
+            raise exc
         except Exception as err:
-            logger.error(f"(CCXTSyncTradingConnector) send_order exception : {err}")
+            logger.error(f"(CCXTSyncTradingConnector::send_order) {order_side} {amount} {order_type} for {symbol} exception : {err}")
             logger.error(traceback.format_exc())
             raise err
 
@@ -180,7 +183,7 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
                 # r = self._task_s(self.exchange.cancel_order(order_id, symbol=order.symbol))
                 r = self.sync.cancel_order(order_id, symbol=order.symbol)
             except Exception as err:
-                logger.error(f"(CCXTSyncTradingConnector) cancel_order exception : {err}")
+                logger.error(f"(CCXTSyncTradingConnector) canceling [{order}] exception : {err}")
                 logger.error(traceback.format_exc())
                 raise err
         return order
