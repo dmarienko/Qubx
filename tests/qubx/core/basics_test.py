@@ -7,6 +7,7 @@ from tests.qubx.ta.utils_for_testing import N
 from qubx.core.basics import Instrument, Position, TransactionCostsCalculator, ZERO_COSTS
 from qubx.core.series import time_as_nsec, Trade, Quote
 
+TIME = lambda x: pd.Timestamp(x, unit='ns').asm8
 
 @dataclass
 class Deal:
@@ -140,4 +141,21 @@ class TestBasics:
             Deal( D+'12:03:00', 0, 47000),
         ])
         assert px0.total_pnl() ==  N(px1.total_pnl() + px2.total_pnl())
+
+    def test_released_funds_estimations(self):
+        fi = lookup.instruments['BINANCE:BNBUSDT'][0]
+        pos = Position(fi, ZERO_COSTS)
+        pos.update_position(TIME(0), 5, 350)
+        pos.update_market_price(TIME(1), 355, 1)
+        assert 355*5 == pos.get_amount_released_funds_after_closing()
+        assert 355*1 == pos.get_amount_released_funds_after_closing(4)
+        assert 0 == pos.get_amount_released_funds_after_closing(10)
+
+        pos2 = Position(fi, ZERO_COSTS)
+        pos2.update_position(TIME(0), -5, 350)
+        pos2.update_market_price(TIME(1), 355, 1)
+        assert 355*5 == pos2.get_amount_released_funds_after_closing(10)
+        assert 355*1 == pos2.get_amount_released_funds_after_closing(-4)
+        assert 355*5 == pos2.get_amount_released_funds_after_closing()
+
 

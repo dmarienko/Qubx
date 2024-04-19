@@ -28,12 +28,14 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
     Synchronous version of trading API
     """
     sync: Exchange
-    acc: AccountProcessor
 
     _fees_calculator: Optional[TransactionCostsCalculator] = None    # type: ignore
     _positions: Dict[str, Position]
 
-    def __init__(self, exchange_id: str, base_currency: str | None, commissions: str|None = None, **exchange_auth):
+    def __init__(self, exchange_id: str, 
+                 base_currency: str | None, commissions: str|None = None, 
+                 reserves: Dict[str, float] | None = None,
+                 **exchange_auth):
         if base_currency is None:
             raise ValueError("Base currency is not specified !")
 
@@ -45,14 +47,17 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
 
         # - sync exchange
         self.sync: Exchange = getattr(ccxt, exchange_id.lower())(exchange_auth)
-        self.acc = AccountProcessor(base_currency)
+        self.acc = AccountProcessor(base_currency, reserves)
 
         logger.info(f"{exch.upper()} loading ...")
         self.sync.load_markets()        
         self._sync_account_info(commissions)
         self._positions = self.acc._positions
 
+        # - show info
         logger.info(f"{exch.upper()} initialized - current time {self.time()}")
+        for s, v in self.acc.reserved.items():
+            logger.info(f" > {v} of {s} is reserved from trading")
 
     def _sync_account_info(self, default_commissions: str | None):
         logger.info(f'Loading account data for {self.get_name()}')
@@ -203,9 +208,6 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
         self.acc.process_deals(symbol, deals)
         self.acc.process_order(order)
         return order
-
-    def get_capital(self) -> float:
-        return self.acc.get_capital()
 
     def get_orders(self, symbol: str | None = None) -> List[Order]:
         return self.acc.get_orders(symbol)

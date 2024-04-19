@@ -12,15 +12,17 @@ class AccountProcessor:
     Account processor class
     """
     base_currency: str
-    _active_orders: Dict[str|int, Order]                            # active orders
+    reserved: Dict[str, float]                         # how much asset is reserved against the trading 
+    _active_orders: Dict[str|int, Order]               # active orders
     _processed_trades: Dict[str|int, List[str|int]] 
     _positions: Dict[str, Position]
     _total_capital_in_base: float = 0.0
     _locked_capital_in_base: float = 0.0
     _locked_capital_by_order: Dict[str|int, float]
 
-    def __init__(self, base_currency: str, total_capital: float=0, locked_capital: float=0) -> None:
+    def __init__(self, base_currency: str, reserves: Dict[str, float] | None, total_capital: float=0, locked_capital: float=0) -> None:
         self.base_currency = base_currency
+        self.reserved = dict() if reserves is None else reserves
         self._processed_trades = defaultdict(list)
         self._active_orders = dict()
         self._positions = {}
@@ -43,6 +45,12 @@ class AccountProcessor:
     def get_capital(self) -> float:
         # TODO: need to take in account leverage and funds currently locked 
         return self._total_capital_in_base - self._locked_capital_in_base  
+
+    def get_reserved(self, instrument: Instrument) -> float:
+        """
+        Check how much were reserved for this instrument
+        """
+        return self.reserved.get(instrument.symbol, self.reserved.get(instrument.base, 0))
 
     def process_deals(self, symbol: str, deals: List[Deal]):
         pos = self._positions.get(symbol)

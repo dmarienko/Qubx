@@ -43,7 +43,7 @@ def load_strategy_config(filename: str) -> Struct:
     return r
 
 
-def get_account_auth(acc_name: str, accounts_cfg_file: str):
+def get_account_config(acc_name: str, accounts_cfg_file: str) -> dict | None:
     parser = configparser.ConfigParser()
     try:
         parser.optionxform=str  # type: ignore
@@ -56,7 +56,16 @@ def get_account_auth(acc_name: str, accounts_cfg_file: str):
         logger.error(f"No records for {acc_name} found in {accounts_cfg_file} file")
         return None
 
-    return dict(parser[acc_name])
+    cfg = dict(parser[acc_name])
+    reserves = {}
+
+    if 'reserves' in cfg: 
+        rs = cfg['reserves']
+        for r in rs.split(','):
+            s,v = r.strip().split(':')
+            reserves[s] = float(v)
+
+    return cfg | {'reserves': reserves}
 
 
 def create_strategy_context(config_file: str, accounts_cfg_file: str, search_paths: list) -> StrategyContext | None:
@@ -73,17 +82,17 @@ def create_strategy_context(config_file: str, accounts_cfg_file: str, search_pat
     logger.add(LOGFILE + cfg.name + "_{time}.log", format=formatter, rotation="100 MB", colorize=False)
 
     # - read account creds
-    acc_auth = {}
+    acc_config = {}
     if cfg.account is not None:
-        acc_auth = get_account_auth(cfg.account, accounts_cfg_file)
-        if acc_auth is None:
+        acc_config = get_account_config(cfg.account, accounts_cfg_file)
+        if acc_config is None:
             return None
 
     # - check connector
     conn = cfg.connector.lower()
     match conn:
         case 'ccxt':
-            connector = CCXTConnector(cfg.exchange.lower(), **acc_auth)
+            connector = CCXTConnector(cfg.exchange.lower(), **acc_config)
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
         

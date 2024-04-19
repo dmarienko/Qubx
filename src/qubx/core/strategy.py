@@ -12,6 +12,7 @@ from enum import Enum
 import pandas as pd
 
 from qubx import lookup, logger
+from qubx.core.account import AccountProcessor
 from qubx.core.lookups import InstrumentsLookup
 from qubx.core.basics import Instrument, Order, Position, Signal, dt_64, td_64, CtrlChannel
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
@@ -49,12 +50,16 @@ class IDataProvider:
 
 
 class IExchangeServiceProvider:
+    acc: AccountProcessor
 
     def time(self) -> dt_64:
         """
         Returns current time
         """
         raise NotImplementedError("time is not implemented")
+
+    def get_account(self) -> AccountProcessor:
+        return self.acc
 
     def get_name(self) -> str:
         raise NotImplementedError("get_name is not implemented")
@@ -63,7 +68,7 @@ class IExchangeServiceProvider:
         raise NotImplementedError("schedule_trigger is not implemented")
 
     def get_capital(self) -> float:
-        raise NotImplementedError("get_capital is not implemented")
+        return self.acc.get_capital()
 
     def send_order(self, instrument: Instrument, order_side: str, order_type: str, amount: float, price: float | None = None, 
         client_id: str | None = None, time_in_force: str='gtc') -> Order | None:
@@ -527,3 +532,6 @@ class StrategyContext:
 
     def get_capital(self) -> float:
         return self.exchange_service.get_capital()
+
+    def get_reserved(self, instrument: Instrument) -> float:
+        return self.exchange_service.get_account().get_reserved(instrument)

@@ -177,6 +177,7 @@ class Position:
 
     last_update_time: int = np.nan              # when price updated or position changed
     last_update_price: float = np.nan           # last update price (actually instrument's price) in quoted currency
+    last_update_conversion_rate: float = np.nan # last update conversion rate
 
     # - helpers for position processing 
     _formatter: str
@@ -219,6 +220,7 @@ class Position:
         self.commissions = 0.0
         self.last_update_time = np.nan # type: ignore
         self.last_update_price = np.nan
+        self.last_update_conversion_rate = np.nan
         self.__pos_incr_qty = 0
 
     def _price(self, update: Quote | Trade) -> float:
@@ -291,6 +293,7 @@ class Position:
     def update_market_price(self, timestamp: dt_64, price: float, conversion_rate:float) -> float:
         self.last_update_time = timestamp # type: ignore
         self.last_update_price = price
+        self.last_update_conversion_rate = conversion_rate
 
         if not np.isnan(price):
             self.pnl = self.quantity * (price - self.position_avg_price) / conversion_rate + self.r_pnl
@@ -305,6 +308,17 @@ class Position:
         if not np.isnan(self.last_update_price): # type: ignore
             pnl += self.quantity * (self.last_update_price - self.position_avg_price) / conversion_rate # type: ignore
         return pnl
+
+    def get_amount_released_funds_after_closing(self, to_remain: float = 0.0) -> float:
+        """
+        Estimate how much funds would be released if part of position closed
+        """
+        d = np.sign(self.quantity)
+        funds_release = self.market_value_funds
+        if to_remain != 0 and self.quantity != 0 and np.sign(to_remain) == d:
+            qty_to_release = max(self.quantity - to_remain, 0) if d > 0 else min(self.quantity - to_remain, 0)
+            funds_release = qty_to_release * self.last_update_price / self.last_update_conversion_rate
+        return abs(funds_release)
 
     @staticmethod
     def _t2s(t) -> str:

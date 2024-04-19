@@ -1,8 +1,10 @@
 from typing import Iterable, List, Set, Tuple, Union, Dict, Optional
 from dataclasses import dataclass
+import numpy as np
 import pandas as pd
 
 from qubx import logger
+from qubx.core.basics import Position
 from qubx.core.strategy import StrategyContext, PositionsTracker
 
 
@@ -37,7 +39,7 @@ class PortfolioRebalancerTracker(PositionsTracker):
             for symbol in symbols_to_close:
                 p = self.ctx.positions.get(symbol)
                 if p is not None and p.quantity != 0:
-                    released_capital_after_close += p.market_value_funds
+                    released_capital_after_close += p.get_amount_released_funds_after_closing(to_remain=self.ctx.get_reserved(p.instrument))
                     closed_symbols.append(symbol)
         return released_capital_after_close, closed_symbols
 
@@ -67,11 +69,13 @@ class PortfolioRebalancerTracker(PositionsTracker):
         # close positions first - we need to release capital 
         for s in to_close:
             if (pos := self.ctx.positions.get(s)):
-                logger.info(f"(PortfolioRebalancerTracker) {s} - closing position {pos.quantity}")
+                reserved = self.ctx.get_reserved(pos.instrument)
+                to_close = self._how_much_can_be_closed(pos.quantity, reserved)
+                logger.info(f"(PortfolioRebalancerTracker) {s} - closing {to_close} from {pos.quantity} amount (reserved: {reserved})")
                 try:
-                    self.ctx.trade(s, -pos.quantity)
+                    self.ctx.trade(s, -to_close)
                 except Exception as err:
-                    logger.error(f"(PortfolioRebalancerTracker) Error processing closing order: {str(err)}")
+                    logger.error(f"(PortfolioRebalancerTracker) {s} Error processing closing order: {str(err)}")
             else:
                 logger.error(f"(PortfolioRebalancerTracker) Position for {s} is required to be closed but can't be found in context !")
 
@@ -85,7 +89,7 @@ class PortfolioRebalancerTracker(PositionsTracker):
                     try:
                         self.ctx.trade(s, trade_size)
                     except Exception as err:
-                        logger.error(f"(PortfolioRebalancerTracker) Error processing opening order: {str(err)}")
+                        logger.error(f"(PortfolioRebalancerTracker) {s} Error processing opening order: {str(err)}")
                 else:
                     logger.info(f"(PortfolioRebalancerTracker) {s} - position change ({pos.quantity} -> {n}) is smaller than tolerance {self.tolerance}%")
                     
@@ -95,8 +99,18 @@ class PortfolioRebalancerTracker(PositionsTracker):
     def close_all(self):
         for s, pos in self.ctx.positions.items():
             if pos.quantity != 0:
-                logger.info(f"(PortfolioRebalancerTracker) {s} - closing position {pos.quantity}")
-                try:
-                    self.ctx.trade(s, -pos.quantity)
-                except Exception as err:
-                    logger.error(f"(PortfolioRebalancerTracker) Error processing closing order: {str(err)}")
+                reserved = self.ctx.get_reserved(pos.instrument)
+                to_close = self._how_much_can_be_closed(pos.quantity, reserved)
+                if to_close != 0:
+                    try:
+                        logger.info(f"(PortfolioRebalancerTracker) {s} - closing {to_close} from {pos.quantity} amount (reserved: {reserved})")
+                        self.ctx.trade(s, -pos.quantity)
+                    except Exception as err:
+                        logger.error(f"(PortfolioRebalancerTracker) {s} Error processing closing order: {str(err)}")
+
+    def _how_much_can_be_closed(self, position: float, to_remain: float) -> float:
+        d = np.sign(position)
+        qty_to_close = position
+        if to_remain != 0 and position != 0 and np.sign(to_remain) == d:
+            qty_to_close = max(position - to_remain, 0) if d > 0 else min(position - to_remain, 0)
+        return qty_to_close
