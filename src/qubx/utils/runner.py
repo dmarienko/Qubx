@@ -144,19 +144,28 @@ def trade(symbol, qty, price=None, tif='gtc'):
     return ctx.trade(symbol, qty, price, tif)
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-def pnl_report():
+def pnl_report(all=True):
     from tabulate import tabulate
     d = dict()
     for s, p in ctx.positions.items():
-        d[dequotify(s)] = dict(Position=round(p.quantity, p.instrument.size_precision),  PnL=p.total_pnl(), AvgPrice=p.position_avg_price_funds, LastPrice=p.last_update_price)
+        mv = round(p.market_value_funds, 3)
+        if mv != 0.0 or all:
+            d[dequotify(s)] = dict(
+                Position=round(p.quantity, p.instrument.size_precision),  
+                PnL=p.total_pnl(), 
+                AvgPrice=round(p.position_avg_price_funds, p.instrument.price_precision), 
+                LastPrice=round(p.last_update_price, p.instrument.price_precision),
+                MktValue=mv
+            )
     d = pd.DataFrame.from_dict(d).T
     # d = d[d['PnL'] != 0.0]
     if d.empty:
         print('-(no open positions yet)-')
         return
     d = d.sort_values('PnL' ,ascending=False)
-    d = pd.concat((d, pd.Series(dict(TOTAL=d['PnL'].sum()), name='PnL'))).fillna('')
-    print(tabulate(d, ['Position', 'PnL', 'AvgPrice', 'LastPrice'], tablefmt='rounded_grid'))
+    # d = pd.concat((d, pd.Series(dict(TOTAL=d['PnL'].sum()), name='PnL'))).fillna('')
+    d = pd.concat((d, scols(pd.Series(dict(TOTAL=d['PnL'].sum()), name='PnL'), pd.Series(dict(TOTAL=d['MktValue'].sum()), name='MktValue')))).fillna('')
+    print(tabulate(d, ['Position', 'PnL', 'AvgPrice', 'LastPrice', 'MktValue'], tablefmt='rounded_grid'))
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 __exit = exit
 def exit():
