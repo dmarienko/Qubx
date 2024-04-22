@@ -37,8 +37,8 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
     _loop: AbstractEventLoop 
     _thread_event_loop: Thread
 
-    def __init__(self, exchange_id: str, base_currency: str | None = None, commissions: str|None = None, **exchange_auth):
-        super().__init__(exchange_id, base_currency, commissions, **exchange_auth)
+    def __init__(self, exchange_id: str, account_id: str, base_currency: str | None = None, commissions: str|None = None, **exchange_auth):
+        super().__init__(exchange_id, account_id, base_currency, commissions, **exchange_auth)
         
         exchange_id = exchange_id.lower()
         exch = DATA_PROVIDERS_ALIASES.get(exchange_id, exchange_id)

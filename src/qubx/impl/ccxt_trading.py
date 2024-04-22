@@ -25,14 +25,16 @@ ORDERS_HISTORY_LOOKBACK_DAYS = 30
 
 class CCXTSyncTradingConnector(IExchangeServiceProvider):
     """
-    Synchronous version of trading API
+    Synchronous instance of trading API
     """
     sync: Exchange
 
     _fees_calculator: Optional[TransactionCostsCalculator] = None    # type: ignore
     _positions: Dict[str, Position]
 
-    def __init__(self, exchange_id: str, 
+    def __init__(self, 
+                 exchange_id: str, 
+                 account_id: str,
                  base_currency: str | None, commissions: str|None = None, 
                  reserves: Dict[str, float] | None = None,
                  **exchange_auth):
@@ -47,7 +49,7 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
 
         # - sync exchange
         self.sync: Exchange = getattr(ccxt, exchange_id.lower())(exchange_auth)
-        self.acc = AccountProcessor(base_currency, reserves)
+        self.acc = AccountProcessor(account_id, base_currency, reserves)
 
         logger.info(f"{exch.upper()} loading ...")
         self.sync.load_markets()        

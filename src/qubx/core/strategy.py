@@ -13,6 +13,7 @@ import pandas as pd
 
 from qubx import lookup, logger
 from qubx.core.account import AccountProcessor
+from qubx.core.loggers import LogsWriter, PortfolioLogger, PositionsDumper
 from qubx.core.lookups import InstrumentsLookup
 from qubx.core.basics import Instrument, Order, Position, Signal, dt_64, td_64, CtrlChannel
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
@@ -196,6 +197,11 @@ class StrategyContext:
     instruments: List[Instrument]
     positions: Dict[str, Position]
 
+    # - loggers
+    positions_dumper: PositionsDumper
+    portfolio_logger: PortfolioLogger
+    executions_logger: PositionsDumper
+
     _market_data_subcription_type:str = 'unknown'
     _market_data_subcription_params: dict = dict()
     _thread_data_loop: Thread | None = None            # market data loop
@@ -231,6 +237,8 @@ class StrategyContext:
             md_subscription: Dict[str,Any] = dict(type='ohlc', timeframe='1Min'),
             # - - - - - - - - - - - - - - - - - - - - -
 
+            # - how to write logs - - - - - - - - - -
+            logs_writer: LogsWriter = LogsWriter(),
         ) -> None:
 
         # - set parameters to strategy (not sure we will do it here)
@@ -261,6 +269,15 @@ class StrategyContext:
 
         # - process market data configuration
         self._check_how_to_listen_to_market_data(md_subscription)
+
+        # - instantiate loggers
+        self.positions_dumper = PositionsDumper(
+            exchange_service.get_account().account_id, self.strategy.__class__.__name__, 
+            # !!!!!!!!!!!!!!!!!!!!!!!!!!!
+            '1Min', # !!!!!!!!!!!!!!!!!!!!!!!!!!!
+            # !!!!!!!!!!!!!!!!!!!!!!!!!!!
+            logs_writer
+        )
 
         # - states 
         self._is_initilized = False

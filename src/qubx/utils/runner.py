@@ -43,29 +43,31 @@ def load_strategy_config(filename: str) -> Struct:
     return r
 
 
-def get_account_config(acc_name: str, accounts_cfg_file: str) -> dict | None:
+def get_account_config(account_id: str, accounts_cfg_file: str) -> dict | None:
     parser = configparser.ConfigParser()
     try:
         parser.optionxform=str  # type: ignore
         parser.read(accounts_cfg_file)
     except Exception as exc:
-        logger.error(f"Can't find { accounts_cfg_file } file for reading {acc_name} account info: {str(exc)}")
+        logger.error(f"Can't find { accounts_cfg_file } file for reading {account_id} account info: {str(exc)}")
         return None
 
-    if acc_name not in parser:
-        logger.error(f"No records for {acc_name} found in {accounts_cfg_file} file")
+    if account_id not in parser:
+        logger.error(f"No records for {account_id} found in {accounts_cfg_file} file")
         return None
 
-    cfg = dict(parser[acc_name])
+    cfg = dict(parser[account_id])
+
+    # - check if there any reserved funds
     reserves = {}
-
     if 'reserves' in cfg: 
         rs = cfg['reserves']
         for r in rs.split(','):
             s,v = r.strip().split(':')
             reserves[s] = float(v)
 
-    return cfg | {'reserves': reserves}
+    # - add account id and reserves
+    return cfg | {'account_id': account_id, 'reserves': reserves}
 
 
 def create_strategy_context(config_file: str, accounts_cfg_file: str, search_paths: list) -> StrategyContext | None:

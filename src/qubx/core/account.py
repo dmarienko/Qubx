@@ -11,6 +11,7 @@ class AccountProcessor:
     """
     Account processor class
     """
+    account_id: str
     base_currency: str
     reserved: Dict[str, float]                         # how much asset is reserved against the trading 
     _active_orders: Dict[str|int, Order]               # active orders
@@ -20,7 +21,14 @@ class AccountProcessor:
     _locked_capital_in_base: float = 0.0
     _locked_capital_by_order: Dict[str|int, float]
 
-    def __init__(self, base_currency: str, reserves: Dict[str, float] | None, total_capital: float=0, locked_capital: float=0) -> None:
+    def __init__(self, 
+                 account_id: str, 
+                 base_currency: str, 
+                 reserves: Dict[str, float] | None, 
+                 total_capital: float=0, 
+                 locked_capital: float=0
+    ) -> None:
+        self.account_id = account_id
         self.base_currency = base_currency
         self.reserved = dict() if reserves is None else reserves
         self._processed_trades = defaultdict(list)

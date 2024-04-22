@@ -19,5 +19,10 @@ config:
       type:           bar
       timeframe:      '1Min'
       delay:          '-5Sec'
+
+    logger:           # how to write portfolio log
+      type:           FileLogWriter
+      save_positions: '10Sec'
+      save_portfolio: '5Min'
     
     universe:         ['PEPEUSDT', 'SHIBUSDT', 'XVGUSDT', 'BOMEUSDT', 'CKBUSDT', 'GALAUSDT', 'LINKUSDT']

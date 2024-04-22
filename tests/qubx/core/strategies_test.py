@@ -351,7 +351,7 @@ class TestStrats:
             'fee': None, 'trades': [], 'fees': [], 'takeProfitPrice': None, 'stopLossPrice': None
             }]]
         
-        acc = AccountProcessor('USDT', 100, 0)
+        acc = AccountProcessor('TestAcc1', 'USDT', {}, 100, 0)
         acc.attach_positions(
             Position(lookup.find_symbol('BINANCE', 'RAREUSDT'), lookup.find_fees('binance', 'vip0_bnb')), # type: ignore
             Position(lookup.find_symbol('BINANCE', 'SUPERUSDT'), lookup.find_fees('binance', 'vip0_bnb')), # type: ignore

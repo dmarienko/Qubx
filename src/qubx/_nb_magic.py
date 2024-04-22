@@ -48,7 +48,7 @@ if runtime_env() in ['notebook', 'shell']:
 
     # - check current version
     try: 
-        version = importlib_metadata.version('qube2')
+        version = importlib_metadata.version('qubx')
     except:
         version = 'Dev'
 

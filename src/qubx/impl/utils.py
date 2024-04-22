@@ -18,7 +18,6 @@ def ccxt_convert_order_info(symbol: str, raw: Dict[str,Any]) -> Order:
     """
     Convert CCXT excution record to Order object
     """
-    deal = None
     ri = raw['info']
     amnt = float(ri.get('origQty', raw.get('amount')))
     price = raw['price']
@@ -40,7 +39,6 @@ def ccxt_convert_order_info(symbol: str, raw: Dict[str,Any]) -> Order:
         time_in_force = raw['timeInForce'],
         client_id = raw['clientOrderId'],
         cost = float(raw['cost']),
-        # execution=deal
     )
 
 
@@ -97,6 +95,7 @@ def ccxt_restore_position_from_deals(
         pos.reset()
 
         if abs(current_volume) > instr.min_size_step:
+            # - - - TODO - - - !!!!
             logger.warning(f"Couldn't restore full deals history for {instr.symbol} symbol. Qubx will use zero position !")
         else:
             for d in _last_deals:

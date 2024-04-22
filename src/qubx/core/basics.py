@@ -303,10 +303,10 @@ class Position:
             self.market_value_funds = self.market_value / conversion_rate
         return self.pnl
 
-    def total_pnl(self, conversion_rate:float=1.0) -> float:
+    def total_pnl(self) -> float:
         pnl = self.r_pnl
         if not np.isnan(self.last_update_price): # type: ignore
-            pnl += self.quantity * (self.last_update_price - self.position_avg_price) / conversion_rate # type: ignore
+            pnl += self.quantity * (self.last_update_price - self.position_avg_price) / self.last_update_conversion_rate # type: ignore
         return pnl
 
     def get_amount_released_funds_after_closing(self, to_remain: float = 0.0) -> float:
