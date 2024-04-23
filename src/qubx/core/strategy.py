@@ -5,6 +5,7 @@ from collections import defaultdict
 from threading import Thread
 import traceback
 from typing import Any, Callable, Dict, List, Optional, Union
+from types import FunctionType
 import numpy as np
 from dataclasses import dataclass
 from enum import Enum
@@ -13,9 +14,9 @@ import pandas as pd
 
 from qubx import lookup, logger
 from qubx.core.account import AccountProcessor
-from qubx.core.loggers import LogsWriter, PortfolioLogger, PositionsDumper
+from qubx.core.loggers import ExecutionsLogger, LogsWriter, PortfolioLogger, PositionsDumper
 from qubx.core.lookups import InstrumentsLookup
-from qubx.core.basics import Instrument, Order, Position, Signal, dt_64, td_64, CtrlChannel
+from qubx.core.basics import Deal, Instrument, Order, Position, Signal, dt_64, td_64, CtrlChannel
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
 from qubx.utils.time import convert_tf_str_td64
 
@@ -198,9 +199,9 @@ class StrategyContext:
     positions: Dict[str, Position]
 
     # - loggers
-    positions_dumper: PositionsDumper
-    portfolio_logger: PortfolioLogger
-    executions_logger: PositionsDumper
+    positions_dumper: PositionsDumper | None = None
+    portfolio_logger: PortfolioLogger | None = None
+    executions_logger: ExecutionsLogger | None = None
 
     _market_data_subcription_type:str = 'unknown'
     _market_data_subcription_params: dict = dict()
@@ -218,6 +219,7 @@ class StrategyContext:
     _symb_to_instr: Dict[str, Instrument]
     __strategy_id: str
     __order_id: int 
+    __handlers: Dict[str, Callable[['StrategyContext', str, Any], TriggerEvent | None]]
 
     _cache: CachedMarketDataHolder # market data cache
 
@@ -238,7 +240,10 @@ class StrategyContext:
             # - - - - - - - - - - - - - - - - - - - - -
 
             # - how to write logs - - - - - - - - - -
-            logs_writer: LogsWriter = LogsWriter(),
+            logs_writer: LogsWriter | None = None,
+            positions_log_freq: str = '1Min',
+            portfolio_log_freq: str = '5Min',
+            num_exec_records_to_write = 1      # in live let's write every execution 
         ) -> None:
 
         # - set parameters to strategy (not sure we will do it here)
@@ -271,18 +276,29 @@ class StrategyContext:
         self._check_how_to_listen_to_market_data(md_subscription)
 
         # - instantiate loggers
-        self.positions_dumper = PositionsDumper(
-            exchange_service.get_account().account_id, self.strategy.__class__.__name__, 
-            # !!!!!!!!!!!!!!!!!!!!!!!!!!!
-            '1Min', # !!!!!!!!!!!!!!!!!!!!!!!!!!!
-            # !!!!!!!!!!!!!!!!!!!!!!!!!!!
-            logs_writer
-        )
+        if logs_writer:
+            if positions_log_freq:
+                # - store current positions
+                self.positions_dumper = PositionsDumper(logs_writer, positions_log_freq)
+
+            if portfolio_log_freq:
+                # - store portfolio log
+                self.portfolio_logger = PortfolioLogger(logs_writer, portfolio_log_freq)
+
+            # - store executions
+            if num_exec_records_to_write >= 1:
+                self.executions_logger = ExecutionsLogger(logs_writer, num_exec_records_to_write)
 
         # - states 
         self._is_initilized = False
         self.__strategy_id = self.strategy.__class__.__name__ + "_"
         self.__order_id = self.time().item() // 100_000_000
+
+        # - extract data and event handlers
+        self.__handlers = {
+            n.split('_processing_')[1]: f for n, f in self.__class__.__dict__.items() 
+            if type(f) == FunctionType and n.startswith('_processing_') 
+        }
 
     def _check_how_to_listen_to_market_data(self, md_config: dict):
         self._market_data_subcription_type = _dict_with_exc(md_config, 'type').lower()
@@ -351,39 +367,20 @@ class StrategyContext:
             case _: 
                 raise ValueError(f"Wrong trigger type {_trigger}")
 
-    def _process_incoming_market_data(self, channel: CtrlChannel):
+    def _process_incoming_data(self, channel: CtrlChannel):
         _fails_counter = 0 
         logger.info("(StrategyContext) Start processing market data")
 
         while channel.control.is_set():
-            _strategy_event: TriggerEvent | None = None
-
             # - waiting for incoming market data
-            symbol, data = channel.queue.get()
+            symbol, d_type, data = channel.queue.get()
 
-            # - processing quote
-            if isinstance(data, Quote):
-                _strategy_event = self._update_ctx_by_quote(symbol, data)
-
-            # - processing trade
-            if isinstance(data, Trade):
-                _strategy_event = self._update_ctx_by_trade(symbol, data)
-
-            # - processing ohlc bar
-            if isinstance(data, Bar):
-                _strategy_event = self._update_ctx_by_bar(symbol, data)
-
-            # - any events from exchange: may be timer, news, alt data, etc
-            if isinstance(data, EventFromExchange):
-                _strategy_event = self._update_ctx_by_bar(symbol, data)
-
-            # - orders update
-            if isinstance(data, Order):
-                _strategy_event = self._update_ctx_by_order(symbol, data)
-
-            if _strategy_event:
+            # - process data if handler is registered
+            handler = self.__handlers.get(d_type)
+            _strategy_trigger_event = handler(self, symbol, data) if handler else None
+            if _strategy_trigger_event:
                 try:
-                    self.strategy.on_event(self, _strategy_event)
+                    self.strategy.on_event(self, _strategy_trigger_event)
                     _fails_counter = 0
                 except Exception as strat_error:
                     # - TODO: probably we need some cooldown interval after exception to prevent flooding
@@ -396,9 +393,33 @@ class StrategyContext:
                         channel.stop()
                         break
 
+                # - notify poition and portfolio loggers
+                self._notify_loggers()
+
         logger.info("(StrategyContext) Market data processing stopped")
 
-    def _update_ctx_by_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
+    def _notify_loggers(self):
+        # - notify position and loggers
+        if self.positions_dumper:
+            self.positions_dumper.store(self.time())
+
+        if self.portfolio_logger:
+            self.portfolio_logger.store(self.time())
+
+    def _processing_hist_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
+        # - processing single historical bar
+        #   here it just updates cache - historical bar can't trigger strategy logic
+        self._cache.update_by_bar(symbol, bar)
+        return None
+
+    def _processing_hist_bars(self, symbol: str, bars: List[Bar]) -> TriggerEvent | None:
+        # - processing historical bars as list
+        for b in bars:
+            self._processing_hist_bar(symbol, b)
+        return None
+
+    def _processing_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
+        # - processing current bar's update
         self._cache.update_by_bar(symbol, bar)
         if self._trig_on_bar:
             t = self.exchange_service.time().item()
@@ -412,12 +433,12 @@ class StrategyContext:
                 self._current_bar_trigger_processed = False
         return None
 
-    def _update_ctx_by_trade(self, symbol: str, trade: Trade) -> TriggerEvent | None:
+    def _processing_trade(self, symbol: str, trade: Trade) -> TriggerEvent | None:
         if self._trig_on_trade:
             return TriggerEvent(self.time(), 'trade', symbol, trade)
         return None
 
-    def _update_ctx_by_quote(self, symbol: str, quote: Quote) -> TriggerEvent | None:
+    def _processing_quote(self, symbol: str, quote: Quote) -> TriggerEvent | None:
         # - TODO: here we can apply throttlings or filters
         #  - let's say we can skip quotes if bid & ask is not changed
         #  - or we can collect let's say N quotes before sending to strategy
@@ -425,14 +446,21 @@ class StrategyContext:
             return TriggerEvent(self.time(), 'quote', symbol, quote)
         return None
 
-    def _update_ctx_by_exchange_event(self, symbol: str, event: EventFromExchange) -> TriggerEvent | None:
+    def _processing_event(self, symbol: str, event: EventFromExchange) -> TriggerEvent | None:
         if self._trig_on_time and event.type == 'time':
             return TriggerEvent(self.time(), 'time', symbol, event)
         return None
 
-    def _update_ctx_by_order(self, symbol: str, order: Order) -> TriggerEvent | None:
-        # TODO: !!!
-        # logger.info(f"Order {order.id} -> {order.side} {symbol} {abs(exec.amount)} @ {exec.price} -> {realized_pnl:.2f}")
+    def _processing_order(self, symbol: str, order: Order) -> TriggerEvent | None:
+        logger.debug(f"[{order.id} / {order.client_id}] : {order.type} {order.side} {order.quantity} of {symbol} { (' @ ' + str(order.price)) if order.price else '' } -> [{order.status}]")
+        # - check if we want to trigger any strat's logic on order
+        return None
+
+    def _processing_deals(self, symbol: str, deals: List[Deal]) -> TriggerEvent | None:
+        if self.executions_logger:
+            self.executions_logger.record_deals(symbol, deals)
+            for d in deals:
+                logger.debug(f"Executed {d.amount} @ {d.price} of {symbol} for order {d.order_id}")
         return None
 
     def ohlc(self, instrument: str | Instrument, timeframe: str) -> OHLCV:
@@ -466,7 +494,7 @@ class StrategyContext:
         # - create incoming market data processing
         # self._thread_data_loop = AsyncioThreadRunner(self.data_provider.get_communication_channel())
         self._thread_data_loop = Thread(
-            target=self._process_incoming_market_data, 
+            target=self._process_incoming_data, 
             args=(self.data_provider.get_communication_channel(),), 
             daemon=True
         )
@@ -475,6 +503,13 @@ class StrategyContext:
         # - subscribe to market data
         logger.info(f"(StrategyContext) Subscribing to {self._market_data_subcription_type} updates using {self._market_data_subcription_params} for \n\t{_symbols} ")
         self.data_provider.subscribe(self._market_data_subcription_type, _symbols, **self._market_data_subcription_params)
+
+        # - attach positions to loggers
+        if self.positions_dumper:
+            self.positions_dumper.attach_positions(*list(self.positions.values()))
+
+        if self.portfolio_logger:
+            self.portfolio_logger.attach_positions(*list(self.positions.values()))
 
         # - initialize strategy (should we do that after any first market data received ?)
         if not self._is_initilized:
@@ -501,6 +536,13 @@ class StrategyContext:
                 logger.error(f"(StrategyContext) Strategy {self.strategy.__class__.__name__} raised an exception in on_stop: {strat_error}")
                 logger.error(traceback.format_exc())
             self._thread_data_loop = None
+
+        # - close 
+        if self.portfolio_logger:
+            self.portfolio_logger.close()
+
+        if self.executions_logger:
+            self.executions_logger.close()
 
     def populate_parameters_to_strategy(self, strategy: IStrategy, **kwargs):
         _log_info = ""

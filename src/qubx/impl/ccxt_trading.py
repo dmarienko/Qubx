@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from collections import defaultdict
 import stackprinter
@@ -56,8 +56,7 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
         self._sync_account_info(commissions)
         self._positions = self.acc._positions
 
-        # - show info
-        logger.info(f"{exch.upper()} initialized - current time {self.time()}")
+        # - show reserves info
         for s, v in self.acc.reserved.items():
             logger.info(f" > {v} of {s} is reserved from trading")
 
@@ -204,12 +203,12 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
     def get_name(self) -> str:
         return self.sync.name  # type: ignore
 
-    def _process_execution_report(self, symbol: str, report: Dict[str, Any]) -> Order:
+    def _process_execution_report(self, symbol: str, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
         order = ccxt_convert_order_info(symbol, report)
         deals = ccxt_extract_deals_from_exec(report)
         self.acc.process_deals(symbol, deals)
         self.acc.process_order(order)
-        return order
+        return order, deals
 
     def get_orders(self, symbol: str | None = None) -> List[Order]:
         return self.acc.get_orders(symbol)

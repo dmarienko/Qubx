@@ -6,6 +6,7 @@ from qubx import lookup, logger, formatter
 from qubx.impl.ccxt_connector import CCXTConnector # TODO: need factory !
 from qubx.core.strategy import StrategyContext
 from qubx.utils.misc import add_project_to_system_path, Struct, version
+from qubx.core.loggers import LogsWriter
 
 
 LOGFILE = 'logs/'
@@ -36,6 +37,9 @@ def load_strategy_config(filename: str) -> Struct:
         account = execution.get('account'),
         md_subscr = execution['subscription'],
         strategy_trigger = execution['trigger'],
+        portfolio_logger = config.get('logger', None),
+        log_positions_interval = config.get('log_positions_interval', None),
+        log_portfolio_interval = config.get('log_portfolio_interval', None)
     )
 
     universe = execution['universe']
@@ -97,11 +101,29 @@ def create_strategy_context(config_file: str, accounts_cfg_file: str, search_pat
             connector = CCXTConnector(cfg.exchange.lower(), **acc_config)
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
+
+    # - get logger
+    writer = None
+    _w_class = cfg.portfolio_logger
+    if _w_class is not None:
+        if '.' not in _w_class:
+            _w_class = 'qubx.core.loggers.' + _w_class
+        try:
+            w_class = class_import(_w_class)
+            writer = w_class(acc_config['account_id'], strategy.__name__)
+        except Exception as err:
+            logger.warning(f"Can't instantiate specified writer {_w_class}: {str(err)}")
+            writer = LogsWriter(acc_config['account_id'], strategy.__name__)
         
     logger.info(f""" - - - <blue>Qubx</blue> (ver. <red>{version()}</red>) - - -\n - Strategy: {strategy}\n - Config: {cfg.parameters} """)
     ctx = StrategyContext(
         strategy, cfg.parameters, connector, connector, 
-        instruments=cfg.instruments, md_subscription=cfg.md_subscr, trigger=cfg.strategy_trigger
+        instruments=cfg.instruments, 
+        md_subscription=cfg.md_subscr, 
+        trigger=cfg.strategy_trigger,
+        logs_writer=writer, 
+        positions_log_freq=cfg.log_positions_interval,
+        portfolio_log_freq=cfg.log_portfolio_interval
     )
  
     return ctx

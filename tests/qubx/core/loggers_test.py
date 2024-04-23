@@ -8,15 +8,15 @@ from qubx import lookup
 import time
 import tabulate
 from qubx import lookup
-from qubx.core.basics import Position, ZERO_COSTS
-from qubx.core.loggers import PositionsDumper, LogsWriter
+from qubx.core.basics import Deal, Position, ZERO_COSTS
+from qubx.core.loggers import CsvFileLogsWriter, ExecutionsLogger, PositionsDumper, LogsWriter
 
 
 class ConsolePositionsWriter(LogsWriter):
     """
     Simple positions - just writes current positions to the standard output as funcy table
     """
-    def _dump_positions(self, account_id: str, strategy_id: str, data: List[Dict[str, Any]]):
+    def _dump_positions(self, data: List[Dict[str, Any]]):
         table = defaultdict(list)
         total_pnl, total_rpnl, total_mkv = 0, 0, 0
         
@@ -39,22 +39,23 @@ class ConsolePositionsWriter(LogsWriter):
         table['MarketValue'].append(total_mkv)
 
         # - write to database table here
-        print(f" ::: Strategy {strategy_id} @ {account_id} :::")
+        print(f" ::: Strategy {self.strategy_id} @ {self.account_id} :::")
         print(tabulate.tabulate(table, [
             'Symbol', 'Time', 'Quantity', 'AvgPrice', 'LastPrice', 'PnL', 'RealPnL', 'MarketValue'
         ], tablefmt='rounded_grid'))
 
-    def write_data(self, log_type: str, account_id: str, strategy_id: str, data: List[Dict[str, Any]]):
+    def write_data(self, log_type: str, data: List[Dict[str, Any]]):
         match log_type:
 
             case 'positions':
-                self._dump_positions(account_id, strategy_id, data)
+                self._dump_positions(data)
 
             case 'portfolio':
                 pass
 
             case 'executions':
-                pass
+                for d in data:
+                    print(f" --- DEAL: {d}")
 
 
 class TestPortfolioLoggers:
@@ -68,14 +69,15 @@ class TestPortfolioLoggers:
         positions[1].change_position_by(0, 0.5, 3200)
         positions[2].change_position_by(0, 10, 56)
 
+        writer = ConsolePositionsWriter('Account1', 'Strategy1')
         # - create dumper and attach positions
-        writer = ConsolePositionsWriter()
         console_dumper = PositionsDumper(
-            'Account1', 
-            'Strategy1', 
-            '1Sec',            # dumps positions once per 1 sec
-            writer
+            writer,
+            '1Sec'             # dumps positions once per 1 sec
         ).attach_positions(*positions)
+
+        # - create executions logger
+        execs_logger = ExecutionsLogger(writer, 1)
 
         # - emulating updates from strategy (this will be done in StategyContext)
         for _ in range(30):
@@ -87,4 +89,22 @@ class TestPortfolioLoggers:
             console_dumper.store(t)
             time.sleep(0.25)
 
+        # - emulate deals
+        execs_logger.record_deals('BTCUSDT', [
+            Deal(1, '111', 0, 0.1, 4444, False),
+            Deal(2, '222', 1, 0.1, 5555, False),
+            Deal(2, '222', 2, 0.2, 6666, False),
+        ])
+        execs_logger.close()
 
+    def test_csv_writer(self):
+        writer = CsvFileLogsWriter('Account1', 'Strategy1')
+
+        # - create executions logger
+        execs_logger = ExecutionsLogger(writer, 10)
+        execs_logger.record_deals('BTCUSDT', [
+            Deal(11, '111', 0, 0.1, 9999, False),
+            Deal(22, '222', 1, 0.1, 8888, False),
+            Deal(33, '222', 2, 0.2, 7777, False),
+        ])
+        execs_logger.close()

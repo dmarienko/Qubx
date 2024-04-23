@@ -51,7 +51,7 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
 
         # - create exchange's instance
         self._exchange = getattr(cxp, exch)(exchange_auth | {'asyncio_loop': self._loop})
-        self._ch_market_data = CtrlChannel(exch + '.marketdata', sent=(None, None))
+        self._ch_market_data = CtrlChannel(exch + '.marketdata', sent=(None, None, None))
         self._last_quotes = defaultdict(lambda: None)
         self._subsriptions: Dict[str, List[str]] = defaultdict(list)
 
@@ -128,13 +128,15 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
         while channel.control.is_set():
             try:
                 exec = await self._exchange.watch_orders(symbol)        # type: ignore
-                _msg = f"\nexecs_{symbol} = [\n"
+                # _msg = f"\nexecs_{symbol} = [\n"
                 for report in exec:
-                    _msg += '\t' + str(report) + ',\n'
-                    order = self._process_execution_report(symbol, report)
+                    # _msg += '\t' + str(report) + ',\n'
+                    order, deals = self._process_execution_report(symbol, report)
                     # - send update to client 
-                    channel.queue.put((symbol, order))
-                logger.info(_msg + "]\n")
+                    channel.queue.put((symbol, 'order', order))
+                    if deals: 
+                        channel.queue.put((symbol, 'deals', deals))
+                # logger.debug(_msg + "]\n")
 
             except NetworkError as e:
                 logger.error(f"(CCXTConnector) NetworkError in _listen_to_execution_reports : {e}")
@@ -155,8 +157,12 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
         if nbarsback >= 1:
             start = self._time_msec_nbars_back(timeframe, nbarsback)
             ohlcv = await self._exchange.fetch_ohlcv(symbol, timeframe, since=start, limit=nbarsback + 1)        # type: ignore
-            for oh in ohlcv:
-                channel.queue.put((symbol, Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
+            # - just send data as the list
+            channel.queue.put((
+                symbol, 
+                'hist_bars', 
+                [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in ohlcv]
+            ))
             logger.info(f"{symbol}: loaded {len(ohlcv)} {timeframe} bars")
 
         while channel.control.is_set():
@@ -167,7 +173,7 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
                 self.update_position_price(symbol, ohlcv[-1][4])
 
                 for oh in ohlcv:
-                    channel.queue.put((symbol, Bar(oh[0] * 1000000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
+                    channel.queue.put((symbol, 'bar', Bar(oh[0] * 1000000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
 
             except NetworkError as e:
                 logger.error(f"(CCXTConnector) NetworkError in _listen_to_ohlcv : {e}")

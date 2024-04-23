@@ -22,7 +22,7 @@ class FlipFlopStrat(IStrategy):
 
     def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
         logger.info(f"{event.time} -> {event}")
-        ohlcs = self.ohlcs('5Min')
+        ohlcs = self.ohlcs('15Min')
 
         symbols_to_close, symbols_to_open = [], []
         for s, p in ctx.positions.items():
