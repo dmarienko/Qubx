@@ -14,13 +14,15 @@ from qubx.utils.misc import makedirs
 class LogsWriter:
     account_id: str
     strategy_id: str
+    run_id: str
 
     """
     Log writer interface with default implementation
     """
-    def __init__(self, account_id: str, strategy_id: str) -> None:
+    def __init__(self, account_id: str, strategy_id: str, run_id: str) -> None:
         self.account_id = account_id
         self.strategy_id = strategy_id
+        self.run_id = run_id
 
     def write_data(self, log_type: str, data: List[Dict[str, Any]]):
         pass
@@ -33,9 +35,8 @@ class CsvFileLogsWriter(LogsWriter):
     """
     Simple CSV strategy log data writer. It does data writing in separate thread.
     """
-
-    def __init__(self, account_id: str, strategy_id: str, log_folder='logs') -> None:
-        super().__init__(account_id, strategy_id)
+    def __init__(self, account_id: str, strategy_id: str, run_id: str, log_folder='logs') -> None:
+        super().__init__(account_id, strategy_id, run_id)
 
         path = makedirs(log_folder)
         # - it rewrites positions every time
@@ -51,27 +52,35 @@ class CsvFileLogsWriter(LogsWriter):
         self._exe_writer = csv.writer(self._execs_file_)
         self.pool = ThreadPool(3)
 
+    @staticmethod
+    def _header(d: dict) -> List[str]:
+        return list(d.keys()) + ['run_id']
+
+    def _values(self, data: List[Dict[str, Any]]) -> List[List[str]]:
+        # - attach run_id (last column)
+        return [list((d | {'run_id': self.run_id}).values()) for d in data]
+
     def _do_write(self, log_type, data):
         match log_type:
 
             case 'positions':
                 with open(self._pos_file_path, "w", newline='') as f:
                     w = csv.writer(f)
-                    w.writerow(data[0].keys())
-                    w.writerows([list(d.values()) for d in data])
+                    w.writerow(self._header(data[0]))
+                    w.writerows(self._values(data))
 
             case 'portfolio':
                 if self._hdr_pfl:
-                    self._pfl_writer.writerow(data[0].keys())
+                    self._pfl_writer.writerow(self._header(data[0]))
                     self._hdr_pfl = False
-                self._pfl_writer.writerows([list(d.values()) for d in data])
+                self._pfl_writer.writerows(self._values(data))
                 self._pfl_file_.flush()
 
             case 'executions':
                 if self._hdr_exe:
-                    self._exe_writer.writerow(data[0].keys())
+                    self._exe_writer.writerow(self._header(data[0]))
                     self._hdr_exe = False
-                self._exe_writer.writerows([list(d.values()) for d in data])
+                self._exe_writer.writerows(self._values(data))
                 self._execs_file_.flush()
 
     def write_data(self, log_type: str, data: List[Dict[str, Any]]):

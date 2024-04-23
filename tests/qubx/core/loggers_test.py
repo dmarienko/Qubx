@@ -69,7 +69,7 @@ class TestPortfolioLoggers:
         positions[1].change_position_by(0, 0.5, 3200)
         positions[2].change_position_by(0, 10, 56)
 
-        writer = ConsolePositionsWriter('Account1', 'Strategy1')
+        writer = ConsolePositionsWriter('Account1', 'Strategy1', 'test-run-id-0')
         # - create dumper and attach positions
         console_dumper = PositionsDumper(
             writer,
@@ -98,7 +98,7 @@ class TestPortfolioLoggers:
         execs_logger.close()
 
     def test_csv_writer(self):
-        writer = CsvFileLogsWriter('Account1', 'Strategy1')
+        writer = CsvFileLogsWriter('Account1', 'Strategy1', 'test-run-id-0')
 
         # - create executions logger
         execs_logger = ExecutionsLogger(writer, 10)

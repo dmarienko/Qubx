@@ -1,6 +1,6 @@
 import click, sys, yaml, sys, time
 from os.path import exists, expanduser
-import yaml, configparser
+import yaml, configparser, socket
 
 from qubx import lookup, logger, formatter
 from qubx.impl.ccxt_connector import CCXTConnector # TODO: need factory !
@@ -102,6 +102,9 @@ def create_strategy_context(config_file: str, accounts_cfg_file: str, search_pat
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
 
+    # - generate new run id
+    run_id = socket.gethostname() + "-" + str(connector.time().item() // 100_000_000)
+
     # - get logger
     writer = None
     _w_class = cfg.portfolio_logger
@@ -110,10 +113,10 @@ def create_strategy_context(config_file: str, accounts_cfg_file: str, search_pat
             _w_class = 'qubx.core.loggers.' + _w_class
         try:
             w_class = class_import(_w_class)
-            writer = w_class(acc_config['account_id'], strategy.__name__)
+            writer = w_class(acc_config['account_id'], strategy.__name__, run_id)
         except Exception as err:
             logger.warning(f"Can't instantiate specified writer {_w_class}: {str(err)}")
-            writer = LogsWriter(acc_config['account_id'], strategy.__name__)
+            writer = LogsWriter(acc_config['account_id'], strategy.__name__, run_id)
         
     logger.info(f""" - - - <blue>Qubx</blue> (ver. <red>{version()}</red>) - - -\n - Strategy: {strategy}\n - Config: {cfg.parameters} """)
     ctx = StrategyContext(
