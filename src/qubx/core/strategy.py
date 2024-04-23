@@ -4,7 +4,7 @@
 from collections import defaultdict
 from threading import Thread
 import traceback
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from types import FunctionType
 import numpy as np
 from dataclasses import dataclass
@@ -14,7 +14,7 @@ import pandas as pd
 
 from qubx import lookup, logger
 from qubx.core.account import AccountProcessor
-from qubx.core.loggers import BalanceLogger, ExecutionsLogger, LogsWriter, PortfolioLogger, PositionsDumper
+from qubx.core.loggers import BalanceLogger, ExecutionsLogger, LogsWriter, PortfolioLogger, PositionsDumper, StrategyLogging
 from qubx.core.lookups import InstrumentsLookup
 from qubx.core.basics import Deal, Instrument, Order, Position, Signal, dt_64, td_64, CtrlChannel
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
@@ -190,20 +190,21 @@ class CachedMarketDataHolder:
 
  
 class StrategyContext:
-    MAX_NUMBER_OF_FAILURES = 10
+    MAX_NUMBER_OF_STRATEGY_FAILURES = 10
 
-    strategy: IStrategy 
-    exchange_service: IExchangeServiceProvider
-    data_provider: IDataProvider
-    instruments: List[Instrument]
-    positions: Dict[str, Position]
+    strategy: IStrategy                         # strategy instance
+    exchange_service: IExchangeServiceProvider  # service for exchange API: orders managemewnt
+    data_provider: IDataProvider                # market data provider 
+    instruments: List[Instrument]               # list of instruments this strategy trades
+    positions: Dict[str, Position]              # positions of the strategy (instrument -> position)
 
     # - loggers
-    positions_dumper: PositionsDumper | None = None
-    portfolio_logger: PortfolioLogger | None = None
-    executions_logger: ExecutionsLogger | None = None
-    balance_logger: BalanceLogger | None
+    _logging: StrategyLogging                    # recording all activities for the strat: execs, positions, portfolio
 
+    # - cached marked data
+    _cache: CachedMarketDataHolder # market data cache
+
+    # - configuration
     _market_data_subcription_type:str = 'unknown'
     _market_data_subcription_params: dict = dict()
     _thread_data_loop: Thread | None = None            # market data loop
@@ -221,8 +222,6 @@ class StrategyContext:
     __strategy_id: str
     __order_id: int 
     __handlers: Dict[str, Callable[['StrategyContext', str, Any], TriggerEvent | None]]
-
-    _cache: CachedMarketDataHolder # market data cache
 
     def __init__(self, 
             # - strategy with parameters
@@ -247,6 +246,37 @@ class StrategyContext:
             num_exec_records_to_write = 1      # in live let's write every execution 
         ) -> None:
 
+        # - initialization
+        self.exchange_service = exchange_service
+        self.data_provider = data_provider
+        self.config = config
+        self.instruments = instruments
+        self.positions = {}
+
+        # - create strategy instance and populate custom paramameters
+        self.__instantiate_strategy(strategy, config)
+
+        # - for fast access to instrument by it's symbol
+        self._symb_to_instr = {i.symbol: i for i in instruments}
+ 
+        # - process trigger configuration
+        self.__check_how_to_trigger_strategy(trigger)
+
+        # - process market data configuration
+        self.__check_how_to_listen_to_market_data(md_subscription)
+
+        # - instantiate logging functional
+        self._logging = StrategyLogging(
+            logs_writer, positions_log_freq, portfolio_log_freq, num_exec_records_to_write
+        )
+
+        # - extract data and event handlers
+        self.__handlers = {
+            n.split('_processing_')[1]: f for n, f in self.__class__.__dict__.items() 
+            if type(f) == FunctionType and n.startswith('_processing_') 
+        }
+
+    def __instantiate_strategy(self, strategy: IStrategy, config: Dict[str, Any] | None):
         # - set parameters to strategy (not sure we will do it here)
         self.strategy = strategy
         if isinstance(strategy, type):
@@ -256,55 +286,15 @@ class StrategyContext:
         # TODO: - trackers - - - - - - - - - - - - -
         # - here we need to instantiate trackers 
         # - need to think how to do it properly !!!
+        # TODO: - trackers - - - - - - - - - - - - -
 
         # - set strategy custom parameters 
         self.populate_parameters_to_strategy(self.strategy, **config if config else {})
-
-        # - other initialization
-        self.exchange_service = exchange_service
-        self.data_provider = data_provider
-        self.config = config
-        self.instruments = instruments
-        self.positions = {}
-
-        # - for fast access to instrument by it's symbol
-        self._symb_to_instr = {i.symbol: i for i in instruments}
- 
-        # - process trigger configuration
-        self._check_how_to_trigger_strategy(trigger)
-
-        # - process market data configuration
-        self._check_how_to_listen_to_market_data(md_subscription)
-
-        # - instantiate loggers
-        if logs_writer:
-            if positions_log_freq:
-                # - store current positions
-                self.positions_dumper = PositionsDumper(logs_writer, positions_log_freq)
-
-            if portfolio_log_freq:
-                # - store portfolio log
-                self.portfolio_logger = PortfolioLogger(logs_writer, portfolio_log_freq)
-
-            # - store executions
-            if num_exec_records_to_write >= 1:
-                self.executions_logger = ExecutionsLogger(logs_writer, num_exec_records_to_write)
-
-            # - balance logger
-            self.balance_logger = BalanceLogger(logs_writer)
-
-        # - states 
         self._is_initilized = False
         self.__strategy_id = self.strategy.__class__.__name__ + "_"
         self.__order_id = self.time().item() // 100_000_000
 
-        # - extract data and event handlers
-        self.__handlers = {
-            n.split('_processing_')[1]: f for n, f in self.__class__.__dict__.items() 
-            if type(f) == FunctionType and n.startswith('_processing_') 
-        }
-
-    def _check_how_to_listen_to_market_data(self, md_config: dict):
+    def __check_how_to_listen_to_market_data(self, md_config: dict):
         self._market_data_subcription_type = _dict_with_exc(md_config, 'type').lower()
         match self._market_data_subcription_type:
             case 'ohlc':
@@ -327,7 +317,7 @@ class StrategyContext:
             case _:
                 raise ValueError(f"{self._market_data_subcription_type} is not a valid value for market data subcription type !!!")
 
-    def _check_how_to_trigger_strategy(self, trigger_config: dict):
+    def __check_how_to_trigger_strategy(self, trigger_config: dict):
         # - check how it's configured to be triggered
         self._trig_interval_in_bar_nsec = 0
 
@@ -392,23 +382,15 @@ class StrategyContext:
                     logger.opt(colors=False).error(traceback.format_exc())
 
                     #  - we stop execution after let's say maximal number of errors in a row
-                    if (_fails_counter := _fails_counter + 1) >= StrategyContext.MAX_NUMBER_OF_FAILURES:
+                    if (_fails_counter := _fails_counter + 1) >= StrategyContext.MAX_NUMBER_OF_STRATEGY_FAILURES:
                         logger.error("STRATEGY FAILURES IN THE ROW EXCEEDED MAX ALLOWED NUMBER - STOPPING ...")
                         channel.stop()
                         break
 
                 # - notify poition and portfolio loggers
-                self._notify_loggers()
+                self._logging.notify(self.time())
 
         logger.info("(StrategyContext) Market data processing stopped")
-
-    def _notify_loggers(self):
-        # - notify position and loggers
-        if self.positions_dumper:
-            self.positions_dumper.store(self.time())
-
-        if self.portfolio_logger:
-            self.portfolio_logger.store(self.time())
 
     def _processing_hist_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
         # - processing single historical bar
@@ -461,10 +443,10 @@ class StrategyContext:
         return None
 
     def _processing_deals(self, symbol: str, deals: List[Deal]) -> TriggerEvent | None:
-        if self.executions_logger:
-            self.executions_logger.record_deals(symbol, deals)
-            for d in deals:
-                logger.debug(f"Executed {d.amount} @ {d.price} of {symbol} for order {d.order_id}")
+        # - log deals in storage
+        self._logging.save_deals(symbol, deals)
+        for d in deals:
+            logger.debug(f"Executed {d.amount} @ {d.price} of {symbol} for order {d.order_id}")
         return None
 
     def ohlc(self, instrument: str | Instrument, timeframe: str) -> OHLCV:
@@ -508,16 +490,10 @@ class StrategyContext:
         logger.info(f"(StrategyContext) Subscribing to {self._market_data_subcription_type} updates using {self._market_data_subcription_params} for \n\t{_symbols} ")
         self.data_provider.subscribe(self._market_data_subcription_type, _symbols, **self._market_data_subcription_params)
 
-        # - attach positions to loggers
-        if self.positions_dumper:
-            self.positions_dumper.attach_positions(*list(self.positions.values()))
-
-        if self.portfolio_logger:
-            self.portfolio_logger.attach_positions(*list(self.positions.values()))
-
-        # - send balance on start
-        if self.balance_logger:
-            self.balance_logger.record_balance(self.time(), self.exchange_service.get_account().get_balances())
+        # - initialize strategy loggers
+        self._logging.initialize(
+            self.time(), self.positions, self.exchange_service.get_account().get_balances()
+        )
 
         # - initialize strategy (should we do that after any first market data received ?)
         if not self._is_initilized:
@@ -543,12 +519,8 @@ class StrategyContext:
                 logger.error(traceback.format_exc())
             self._thread_data_loop = None
 
-        # - close 
-        if self.portfolio_logger:
-            self.portfolio_logger.close()
-
-        if self.executions_logger:
-            self.executions_logger.close()
+        # - close logging
+        self._logging.close()
 
     def populate_parameters_to_strategy(self, strategy: IStrategy, **kwargs):
         _log_info = ""

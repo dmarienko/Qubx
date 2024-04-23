@@ -30,6 +30,7 @@ class LogsWriter:
     def flush_data(self):
         pass
 
+
 class CsvFileLogsWriter(LogsWriter):
     """
     Simple CSV strategy log data writer. It does data writing in separate thread.
@@ -265,3 +266,75 @@ class BalanceLogger(_BaseIntervalDumper):
 
     def close(self):
         self._writer.flush_data()
+
+
+class StrategyLogging:
+    """
+    Just combined loggers functionality
+    """
+    positions_dumper: PositionsDumper | None = None
+    portfolio_logger: PortfolioLogger | None = None
+    executions_logger: ExecutionsLogger | None = None
+    balance_logger: BalanceLogger | None
+
+    def __init__(
+        self, 
+        logs_writer: LogsWriter | None = None,
+        positions_log_freq: str = '1Min',
+        portfolio_log_freq: str = '5Min',
+        num_exec_records_to_write = 1      # in live let's write every execution 
+    ) -> None:
+        # - instantiate loggers
+        if logs_writer:
+            if positions_log_freq:
+                # - store current positions
+                self.positions_dumper = PositionsDumper(logs_writer, positions_log_freq)
+
+            if portfolio_log_freq:
+                # - store portfolio log
+                self.portfolio_logger = PortfolioLogger(logs_writer, portfolio_log_freq)
+
+            # - store executions
+            if num_exec_records_to_write >= 1:
+                self.executions_logger = ExecutionsLogger(logs_writer, num_exec_records_to_write)
+
+            # - balance logger
+            self.balance_logger = BalanceLogger(logs_writer)
+        else:
+            logger.warning("Log writer is not defined - strategy activity will not be saved !")
+
+    def initialize(self, 
+                   timestamp: np.datetime64, 
+                   positions: Dict[str, Position],
+                   balances: Dict[str, Tuple[float, float]]
+    ) -> None:
+        # - attach positions to loggers
+        if self.positions_dumper:
+            self.positions_dumper.attach_positions(*list(positions.values()))
+
+        if self.portfolio_logger:
+            self.portfolio_logger.attach_positions(*list(positions.values()))
+
+        # - send balance on start
+        if self.balance_logger:
+            self.balance_logger.record_balance(timestamp, balances)
+
+    def close(self):
+        if self.portfolio_logger:
+            self.portfolio_logger.close()
+
+        if self.executions_logger:
+            self.executions_logger.close()
+
+    def notify(self, timestamp: np.datetime64):
+        # - notify position logger
+        if self.positions_dumper:
+            self.positions_dumper.store(timestamp)
+
+        # - notify portfolio records logger
+        if self.portfolio_logger:
+            self.portfolio_logger.store(timestamp)
+
+    def save_deals(self, symbol: str, deals: List[Deal]):
+        if self.executions_logger:
+            self.executions_logger.record_deals(symbol, deals)

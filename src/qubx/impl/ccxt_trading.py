@@ -161,10 +161,6 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
             params['newClientOrderId'] = client_id
 
         try:
-            # r: Dict[str, Any] | None = self._task_s(self.exchange.create_order(
-            #     symbol, order_type, order_side, amount, price, # type: ignore
-            #     params=params)
-            # )
             r: Dict[str, Any] | None = self.sync.create_order(
                 symbol, order_type, order_side, amount, price, # type: ignore
                 params=params)

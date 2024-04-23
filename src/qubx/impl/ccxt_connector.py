@@ -128,15 +128,15 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
         while channel.control.is_set():
             try:
                 exec = await self._exchange.watch_orders(symbol)        # type: ignore
-                # _msg = f"\nexecs_{symbol} = [\n"
+                _msg = f"\nexecs_{symbol} = [\n"
                 for report in exec:
-                    # _msg += '\t' + str(report) + ',\n'
+                    _msg += '\t' + str(report) + ',\n'
                     order, deals = self._process_execution_report(symbol, report)
                     # - send update to client 
                     channel.queue.put((symbol, 'order', order))
                     if deals: 
                         channel.queue.put((symbol, 'deals', deals))
-                # logger.debug(_msg + "]\n")
+                logger.debug(_msg + "]\n")
 
             except NetworkError as e:
                 logger.error(f"(CCXTConnector) NetworkError in _listen_to_execution_reports : {e}")
