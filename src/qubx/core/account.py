@@ -1,4 +1,4 @@
-from typing import Any, Optional, List, Dict
+from typing import Any, Optional, List, Dict, Tuple
 from collections import defaultdict
 
 import numpy as np
@@ -14,6 +14,7 @@ class AccountProcessor:
     account_id: str
     base_currency: str
     reserved: Dict[str, float]                         # how much asset is reserved against the trading 
+    _balances: Dict[str, Tuple[float, float]]
     _active_orders: Dict[str|int, Order]               # active orders
     _processed_trades: Dict[str|int, List[str|int]] 
     _positions: Dict[str, Position]
@@ -35,11 +36,21 @@ class AccountProcessor:
         self._active_orders = dict()
         self._positions = {}
         self._locked_capital_by_order = dict()
-        self.update_balance(total_capital, locked_capital)
+        self._balances = dict()
+        self.update_base_balance(total_capital, locked_capital)
 
-    def update_balance(self, total_capital: float, locked_capital: float):
+    def update_base_balance(self, total_capital: float, locked_capital: float):
+        """
+        Update base currency balance
+        """
         self._total_capital_in_base = total_capital
         self._locked_capital_in_base = locked_capital
+
+    def update_balance(self, symbol: str, total_capital: float, locked_capital: float):
+        self._balances[symbol] = (total_capital, locked_capital)
+
+    def get_balances(self) -> Dict[str, Tuple[float, float]]:
+        return dict(self._balances)
 
     def attach_positions(self, *position: Position) -> 'AccountProcessor':
         for p in position:

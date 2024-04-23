@@ -65,11 +65,14 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
         self._balance = self.sync.fetch_balance()
         _info = self._balance.get('info')
 
-        # - check what we have on balance
+        # - check what we have on balance: TODO test on futures account
         for k, vol in self._balance['total'].items(): # type: ignore
             if k.lower() == self.acc.base_currency.lower():
                 _free = self._balance['free'][self.acc.base_currency]
-                self.acc.update_balance(vol, vol - _free)
+                self.acc.update_base_balance(vol, vol - _free)
+
+            if vol != 0.0: # - get all non zero balances 
+                self.acc.update_balance(k, vol, vol - self._balance['free'].get(k, 0))
 
         # - try to get account's commissions calculator or set default one
         if _info:

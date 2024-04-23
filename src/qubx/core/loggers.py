@@ -30,7 +30,6 @@ class LogsWriter:
     def flush_data(self):
         pass
 
-
 class CsvFileLogsWriter(LogsWriter):
     """
     Simple CSV strategy log data writer. It does data writing in separate thread.
@@ -41,6 +40,7 @@ class CsvFileLogsWriter(LogsWriter):
         path = makedirs(log_folder)
         # - it rewrites positions every time
         self._pos_file_path = f"{path}/{self.strategy_id}_{self.account_id}_positions.csv"
+        self._balance_file_path = f"{path}/{self.strategy_id}_{self.account_id}_balance.csv"
         _pfl_path = f"{path}/{strategy_id}_{account_id}_portfolio.csv"
         _exe_path =  f"{path}/{strategy_id}_{account_id}_executions.csv"
         self._hdr_pfl = not os.path.exists(_pfl_path)
@@ -82,6 +82,12 @@ class CsvFileLogsWriter(LogsWriter):
                     self._hdr_exe = False
                 self._exe_writer.writerows(self._values(data))
                 self._execs_file_.flush()
+
+            case 'balance':
+                with open(self._balance_file_path, "w", newline='') as f:
+                    w = csv.writer(f)
+                    w.writerow(self._header(data[0]))
+                    w.writerows(self._values(data))
 
     def write_data(self, log_type: str, data: List[Dict[str, Any]]):
         if len(data) > 0:
@@ -229,4 +235,33 @@ class ExecutionsLogger(_BaseIntervalDumper):
         if self._deals:
             t = self._deals[-1][1].time
             self.dump(t, t)
+        self._writer.flush_data()
+
+
+class BalanceLogger(_BaseIntervalDumper):
+    """
+    Balance logger - send balance on strategy start
+    """
+    _writer: LogsWriter
+
+    def __init__(self, writer: LogsWriter) -> None:
+        super().__init__(None) # no intervals
+        self._writer = writer
+        
+    def record_balance(self, timestamp: np.datetime64, balance: Dict[str, Tuple[float, float]]):
+        if balance:
+            data = []
+            for s, d in balance.items():
+                data.append({
+                    'timestamp': timestamp,
+                    'instrument_id': s,
+                    'total': d[0],
+                    'locked': d[1],
+                })
+        self._writer.write_data('balance', data)
+
+    def store(self, timestamp: np.datetime64):
+        pass
+
+    def close(self):
         self._writer.flush_data()

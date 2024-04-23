@@ -14,7 +14,7 @@ import pandas as pd
 
 from qubx import lookup, logger
 from qubx.core.account import AccountProcessor
-from qubx.core.loggers import ExecutionsLogger, LogsWriter, PortfolioLogger, PositionsDumper
+from qubx.core.loggers import BalanceLogger, ExecutionsLogger, LogsWriter, PortfolioLogger, PositionsDumper
 from qubx.core.lookups import InstrumentsLookup
 from qubx.core.basics import Deal, Instrument, Order, Position, Signal, dt_64, td_64, CtrlChannel
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
@@ -202,6 +202,7 @@ class StrategyContext:
     positions_dumper: PositionsDumper | None = None
     portfolio_logger: PortfolioLogger | None = None
     executions_logger: ExecutionsLogger | None = None
+    balance_logger: BalanceLogger | None
 
     _market_data_subcription_type:str = 'unknown'
     _market_data_subcription_params: dict = dict()
@@ -288,6 +289,9 @@ class StrategyContext:
             # - store executions
             if num_exec_records_to_write >= 1:
                 self.executions_logger = ExecutionsLogger(logs_writer, num_exec_records_to_write)
+
+            # - balance logger
+            self.balance_logger = BalanceLogger(logs_writer)
 
         # - states 
         self._is_initilized = False
@@ -477,7 +481,7 @@ class StrategyContext:
                 self.instruments.append(aux)
                 self.positions[aux.symbol] = self.exchange_service.get_position(aux)
 
-    def start(self, join=False):
+    def start(self):
         if self._is_initilized :
             raise ValueError("Strategy is already started !")
 
@@ -511,6 +515,10 @@ class StrategyContext:
         if self.portfolio_logger:
             self.portfolio_logger.attach_positions(*list(self.positions.values()))
 
+        # - send balance on start
+        if self.balance_logger:
+            self.balance_logger.record_balance(self.time(), self.exchange_service.get_account().get_balances())
+
         # - initialize strategy (should we do that after any first market data received ?)
         if not self._is_initilized:
             try:
@@ -522,9 +530,7 @@ class StrategyContext:
                 return
 
         self._thread_data_loop.start()
-        logger.info("(StrategyContext) Market data processor started")
-        # if join:
-            # self._thread_data_loop.join()
+        logger.info("(StrategyContext) strategy is started")
 
     def stop(self):
         if self._thread_data_loop:
