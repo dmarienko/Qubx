@@ -19,6 +19,7 @@ from qubx.core.lookups import InstrumentsLookup
 from qubx.core.basics import Deal, Instrument, Order, Position, Signal, dt_64, td_64, CtrlChannel
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
 from qubx.utils.time import convert_tf_str_td64
+from qubx.utils.misc import Stopwatch
 
 
 @dataclass
@@ -122,6 +123,9 @@ def _round_down_at_min_qty(x: float, min_size: float) -> float:
     return (int(x / min_size)) * min_size
 
 
+_SW = Stopwatch()
+
+
 class CachedMarketDataHolder: 
     _min_timeframe: dt_64
     _last_bar: Dict[str, Optional[Bar]]
@@ -135,6 +139,7 @@ class CachedMarketDataHolder:
     def init_ohlcv(self, symbol: str, max_size=np.inf):
         self._ohlcvs[symbol] = {self._min_timeframe: OHLCV(symbol, self._min_timeframe, max_size)}
     
+    @_SW.watch('CachedMarketDataHolder')
     def get_ohlcv(self, symbol: str, timeframe: str, max_size=np.inf) -> OHLCV:
         tf = convert_tf_str_td64(timeframe) 
 
@@ -156,6 +161,7 @@ class CachedMarketDataHolder:
 
         return self._ohlcvs[symbol][tf]
 
+    @_SW.watch('CachedMarketDataHolder')
     def update_by_bar(self, symbol: str, bar: Bar):
         _last_bar = self._last_bar[symbol]
         v_tot_inc = bar.volume
@@ -174,12 +180,14 @@ class CachedMarketDataHolder:
             for ser in self._ohlcvs[symbol].values():
                 ser.update_by_bar(bar.time, bar.open, bar.high, bar.low, bar.close, v_tot_inc, v_buy_inc)
 
+    @_SW.watch('CachedMarketDataHolder')
     def update_by_quote(self, symbol: str, quote: Quote):
         series = self._ohlcvs.get(symbol)
         if series:
             for ser in series.values():
                 ser.update(quote.time, quote.mid_price(), 0)
 
+    @_SW.watch('CachedMarketDataHolder')
     def update_by_trade(self, symbol: str, trade: Trade):
         series = self._ohlcvs.get(symbol)
         if series:
@@ -360,12 +368,15 @@ class StrategyContext:
 
             case _: 
                 raise ValueError(f"Wrong trigger type {_trigger}")
-
+   
     def _process_incoming_data(self, channel: CtrlChannel):
         _fails_counter = 0 
         logger.info("(StrategyContext) Start processing market data")
 
         while channel.control.is_set():
+            # - start loop latency measurement 
+            _SW.start('StrategyContext._process_incoming_data')
+
             # - waiting for incoming market data
             symbol, d_type, data = channel.queue.get()
 
@@ -374,6 +385,7 @@ class StrategyContext:
             _strategy_trigger_event = handler(self, symbol, data) if handler else None
             if _strategy_trigger_event:
                 try:
+                    _SW.start('strategy.on_event')
                     self.strategy.on_event(self, _strategy_trigger_event)
                     _fails_counter = 0
                 except Exception as strat_error:
@@ -386,10 +398,16 @@ class StrategyContext:
                         logger.error("STRATEGY FAILURES IN THE ROW EXCEEDED MAX ALLOWED NUMBER - STOPPING ...")
                         channel.stop()
                         break
+                finally:
+                    _SW.stop('strategy.on_event')
 
-                # - notify poition and portfolio loggers
-                self._logging.notify(self.time())
+            # - stop loop latency measurement 
+            _SW.stop('StrategyContext._process_incoming_data')
 
+            # - notify poition and portfolio loggers
+            self._logging.notify(self.time())
+
+        _SW.stop('StrategyContext._process_incoming_data')
         logger.info("(StrategyContext) Market data processing stopped")
 
     def _processing_hist_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
@@ -437,11 +455,13 @@ class StrategyContext:
             return TriggerEvent(self.time(), 'time', symbol, event)
         return None
 
+    @_SW.watch('StrategyContext')
     def _processing_order(self, symbol: str, order: Order) -> TriggerEvent | None:
         logger.debug(f"[{order.id} / {order.client_id}] : {order.type} {order.side} {order.quantity} of {symbol} { (' @ ' + str(order.price)) if order.price else '' } -> [{order.status}]")
         # - check if we want to trigger any strat's logic on order
         return None
 
+    @_SW.watch('StrategyContext')
     def _processing_deals(self, symbol: str, deals: List[Deal]) -> TriggerEvent | None:
         # - log deals in storage
         self._logging.save_deals(symbol, deals)
@@ -521,6 +541,8 @@ class StrategyContext:
 
         # - close logging
         self._logging.close()
+        for l in _SW.latencies.keys():
+            logger.info(f"\t<w>{l}</w> took <r>{_SW.latency_sec(l):.7f}</r> secs")
 
     def populate_parameters_to_strategy(self, strategy: IStrategy, **kwargs):
         _log_info = ""
@@ -540,7 +562,9 @@ class StrategyContext:
         self.__order_id += 1
         return self.__strategy_id + symbol + '_' + str(self.__order_id)
 
+    @_SW.watch('StrategyContext')
     def trade(self, instr_or_symbol: Instrument | str, amount:float, price: float|None=None, time_in_force='gtc') -> Order:
+        _SW.start('send_order')
         instrument: Instrument | None = self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
         if instrument is None:
             raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
@@ -555,8 +579,10 @@ class StrategyContext:
         logger.info(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} ...")
         client_id = self._generate_order_client_id(instrument.symbol)
         order = self.exchange_service.send_order(instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id) 
+
         return order
 
+    @_SW.watch('StrategyContext')
     def cancel(self, instr_or_symbol: Instrument | str):
         instrument: Instrument | None = self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
         if instrument is None:

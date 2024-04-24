@@ -5,7 +5,7 @@ import yaml, configparser, socket
 from qubx import lookup, logger, formatter
 from qubx.impl.ccxt_connector import CCXTConnector # TODO: need factory !
 from qubx.core.strategy import StrategyContext
-from qubx.utils.misc import add_project_to_system_path, Struct, version
+from qubx.utils.misc import add_project_to_system_path, Struct, logo, version
 from qubx.core.loggers import LogsWriter
 
 
@@ -219,7 +219,10 @@ def run(filename: str, accounts: str, paths: list, jupyter: bool):
     if jupyter:
         _run_in_jupyter(filename, accounts, paths)
         return
-    
+
+    # - show Qubx logo with current version
+    logo()
+
     # - create context
     ctx = create_strategy_context(filename, accounts, paths)
     if ctx is None:

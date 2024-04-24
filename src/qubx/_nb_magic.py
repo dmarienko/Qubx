@@ -5,7 +5,7 @@ import importlib_metadata
 
 import qubx
 from qubx.utils import runtime_env
-from qubx.utils.misc import add_project_to_system_path
+from qubx.utils.misc import add_project_to_system_path, logo
 
 
 def np_fmt_short():
@@ -46,24 +46,8 @@ if runtime_env() in ['notebook', 'shell']:
     # - add project home to system path
     add_project_to_system_path()
 
-    # - check current version
-    try: 
-        version = importlib_metadata.version('qubx')
-    except:
-        version = 'Dev'
-
-    # some new logo
+    # show logo first time
     if not hasattr(qubx.QubxMagics, '__already_initialized__'):
-        from qubx.utils.misc import (green, yellow, cyan, magenta, white, blue, red)
-
-        print(
-        f"""
-                   {red("╻")}
-   {green("┏┓      ╻     ")}  {red("┃")}  {yellow("┏┓")}       {cyan("Quantitative Backtesting Environment")} 
-   {green("┃┃  ┓┏  ┣┓  ┏┓")}  {red("┃")}  {yellow("┏┛")}       
-   {green("┗┻  ┗┻  ┗┛  ┗ ")}  {red("┃")}  {yellow("┗━")}       (c) 2024,  ver. {magenta(version.rstrip())}
-                   {red("╹")}       
-"""
-        )
-        qubx.QubxMagics.__already_initialized__ = True
+        setattr(qubx.QubxMagics, "__already_initialized__", True)
+        logo()
 

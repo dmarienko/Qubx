@@ -8,7 +8,9 @@ from qubx.core.basics import Deal, Position
 
 from qubx.core.series import time_as_nsec
 from qubx.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
-from qubx.utils.misc import makedirs 
+from qubx.utils.misc import makedirs, Stopwatch
+
+_SW = Stopwatch()
 
 
 class LogsWriter:
@@ -326,6 +328,7 @@ class StrategyLogging:
         if self.executions_logger:
             self.executions_logger.close()
 
+    @_SW.watch('loggers')
     def notify(self, timestamp: np.datetime64):
         # - notify position logger
         if self.positions_dumper:

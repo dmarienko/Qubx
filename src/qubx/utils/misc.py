@@ -124,6 +124,19 @@ red, green, yellow, blue, magenta, cyan, white = (
 )
 
 
+def logo():
+    """
+    Some fancy Qubx logo
+    """
+    print(f"""
+⠀⠀⡰⡖⠒⠒⢒⢦⠀⠀   
+⠀⢠⠃⠈⢆⣀⣎⣀⣱⡀  {red("QUBX")} | {cyan("Quantitative Backtesting Environment")} 
+⠀⢳⠒⠒⡞⠚⡄⠀⡰⠁         (c) 2024, ver. {magenta(version().rstrip())}
+⠀⠀⠱⣜⣀⣀⣈⣦⠃⠀⠀⠀ 
+        """ 
+    )
+
+
 class Struct:
     """
     Dynamic structure (similar to matlab's struct it allows to add new properties dynamically)
@@ -244,20 +257,20 @@ class Stopwatch:
     """
     Stopwatch timer for performance 
     """
-    starts: Dict[str, int] = {} 
-    counts: Dict[str, int] = defaultdict(lambda: 0)
-    latencies: Dict[str, int] = {} 
+    starts: Dict[str|None, int] = {} 
+    counts: Dict[str|None, int] = defaultdict(lambda: 0)
+    latencies: Dict[str|None, int] = {} 
     
     def __new__(cls):
         if not hasattr(cls, 'instance'):
             cls.instance = super(Stopwatch, cls).__new__(cls)
         return cls.instance
     
-    def start(self, scope: Optional[str]=None):
+    def start(self, scope: str | None):
         self.starts[scope] = time.perf_counter_ns()
         self.counts[scope] += 1
         
-    def stop(self, scope: Optional[str]=None) -> Optional[int]:
+    def stop(self, scope: str|None=None) -> int | None:
         t = time.perf_counter_ns()
         s = self.starts.get(scope, None)
         lat = None
@@ -268,7 +281,7 @@ class Stopwatch:
             del self.starts[scope]
         return lat
 
-    def latency_sec(self, scope: str) -> float:
+    def latency_sec(self, scope: str | None) -> float:
         return self.latencies.get(scope, 0) / 1e9
 
     def watch(self, scope='global'):

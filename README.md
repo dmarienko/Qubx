@@ -2,10 +2,11 @@
 
 ## Next generation of Qube quantitative backtesting framework (QUBX)
 ```          
-   /////\     Qubx  
-  /////  \      |  Quantitative Backtesting Environment (NeXt)
-  \\\\\  /      | (c) 2024, by Dmitry Marienko
-   \\\\\/    
+⠀⠀⡰⡖⠒⠒⢒⢦⠀⠀
+⠀⢠⠃⠈⢆⣀⣎⣀⣱⡀  QUBX | Quantitative Backtesting Environment
+⠀⢳⠒⠒⡞⠚⡄⠀⡰⠁         (c) 2024, by Dmytro Mariienko
+⠀⠀⠱⣜⣀⣀⣈⣦⠃⠀⠀⠀
+
 ```                                          
 ### How to run live trading (Only Binance spot tested)
 1. cd experiments/
