@@ -72,7 +72,7 @@ def ccxt_extract_deals_from_exec(report: Dict[str,Any]) -> List[Deal]:
 
 
 def ccxt_restore_position_from_deals(
-    pos: Position, current_volume: float, deals: List[Deal]
+    pos: Position, current_volume: float, deals: List[Deal], reserved_amount:float=0.0
 ) -> Position:
     if  current_volume != 0:
         instr = pos.instrument
@@ -88,13 +88,15 @@ def ccxt_restore_position_from_deals(
                     current_volume += d.fee_amount
             # print(d.amount, current_volume)
             _last_deals.insert(0, d)
-            if abs(current_volume) < instr.min_size_step:
+
+            # - take in account reserves
+            if abs(current_volume) - abs(reserved_amount) < instr.min_size_step:
                 break
             
         # - reset to 0
         pos.reset()
 
-        if abs(current_volume) > instr.min_size_step:
+        if abs(current_volume) - abs(reserved_amount) > instr.min_size_step:
             # - - - TODO - - - !!!!
             logger.warning(f"Couldn't restore full deals history for {instr.symbol} symbol. Qubx will use zero position !")
         else:

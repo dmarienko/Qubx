@@ -128,7 +128,7 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
             deals = self._get_deals_from_exchange(symbol)
 
             # - actualize position
-            position = ccxt_restore_position_from_deals(position, vol_from_exch, deals);
+            position = ccxt_restore_position_from_deals(position, vol_from_exch, deals, reserved_amount=self.acc.get_reserved(position.instrument));
 
         return position
 
