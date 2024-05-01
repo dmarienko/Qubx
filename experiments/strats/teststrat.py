@@ -20,6 +20,10 @@ class FlipFlopStrat(IStrategy):
         logger.info(f"> Started with capital {self.capital_invested}")
         self._tracker = self.tracker(ctx)  
 
+    def on_fit(self, ctx: 'StrategyContext', fit_end_time: str | pd.Timestamp):
+        logger.info(f"> Fit is called")
+        pass
+
     def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
         logger.info(f"{event.time} -> {event}")
         ohlcs = self.ohlcs('15Min')

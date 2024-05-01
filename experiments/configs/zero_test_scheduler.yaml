@@ -1,0 +1,29 @@
+config:
+  strategy:                   experiments.strats.teststrat.FlipFlopStrat
+
+  parameters:
+    capital_invested:         100
+    trading_allowed:          false
+
+  execution:
+    connector:                ccxt
+    exchange:                 binance   # spot
+    account:                  binance-mde
+
+    subscription:     # market data subscription
+      type:                   ohlc
+      timeframe:              '15Min'
+      nback:                  600
+
+    trigger:          # how to trigger strategy
+      type:                   time
+      when:                   '* * * * * 55' # every minute at 55 sec
+
+    fit:                      '* * * * * 45' # every minute at 45 sec
+ 
+    universe:                 ['BNBUSDT', 'PEPEUSDT', 'SHIBUSDT', 'XVGUSDT', 'BOMEUSDT', 'CKBUSDT', 'GALAUSDT', 'LINKUSDT']
+
+  # how to write portfolio log
+  logger:                   CsvFileLogsWriter
+  log_positions_interval:   '10Sec'
+  log_portfolio_interval:   '5Min'

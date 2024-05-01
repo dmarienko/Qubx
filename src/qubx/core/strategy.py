@@ -1,24 +1,22 @@
 """
  # All interfaces related to strategy etc
 """
-from collections import defaultdict
-from threading import Thread
-import traceback
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from types import FunctionType
-import numpy as np
+from collections import defaultdict
 from dataclasses import dataclass
-from enum import Enum
+from threading import Thread
+import traceback
 
 import pandas as pd
 
 from qubx import lookup, logger
 from qubx.core.account import AccountProcessor
-from qubx.core.loggers import BalanceLogger, ExecutionsLogger, LogsWriter, PortfolioLogger, PositionsDumper, StrategyLogging
+from qubx.core.helpers import CachedMarketDataHolder
+from qubx.core.loggers import LogsWriter, StrategyLogging
 from qubx.core.lookups import InstrumentsLookup
 from qubx.core.basics import Deal, Instrument, Order, Position, Signal, dt_64, td_64, CtrlChannel
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
-from qubx.utils.time import convert_tf_str_td64
 from qubx.utils.misc import Stopwatch
 
 
@@ -67,9 +65,6 @@ class IExchangeServiceProvider:
     def get_name(self) -> str:
         raise NotImplementedError("get_name is not implemented")
 
-    def schedule_trigger(self, trigger_id: str, when: str):
-        raise NotImplementedError("schedule_trigger is not implemented")
-
     def get_capital(self) -> float:
         return self.acc.get_capital()
 
@@ -103,6 +98,12 @@ class IStrategy:
     def on_start(self, ctx: 'StrategyContext'):
         pass
 
+    def on_fit(self, ctx: 'StrategyContext', fit_end_time: str | pd.Timestamp):
+        """
+        This method is called when it's time to fit model
+        """
+        return None
+
     def on_event(self, ctx: 'StrategyContext', event: TriggerEvent) -> Optional[List[Signal]]:
         return None
 
@@ -124,77 +125,6 @@ def _round_down_at_min_qty(x: float, min_size: float) -> float:
 
 
 _SW = Stopwatch()
-
-
-class CachedMarketDataHolder: 
-    _min_timeframe: dt_64
-    _last_bar: Dict[str, Optional[Bar]]
-    _ohlcvs: Dict[str, Dict[td_64, OHLCV]]
-
-    def __init__(self, minimal_timeframe: str) -> None:
-        self._min_timeframe = convert_tf_str_td64(minimal_timeframe)
-        self._ohlcvs = dict()
-        self._last_bar = defaultdict(lambda: None)
-
-    def init_ohlcv(self, symbol: str, max_size=np.inf):
-        self._ohlcvs[symbol] = {self._min_timeframe: OHLCV(symbol, self._min_timeframe, max_size)}
-    
-    @_SW.watch('CachedMarketDataHolder')
-    def get_ohlcv(self, symbol: str, timeframe: str, max_size=np.inf) -> OHLCV:
-        tf = convert_tf_str_td64(timeframe) 
-
-        if symbol not in self._ohlcvs:
-           self._ohlcvs[symbol] = {}
-
-        if tf not in self._ohlcvs[symbol]: 
-            # - check requested timeframe
-            new_ohlc = OHLCV(symbol, tf, max_size)
-            if tf < self._min_timeframe:
-                logger.warning(f"[{symbol}] Request for timeframe {timeframe} that is smaller then minimal {self._min_timeframe}")
-            else:
-                # - first try to resample from smaller frame
-                if (basis := self._ohlcvs[symbol].get(self._min_timeframe)):
-                    for b in basis[::-1]:
-                        new_ohlc.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume, b.bought_volume)
-                
-            self._ohlcvs[symbol][tf] = new_ohlc
-
-        return self._ohlcvs[symbol][tf]
-
-    @_SW.watch('CachedMarketDataHolder')
-    def update_by_bar(self, symbol: str, bar: Bar):
-        _last_bar = self._last_bar[symbol]
-        v_tot_inc = bar.volume
-        v_buy_inc = bar.bought_volume
-
-        if _last_bar is not None:
-            if _last_bar.time == bar.time: # just current bar updated
-                v_tot_inc -= _last_bar.volume
-                v_buy_inc -= _last_bar.bought_volume
-
-            if _last_bar.time > bar.time: # update is too late - skip it
-                return
-
-        if symbol in self._ohlcvs:
-            self._last_bar[symbol] = bar
-            for ser in self._ohlcvs[symbol].values():
-                ser.update_by_bar(bar.time, bar.open, bar.high, bar.low, bar.close, v_tot_inc, v_buy_inc)
-
-    @_SW.watch('CachedMarketDataHolder')
-    def update_by_quote(self, symbol: str, quote: Quote):
-        series = self._ohlcvs.get(symbol)
-        if series:
-            for ser in series.values():
-                ser.update(quote.time, quote.mid_price(), 0)
-
-    @_SW.watch('CachedMarketDataHolder')
-    def update_by_trade(self, symbol: str, trade: Trade):
-        series = self._ohlcvs.get(symbol)
-        if series:
-            total_vol = trade.size 
-            bought_vol = total_vol if trade.taker >= 1 else 0.0 
-            for ser in series.values():
-                ser.update(trade.time, trade.price, total_vol, bought_vol)
 
  
 class StrategyContext:
@@ -247,6 +177,10 @@ class StrategyContext:
             md_subscription: Dict[str,Any] = dict(type='ohlc', timeframe='1Min'),
             # - - - - - - - - - - - - - - - - - - - - -
 
+            # - when need to fit strategy - - - - - - -
+            fit_schedule: str | None = None,
+            # - - - - - - - - - - - - - - - - - - - - -
+
             # - how to write logs - - - - - - - - - -
             logs_writer: LogsWriter | None = None,
             positions_log_freq: str = '1Min',
@@ -269,6 +203,9 @@ class StrategyContext:
  
         # - process trigger configuration
         self.__check_how_to_trigger_strategy(trigger)
+
+        # - process fit configuration
+        self.__check_when_to_fit_strategy(fit_schedule)
 
         # - process market data configuration
         self.__check_how_to_listen_to_market_data(md_subscription)
@@ -352,7 +289,7 @@ class StrategyContext:
                 _time_to_trigger = _dict_with_exc(trigger_config, 'when')
 
                 # - schedule periodic timer
-                self.exchange_service.schedule_trigger('time', _time_to_trigger)
+                self._schedule_trigger(_time_to_trigger, 'on_event')
 
             case 'quote': 
                 self._trig_on_quote = True
@@ -368,6 +305,16 @@ class StrategyContext:
 
             case _: 
                 raise ValueError(f"Wrong trigger type {_trigger}")
+
+    def __check_when_to_fit_strategy(self, fit_schedue: str | None):
+        if fit_schedue is None:
+            return
+        # - schedule periodic fit
+        self._schedule_trigger(fit_schedue, 'fit')
+
+    def _schedule_trigger(self, schedule: str, callback: str):
+        # - setup scheduler
+        pass
    
     def _process_incoming_data(self, channel: CtrlChannel):
         _fails_counter = 0 

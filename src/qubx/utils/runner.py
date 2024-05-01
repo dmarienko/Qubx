@@ -43,7 +43,13 @@ def load_strategy_config(filename: str) -> Struct:
     )
 
     universe = execution['universe']
-    r.instruments = [lookup.find_symbol(r.exchange.upper(), s.upper()) for s in universe ]
+    r.instruments = []
+    for s in universe:
+        instr = lookup.find_symbol(r.exchange.upper(), s.upper()) 
+        if instr is not None:
+            r.instruments.append(instr)
+        else:
+            logger.warning(f"Can't find instrument for symbo {s} - try to refresh lookup first !")
     return r
 
 
