@@ -145,7 +145,7 @@ class BasicScheduler:
     def initialize(self, channel: CtrlChannel):
         self.channel = channel
 
-    def parse_schedule_spec(self, schedule: str) -> Dict[str, str]:
+    def _parse_schedule_spec(self, schedule: str) -> Dict[str, str]:
         m = BasicScheduler.SPEC_REGEX.match(schedule)
         return {k: v for k, v in m.groupdict().items() if v} if m else {}
 
@@ -163,29 +163,29 @@ class BasicScheduler:
         match _T:
             case 'cron':
                 if not _S or croniter.is_valid(_S):
-                    config.append(dict(type='cron', args=_S))
+                    config.append(dict(type='cron', args=_S, spec=_S))
                 else:
                     raise ValueError(f"Wrong specification for cron type: {_S}")
 
             case 'time':
                 for t in _t:
-                    config.append(dict(type='cron', args=_mk_cron(t, _by)))
+                    config.append(dict(type='cron', args=_mk_cron(t, _by), spec=_S))
             
             case None:
                 if _t: # - if time specified
                     for t in _t:
-                        config.append(dict(type='cron', args=_mk_cron(t, _by)))
+                        config.append(dict(type='cron', args=_mk_cron(t, _by), spec=_S))
                 else:
                     # - check if it's valid cron
                     if _S:
                         if croniter.is_valid(_S):
-                            config.append(dict(type='cron', args=_S))
+                            config.append(dict(type='cron', args=_S, spec=_S))
                         else:
                             if _has_intervals:
                                 _F = convert_seconds_to_str(int(_s_pos.as_unit('s').to_timedelta64().item().total_seconds())) if not _F else _F  
-                                config.append(dict(type='bar', args=_S, timeframe=_F, delay=_s_neg))
+                                config.append(dict(type='bar', args=None, timeframe=_F, delay=_s_neg, spec=_S))
             case _:
-                config.append(dict(type=_T, args=_S, timeframe=_F, delay=_shift))
+                config.append(dict(type=_T, args=None, timeframe=_F, delay=_shift, spec=_S))
 
         return config
 

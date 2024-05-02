@@ -58,5 +58,5 @@ class TestScheduler:
 
         bs = BasicScheduler()
         for s, r in zip(specs, res):
-            assert bs.parse_schedule_spec(s) == r
+            assert bs._parse_schedule_spec(s) == r
             
