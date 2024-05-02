@@ -12,14 +12,21 @@ config:
 
     subscription:     # market data subscription
       type:                   ohlc
-      timeframe:              '15Min'
+      timeframe:              '1Min'
       nback:                  600
 
-    trigger:          # how to trigger strategy
-      type:                   time
-      when:                   '* * * * * 55' # every minute at 55 sec
+    # - how to trigger strategy
+    # trigger:                  '* * * * * 55' # 55 sec at every minute
+    trigger:                  'bar: -5s'        # 5 sec before subsciption bar end
 
-    fit:                      '* * * * * 45' # every minute at 45 sec
+    # - when to fit strategy
+    fit:                      'cron: * * * * * 45'   # every minute at 45 sec
+
+    # trigger:                  '-5Sec'          # 5 sec before subsciption bar end
+    # trigger:                  '5Min -5Sec'     # 5 sec before 5min bar ends
+    # trigger:                  '23:59:00 @ Sat' # at 23:59:00 every Saturday
+    # fit:                      '1w -1h'         # 1h before every week ends
+    # fit:                      '4month -5h'     # 5h before the end of every 4 months 
  
     universe:                 ['BNBUSDT', 'PEPEUSDT', 'SHIBUSDT', 'XVGUSDT', 'BOMEUSDT', 'CKBUSDT', 'GALAUSDT', 'LINKUSDT']
 

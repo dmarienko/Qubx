@@ -2,7 +2,7 @@ import pandas as pd
 from qubx import lookup
 from qubx.core.account import AccountProcessor
 from qubx.core.basics import Deal, Instrument, Position
-from qubx.impl.utils import ccxt_convert_deal_info, ccxt_convert_order_info, ccxt_extract_deals_from_exec, ccxt_restore_position_from_deals
+from qubx.impl.ccxt_utils import ccxt_convert_deal_info, ccxt_convert_order_info, ccxt_extract_deals_from_exec, ccxt_restore_position_from_deals
 
 C1 = {'info': {'e': 'executionReport', 'E': 1712231084293, 's': 'ACAUSDT', 'c': 'x-R4BD3S8238819a3237ee3b4e56266c', 'S': 'BUY', 'o': 'MARKET', 'f': 'GTC', 'q': '50.00000000', 'p': '0.00000000', 'P': '0.00000000', 'F': '0.00000000', 'g': -1, 'C': '', 'x': 'NEW', 'X': 'NEW', 'r': 'NONE', 'i': 149024288, 'l': '0.00000000', 'z': '0.00000000', 'L': '0.00000000', 'n': '0', 'N': None, 'T': 1712231084293, 't': -1, 'I': 315492989, 'w': True, 'm': False, 'M': False, 'O': 1712231084293, 'Z': '0.00000000', 'Y': '0.00000000', 'Q': '0.00000000', 'W': 1712231084293, 'V': 'EXPIRE_MAKER'}, 'symbol': 'ACA/USDT', 'id': '149024288', 'clientOrderId': 'x-R4BD3S8238819a3237ee3b4e56266c', 'timestamp': 1712231084293, 'datetime': '2024-04-04T11:44:44.293Z', 'lastTradeTimestamp': None, 'lastUpdateTimestamp': 1712231084293, 'type': 'market', 'timeInForce': 'GTC', 'postOnly': False, 'reduceOnly': None, 'side': 'buy', 'price': None, 'stopPrice': 0.0, 'triggerPrice': 0.0, 'amount': 50.0, 'cost': 0.0, 'average': None, 'filled': 0.0, 'remaining': 50.0, 'status': 'open', 'fee': None, 'trades': [], 'fees': [], 'takeProfitPrice': None, 'stopLossPrice': None}
 

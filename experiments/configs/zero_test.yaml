@@ -20,7 +20,7 @@ config:
       timeframe:              '1Min'
       delay:                  '-5Sec'
  
-    universe:                 ['BNBUSDT', 'PEPEUSDT', 'SHIBUSDT', 'XVGUSDT', 'BOMEUSDT', 'CKBUSDT', 'GALAUSDT', 'LINKUSDT']
+    universe:                 ['ACAUSDT', 'ETHUSDT', 'BNBUSDT', 'PEPEUSDT', 'SHIBUSDT', 'XVGUSDT', 'BOMEUSDT', 'CKBUSDT', 'GALAUSDT', 'LINKUSDT']
 
   # how to write portfolio log
   logger:                   CsvFileLogsWriter

@@ -45,14 +45,17 @@ def convert_seconds_to_str(seconds: int) -> str:
     """
     Convert seconds to string representation: 310 -> '5Min10S' etc
     """
+    weeks, seconds = divmod(seconds, 7*86400)
     days, seconds = divmod(seconds, 86400)
     hours, seconds = divmod(seconds, 3600)
     minutes, seconds = divmod(seconds, 60)
     r = ''
+    if weeks > 0:
+        r += '%dw' % weeks
     if days > 0:
         r += '%dD' % days
     if hours > 0:
-        r += '%dH' % hours
+        r += '%dh' % hours
     if minutes > 0:
         r += '%dMin' % minutes
     if seconds > 0:

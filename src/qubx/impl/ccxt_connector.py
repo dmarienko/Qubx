@@ -18,12 +18,12 @@ from qubx import logger
 from qubx.core.basics import Instrument, Position, dt_64, Deal
 from qubx.core.strategy import IDataProvider, CtrlChannel, IExchangeServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
-from qubx.impl.utils import DATA_PROVIDERS_ALIASES
+from qubx.impl.ccxt_utils import DATA_PROVIDERS_ALIASES
 
 from .ccxt_trading import CCXTSyncTradingConnector
 
 # - register custom wrappers
-from .exchange_customizations import BinanceQV
+from .ccxt_customizations import BinanceQV
 cxp.binanceqv = BinanceQV            # type: ignore
 cxp.exchanges.append('binanceqv')
 

@@ -96,11 +96,15 @@ class IStrategy:
     ctx: 'StrategyContext'
 
     def on_start(self, ctx: 'StrategyContext'):
+        """
+        This method is called strategy is started
+        """
         pass
 
     def on_fit(self, ctx: 'StrategyContext', fit_end_time: str | pd.Timestamp):
         """
         This method is called when it's time to fit model
+        :param fit_end_time: last time of fit data to use 
         """
         return None
 
@@ -114,7 +118,7 @@ class IStrategy:
         pass
 
 
-def _dict_with_exc(dct, f):
+def _dict_with_exception(dct, f):
     if f not in dct:
         raise ValueError(f"Configuration {dct} must contain field '{f}'")
     return dct[f]
@@ -177,8 +181,9 @@ class StrategyContext:
             md_subscription: Dict[str,Any] = dict(type='ohlc', timeframe='1Min'),
             # - - - - - - - - - - - - - - - - - - - - -
 
-            # - when need to fit strategy - - - - - - -
-            fit_schedule: str | None = None,
+            # - when need to trigger and fit strategy - - - - - - -
+            trigger_spec: str = 'bar,-1Sec',       # basic bar 
+            fit_spec: str | None = None,
             # - - - - - - - - - - - - - - - - - - - - -
 
             # - how to write logs - - - - - - - - - -
@@ -205,7 +210,7 @@ class StrategyContext:
         self.__check_how_to_trigger_strategy(trigger)
 
         # - process fit configuration
-        self.__check_when_to_fit_strategy(fit_schedule)
+        self.__check_when_to_fit_strategy(fit_spec)
 
         # - process market data configuration
         self.__check_how_to_listen_to_market_data(md_subscription)
@@ -240,10 +245,10 @@ class StrategyContext:
         self.__order_id = self.time().item() // 100_000_000
 
     def __check_how_to_listen_to_market_data(self, md_config: dict):
-        self._market_data_subcription_type = _dict_with_exc(md_config, 'type').lower()
+        self._market_data_subcription_type = _dict_with_exception(md_config, 'type').lower()
         match self._market_data_subcription_type:
             case 'ohlc':
-                timeframe = _dict_with_exc(md_config, 'timeframe')
+                timeframe = _dict_with_exception(md_config, 'timeframe')
                 self._market_data_subcription_params = {
                     'timeframe': timeframe,
                     'nback': md_config.get('nback', 1), 
@@ -266,12 +271,12 @@ class StrategyContext:
         # - check how it's configured to be triggered
         self._trig_interval_in_bar_nsec = 0
 
-        match (_trigger := _dict_with_exc(trigger_config, 'type').lower()):
+        match (_trigger := _dict_with_exception(trigger_config, 'type').lower()):
             case 'bar': 
                 self._trig_on_bar = True
 
-                _bar_timeframe = pd.Timedelta(_dict_with_exc(trigger_config, 'timeframe'))
-                _inside_bar_delay = pd.Timedelta(_dict_with_exc(trigger_config, 'delay'))
+                _bar_timeframe = pd.Timedelta(_dict_with_exception(trigger_config, 'timeframe'))
+                _inside_bar_delay = pd.Timedelta(_dict_with_exception(trigger_config, 'delay'))
 
                 if abs(pd.Timedelta(_inside_bar_delay)) > pd.Timedelta(_bar_timeframe):
                     raise ValueError(f"Delay must be less or equal to bar's timeframe for {_trigger} trigger: you set delay {_inside_bar_delay} for {_bar_timeframe}")
@@ -286,7 +291,7 @@ class StrategyContext:
 
             case 'time': 
                 self._trig_on_time = True
-                _time_to_trigger = _dict_with_exc(trigger_config, 'when')
+                _time_to_trigger = _dict_with_exception(trigger_config, 'when')
 
                 # - schedule periodic timer
                 self._schedule_trigger(_time_to_trigger, 'on_event')

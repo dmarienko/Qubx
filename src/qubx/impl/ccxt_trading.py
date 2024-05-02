@@ -17,7 +17,7 @@ from qubx.core.account import AccountProcessor
 from qubx.core.basics import Instrument, Position, Order, TransactionCostsCalculator, dt_64, Deal
 from qubx.core.strategy import IDataProvider, CtrlChannel, IExchangeServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
-from qubx.impl.utils import EXCHANGE_ALIASES, ccxt_convert_order_info, ccxt_convert_deal_info, ccxt_extract_deals_from_exec, ccxt_restore_position_from_deals
+from qubx.impl.ccxt_utils import EXCHANGE_ALIASES, ccxt_convert_order_info, ccxt_convert_deal_info, ccxt_extract_deals_from_exec, ccxt_restore_position_from_deals
 
 
 ORDERS_HISTORY_LOOKBACK_DAYS = 30

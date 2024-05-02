@@ -21,7 +21,7 @@ class FlipFlopStrat(IStrategy):
         self._tracker = self.tracker(ctx)  
 
     def on_fit(self, ctx: 'StrategyContext', fit_end_time: str | pd.Timestamp):
-        logger.info(f"> Fit is called")
+        logger.info(f"> Fit is called | fit_end_time: {fit_end_time}")
         pass
 
     def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
