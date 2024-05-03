@@ -261,7 +261,7 @@ class BalanceLogger(_BaseIntervalDumper):
                     'total': d[0],
                     'locked': d[1],
                 })
-        self._writer.write_data('balance', data)
+            self._writer.write_data('balance', data)
 
     def store(self, timestamp: np.datetime64):
         pass
