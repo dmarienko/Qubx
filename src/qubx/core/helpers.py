@@ -1,8 +1,8 @@
 from collections import defaultdict
-import re
-from typing import Dict, List, Optional
-import numpy as np
+import re, sched, time
+from typing import Callable, Dict, List, Optional
 from croniter import croniter
+import numpy as np
 import pandas as pd
 
 from qubx import logger
@@ -88,11 +88,30 @@ class CachedMarketDataHolder:
                 ser.update(trade.time, trade.price, total_vol, bought_vol)
 
 
-S = lambda s: [x for x in re.split(r"[, ]", s) if x]
-HMS = lambda s: list(map(int, s.split(':') if s.count(':') == 2 else [*s.split(':'), 0]))
-AS_INT = lambda d, k: int(d.get(k, 0)) 
+sec2ts = lambda t: pd.Timestamp(t, unit='s')
+
+SPEC_REGEX = re.compile(
+    r"((?P<type>[A-Za-z]+)(\.?(?P<timeframe>[0-9A-Za-z]+))?\ *:)?"
+    r"\ *"
+    r"((?P<spec>"
+        r"(?P<time>((\d+:\d+(:\d+)?)\ *,?\ *)+)?"
+        r"((\ *@\ *)(?P<by>([A-Za-z0-9-,\ ]+)))?"
+        r"(("
+        r'((?P<months>[-+]?\d+)(months|month|bm|mo))?'
+        r'((?P<weeks>[-+]?\d+)(weeks|week|w))?'
+        r'((?P<days>[-+]?\d+)(days|day|d))?'
+        r'((?P<hours>[-+]?\d+)(hours|hour|h))?'
+        r'((?P<minutes>[-+]?\d+)(mins|min|m))?'
+        r'((?P<seconds>[-+]?\d+)(sec|s))?'
+        r")(\ *)?)*"
+        r".*"
+    r"))?", re.IGNORECASE
+)
+
 
 def _mk_cron(time: str, by: list | None) -> str:
+    HMS = lambda s: list(map(int, s.split(':') if s.count(':') == 2 else [*s.split(':'), 0]))
+
     h,m,s = HMS(time)
     assert h < 24, f'Wrong value for hour {h}'
     assert m < 60, f'Wrong value for minute {m}'
@@ -118,80 +137,107 @@ def _make_shift(_b, _w, _d, _h, _m, _s):
     return P, N
 
 
+def _parse_schedule_spec(schedule: str) -> Dict[str, str]:
+    m = SPEC_REGEX.match(schedule)
+    return {k: v for k, v in m.groupdict().items() if v} if m else {}
+
+
+def process_schedule_spec(spec_str: str) -> List[Dict]:
+    AS_INT = lambda d, k: int(d.get(k, 0)) 
+    S = lambda s: [x for x in re.split(r"[, ]", s) if x]
+
+    # - parse schedule spec
+    spec = _parse_schedule_spec(spec_str)
+
+    # - check how to run it 
+    config = []
+    _T, _S = spec.get('type'), spec.get('spec')
+    _F = spec.get('timeframe')
+    _t, _by = S(spec.get('time', '')), S(spec.get('by', ''))
+    _b, _w, _d = AS_INT(spec, 'months'), AS_INT(spec, 'weeks'), AS_INT(spec, 'days')
+    _h, _m, _s = AS_INT(spec, 'hours'), AS_INT(spec, 'minutes'), AS_INT(spec, 'seconds')
+    _has_intervals = (_b != 0) or (_w != 0) or (_d != 0) or (_h != 0) or (_m != 0) or (_s != 0) 
+    _s_pos, _s_neg = _make_shift(_b, _w, _d, _h, _m, _s)
+    _shift = _s_pos + _s_neg
+
+    match _T:
+        case 'cron':
+            if not _S or croniter.is_valid(_S):
+                config.append(dict(type='cron', args=_S, spec=_S))
+            else:
+                raise ValueError(f"Wrong specification for cron type: {_S}")
+
+        case 'time':
+            for t in _t:
+                config.append(dict(type='cron', args=_mk_cron(t, _by), spec=_S))
+        
+        case None:
+            if _t: # - if time specified
+                for t in _t:
+                    config.append(dict(type='cron', args=_mk_cron(t, _by), spec=_S))
+            else:
+                # - check if it's valid cron
+                if _S:
+                    if croniter.is_valid(_S):
+                        config.append(dict(type='cron', args=_S, spec=_S))
+                    else:
+                        if _has_intervals:
+                            _F = convert_seconds_to_str(int(_s_pos.as_unit('s').to_timedelta64().item().total_seconds())) if not _F else _F  
+                            config.append(dict(type='bar', args=None, timeframe=_F, delay=_s_neg, spec=_S))
+        case _:
+            config.append(dict(type=_T, args=None, timeframe=_F, delay=_shift, spec=_S))
+
+    return config
+
+
 class BasicScheduler:
     """
     Basic scheduler functionality
     """
+    _chan: CtrlChannel
+    _schdl:  sched.scheduler
+    _ns_time_fun: Callable[[], float]
+    _iters: Dict[str, croniter]
 
-    SPEC_REGEX = re.compile(
-        r"((?P<type>[A-Za-z]+)(\.?(?P<timeframe>[0-9A-Za-z]+))?\ *:)?"
-        r"\ *"
-        r"((?P<spec>"
-            r"(?P<time>((\d+:\d+(:\d+)?)\ *,?\ *)+)?"
-            r"((\ *@\ *)(?P<by>([A-Za-z0-9-,\ ]+)))?"
-            r"(("
-            r'((?P<months>[-+]?\d+)(months|month|bm|mo))?'
-            r'((?P<weeks>[-+]?\d+)(weeks|week|w))?'
-            r'((?P<days>[-+]?\d+)(days|day|d))?'
-            r'((?P<hours>[-+]?\d+)(hours|hour|h))?'
-            r'((?P<minutes>[-+]?\d+)(mins|min|m))?'
-            r'((?P<seconds>[-+]?\d+)(sec|s))?'
-            r")(\ *)?)*"
-            r".*"
-        r"))?", re.IGNORECASE
-    )
-    channel: CtrlChannel
+    def __init__(self, channel: CtrlChannel, time_provider_ns: Callable[[], float]):
+        self._chan = channel
+        self._ns_time_fun = time_provider_ns
+        self._schdl = sched.scheduler(self.time_sec)
+        self._iters = dict()
 
-    def initialize(self, channel: CtrlChannel):
-        self.channel = channel
+    def time_sec(self) -> float:
+        return self._ns_time_fun() / 1000000000.0
 
-    def _parse_schedule_spec(self, schedule: str) -> Dict[str, str]:
-        m = BasicScheduler.SPEC_REGEX.match(schedule)
-        return {k: v for k, v in m.groupdict().items() if v} if m else {}
+    def schedule_event(self, cron_schedule: str, event_name: str):
+        if not croniter.is_valid(cron_schedule):
+            raise ValueError(f"Specified schedule {cron_schedule} for {event_name} doesn't have valid cron format !")
+        self._iters[event_name] = croniter(cron_schedule)
 
-    def _process_spec_dict(self, spec: dict) -> List[Dict]:
-        config = []
-        _T, _S = spec.get('type'), spec.get('spec')
-        _F = spec.get('timeframe')
-        _t, _by = S(spec.get('time', '')), S(spec.get('by', ''))
-        _b, _w, _d = AS_INT(spec, 'months'), AS_INT(spec, 'weeks'), AS_INT(spec, 'days')
-        _h, _m, _s = AS_INT(spec, 'hours'), AS_INT(spec, 'minutes'), AS_INT(spec, 'seconds')
-        _has_intervals = (_b != 0) or (_w != 0) or (_d != 0) or (_h != 0) or (_m != 0) or (_s != 0) 
-        _s_pos, _s_neg = _make_shift(_b, _w, _d, _h, _m, _s)
-        _shift = _s_pos + _s_neg
+    def _arm_schedule(self, event: str, start_time: float) -> bool:
+        iter = self._iters[event]
+        prev_time = iter.get_prev()
+        next_time = iter.get_next(start_time=start_time)
+        if next_time:
+            self._schdl.enterabs(
+                next_time, 1, self._trigger, (event, prev_time, next_time, iter)
+            )
+            logger.debug(f"Scheduled ({event}) task: next run at {sec2ts(next_time)}")
+            return True
+        logger.debug(f"({event}) task is not scheduled")
+        return False
 
-        match _T:
-            case 'cron':
-                if not _S or croniter.is_valid(_S):
-                    config.append(dict(type='cron', args=_S, spec=_S))
-                else:
-                    raise ValueError(f"Wrong specification for cron type: {_S}")
+    def _trigger(self, event: str, prev_time_sec: float, trig_time: float, iter: croniter):
+        now = self.time_sec()
+        logger.info(f" prev {sec2ts(prev_time_sec)} --> ({sec2ts(trig_time)}) {event} ")
+        self._arm_schedule(event, now)
 
-            case 'time':
-                for t in _t:
-                    config.append(dict(type='cron', args=_mk_cron(t, _by), spec=_S))
-            
-            case None:
-                if _t: # - if time specified
-                    for t in _t:
-                        config.append(dict(type='cron', args=_mk_cron(t, _by), spec=_S))
-                else:
-                    # - check if it's valid cron
-                    if _S:
-                        if croniter.is_valid(_S):
-                            config.append(dict(type='cron', args=_S, spec=_S))
-                        else:
-                            if _has_intervals:
-                                _F = convert_seconds_to_str(int(_s_pos.as_unit('s').to_timedelta64().item().total_seconds())) if not _F else _F  
-                                config.append(dict(type='bar', args=None, timeframe=_F, delay=_s_neg, spec=_S))
-            case _:
-                config.append(dict(type=_T, args=None, timeframe=_F, delay=_shift, spec=_S))
+    def run(self):
+        _has_tasks = False
+        for k in self._iters.keys():
+            _has_tasks |= self._arm_schedule(k, self.time_sec())
 
-        return config
+        if _has_tasks:
+            while (r:=self._schdl.run(blocking=False)):
+                time.sleep(max(r/5, 0.1))
 
-    def schedule_event(self, schedule: str, event_name: str):
-        if not croniter.is_valid(schedule):
-            raise ValueError(f"Specified schedule {schedule} is not valid for {event_name} !")
-
-        logger.debug(f"Adding schedule {schedule} for {event_name}")
     

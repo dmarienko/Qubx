@@ -202,7 +202,7 @@ def retain_columns_and_join(data: Dict[str, pd.DataFrame], columns: str | List[s
     return pd.concat([data[k][columns] for k in data.keys()], axis=1, keys=data.keys())
 
 
-def continuous_periods(xs, cond) -> Struct:
+def continuous_periods(xs: pd.Series, cond: pd.Series) -> Struct:
     """
     Detect continues periods on series xs based on condition cond
     """

@@ -21,6 +21,7 @@ config:
 
     # - when to fit strategy
     fit:                      'cron: * * * * * 45'   # every minute at 45 sec
+    # fit:                      '1w @ Sat'
 
     # trigger:                  '-5Sec'          # 5 sec before subsciption bar end
     # trigger:                  '5Min -5Sec'     # 5 sec before 5min bar ends

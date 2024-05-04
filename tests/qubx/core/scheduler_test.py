@@ -1,5 +1,5 @@
 
-from qubx.core.helpers import BasicScheduler
+from qubx.core.helpers import BasicScheduler, _parse_schedule_spec
 
 
 class TestScheduler:
@@ -56,7 +56,8 @@ class TestScheduler:
             {'type': 'calendar', 'spec': '23:00 liquidation', 'time': '23:00 '},
         ]
 
-        bs = BasicScheduler()
         for s, r in zip(specs, res):
-            assert bs._parse_schedule_spec(s) == r
+            assert _parse_schedule_spec(s) == r
             
+    def test_recognize_format(self):
+        pass
