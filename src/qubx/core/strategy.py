@@ -21,13 +21,6 @@ from qubx.utils.misc import Stopwatch
 
 
 @dataclass
-class EventFromExchange:
-    time: dt_64
-    type: str
-    data: Optional[Any] 
-
-
-@dataclass
 class TriggerEvent:
     time: dt_64
     type: str
@@ -101,10 +94,11 @@ class IStrategy:
         """
         pass
 
-    def on_fit(self, ctx: 'StrategyContext', fit_end_time: str | pd.Timestamp):
+    def on_fit(self, ctx: 'StrategyContext', fit_time: str | pd.Timestamp, previous_fit_time: str | pd.Timestamp | None = None):
         """
         This method is called when it's time to fit model
-        :param fit_end_time: last time of fit data to use 
+        :param fit_time: last time of fit data to use 
+        :param previous_fit_time: last time of fit data used in previous fit call 
         """
         return None
 
@@ -176,13 +170,13 @@ class StrategyContext:
             instruments: List[Instrument],
             # - - - - - - - - - - - - - - - - - - - - -
 
-            # - context's parameters - - - - - - - - - -
-            trigger: Dict[str, Any] = dict(type='ohlc', timeframe='1Min', nback=60),
-            md_subscription: Dict[str,Any] = dict(type='ohlc', timeframe='1Min'),
+            # - data subscription - - - - - - - - - - -
+            md_subscription: Dict[str,Any] = dict(type='ohlc', timeframe='1Min', nback=60),
             # - - - - - - - - - - - - - - - - - - - - -
 
             # - when need to trigger and fit strategy - - - - - - -
-            trigger_spec: str = 'bar,-1Sec',       # basic bar 
+            trigger: Dict[str, Any] = dict(type='ohlc', timeframe='1Min'),
+            trigger_spec: str = 'bar: -1Sec',       # 1 sec before subscription bar is closed
             fit_spec: str | None = None,
             # - - - - - - - - - - - - - - - - - - - - -
 
@@ -294,7 +288,7 @@ class StrategyContext:
                 _time_to_trigger = _dict_with_exception(trigger_config, 'when')
 
                 # - schedule periodic timer
-                self._schedule_trigger(_time_to_trigger, 'on_event')
+                self._schedule_trigger(_time_to_trigger, 'time_event')
 
             case 'quote': 
                 self._trig_on_quote = True
@@ -315,7 +309,7 @@ class StrategyContext:
         if fit_schedue is None:
             return
         # - schedule periodic fit
-        self._schedule_trigger(fit_schedue, 'fit')
+        self._schedule_trigger(fit_schedue, 'fit_event')
 
     def _schedule_trigger(self, schedule: str, callback: str):
         # - setup scheduler
@@ -341,7 +335,7 @@ class StrategyContext:
                     self.strategy.on_event(self, _strategy_trigger_event)
                     _fails_counter = 0
                 except Exception as strat_error:
-                    # - TODO: probably we need some cooldown interval after exception to prevent flooding
+                    # - probably we need some cooldown interval after exception to prevent flooding
                     logger.error(f"[{self.time()}]: Strategy {self.strategy.__class__.__name__} raised an exception: {strat_error}")
                     logger.opt(colors=False).error(traceback.format_exc())
 
@@ -361,6 +355,22 @@ class StrategyContext:
 
         _SW.stop('StrategyContext._process_incoming_data')
         logger.info("(StrategyContext) Market data processing stopped")
+
+    def _processing_time_event(self, symbol: str, data: Any) -> TriggerEvent | None:
+        return TriggerEvent(self.time(), 'time', None, data)
+
+    def _processing_fit_event(self, symbol: str, data: Any) -> TriggerEvent | None:
+        try:
+            # - data contains previous, and current fit datetimes 
+            prev_fit_time, now_fit_time = data
+            _SW.start('strategy.on_fit')
+            self.strategy.on_fit(self, now_fit_time)
+        except Exception as strat_error:
+            logger.error(f"[{self.time()}]: Strategy {self.strategy.__class__.__name__} on_fit('{now_fit_time}', '{prev_fit_time}') raised an exception: {strat_error}")
+            logger.opt(colors=False).error(traceback.format_exc())
+        finally:
+            _SW.stop('strategy.on_fit')
+        return None
 
     def _processing_hist_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
         # - processing single historical bar
@@ -400,11 +410,6 @@ class StrategyContext:
         #  - or we can collect let's say N quotes before sending to strategy
         if self._trig_on_quote:
             return TriggerEvent(self.time(), 'quote', symbol, quote)
-        return None
-
-    def _processing_event(self, symbol: str, event: EventFromExchange) -> TriggerEvent | None:
-        if self._trig_on_time and event.type == 'time':
-            return TriggerEvent(self.time(), 'time', symbol, event)
         return None
 
     @_SW.watch('StrategyContext')

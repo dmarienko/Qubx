@@ -20,8 +20,8 @@ class FlipFlopStrat(IStrategy):
         logger.info(f"> Started with capital {self.capital_invested}")
         self._tracker = self.tracker(ctx)  
 
-    def on_fit(self, ctx: 'StrategyContext', fit_end_time: str | pd.Timestamp):
-        logger.info(f"> Fit is called | fit_end_time: {fit_end_time}")
+    def on_fit(self, ctx: 'StrategyContext', fit_time: str | pd.Timestamp, previous_fit_time: str | pd.Timestamp | None = None):
+        logger.info(f"> Fit is called | fit_time: {fit_time} / prev: {previous_fit_time}")
         pass
 
     def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:

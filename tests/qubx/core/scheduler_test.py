@@ -1,4 +1,6 @@
 
+import pandas as pd
+from qubx.core.basics import CtrlChannel
 from qubx.core.helpers import BasicScheduler, _parse_schedule_spec
 
 
@@ -59,5 +61,82 @@ class TestScheduler:
         for s, r in zip(specs, res):
             assert _parse_schedule_spec(s) == r
             
-    def test_recognize_format(self):
-        pass
+    def test_scheduler(self):
+        time_now_fixed = lambda: pd.Timestamp('2024-04-20 12:00:00', tz='UTC').as_unit('ns').asm8.item()
+
+        bs = BasicScheduler(c:=CtrlChannel('test'), time_now_fixed)
+        
+        # schedule every 10 sec
+        bs.schedule_event('* * * * * */10', 'TEST')
+
+        assert bs.get_event_last_time('TEST') == pd.Timestamp('2024-04-20 11:59:50')
+        assert bs.get_event_next_time('TEST') == pd.Timestamp('2024-04-20 12:00:10')
+
+    def test_scheduler_run(self):
+        time_now = lambda: pd.Timestamp('now', tz='UTC').as_unit('ns').asm8.item()
+        bs = BasicScheduler(c:=CtrlChannel('test'), time_now)
+        
+        # - schedule event every 1 and 2 sec
+        bs.schedule_event('* * * * * */1', 'test-1')
+        bs.schedule_event('* * * * * */2', 'test-2')
+
+        # - finishing event
+        t = (pd.Timestamp(time_now(), unit='ns') + pd.Timedelta('7s'))
+        bs.schedule_event(f'{t.minute} {t.hour} {t.day} {t.month} * {t.second}', 'test-3')
+        bs.run()
+
+        t1, t2 = 0, 0
+        while c.control.is_set():
+            s, event, data = c.queue.get()
+            print(event, data)
+            if event == 'test-1':
+                t1 += 1
+            if event == 'test-2':
+                t2 += 1
+            if event == 'test-3':
+                c.control.clear()
+        assert t1 >= 6
+        assert t2 >= 3
+
+    def test_scheduler_test(self):
+        """
+        Test when we don't need to refer to any real time (in backtester for example) 
+        """
+        from queue import Empty
+
+        class TesterScheduler(BasicScheduler):
+            def run(self):
+                self._is_started = True
+
+        class Tester:
+            def __init__(self) -> None:
+                self.chan = CtrlChannel('test')
+                self.c_time = pd.Timestamp("2024-04-20 10:00")
+                self.scheduler = TesterScheduler(self.chan, self.time_now)
+                self.scheduler.run()
+
+                # - wake once per second
+                self.scheduler.schedule_event('* * * * * */1', 'test-1')
+            
+            def time_now(self): 
+                return self.c_time.as_unit('ns').asm8.item()
+            
+            def run_test(self):
+                for i in range(20):
+                    self.c_time += pd.Timedelta('0.5s')
+                    self.scheduler.check_and_run_tasks()
+
+                 #- read the queue back
+                n = 0
+                try:
+                    while True:
+                        print(self.chan.queue.get(block=False))
+                        n += 1
+                except Empty as e:
+                    pass
+                print(f"DONE: {n}")
+                return n
+
+        tester = Tester()
+        assert tester.run_test() == 10
+

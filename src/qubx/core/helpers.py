@@ -1,9 +1,10 @@
 from collections import defaultdict
 import re, sched, time
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 from croniter import croniter
 import numpy as np
 import pandas as pd
+from threading import Thread
 
 from qubx import logger
 from qubx.core.basics import CtrlChannel
@@ -87,8 +88,6 @@ class CachedMarketDataHolder:
             for ser in series.values():
                 ser.update(trade.time, trade.price, total_vol, bought_vol)
 
-
-sec2ts = lambda t: pd.Timestamp(t, unit='s')
 
 SPEC_REGEX = re.compile(
     r"((?P<type>[A-Za-z]+)(\.?(?P<timeframe>[0-9A-Za-z]+))?\ *:)?"
@@ -190,20 +189,24 @@ def process_schedule_spec(spec_str: str) -> List[Dict]:
     return config
 
 
+_SEC2TS = lambda t: pd.Timestamp(t, unit='s')
+
 class BasicScheduler:
     """
-    Basic scheduler functionality
+    Basic scheduler functionality. It helps to create scheduled event task
     """
     _chan: CtrlChannel
-    _schdl:  sched.scheduler
+    _scdlr:  sched.scheduler
     _ns_time_fun: Callable[[], float]
-    _iters: Dict[str, croniter]
+    _crons: Dict[str, croniter]
+    _is_started: bool
 
     def __init__(self, channel: CtrlChannel, time_provider_ns: Callable[[], float]):
         self._chan = channel
         self._ns_time_fun = time_provider_ns
-        self._schdl = sched.scheduler(self.time_sec)
-        self._iters = dict()
+        self._scdlr = sched.scheduler(self.time_sec)
+        self._crons = dict()
+        self._is_started = False
 
     def time_sec(self) -> float:
         return self._ns_time_fun() / 1000000000.0
@@ -211,33 +214,73 @@ class BasicScheduler:
     def schedule_event(self, cron_schedule: str, event_name: str):
         if not croniter.is_valid(cron_schedule):
             raise ValueError(f"Specified schedule {cron_schedule} for {event_name} doesn't have valid cron format !")
-        self._iters[event_name] = croniter(cron_schedule)
+        self._crons[event_name] = croniter(cron_schedule, self.time_sec())
+
+        if self._is_started:
+            self._arm_schedule(event_name, self.time_sec())
+
+    def get_event_last_time(self, event_name: str) -> pd.Timestamp | None:
+        if event_name in self._crons: 
+            _iter = self._crons[event_name]
+            _c = _iter.get_current()
+            _t = pd.Timestamp(_iter.get_prev(), unit='s')
+            _iter.set_current(_c, force=True)
+            return _t
+        return None
+
+    def get_event_next_time(self, event_name: str) -> pd.Timestamp | None:
+        if event_name in self._crons: 
+            _iter = self._crons[event_name]
+            _t = pd.Timestamp(_iter.get_next(start_time=self.time_sec()), unit='s')
+            return _t
+        return None
 
     def _arm_schedule(self, event: str, start_time: float) -> bool:
-        iter = self._iters[event]
+        iter = self._crons[event]
         prev_time = iter.get_prev()
         next_time = iter.get_next(start_time=start_time)
         if next_time:
-            self._schdl.enterabs(
-                next_time, 1, self._trigger, (event, prev_time, next_time, iter)
+            self._scdlr.enterabs(
+                next_time, 1, self._trigger, (event, prev_time, next_time)
             )
-            logger.debug(f"Scheduled ({event}) task: next run at {sec2ts(next_time)}")
+            logger.debug(f"Next ({event}) event scheduled at <red>{_SEC2TS(next_time)}</red>")
             return True
         logger.debug(f"({event}) task is not scheduled")
         return False
 
-    def _trigger(self, event: str, prev_time_sec: float, trig_time: float, iter: croniter):
+    def _trigger(self, event: str, prev_time_sec: float, trig_time: float):
         now = self.time_sec()
-        logger.info(f" prev {sec2ts(prev_time_sec)} --> ({sec2ts(trig_time)}) {event} ")
+
+        # - send notification to channel
+        if self._chan.control.is_set():
+            self._chan.queue.put((None, event, (prev_time_sec, trig_time)))
+
+        # - try to arm this event again
         self._arm_schedule(event, now)
 
+    def check_and_run_tasks(self) -> float | None:
+        return self._scdlr.run(blocking=False) 
+
     def run(self):
+        if self._is_started:
+            logger.warning("Scheduler is already running")
+            return
+
         _has_tasks = False
-        for k in self._iters.keys():
+        for k in self._crons.keys():
             _has_tasks |= self._arm_schedule(k, self.time_sec())
 
+        def _watcher():
+            while (r := self.check_and_run_tasks()):
+                if not self._chan.control.is_set():
+                    break
+                _delay = max(min(r/5, 5), 0.1)
+                time.sleep(_delay)
+            logger.debug("Scheduler is stopped ")                    
+            self._is_started = False
+
         if _has_tasks:
-            while (r:=self._schdl.run(blocking=False)):
-                time.sleep(max(r/5, 0.1))
+            Thread(target=_watcher).start()
+            self._is_started = True
 
     

@@ -51,7 +51,7 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
 
         # - create exchange's instance
         self._exchange = getattr(cxp, exch)(exchange_auth | {'asyncio_loop': self._loop})
-        self._ch_market_data = CtrlChannel(exch + '.marketdata', sent=(None, None, None))
+        self._ch_market_data = CtrlChannel(exch + '.marketdata', sentinel=(None, None, None))
         self._last_quotes = defaultdict(lambda: None)
         self._subsriptions: Dict[str, List[str]] = defaultdict(list)
 

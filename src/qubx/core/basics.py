@@ -338,12 +338,12 @@ class CtrlChannel:
     name: str
     lock: Lock
 
-    def __init__(self, name: str, sent=(None, None)):
+    def __init__(self, name: str, sentinel=(None, None, None)):
         self.name = name
         self.control = Event()
         self.queue = Queue()
         self.lock = Lock()
-        self.sent = sent
+        self.sent = sentinel
         self.start()
 
     def stop(self):
