@@ -41,7 +41,7 @@ def runtime_env():
              - 'unknown' can't recognize environment
     """
     try:
-        from IPython import get_ipython
+        from IPython.core.getipython import get_ipython
         shell = get_ipython().__class__.__name__
 
         if shell == 'ZMQInteractiveShell':  # Jupyter notebook or qtconsole

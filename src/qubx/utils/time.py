@@ -8,7 +8,7 @@ import pandas as pd
 UNIX_T0 = np.datetime64('1970-01-01T00:00:00')
 
 
-time_to_str = lambda t, u='us': np.datetime_as_string(t if isinstance(t, np.datetime64) else np.datetime64(t, u), unit=u)
+time_to_str = lambda t, u='us': np.datetime_as_string(t if isinstance(t, np.datetime64) else np.datetime64(t, u), unit=u) # type: ignore
 
 
 def convert_tf_str_td64(c_tf: str) -> np.timedelta64:
@@ -41,23 +41,33 @@ def convert_tf_str_td64(c_tf: str) -> np.timedelta64:
     return _dt
 
 
-def convert_seconds_to_str(seconds: int) -> str:
+def convert_seconds_to_str(seconds: int, convert_months=False) -> str:
     """
     Convert seconds to string representation: 310 -> '5Min10S' etc
     """
-    weeks, seconds = divmod(seconds, 7*86400)
-    days, seconds = divmod(seconds, 86400)
-    hours, seconds = divmod(seconds, 3600)
-    minutes, seconds = divmod(seconds, 60)
     r = ''
+
+    if convert_months:
+        months, seconds = divmod(seconds, 4*7*86400)
+        if months > 0:
+            r += '%dmonth' % months
+
+    weeks, seconds = divmod(seconds, 7*86400)
     if weeks > 0:
         r += '%dw' % weeks
+
+    days, seconds = divmod(seconds, 86400)
     if days > 0:
-        r += '%dD' % days
+        r += '%dd' % days
+
+    hours, seconds = divmod(seconds, 3600)
     if hours > 0:
         r += '%dh' % hours
+
+    minutes, seconds = divmod(seconds, 60)
     if minutes > 0:
         r += '%dMin' % minutes
+
     if seconds > 0:
         r += '%dS' % seconds
     return r

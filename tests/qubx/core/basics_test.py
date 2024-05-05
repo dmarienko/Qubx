@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import List, Union
 from qubx import lookup
 
+from qubx.utils.time import convert_seconds_to_str
 from tests.qubx.ta.utils_for_testing import N
 from qubx.core.basics import Instrument, Position, TransactionCostsCalculator, ZERO_COSTS
 from qubx.core.series import time_as_nsec, Trade, Quote
@@ -36,6 +37,13 @@ pos_round = lambda s, p, i: (p * round(s/p, i.size_precision), p, round(s/p, i.s
 
 
 class TestBasics:
+
+    def test_convertors(self):
+        assert '3w' == convert_seconds_to_str(int(pd.Timedelta('3w').total_seconds()))
+        assert '1d5h' == convert_seconds_to_str(int(pd.Timedelta('1d5h').total_seconds()))
+        assert '1month' == convert_seconds_to_str(int(pd.Timedelta('4w').total_seconds()), convert_months=True)
+        assert '1month' == convert_seconds_to_str(int(pd.Timedelta('28d').total_seconds()), convert_months=True)
+        assert '4w' == convert_seconds_to_str(int(pd.Timedelta('28d').total_seconds()))
 
     def test_lookup(self):
         s0 = lookup.instruments['BINANCE:ETH.*']

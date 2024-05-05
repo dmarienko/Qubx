@@ -100,7 +100,7 @@ class TestScheduler:
 
     def test_scheduler_test(self):
         """
-        Test when we don't need to refer to any real time (in backtester for example) 
+        Test scheduler in pseudo simulation context when we don't need any references to actual time
         """
         from queue import Empty
 
@@ -108,14 +108,14 @@ class TestScheduler:
             def run(self):
                 self._is_started = True
 
-        class Tester:
+        class PseudoBacktester:
             def __init__(self) -> None:
                 self.chan = CtrlChannel('test')
                 self.c_time = pd.Timestamp("2024-04-20 10:00")
                 self.scheduler = TesterScheduler(self.chan, self.time_now)
                 self.scheduler.run()
 
-                # - wake once per second
+                # - wakeup once per second
                 self.scheduler.schedule_event('* * * * * */1', 'test-1')
             
             def time_now(self): 
@@ -137,6 +137,6 @@ class TestScheduler:
                 print(f"DONE: {n}")
                 return n
 
-        tester = Tester()
+        tester = PseudoBacktester()
         assert tester.run_test() == 10
 

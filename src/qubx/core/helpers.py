@@ -1,6 +1,6 @@
 from collections import defaultdict
 import re, sched, time
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from croniter import croniter
 import numpy as np
 import pandas as pd
@@ -19,17 +19,17 @@ class CachedMarketDataHolder:
     """
     Collected cached data updates from StrategyContext
     """
-    _min_timeframe: np.timedelta64
+    default_timeframe: np.timedelta64
     _last_bar: Dict[str, Optional[Bar]]
     _ohlcvs: Dict[str, Dict[np.timedelta64, OHLCV]]
 
-    def __init__(self, minimal_timeframe: str) -> None:
-        self._min_timeframe = convert_tf_str_td64(minimal_timeframe)
+    def __init__(self, default_timeframe: str) -> None:
+        self.default_timeframe = convert_tf_str_td64(default_timeframe)
         self._ohlcvs = dict()
         self._last_bar = defaultdict(lambda: None)
 
     def init_ohlcv(self, symbol: str, max_size=np.inf):
-        self._ohlcvs[symbol] = {self._min_timeframe: OHLCV(symbol, self._min_timeframe, max_size)}
+        self._ohlcvs[symbol] = {self.default_timeframe: OHLCV(symbol, self.default_timeframe, max_size)}
     
     @_SW.watch('CachedMarketDataHolder')
     def get_ohlcv(self, symbol: str, timeframe: str, max_size=np.inf) -> OHLCV:
@@ -41,11 +41,11 @@ class CachedMarketDataHolder:
         if tf not in self._ohlcvs[symbol]: 
             # - check requested timeframe
             new_ohlc = OHLCV(symbol, tf, max_size)
-            if tf < self._min_timeframe:
-                logger.warning(f"[{symbol}] Request for timeframe {timeframe} that is smaller then minimal {self._min_timeframe}")
+            if tf < self.default_timeframe:
+                logger.warning(f"[{symbol}] Request for timeframe {timeframe} that is smaller then minimal {self.default_timeframe}")
             else:
                 # - first try to resample from smaller frame
-                if (basis := self._ohlcvs[symbol].get(self._min_timeframe)):
+                if (basis := self._ohlcvs[symbol].get(self.default_timeframe)):
                     for b in basis[::-1]:
                         new_ohlc.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume, b.bought_volume)
                 
@@ -141,15 +141,18 @@ def _parse_schedule_spec(schedule: str) -> Dict[str, str]:
     return {k: v for k, v in m.groupdict().items() if v} if m else {}
 
 
-def process_schedule_spec(spec_str: str) -> List[Dict]:
+def process_schedule_spec(spec_str: str | None) -> Dict[str, Any]:
     AS_INT = lambda d, k: int(d.get(k, 0)) 
     S = lambda s: [x for x in re.split(r"[, ]", s) if x]
+    config = {}
+
+    if not spec_str:
+        return config
 
     # - parse schedule spec
     spec = _parse_schedule_spec(spec_str)
 
     # - check how to run it 
-    config = []
     _T, _S = spec.get('type'), spec.get('spec')
     _F = spec.get('timeframe')
     _t, _by = S(spec.get('time', '')), S(spec.get('by', ''))
@@ -162,29 +165,29 @@ def process_schedule_spec(spec_str: str) -> List[Dict]:
     match _T:
         case 'cron':
             if not _S or croniter.is_valid(_S):
-                config.append(dict(type='cron', args=_S, spec=_S))
+                config = dict(type='cron', schedule=_S, spec=_S)
             else:
                 raise ValueError(f"Wrong specification for cron type: {_S}")
 
         case 'time':
             for t in _t:
-                config.append(dict(type='cron', args=_mk_cron(t, _by), spec=_S))
+                config = dict(type='cron', schedule=_mk_cron(t, _by), spec=_S)
         
         case None:
             if _t: # - if time specified
                 for t in _t:
-                    config.append(dict(type='cron', args=_mk_cron(t, _by), spec=_S))
+                    config = dict(type='cron', schedule=_mk_cron(t, _by), spec=_S)
             else:
                 # - check if it's valid cron
                 if _S:
                     if croniter.is_valid(_S):
-                        config.append(dict(type='cron', args=_S, spec=_S))
+                        config = dict(type='cron', schedule=_S, spec=_S)
                     else:
                         if _has_intervals:
                             _F = convert_seconds_to_str(int(_s_pos.as_unit('s').to_timedelta64().item().total_seconds())) if not _F else _F  
-                            config.append(dict(type='bar', args=None, timeframe=_F, delay=_s_neg, spec=_S))
+                            config = dict(type='bar', schedule=None, timeframe=_F, delay=_s_neg, spec=_S)
         case _:
-            config.append(dict(type=_T, args=None, timeframe=_F, delay=_shift, spec=_S))
+            config = dict(type=_T, schedule=None, timeframe=_F, delay=_shift, spec=_S)
 
     return config
 

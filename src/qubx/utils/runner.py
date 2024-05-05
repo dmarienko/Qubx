@@ -37,6 +37,7 @@ def load_strategy_config(filename: str) -> Struct:
         account = execution.get('account'),
         md_subscr = execution['subscription'],
         strategy_trigger = execution['trigger'],
+        strategy_fit_trigger = execution.get('fit', ''),
         portfolio_logger = config.get('logger', None),
         log_positions_interval = config.get('log_positions_interval', None),
         log_portfolio_interval = config.get('log_portfolio_interval', None)
@@ -127,12 +128,13 @@ def create_strategy_context(config_file: str, accounts_cfg_file: str, search_pat
     logger.info(f""" - - - <blue>Qubx</blue> (ver. <red>{version()}</red>) - - -\n - Strategy: {strategy}\n - Config: {cfg.parameters} """)
     ctx = StrategyContext(
         strategy, cfg.parameters, connector, connector, 
-        instruments=cfg.instruments, 
-        md_subscription=cfg.md_subscr, 
-        trigger=cfg.strategy_trigger,
-        logs_writer=writer, 
-        positions_log_freq=cfg.log_positions_interval,
-        portfolio_log_freq=cfg.log_portfolio_interval
+        instruments        = cfg.instruments, 
+        md_subscription    = cfg.md_subscr, 
+        trigger_spec       = cfg.strategy_trigger,
+        fit_spec           = cfg.strategy_fit_trigger,
+        logs_writer        = writer, 
+        positions_log_freq = cfg.log_positions_interval,
+        portfolio_log_freq = cfg.log_portfolio_interval
     )
  
     return ctx

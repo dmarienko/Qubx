@@ -6,18 +6,20 @@ from types import FunctionType
 from collections import defaultdict
 from dataclasses import dataclass
 from threading import Thread
+from multiprocessing.pool import ThreadPool
 import traceback
 
 import pandas as pd
 
 from qubx import lookup, logger
 from qubx.core.account import AccountProcessor
-from qubx.core.helpers import CachedMarketDataHolder
+from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, process_schedule_spec
 from qubx.core.loggers import LogsWriter, StrategyLogging
 from qubx.core.lookups import InstrumentsLookup
 from qubx.core.basics import Deal, Instrument, Order, Position, Signal, dt_64, td_64, CtrlChannel
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
 from qubx.utils.misc import Stopwatch
+from qubx.utils.time import convert_seconds_to_str
 
 
 @dataclass
@@ -137,8 +139,9 @@ class StrategyContext:
     # - loggers
     _logging: StrategyLogging                    # recording all activities for the strat: execs, positions, portfolio
 
-    # - cached marked data
+    # - cached marked data anb scheduler
     _cache: CachedMarketDataHolder # market data cache
+    _scheduler: BasicScheduler
 
     # - configuration
     _market_data_subcription_type:str = 'unknown'
@@ -158,6 +161,8 @@ class StrategyContext:
     __strategy_id: str
     __order_id: int 
     __handlers: Dict[str, Callable[['StrategyContext', str, Any], TriggerEvent | None]]
+    __fit_is_running: bool = False
+    __pool: ThreadPool = None                         # type: ignore
 
     def __init__(self, 
             # - strategy with parameters
@@ -193,21 +198,14 @@ class StrategyContext:
         self.config = config
         self.instruments = instruments
         self.positions = {}
-
-        # - create strategy instance and populate custom paramameters
-        self.__instantiate_strategy(strategy, config)
+        self.__fit_is_running = False
+        self.__pool = None            # type: ignore
 
         # - for fast access to instrument by it's symbol
         self._symb_to_instr = {i.symbol: i for i in instruments}
- 
-        # - process trigger configuration
-        self.__check_how_to_trigger_strategy(trigger)
 
-        # - process fit configuration
-        self.__check_when_to_fit_strategy(fit_spec)
-
-        # - process market data configuration
-        self.__check_how_to_listen_to_market_data(md_subscription)
+        # - create scheduler
+        self._scheduler = BasicScheduler(self.data_provider.get_communication_channel(), lambda: self.time().item())
 
         # - instantiate logging functional
         self._logging = StrategyLogging(
@@ -220,7 +218,22 @@ class StrategyContext:
             if type(f) == FunctionType and n.startswith('_processing_') 
         }
 
-    def __instantiate_strategy(self, strategy: IStrategy, config: Dict[str, Any] | None):
+        # - create strategy instance and populate custom paramameters
+        self._instantiate_strategy(strategy, config)
+
+        # - process market data configuration
+        self.__check_how_to_listen_to_market_data(md_subscription)
+ 
+        # - process trigger configuration
+        # self.__check_how_to_trigger_strategy(trigger)
+
+        # - process trigger and fit configurations
+        self.__check_how_to_trigger_and_fit_strategy(trigger_spec, fit_spec)
+
+        # - run cron scheduler
+        self._scheduler.run()
+
+    def _instantiate_strategy(self, strategy: IStrategy, config: Dict[str, Any] | None):
         # - set parameters to strategy (not sure we will do it here)
         self.strategy = strategy
         if isinstance(strategy, type):
@@ -287,9 +300,6 @@ class StrategyContext:
                 self._trig_on_time = True
                 _time_to_trigger = _dict_with_exception(trigger_config, 'when')
 
-                # - schedule periodic timer
-                self._schedule_trigger(_time_to_trigger, 'time_event')
-
             case 'quote': 
                 self._trig_on_quote = True
                 raise ValueError(f"{_trigger} NOT IMPLEMENTED")
@@ -305,15 +315,90 @@ class StrategyContext:
             case _: 
                 raise ValueError(f"Wrong trigger type {_trigger}")
 
-    def __check_when_to_fit_strategy(self, fit_schedue: str | None):
-        if fit_schedue is None:
-            return
-        # - schedule periodic fit
-        self._schedule_trigger(fit_schedue, 'fit_event')
+    def __check_how_to_trigger_and_fit_strategy(self, trigger_schedule: str | None, fit_schedue: str | None):
+        _td2ns = lambda x: x.as_unit('ns').asm8.item()
 
-    def _schedule_trigger(self, schedule: str, callback: str):
-        # - setup scheduler
-        pass
+        self._trig_interval_in_bar_nsec = 0
+        
+        if not trigger_schedule:
+            raise ValueError("trigger parameter can't be empty !")
+        t_rules = process_schedule_spec(trigger_schedule)
+        f_rules = process_schedule_spec(fit_schedue)
+
+        if t_rules is None:
+            raise ValueError(f"Couldn't recognize 'trigger' parameter specification: {trigger_schedule} !")
+
+        # - we can use it as reference if bar timeframe is not secified
+        _default_data_timeframe = pd.Timedelta(self._cache.default_timeframe)
+
+        # - check trigger spec - - - - -
+        match t_rules['type']:
+            # it triggers on_event method when new bar is formed.
+            # in this case it won't arm scheduler but just ruled by actual market data updates 
+            # - TODO: so probably need to drop this in favor to cron tasks
+            # it's also possible to specify delay
+            # "bar: -1s"      - it uses default timeframe and wake up 1 sec before every bar's close
+            # "bar.5m: -5sec" - 5 sec before 5min bar's close
+            # "bar.5m: 1sec"  - 1 sec after 5min bar closed (in next bar)
+            case 'bar':
+                _r_tf = t_rules.get('timeframe')
+                _bar_timeframe = _default_data_timeframe if not _r_tf else pd.Timedelta(_r_tf)
+                _inside_bar_delay: pd.Timedelta = t_rules.get('delay', pd.Timedelta(0))
+
+                if abs(pd.Timedelta(_inside_bar_delay)) > pd.Timedelta(_bar_timeframe):
+                    raise ValueError(f"Delay must be less or equal to bar's timeframe for bar trigger: you used {_inside_bar_delay} delay for {_bar_timeframe}")
+
+                # for positive delay - trigger strategy when this interval passed after new bar's open
+                if _inside_bar_delay >= pd.Timedelta(0): 
+                    self._trig_interval_in_bar_nsec = _td2ns(_inside_bar_delay)
+
+                # for negative delay - trigger strategy when time is closer to bar's closing time more than this interval
+                else:
+                    self._trig_interval_in_bar_nsec = _td2ns(_bar_timeframe + _inside_bar_delay)
+
+                self._trig_bar_freq_nsec = _td2ns(_bar_timeframe)
+                self._trig_on_bar = True
+
+                logger.debug(f"Triggering strategy on every {convert_seconds_to_str(self._trig_bar_freq_nsec/1e9)} bar after {convert_seconds_to_str(self._trig_interval_in_bar_nsec/1e9)}")
+
+            case 'cron':
+                if 'schedule' not in t_rules:
+                    raise ValueError(f"cron trigger type is specified but cron schedule not found !")
+
+                self._scheduler.schedule_event(t_rules['schedule'], 'time_event')
+
+            case 'quote': 
+                self._trig_on_quote = True
+                raise ValueError(f"quote trigger NOT IMPLEMENTED YET")
+
+            case 'trade': 
+                self._trig_on_trade = True
+                raise ValueError(f"trade trigger NOT IMPLEMENTED YET")
+
+            case 'orderbook' | 'ob': 
+                self._trig_on_book = True
+                raise ValueError(f"orderbook trigger NOT IMPLEMENTED YET")
+
+            case _: 
+                raise ValueError(f"Wrong trigger type {t_rules['type']}")
+
+        # - check fit spec - - - - -
+        _initial_fit_time = pd.Timestamp(self.time())
+        match f_rules.get('type'):
+            case 'cron':
+                if 'schedule' not in f_rules:
+                    raise ValueError(f"cron fit trigger type is specified but cron schedule not found !")
+
+                self._scheduler.schedule_event(f_rules['schedule'], 'fit_event')
+                _initial_fit_time = self._scheduler.get_event_last_time('fit_event')
+
+            case 'bar':
+                raise ValueError("Raw 'bar' type is not supported for fitting spec yet, please use cron type !")
+
+        # - TODO: - - - - - - - - - - - - - - - - - - - - - - -
+        # - TODO: here we need create task for initial fitting 
+        # - TODO: - - - - - - - - - - - - - - - - - - - - - - -
+        logger.warning("NEED TO RUN TASK FOR INITIAL FIT !")
    
     def _process_incoming_data(self, channel: CtrlChannel):
         _fails_counter = 0 
@@ -330,6 +415,12 @@ class StrategyContext:
             handler = self.__handlers.get(d_type)
             _strategy_trigger_event = handler(self, symbol, data) if handler else None
             if _strategy_trigger_event:
+
+                # - if strategy still fitting - skip on_event call
+                if self.__fit_is_running:
+                    logger.warning(f"[{self.time()}]: on_event() is SKIPPED - because {self.strategy.__class__.__name__} is being still fitting !")
+                    continue
+
                 try:
                     _SW.start('strategy.on_event')
                     self.strategy.on_event(self, _strategy_trigger_event)
@@ -356,20 +447,37 @@ class StrategyContext:
         _SW.stop('StrategyContext._process_incoming_data')
         logger.info("(StrategyContext) Market data processing stopped")
 
+    def _invoke_on_fit(self, current_fit_time: str | pd.Timestamp, prev_fit_time: str | pd.Timestamp | None):
+        try:
+            self.__fit_is_running = True
+            logger.info(f"[{self.time()}]: Invoking {self.strategy.__class__.__name__} on_fit('{current_fit_time}', '{prev_fit_time}')")
+            _SW.start('strategy.on_fit')
+            self.strategy.on_fit(self, current_fit_time, prev_fit_time)
+            logger.info(f"[{self.time()}]: {self.strategy.__class__.__name__} fitted")
+        except Exception as strat_error:
+            logger.error(f"[{self.time()}]: Strategy {self.strategy.__class__.__name__} on_fit('{current_fit_time}', '{prev_fit_time}') raised an exception: {strat_error}")
+            logger.opt(colors=False).error(traceback.format_exc())
+        finally:
+            self.__fit_is_running = False
+            _SW.stop('strategy.on_fit')
+        return None
+
     def _processing_time_event(self, symbol: str, data: Any) -> TriggerEvent | None:
+        """
+        When scheduled time event is happened - we need to invoke strategy on_event method
+        """
         return TriggerEvent(self.time(), 'time', None, data)
 
     def _processing_fit_event(self, symbol: str, data: Any) -> TriggerEvent | None:
-        try:
-            # - data contains previous, and current fit datetimes 
-            prev_fit_time, now_fit_time = data
-            _SW.start('strategy.on_fit')
-            self.strategy.on_fit(self, now_fit_time)
-        except Exception as strat_error:
-            logger.error(f"[{self.time()}]: Strategy {self.strategy.__class__.__name__} on_fit('{now_fit_time}', '{prev_fit_time}') raised an exception: {strat_error}")
-            logger.opt(colors=False).error(traceback.format_exc())
-        finally:
-            _SW.stop('strategy.on_fit')
+        """
+        When scheduled fit event is happened - we need to invoke strategy on_fit method
+        """
+        prev_fit_time, now_fit_time = data
+        # self._invoke_on_fit(now_fit_time, prev_fit_time)
+
+        # - we need to run this in separate thread
+        self._run_in_thread_pool(self._invoke_on_fit, (now_fit_time, prev_fit_time))
+
         return None
 
     def _processing_hist_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
@@ -394,7 +502,7 @@ class StrategyContext:
                 # we want to trigger only first one - not every
                 if not self._current_bar_trigger_processed:
                     self._current_bar_trigger_processed = True
-                    return TriggerEvent(self.time(), 'bar', symbol, bar)
+                    return TriggerEvent(self.time(), 'bar', self._symb_to_instr.get(symbol), bar)
             else:
                 self._current_bar_trigger_processed = False
         return None
@@ -555,3 +663,35 @@ class StrategyContext:
 
     def get_reserved(self, instrument: Instrument) -> float:
         return self.exchange_service.get_account().get_reserved(instrument)
+
+    def _run_in_thread_pool(self, func: Callable, args=()):
+        """
+        For backtester we need to override this method and just call function
+        """
+        if self.__pool is None:
+            self.__pool = ThreadPool(2)
+        self.__pool.apply_async(func, args)
+
+
+if __name__ == '__main__':
+    from qubx.utils.runner import create_strategy_context
+    import time, sys
+    filename, accounts, paths = '../experiments/configs/zero_test_scheduler.yaml', "../experiments/configs/.env", ['../']
+
+    # - create context
+    ctx = create_strategy_context(filename, accounts, paths)
+    if ctx is None:
+        sys.exit(0)
+
+    # - run main loop
+    try:
+        ctx.start()
+
+        # - just wake up every 60 sec and check if it's OK 
+        while True: 
+            time.sleep(60)
+
+    except KeyboardInterrupt:
+        ctx.stop()
+        time.sleep(1)
+        sys.exit(0)
