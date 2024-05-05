@@ -76,6 +76,8 @@ class CachedMarketDataHolder:
         new_ohlc = OHLCV(symbol, tf)
         for b in bars:
             new_ohlc.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume, b.bought_volume)
+            self._updates[symbol] = b
+
         self._ohlcvs[symbol][tf] = new_ohlc
         return new_ohlc
 
