@@ -94,7 +94,7 @@ class CsvFileLogsWriter(LogsWriter):
 
     def write_data(self, log_type: str, data: List[Dict[str, Any]]):
         if len(data) > 0:
-            self.pool.apply(self._do_write, (log_type, data))
+            self.pool.apply_async(self._do_write, (log_type, data))
 
     def flush_data(self):
         try:
