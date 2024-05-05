@@ -455,6 +455,8 @@ class StrategyContext:
     def _processing_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
         # - processing current bar's update
         self._cache.update_by_bar(symbol, bar)
+
+        # - check if it's time to trigger the on_event if it's configured
         if self._trig_on_bar:
             t = self.exchange_service.time().item()
             _time_to_trigger = t % self._trig_bar_freq_nsec >= self._trig_interval_in_bar_nsec
