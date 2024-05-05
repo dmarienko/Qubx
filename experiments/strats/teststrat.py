@@ -11,6 +11,18 @@ from qubx.trackers import Capital, PortfolioRebalancerTracker
 from qubx.utils.misc import quotify, dequotify
 
 
+def priceframe(ctx: StrategyContext, field: str, timeframe: str) -> pd.DataFrame:
+    data = []
+    for i in ctx.instruments:
+        d = ctx.ohlc(i.symbol, timeframe)
+        if hasattr(d, field):
+            b = getattr(d, field).pd()
+            data.append(b)
+        else: 
+            logger.error(f"No {field} column in OHLC for {i.symbol}")
+    return scols(*data)
+
+
 class FlipFlopStrat(IStrategy):
     capital_invested: float = 100.0
     trading_allowed: bool = False
@@ -21,8 +33,9 @@ class FlipFlopStrat(IStrategy):
         self._tracker = self.tracker(ctx)  
 
     def on_fit(self, ctx: 'StrategyContext', fit_time: str | pd.Timestamp, previous_fit_time: str | pd.Timestamp | None = None):
+        closes = priceframe(ctx, 'close', '5Min')
         logger.info(f"> Fit is called | fit_time: {fit_time} / prev: {previous_fit_time}")
-        pass
+        logger.info(f"{str(closes)}")
 
     def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
         logger.info(f"{event.time} -> {event}")

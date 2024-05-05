@@ -161,8 +161,10 @@ class StrategyContext:
     __strategy_id: str
     __order_id: int 
     __handlers: Dict[str, Callable[['StrategyContext', str, Any], TriggerEvent | None]]
-    __fit_is_running: bool = False
-    __pool: ThreadPool = None                         # type: ignore
+    __fit_is_running: bool = False                       # during fitting working it stops calling on_event method
+    __init_fit_was_called: bool = False                  # true if initial fit was already run
+    __init_fit_args: Tuple = (None, None)                # arguments for initial on_fit() method call
+    __pool: ThreadPool | None = None                     # thread pool used for running aux tasks (fit etc)
 
     def __init__(self, 
             # - strategy with parameters
@@ -180,7 +182,6 @@ class StrategyContext:
             # - - - - - - - - - - - - - - - - - - - - -
 
             # - when need to trigger and fit strategy - - - - - - -
-            trigger: Dict[str, Any] = dict(type='ohlc', timeframe='1Min'),
             trigger_spec: str = 'bar: -1Sec',       # 1 sec before subscription bar is closed
             fit_spec: str | None = None,
             # - - - - - - - - - - - - - - - - - - - - -
@@ -198,8 +199,9 @@ class StrategyContext:
         self.config = config
         self.instruments = instruments
         self.positions = {}
-        self.__fit_is_running = False
-        self.__pool = None            # type: ignore
+        self.__fit_is_running = False         
+        self.__init_fit_was_called = False     
+        self.__pool = None 
 
         # - for fast access to instrument by it's symbol
         self._symb_to_instr = {i.symbol: i for i in instruments}
@@ -208,9 +210,7 @@ class StrategyContext:
         self._scheduler = BasicScheduler(self.data_provider.get_communication_channel(), lambda: self.time().item())
 
         # - instantiate logging functional
-        self._logging = StrategyLogging(
-            logs_writer, positions_log_freq, portfolio_log_freq, num_exec_records_to_write
-        )
+        self._logging = StrategyLogging(logs_writer, positions_log_freq, portfolio_log_freq, num_exec_records_to_write)
 
         # - extract data and event handlers
         self.__handlers = {
@@ -339,22 +339,22 @@ class StrategyContext:
                 raise ValueError(f"Wrong trigger type {t_rules['type']}")
 
         # - check fit spec - - - - -
-        _initial_fit_time = pd.Timestamp(self.time())
+        _last_fit_data_can_be_used = pd.Timestamp(self.time())
         match f_rules.get('type'):
             case 'cron':
                 if 'schedule' not in f_rules:
                     raise ValueError(f"cron fit trigger type is specified but cron schedule not found !")
 
                 self._scheduler.schedule_event(f_rules['schedule'], 'fit_event')
-                _initial_fit_time = self._scheduler.get_event_last_time('fit_event')
+                _last_fit_data_can_be_used = self._scheduler.get_event_last_time('fit_event')
 
             case 'bar':
                 raise ValueError("Raw 'bar' type is not supported for fitting spec yet, please use cron type !")
 
-        # - TODO: - - - - - - - - - - - - - - - - - - - - - - -
-        # - TODO: here we need create task for initial fitting 
-        # - TODO: - - - - - - - - - - - - - - - - - - - - - - -
-        logger.warning("NEED TO RUN TASK FOR INITIAL FIT !")
+        # - we can't just call on_fit right now because not all market data may be ready
+        # - so we just mark it as not called yet
+        self.__init_fit_was_called = False
+        self.__init_fit_args = (None, _last_fit_data_can_be_used) 
    
     def _process_incoming_data(self, channel: CtrlChannel):
         _fails_counter = 0 
@@ -370,19 +370,30 @@ class StrategyContext:
             # - process data if handler is registered
             handler = self.__handlers.get(d_type)
             _SW.start('StrategyContext.handler')
-            _strategy_trigger_event = handler(self, symbol, data) if handler else None
+            _strategy_trigger_on_event = handler(self, symbol, data) if handler else None
             _SW.stop('StrategyContext.handler')
 
-            if _strategy_trigger_event:
+            # - check if it still didn't call on_fit() for first time
+            if not self.__init_fit_was_called:
+                self._processing_fit_event(None, self.__init_fit_args)
+
+            if _strategy_trigger_on_event:
+
+                # - if fit was not called - skip on_event call
+                if not self.__init_fit_was_called:
+                    _SW.stop('StrategyContext._process_incoming_data')
+                    logger.warning(f"[{self.time()}] {self.strategy.__class__.__name__}::on_event() is SKIPPED for now because on_fit() was not called yet !")
+                    continue
 
                 # - if strategy still fitting - skip on_event call
                 if self.__fit_is_running:
-                    logger.warning(f"[{self.time()}]: on_event() is SKIPPED - because {self.strategy.__class__.__name__} is being still fitting !")
+                    _SW.stop('StrategyContext._process_incoming_data')
+                    logger.warning(f"[{self.time()}] {self.strategy.__class__.__name__}::on_event() is SKIPPED for now because is being still fitting !")
                     continue
 
                 try:
                     _SW.start('strategy.on_event')
-                    self.strategy.on_event(self, _strategy_trigger_event)
+                    self.strategy.on_event(self, _strategy_trigger_on_event)
                     _fails_counter = 0
                 except Exception as strat_error:
                     # - probably we need some cooldown interval after exception to prevent flooding
@@ -409,15 +420,16 @@ class StrategyContext:
     def _invoke_on_fit(self, current_fit_time: str | pd.Timestamp, prev_fit_time: str | pd.Timestamp | None):
         try:
             self.__fit_is_running = True
-            logger.info(f"[{self.time()}]: Invoking {self.strategy.__class__.__name__} on_fit('{current_fit_time}', '{prev_fit_time}')")
+            logger.debug(f"[{self.time()}]: Invoking {self.strategy.__class__.__name__} on_fit('{current_fit_time}', '{prev_fit_time}')")
             _SW.start('strategy.on_fit')
             self.strategy.on_fit(self, current_fit_time, prev_fit_time)
-            logger.info(f"[{self.time()}]: {self.strategy.__class__.__name__} fitted")
+            logger.debug(f"[{self.time()}]: {self.strategy.__class__.__name__} is fitted")
         except Exception as strat_error:
             logger.error(f"[{self.time()}]: Strategy {self.strategy.__class__.__name__} on_fit('{current_fit_time}', '{prev_fit_time}') raised an exception: {strat_error}")
             logger.opt(colors=False).error(traceback.format_exc())
         finally:
             self.__fit_is_running = False
+            self.__init_fit_was_called = True
             _SW.stop('strategy.on_fit')
         return None
 
@@ -427,15 +439,22 @@ class StrategyContext:
         """
         return TriggerEvent(self.time(), 'time', None, data)
 
-    def _processing_fit_event(self, symbol: str, data: Any) -> TriggerEvent | None:
+    def _processing_fit_event(self, symbol: str | None, data: Any) -> TriggerEvent | None:
         """
         When scheduled fit event is happened - we need to invoke strategy on_fit method
         """
+        if not self._cache.is_data_ready():
+            return None
+
         # times are in seconds here
         prev_fit_time, now_fit_time = data
 
         # - we need to run this in separate thread
-        self._run_in_thread_pool(self._invoke_on_fit, (pd.Timestamp(now_fit_time, unit='s'), pd.Timestamp(prev_fit_time, unit='s')))
+        self.__fit_is_running = True
+        self._run_in_thread_pool(self._invoke_on_fit, (
+            pd.Timestamp(now_fit_time, unit='s'), 
+            pd.Timestamp(prev_fit_time, unit='s') if prev_fit_time else None
+        ))
 
         return None
 

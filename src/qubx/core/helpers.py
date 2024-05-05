@@ -20,16 +20,27 @@ class CachedMarketDataHolder:
     Collected cached data updates from StrategyContext
     """
     default_timeframe: np.timedelta64
-    _last_bar: Dict[str, Optional[Bar]]
+    _last_bar: Dict[str, Bar | None]
     _ohlcvs: Dict[str, Dict[np.timedelta64, OHLCV]]
+    _updates: Dict[str, Any]
 
     def __init__(self, default_timeframe: str) -> None:
         self.default_timeframe = convert_tf_str_td64(default_timeframe)
         self._ohlcvs = dict()
         self._last_bar = defaultdict(lambda: None)
+        self._updates = dict()
 
     def init_ohlcv(self, symbol: str, max_size=np.inf):
         self._ohlcvs[symbol] = {self.default_timeframe: OHLCV(symbol, self.default_timeframe, max_size)}
+
+    def is_data_ready(self) -> bool:
+        """
+        Check if all symbols in this cache have at least one update
+        """
+        for v in self._ohlcvs.keys():
+            if v not in self._updates:
+                return False
+        return True
     
     @_SW.watch('CachedMarketDataHolder')
     def get_ohlcv(self, symbol: str, timeframe: str, max_size=np.inf) -> OHLCV:
@@ -55,6 +66,8 @@ class CachedMarketDataHolder:
 
     @_SW.watch('CachedMarketDataHolder')
     def update_by_bar(self, symbol: str, bar: Bar):
+        self._updates[symbol] = bar
+
         _last_bar = self._last_bar[symbol]
         v_tot_inc = bar.volume
         v_buy_inc = bar.bought_volume
@@ -74,6 +87,8 @@ class CachedMarketDataHolder:
 
     @_SW.watch('CachedMarketDataHolder')
     def update_by_quote(self, symbol: str, quote: Quote):
+        self._updates[symbol] = quote
+
         series = self._ohlcvs.get(symbol)
         if series:
             for ser in series.values():
@@ -81,6 +96,7 @@ class CachedMarketDataHolder:
 
     @_SW.watch('CachedMarketDataHolder')
     def update_by_trade(self, symbol: str, trade: Trade):
+        self._updates[symbol] = trade
         series = self._ohlcvs.get(symbol)
         if series:
             total_vol = trade.size 
