@@ -224,9 +224,6 @@ class StrategyContext:
         # - process market data configuration
         self.__check_how_to_listen_to_market_data(md_subscription)
  
-        # - process trigger configuration
-        # self.__check_how_to_trigger_strategy(trigger)
-
         # - process trigger and fit configurations
         self.__check_how_to_trigger_and_fit_strategy(trigger_spec, fit_spec)
 
@@ -273,47 +270,6 @@ class StrategyContext:
 
             case _:
                 raise ValueError(f"{self._market_data_subcription_type} is not a valid value for market data subcription type !!!")
-
-    def __check_how_to_trigger_strategy(self, trigger_config: dict):
-        # - check how it's configured to be triggered
-        self._trig_interval_in_bar_nsec = 0
-
-        match (_trigger := _dict_with_exception(trigger_config, 'type').lower()):
-            case 'bar': 
-                self._trig_on_bar = True
-
-                _bar_timeframe = pd.Timedelta(_dict_with_exception(trigger_config, 'timeframe'))
-                _inside_bar_delay = pd.Timedelta(_dict_with_exception(trigger_config, 'delay'))
-
-                if abs(pd.Timedelta(_inside_bar_delay)) > pd.Timedelta(_bar_timeframe):
-                    raise ValueError(f"Delay must be less or equal to bar's timeframe for {_trigger} trigger: you set delay {_inside_bar_delay} for {_bar_timeframe}")
-
-                # for positive delay - trigger strategy when this interval passed after new bar's open
-                if _inside_bar_delay >= pd.Timedelta(0): 
-                    self._trig_interval_in_bar_nsec = _inside_bar_delay.asm8.item()
-                # for negative delay - trigger strategy when time is closer to bar's closing time more than this interval
-                else:
-                    self._trig_interval_in_bar_nsec = (_bar_timeframe + _inside_bar_delay).asm8.item()
-                self._trig_bar_freq_nsec = _bar_timeframe.asm8.item()
-
-            case 'time': 
-                self._trig_on_time = True
-                _time_to_trigger = _dict_with_exception(trigger_config, 'when')
-
-            case 'quote': 
-                self._trig_on_quote = True
-                raise ValueError(f"{_trigger} NOT IMPLEMENTED")
-
-            case 'trade': 
-                self._trig_on_trade = True
-                raise ValueError(f"{_trigger} NOT IMPLEMENTED")
-
-            case 'orderbook' | 'ob': 
-                self._trig_on_book = True
-                raise ValueError(f"{_trigger} NOT IMPLEMENTED")
-
-            case _: 
-                raise ValueError(f"Wrong trigger type {_trigger}")
 
     def __check_how_to_trigger_and_fit_strategy(self, trigger_schedule: str | None, fit_schedue: str | None):
         _td2ns = lambda x: x.as_unit('ns').asm8.item()
@@ -413,7 +369,10 @@ class StrategyContext:
 
             # - process data if handler is registered
             handler = self.__handlers.get(d_type)
+            _SW.start('StrategyContext.handler')
             _strategy_trigger_event = handler(self, symbol, data) if handler else None
+            _SW.stop('StrategyContext.handler')
+
             if _strategy_trigger_event:
 
                 # - if strategy still fitting - skip on_event call
@@ -472,11 +431,11 @@ class StrategyContext:
         """
         When scheduled fit event is happened - we need to invoke strategy on_fit method
         """
+        # times are in seconds here
         prev_fit_time, now_fit_time = data
-        # self._invoke_on_fit(now_fit_time, prev_fit_time)
 
         # - we need to run this in separate thread
-        self._run_in_thread_pool(self._invoke_on_fit, (now_fit_time, prev_fit_time))
+        self._run_in_thread_pool(self._invoke_on_fit, (pd.Timestamp(now_fit_time, unit='s'), pd.Timestamp(prev_fit_time, unit='s')))
 
         return None
 
@@ -492,6 +451,7 @@ class StrategyContext:
             self._processing_hist_bar(symbol, b)
         return None
 
+    @_SW.watch('StrategyContext')
     def _processing_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
         # - processing current bar's update
         self._cache.update_by_bar(symbol, bar)
@@ -606,6 +566,9 @@ class StrategyContext:
 
         # - close logging
         self._logging.close()
+        self.get_latencies_report()
+
+    def get_latencies_report(self):
         for l in _SW.latencies.keys():
             logger.info(f"\t<w>{l}</w> took <r>{_SW.latency_sec(l):.7f}</r> secs")
 
