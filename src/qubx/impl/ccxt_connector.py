@@ -109,12 +109,14 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
     def _time_msec_nbars_back(self, timeframe: str, nbarsback: int) -> int:
         return (self.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
 
-    def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> Optional[List[Bar]]:
+    def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
         assert nbarsback >= 1
         since = self._time_msec_nbars_back(timeframe, nbarsback)
 
         # - get this from sync 
-        res = self.sync.fetch_ohlcv(symbol, self._get_exch_timeframe(timeframe), since=since)
+        # - TODO: check if nbarsback > max_limit (1000) we need to do more requests
+        # - TODO: how to get quoted volumes ?
+        res = self.sync.fetch_ohlcv(symbol, self._get_exch_timeframe(timeframe), since=since, limit=1000)
         _arr = []  
         for oh in res: # type: ignore
             _arr.append(

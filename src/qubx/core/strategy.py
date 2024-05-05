@@ -38,7 +38,7 @@ class IDataProvider:
     def get_communication_channel(self) -> CtrlChannel:
         raise NotImplementedError("get_communication_channel")
 
-    def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar] | None:
+    def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
         raise NotImplementedError("get_historical_ohlcs")
 
     def get_quote(self, symbol: str) -> Quote | None:
@@ -647,6 +647,27 @@ class StrategyContext:
 
     def get_reserved(self, instrument: Instrument) -> float:
         return self.exchange_service.get_account().get_reserved(instrument)
+
+    @_SW.watch('StrategyContext')
+    def get_historical_ohlcs(self, instrument: Instrument | str, timeframe: str, length: int) -> OHLCV | None:
+        """
+        Helper for historical ohlc data
+        """
+        instr = self._symb_to_instr.get(instrument) if isinstance(instrument, str) else instrument
+
+        if instr is None:
+            logger.warning(f"Can't find instrument for {instrument} symbol !")
+            return None
+
+        # - first check if we can use cached series
+        rc = self.ohlc(instr, timeframe)
+        if len(rc) >= length:
+            return rc
+
+        # - send request for historical data
+        bars = self.data_provider.get_historical_ohlcs(instr.symbol, timeframe, length) 
+        r = self._cache.update_by_bars(instr.symbol, timeframe, bars)
+        return r 
 
     def _run_in_thread_pool(self, func: Callable, args=()):
         """

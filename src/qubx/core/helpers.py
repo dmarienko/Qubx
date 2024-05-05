@@ -65,6 +65,21 @@ class CachedMarketDataHolder:
         return self._ohlcvs[symbol][tf]
 
     @_SW.watch('CachedMarketDataHolder')
+    def update_by_bars(self, symbol: str, timeframe: str, bars: List[Bar]) -> OHLCV:
+        """
+        Substitute or create new series based on provided historical bars
+        """
+        if symbol not in self._ohlcvs:
+           self._ohlcvs[symbol] = {}
+
+        tf = convert_tf_str_td64(timeframe) 
+        new_ohlc = OHLCV(symbol, tf)
+        for b in bars:
+            new_ohlc.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume, b.bought_volume)
+        self._ohlcvs[symbol][tf] = new_ohlc
+        return new_ohlc
+
+    @_SW.watch('CachedMarketDataHolder')
     def update_by_bar(self, symbol: str, bar: Bar):
         self._updates[symbol] = bar
 
