@@ -1,9 +1,12 @@
+import re
 from typing import List, Union, Optional, Iterable, Any
 from os.path import exists
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 from pyarrow import csv
+import psycopg as pg
+from functools import wraps
 
 from qubx import logger
 from qubx.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
@@ -43,13 +46,20 @@ class DataProcessor:
         self.buffer = {}
         self._column_names = []
 
-    def start_processing(self, column_names: List[str]):
+    def start_processing(self, column_names: List[str], name: str | None = None):
         self._column_names = column_names
         self.buffer = {c: [] for c in column_names}
 
-    def process_data(self, columns_data: list) -> Optional[Iterable]:
+    def process_data_columns(self, columns_data: list) -> Optional[Iterable]:
         for i, c in enumerate(columns_data):
             self.buffer[self._column_names[i]].append(c)
+        return None
+
+    def process_data_rows(self, rows_data: list) -> Optional[Iterable]:
+        for r in rows_data:
+            c = []
+            for j, d in enumerate(r):
+                self.buffer[self._column_names[j]].append(d)
         return None
 
     def get_result(self) -> Any:
@@ -73,7 +83,7 @@ class QuotesDataProcessor(DataProcessor):
     """
     Process quotes data and collect them as list
     """
-    def start_processing(self, fieldnames: List[str]):
+    def start_processing(self, fieldnames: List[str], name: str | None = None):
         self.buffer = list()
         self._time_idx = _find_column_index_in_list(fieldnames, 'time', 'timestamp', 'datetime')
         self._bid_idx = _find_column_index_in_list(fieldnames, 'bid')
@@ -81,7 +91,7 @@ class QuotesDataProcessor(DataProcessor):
         self._bidvol_idx = _find_column_index_in_list(fieldnames, 'bidvol', 'bid_vol', 'bidsize', 'bid_size')
         self._askvol_idx = _find_column_index_in_list(fieldnames, 'askvol', 'ask_vol', 'asksize', 'ask_size')
 
-    def process_data(self, columns_data: list) -> Optional[Iterable]:
+    def process_data_columns(self, columns_data: list) -> Optional[Iterable]:
         tms = columns_data[self._time_idx] 
         bids = columns_data[self._bid_idx]
         asks = columns_data[self._ask_idx]
@@ -110,7 +120,7 @@ class QuotesFromOHLCVDataProcessor(DataProcessor):
         self._d_session_start = daily_session_start_end[0]
         self._d_session_end = daily_session_start_end[1]
 
-    def start_processing(self, fieldnames: List[str]):
+    def start_processing(self, fieldnames: List[str], name: str | None = None):
         self._time_idx = _find_column_index_in_list(fieldnames, 'time', 'timestamp', 'datetime', 'date')
         self._open_idx = _find_column_index_in_list(fieldnames, 'open')
         self._high_idx = _find_column_index_in_list(fieldnames, 'high')
@@ -126,7 +136,7 @@ class QuotesFromOHLCVDataProcessor(DataProcessor):
 
         self.buffer = []
 
-    def process_data(self, data: list) -> Optional[Iterable]:
+    def process_data_columns(self, data: list) -> Optional[Iterable]:
         s2 = self._s2
         if self._timeframe is None:
             _freq = infer_series_frequency(data[self._time_idx])
@@ -201,11 +211,11 @@ class OhlcvDataProcessor(DataProcessor):
     """
     Process data and convert it to Qube OHLCV timeseries 
     """
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str | None = None) -> None:
         super().__init__()
         self._name = name
 
-    def start_processing(self, fieldnames: List[str]):
+    def start_processing(self, fieldnames: List[str], name: str | None = None):
         self._time_idx = _find_column_index_in_list(fieldnames, 'time', 'timestamp', 'datetime', 'date')
         self._open_idx = _find_column_index_in_list(fieldnames, 'open')
         self._high_idx = _find_column_index_in_list(fieldnames, 'high')
@@ -214,6 +224,7 @@ class OhlcvDataProcessor(DataProcessor):
         self._volume_idx = None
         self._b_volume_idx = None
         self._timeframe = None
+        self._name = name if name else self._name
 
         try:
             self._volume_idx = _find_column_index_in_list(fieldnames, 'quote_volume', 'volume', 'vol')
@@ -225,7 +236,7 @@ class OhlcvDataProcessor(DataProcessor):
 
         self.ohlc = None
 
-    def process_data(self, data: list) -> Optional[Iterable]:
+    def process_data_columns(self, data: list) -> Optional[Iterable]:
         if self._timeframe is None:
             self._timeframe = infer_series_frequency(data[self._time_idx]).astype('timedelta64[s]')
 
@@ -240,6 +251,23 @@ class OhlcvDataProcessor(DataProcessor):
         )
         return None
 
+    def process_data_rows(self, data: List[list]) -> Iterable | None:
+        if self._timeframe is None:
+            ts = [t[self._time_idx] for t in data[:100]]
+            self._timeframe = pd.Timedelta(infer_series_frequency(ts)).asm8.item()
+
+            # - create instance after first data received
+            self.ohlc = OHLCV(self._name, self._timeframe)
+
+        for d in data:
+            self.ohlc.update_by_bar(
+                np.datetime64(d[self._time_idx], 'ns').item(),
+                d[self._open_idx], d[self._high_idx], d[self._low_idx], d[self._close_idx], 
+                d[self._volume_idx] if self._volume_idx else 0,
+                d[self._b_volume_idx] if self._b_volume_idx else 0
+            )
+        return None
+
     def get_result(self) -> Any:
         return self.ohlc
 
@@ -250,8 +278,9 @@ class OhlcvPandasDataProcessor(DataProcessor):
     """
     def __init__(self) -> None:
         super().__init__()
+        self._fieldnames: List = []
 
-    def start_processing(self, fieldnames: List[str]):
+    def start_processing(self, fieldnames: List[str], name: str | None = None):
         self._time_idx = _find_column_index_in_list(fieldnames, 'time', 'timestamp', 'datetime', 'date')
         self._open_idx = _find_column_index_in_list(fieldnames, 'open')
         self._high_idx = _find_column_index_in_list(fieldnames, 'high')
@@ -269,8 +298,6 @@ class OhlcvPandasDataProcessor(DataProcessor):
             self._b_volume_idx = _find_column_index_in_list(fieldnames, 'taker_buy_volume', 'taker_buy_quote_volume', 'buy_volume')
         except: pass
 
-        # self.ohlc = pd.DataFrame()
-
         self._time = np.array([], dtype=np.datetime64)
         self._open = np.array([])
         self._high = np.array([])
@@ -278,8 +305,16 @@ class OhlcvPandasDataProcessor(DataProcessor):
         self._close = np.array([])
         self._volume = np.array([])
         self._bvolume = np.array([])
+        self._fieldnames = fieldnames
+        self._ohlc = pd.DataFrame()
 
-    def process_data(self, data: list) -> Optional[Iterable]:
+    def process_data_rows(self, data: List[list]) -> Optional[Iterable]:
+        p = pd.DataFrame.from_records(data, columns=self._fieldnames)
+        p.set_index(self._fieldnames[self._time_idx], drop=True, inplace=True)
+        self._ohlc = pd.concat((self._ohlc, p), axis=0, sort=True, copy=True)
+        return None
+
+    def process_data_columns(self, data: list) -> Optional[Iterable]:
         # p = pd.DataFrame({
         #     'open': data[self._open_idx], 
         #     'high': data[self._high_idx], 
@@ -302,6 +337,9 @@ class OhlcvPandasDataProcessor(DataProcessor):
         return None
 
     def get_result(self) -> Any:
+        if not self._ohlc.empty:
+            return self._ohlc
+
         rd = {
             'open': self._open, 'high': self._high, 'low': self._low, 'close': self._close, 
         }
@@ -392,6 +430,86 @@ class CsvDataReader(DataReader):
                 # - in some cases we need to convert time index to primitive type
                 _time_cast_function(selected_table[k].chunk(n)).to_numpy() if k == _time_field_idx else selected_table[k].chunk(n).to_numpy()
                 for k in range(selected_table.num_columns)]
-            self._processor.process_data(data)
+            self._processor.process_data_columns(data)
         return self._processor.get_result()
-            
+
+
+def _retry(fn):
+    @wraps(fn)
+    def wrapper(*args, **kw):
+        cls = args[0]
+        for x in range(cls._reconnect_tries):
+            # print(x, cls._reconnect_tries)
+            try:
+                return fn(*args, **kw)
+            except (pg.InterfaceError, pg.OperationalError) as e:
+                logger.warning("Database Connection [InterfaceError or OperationalError]")
+                # print ("Idle for %s seconds" % (cls._reconnect_idle))
+                # time.sleep(cls._reconnect_idle)
+                cls._connect()
+    return wrapper
+
+
+class QuestDBConnector(DataReader):
+    """
+    Very first version of QuestDB connector
+
+    # Connect to an existing QuestDB instance
+    >>> db = QuestDBConnector('user=admin password=quest host=localhost port=8812', OhlcvPandasDataProcessor())
+    >>> db.read('BINANCEF.ETHUSDT', '5m', '2024-01-01')
+    """
+    _reconnect_tries = 5
+    _reconnect_idle = 0.1  # wait seconds before retying
+
+    def __init__(self, connection_url: str, processor: DataProcessor | None=None) -> None:
+        super().__init__(processor)
+        self._connection = None
+        self._cursor = None
+        self.connection_url = connection_url
+        self._connect()
+
+    def _connect(self):
+        logger.info("Connecting to QuestDB ...")
+        self._connection = pg.connect(self.connection_url, autocommit=True)
+        self._cursor = self._connection.cursor()
+
+    @_retry
+    def read(self, symbol: str, timeframe: str, start: str|None=None, stop: str|None=None) -> Any:
+        start, end = handle_start_stop(start, stop)
+        w0 = f"timestamp >= '{start}'" if start else ''
+        w1 = f"timestamp <= '{end}'" if end else ''
+        where = f'where {w0} and {w1}' if (w0 and w1) else f"where {(w0 or w1)}"
+
+        self._cursor.execute(
+            f"""
+                select timestamp, 
+                first(open) as open, 
+                max(high) as high,
+                min(low) as low,
+                last(close) as close,
+                sum(volume) as volume,
+                sum(quote_volume) as quote_volume,
+                sum(count) as count,
+                sum(taker_buy_volume) as taker_buy_volume,
+                sum(taker_buy_quote_volume) as taker_buy_quote_volume
+                from "{symbol.upper()}" {where}
+                SAMPLE by {timeframe};
+            """ # type: ignore
+        )
+        records = self._cursor.fetchall()
+        names = [d.name for d in self._cursor.description]
+
+        self._processor.start_processing(names, re.split(r'[.:]', symbol)[-1])
+        
+        # d = np.array(records)
+        self._processor.process_data_rows(records)
+        return self._processor.get_result()
+
+    def __del__(self):
+        for c in (self._cursor, self._connection):
+            try:
+                logger.info("Closing connection")
+                c.close()
+            except:
+                pass
+
