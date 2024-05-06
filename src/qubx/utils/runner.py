@@ -20,37 +20,47 @@ def class_import(name):
     return mod
 
 
+def _instruments_for_exchange(exch: str, symbols: list) -> list:
+    instrs = []
+    for s in symbols:
+        instr = lookup.find_symbol(exch.upper(), s.upper()) 
+        if instr is not None:
+            instrs.append(instr)
+        else:
+            logger.warning(f"Can't find instrument for symbol {s} - try to refresh lookup first !")
+    return instrs
+
+
 def load_strategy_config(filename: str) -> Struct:
     with open(filename, 'r') as f:
         content = yaml.safe_load(f)
 
     config = content['config']
-    execution = config['execution']
     strat = config['strategy']
     name = strat.split('.')[-1]
     r = Struct(
         strategy = strat,
         name = name,
         parameters = config.get('parameters', dict()),
-        connector = execution['connector'],
-        exchange = execution['exchange'],
-        account = execution.get('account'),
-        md_subscr = execution['subscription'],
-        strategy_trigger = execution['trigger'],
-        strategy_fit_trigger = execution.get('fit', ''),
+        connector = config['connector'],
+        exchange = config['exchange'],
+        account = config.get('account'),
+        md_subscr = config['subscription'],
+        strategy_trigger = config['trigger'],
+        strategy_fit_trigger = config.get('fit', ''),
         portfolio_logger = config.get('logger', None),
         log_positions_interval = config.get('log_positions_interval', None),
         log_portfolio_interval = config.get('log_portfolio_interval', None)
     )
 
-    universe = execution['universe']
-    r.instruments = []
-    for s in universe:
-        instr = lookup.find_symbol(r.exchange.upper(), s.upper()) 
-        if instr is not None:
-            r.instruments.append(instr)
-        else:
-            logger.warning(f"Can't find instrument for symbo {s} - try to refresh lookup first !")
+    universe = config['universe']
+    if isinstance(universe, dict):
+        r.instruments = []
+        for e, symbs in universe.items():
+            r.instruments.extend(_instruments_for_exchange(e, symbs))
+    else:
+       r.instruments = _instruments_for_exchange(r.exchange, universe)
+
     return r
 
 

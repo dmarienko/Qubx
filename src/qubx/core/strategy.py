@@ -351,6 +351,11 @@ class StrategyContext:
             case 'bar':
                 raise ValueError("Raw 'bar' type is not supported for fitting spec yet, please use cron type !")
 
+            case _: 
+                # if schedule is not specified just do not arm the task 
+                # only initial fit will be called
+                pass
+
         # - we can't just call on_fit right now because not all market data may be ready
         # - so we just mark it as not called yet
         self.__init_fit_was_called = False
