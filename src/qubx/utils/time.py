@@ -108,7 +108,7 @@ def infer_series_frequency(series: Union[List, pd.DataFrame, pd.Series, pd.Datet
     if times_index.shape[0] < 2:
         raise ValueError("Series must have at least 2 points to determ frequency")
 
-    values = np.array(sorted([(x if isinstance(x, np.timedelta64) else x.total_seconds()) for x in np.abs(np.diff(times_index))]))
+    values = np.array(sorted([(x if isinstance(x, np.timedelta64) else int(1e9 * x.total_seconds())) for x in np.abs(np.diff(times_index))]))
     diff = np.concatenate(([1], np.diff(values)))
     idx = np.concatenate((np.where(diff)[0], [len(values)]))
     freqs = dict(zip(values[idx[:-1]], np.diff(idx)))
