@@ -3,7 +3,7 @@ import pandas as pd
 
 from qubx.core.series import (TimeSeries, lag, compare, OHLCV)
 from qubx.ta.indicators import (sma, ema, tema, dema, kama, highest, lowest)
-from qubx.data.readers import CsvDataReader, QuotesDataProcessor, OhlcvDataProcessor, QuotesFromOHLCVDataProcessor
+from qubx.data.readers import CsvStorageDataReader, AsQuotes
 import tests.qubx.ta.utils_for_testing as test
 
 
@@ -151,8 +151,8 @@ class TestIndicators:
         assert err < 1e-10
         
     def test_on_ready_series(self):
-        r0 = CsvDataReader('tests/data/csv/quotes.csv', QuotesDataProcessor())
-        ticks = r0.read()
+        r0 = CsvStorageDataReader('tests/data/csv/')
+        ticks = r0.read('quotes', transform=AsQuotes())
 
         s0 = TimeSeries('T0', '1Min')
         control = TimeSeries('T0', '1Min')
@@ -171,8 +171,8 @@ class TestIndicators:
         assert test.N(mx.streamed) == mx.finished
 
     def test_on_formed_only(self):
-        r0 = CsvDataReader('tests/data/csv/quotes.csv', QuotesDataProcessor())
-        ticks = r0.read()
+        r0 = CsvStorageDataReader('tests/data/csv/')
+        ticks = r0.read('quotes', transform=AsQuotes())
 
         # - ask to calculate indicators on closed bars only
         s0 = TimeSeries('T0', '30Sec', process_every_update=False)
