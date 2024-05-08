@@ -497,8 +497,11 @@ class QuestDBConnector(DataReader):
         transform.process_data(records)
         return transform.collect()
 
+    @_retry
     def get_names(self) -> List[str] :
-        raise NotImplemented("Need to find way how to get tables in QuestDB")
+        self._cursor.execute("select table_name from tables()")
+        records = self._cursor.fetchall()
+        return [r[0] for r in records]
 
     def __del__(self):
         for c in (self._cursor, self._connection):
