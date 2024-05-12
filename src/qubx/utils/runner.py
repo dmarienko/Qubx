@@ -184,7 +184,7 @@ import pandas as pd
 import nest_asyncio; nest_asyncio.apply()
 from qubx.utils.misc import dequotify, quotify
 from qubx.utils.runner import create_strategy_context
-from qubx.utils.pandas import *
+from qubx.pandaz.utils import *
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 ctx = create_strategy_context('{filename}', '{accounts}', {paths})

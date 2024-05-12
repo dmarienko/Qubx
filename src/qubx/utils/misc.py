@@ -1,5 +1,5 @@
 from typing import Dict, Optional, Union, List
-import glob, os
+import os
 from collections import OrderedDict, defaultdict, namedtuple
 from os.path import basename, exists, dirname, join, expanduser
 import time

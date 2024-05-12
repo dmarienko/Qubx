@@ -32,13 +32,17 @@ if runtime_env() in ['notebook', 'shell']:
     from tqdm.auto import tqdm
 
     # - - - - TA stuff and indicators - - - -
+    import qubx.pandaz.ta as pta
+
     # - - - - Portfolio analysis - - - -
     # - - - - Simulator stuff - - - -
     # - - - - Learn stuff - - - -
     # - - - - Charting stuff - - - -
     from matplotlib import pyplot as plt
     from qubx.utils.charting.mpl_helpers import fig, subplot, sbp
+
     # - - - - Utils - - - -
+    from qubx.pandaz.utils import scols, srows, ohlc_resample, continuous_periods, generate_equal_date_ranges
 
     # - setup short numpy output format
     np_fmt_short()

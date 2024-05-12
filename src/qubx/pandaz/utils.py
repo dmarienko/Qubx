@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Iterable, Optional, Union, List
+from typing import Callable, Dict, Iterable, Literal, Optional, Union, List
 from datetime import timedelta
 import pandas as pd
 import numpy as np
@@ -6,6 +6,19 @@ import numpy as np
 from numpy.lib.stride_tricks import as_strided as stride
 
 from qubx.utils.misc import Struct
+
+
+def has_columns(x, *args):
+    return isinstance(x, pd.DataFrame) and sum(x.columns.isin(args)) == len(args)
+
+
+def check_frame_columns(x, *args):
+    if not isinstance(x, pd.DataFrame):
+        raise ValueError(f"Input data must be DataFrame but {type(x)} received !")
+
+    if sum(x.columns.isin(args)) != len(args):
+        required = [y for y in args if y not in x.columns]
+        raise ValueError(f"> Required {required} columns not found in dataframe !")
 
 
 def rolling_forward_test_split(x: pd.Series | pd.DataFrame, training_period: int, test_period: int, units: str | None = None ):
@@ -98,7 +111,7 @@ def generate_equal_date_ranges(start: str | pd.Timestamp, end: str | pd.Timestam
     yield _as_f(b[0]), _as_f(b[-1])
 
 
-def drop_duplicated_indexes(df: pd.DataFrame, keep='first'):
+def drop_duplicated_indexes(df: pd.DataFrame, keep: Literal['first', 'last', False]='first'):
     """
     Drops duplicated indexes in dataframe/series
     Keeps either first or last occurence (parameter keep)

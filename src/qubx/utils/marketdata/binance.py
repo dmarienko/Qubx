@@ -9,7 +9,7 @@ from collections import defaultdict
 
 from qubx import logger
 from qubx.utils.misc import makedirs, get_local_qubx_folder
-from qubx.utils.pandas import generate_equal_date_ranges, srows
+from qubx.pandaz import generate_equal_date_ranges, srows
 
 
 DEFALT_LOCAL_FILE_STORAGE = makedirs(get_local_qubx_folder(), 'data/import/binance_history/')

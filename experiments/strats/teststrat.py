@@ -6,7 +6,7 @@ from tabulate import tabulate
 from qubx import logger
 from qubx.core.strategy import IStrategy, TriggerEvent, StrategyContext
 from qubx.core.basics import Instrument, Position, Signal
-from qubx.utils.pandas import srows, scols, ohlc_resample, retain_columns_and_join
+from qubx.pandaz import srows, scols, ohlc_resample, retain_columns_and_join
 from qubx.trackers import Capital, PortfolioRebalancerTracker
 from qubx.utils.misc import quotify, dequotify
 
