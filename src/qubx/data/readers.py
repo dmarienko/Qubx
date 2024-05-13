@@ -465,15 +465,26 @@ class QuestDBConnector(DataReader):
              chunksize=0,  # TODO: use self._cursor.fetchmany in this case !!!!
              timeframe: str='1m') -> Any:
         start, end = handle_start_stop(start, stop)
+        _req = self._prepare_data_sql(data_id, start, end, timeframe)
+
+        self._cursor.execute(_req) # type: ignore
+        records = self._cursor.fetchall() # TODO: for chunksize > 0 use fetchmany etc
+
+        names = [d.name for d in self._cursor.description] # type: ignore
+        transform.start_transform(data_id, names)
+
+        transform.process_data(records)
+        return transform.collect()
+
+    def _prepare_data_sql(self, data_id: str, start: str|None, end: str|None, resample: str) -> str:
+        # just a temp hack - actually we need to discuss symbology etc
+        symbol = data_id#.split('.')[-1]
+
         w0 = f"timestamp >= '{start}'" if start else ''
         w1 = f"timestamp <= '{end}'" if end else ''
         where = f'where {w0} and {w1}' if (w0 and w1) else f"where {(w0 or w1)}"
 
-        # just a temp hack - actually we need to discuss symbology etc
-        symbol = data_id#.split('.')[-1]
-
-        self._cursor.execute(
-            f"""
+        return f"""
                 select timestamp, 
                 first(open) as open, 
                 max(high) as high,
@@ -485,21 +496,15 @@ class QuestDBConnector(DataReader):
                 sum(taker_buy_volume) as taker_buy_volume,
                 sum(taker_buy_quote_volume) as taker_buy_quote_volume
                 from "{symbol.upper()}" {where}
-                SAMPLE by {timeframe};
-            """ # type: ignore
-        )
-        records = self._cursor.fetchall() # TODO: for chunksize > 0 use fetchmany etc
-        names = [d.name for d in self._cursor.description]
+                SAMPLE by {resample};
+            """ 
 
-        transform.start_transform(data_id, names)
-        
-        # d = np.array(records)
-        transform.process_data(records)
-        return transform.collect()
+    def _prepare_names_sql(self) -> str:
+        return "select table_name from tables()"
 
     @_retry
     def get_names(self) -> List[str] :
-        self._cursor.execute("select table_name from tables()")
+        self._cursor.execute(self._prepare_names_sql()) # type: ignore
         records = self._cursor.fetchall()
         return [r[0] for r in records]
 
@@ -511,3 +516,48 @@ class QuestDBConnector(DataReader):
             except:
                 pass
 
+
+class SnapshotsBuilder(DataTransformer):
+    """
+    Snapshots assembler from OB updates
+    """
+    def __init__(self, 
+                 levels: int=-1,     # how many levels restore, 1 - TOB, -1 - all
+                 as_frame=False      # result is dataframe
+    ):
+        self.buffer = []
+        self.levels = levels
+        self.as_frame = as_frame
+
+    def start_transform(self, name: str, column_names: List[str]):
+        # initialize buffer / series etc
+        # let's keep restored snapshots into some buffer etc
+        self.buffer = []
+
+        # do additional init stuff here
+
+    def process_data(self, rows_data:List[List]) -> Any:
+        for r in rows_data:
+            # restore snapshots and put into buffer or series
+            pass
+
+    def collect(self) -> Any:
+        # - may be convert it to pandas DataFrame ?
+        if self.as_frame:
+            return pd.DataFrame.from_records(self.buffer) # or custom transform
+
+        # - or just returns as plain list
+        return self.buffer
+
+
+class QuestDBOrderBookConnector(QuestDBConnector):
+    """
+    Example of custom OrderBook data connector 
+    """
+
+    def _prepare_data_sql(self, data_id: str, start: str|None, end: str|None, resample: str|None) -> str:
+        raise NotImplemented("TODO")
+
+    def _prepare_names_sql(self) -> str:
+        # return "select table_name from tables() where ..."
+        raise NotImplemented("TODO")
