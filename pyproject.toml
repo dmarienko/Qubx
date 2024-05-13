@@ -33,6 +33,15 @@ cython = "3.0.8"
 ccxt = "^4.2.68"
 croniter = "^2.0.5"
 psycopg = "^3.1.18"
+pandas = "^2.2.2"
+statsmodels = "^0.14.2"
+matplotlib = "^3.8.4"
+numba = "^0.59.1"
+scikit-learn = "^1.4.2"
+plotly = "^5.22.0"
+psycopg-binary = "^3.1.19"
+psycopg-pool = "^3.2.2"
+
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^2.20.0"
