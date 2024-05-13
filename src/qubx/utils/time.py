@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 import numpy as np
 import re
 
@@ -115,7 +115,7 @@ def infer_series_frequency(series: Union[List, pd.DataFrame, pd.Series, pd.Datet
     return np.timedelta64(max(freqs, key=freqs.get))
 
 
-def handle_start_stop(s: Optional[str], e: Optional[str], convert=str) -> tuple:
+def handle_start_stop(s: Optional[str], e: Optional[str], convert=str) -> Tuple[str|None, str|None]:
     """
     Process start/stop times
 

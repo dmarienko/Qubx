@@ -5,10 +5,6 @@ from importlib.util import spec_from_file_location
 from importlib.machinery import ExtensionFileLoader, SourceFileLoader
 from typing import List
 
-# - disable warn about deprecation of imp module: after dev stage _pyxreloader will be removed
-import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-import imp
 
 PYX_EXT = ".pyx"
 PYXDEP_EXT = ".pyxdep"
@@ -49,6 +45,10 @@ def handle_dependencies(pyxfilename):
 
 
 def handle_special_build(modname, pyxfilename):
+    try:
+        import imp
+    except:
+        return None, None
     special_build = os.path.splitext(pyxfilename)[0] + PYXBLD_EXT
     ext = None
     setup_args={}
@@ -135,6 +135,10 @@ def build_module(name, pyxfilename, user_setup_args, pyxbuild_dir=None, inplace=
 
 
 def load_module(name, pyxfilename, pyxbuild_dir=None, is_package=False, build_inplace=False, language_level=None, so_path=None):
+    try:
+        import imp
+    except:
+        return None
     try:
         if so_path is None:
             if is_package:
