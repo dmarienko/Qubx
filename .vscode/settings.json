@@ -1,16 +1,20 @@
 {
     "python.testing.pytestArgs": [
-        "tests", 
+        "tests",
         "-s",
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
-
+    "python.formatting.provider": "black",
+    "python.formatting.blackArgs": [
+        "--line-length",
+        "88"
+    ],
+    "editor.formatOnSave": true,
     "python.analysis.diagnosticSeverityOverrides": {
         "reportMissingImports": "none",
         "reportUnusedImport": "none",
         "reportMissingModuleSource": "none"
-
     },
     "python.analysis.typeCheckingMode": "basic",
 }
