@@ -29,6 +29,13 @@ def _recognize_t(t: Union[int, str], defaultvalue, timeunit) -> int:
     return defaultvalue
 
 
+def _time(t, timestamp_units: str) -> int:
+    t = int(t) if isinstance(t, float) else t
+    if timestamp_units == 'ns':
+        return np.datetime64(t, 'ns').item() 
+    return np.datetime64(t, timestamp_units).astype('datetime64[ns]').item()
+
+
 def _find_column_index_in_list(xs, *args):
     xs = [x.lower() for x in xs]
     for a in args:
@@ -36,6 +43,9 @@ def _find_column_index_in_list(xs, *args):
         if ai in xs:
             return xs.index(ai)
     raise IndexError(f"Can't find any from {args} in list: {xs}")
+
+
+_FIND_TIME_COL_IDX = lambda column_names: _find_column_index_in_list(column_names, 'time', 'timestamp', 'datetime', 'date', 'open_time')
 
 
 class DataTransformer:
@@ -121,9 +131,9 @@ class CsvStorageDataReader(DataReader):
         # - try to find range to load  
         start_idx, stop_idx = 0, table.num_rows
         try:
-            _time_field_idx = _find_column_index_in_list(fieldnames, 'time', 'timestamp', 'datetime', 'date')
+            _time_field_idx = _FIND_TIME_COL_IDX(fieldnames)
             _time_type = table.field(_time_field_idx).type
-            _time_unit = _time_type.unit if hasattr(_time_type, 'unit') else 's'
+            _time_unit = _time_type.unit if hasattr(_time_type, 'unit') else 'ms'
             _time_data = table[_time_field_idx]
 
             # - check if need convert time to primitive types (i.e. Date32 -> timestamp[x])
@@ -181,9 +191,11 @@ class AsPandasFrame(DataTransformer):
     """
     List of records to pandas dataframe transformer
     """
+    def __init__(self, timestamp_units=None) -> None:
+        self.timestamp_units = timestamp_units
 
     def start_transform(self, name: str, column_names: List[str]):
-        self._time_idx = _find_column_index_in_list(column_names, 'time', 'timestamp', 'datetime', 'date')
+        self._time_idx = _FIND_TIME_COL_IDX(column_names)
         self._column_names = column_names
         self._frame = pd.DataFrame()
     
@@ -191,6 +203,8 @@ class AsPandasFrame(DataTransformer):
         self._frame
         p = pd.DataFrame.from_records(rows_data, columns=self._column_names)
         p.set_index(self._column_names[self._time_idx], drop=True, inplace=True)
+        p.index = pd.to_datetime(p.index, unit=self.timestamp_units) if self.timestamp_units else p.index
+        p.index.rename('timestamp', inplace=True)
         p.sort_index(inplace=True)
         self._frame = pd.concat((self._frame, p), axis=0, sort=True)
         return p
@@ -200,6 +214,17 @@ class AsPandasFrame(DataTransformer):
 
 
 class AsOhlcvSeries(DataTransformer):
+    """
+    Convert incoming data into OHLCV series.
+
+    Incoming data may have one of the following structures: 
+
+        ```
+        ohlcv:        time,open,high,low,close,volume|quote_volume,(buy_volume)
+        quotes:       time,bid,ask,bidsize,asksize
+        trades (TAS): time,price,size,(is_taker)
+        ```
+    """
 
     def __init__(self, timeframe: str | None = None, timestamp_units='ns') -> None:
         super().__init__()
@@ -209,7 +234,7 @@ class AsOhlcvSeries(DataTransformer):
         self.timestamp_units = timestamp_units
 
     def start_transform(self, name: str, column_names: List[str]):
-        self._time_idx = _find_column_index_in_list(column_names, 'time', 'timestamp', 'datetime', 'date')
+        self._time_idx = _FIND_TIME_COL_IDX(column_names)
         self._volume_idx = None
         self._b_volume_idx = None
         try:
@@ -251,15 +276,10 @@ class AsOhlcvSeries(DataTransformer):
         if self.timeframe:
             self._series = OHLCV(self._name, self.timeframe)
 
-    def _time(self, t) -> int:
-        if self.timestamp_units == 'ns':
-            return np.datetime64(t, 'ns').item() 
-        return np.datetime64(t, self.timestamp_units).astype('datetime64[ns]').item()
-
     def _proc_ohlc(self, rows_data: List[List]):
         for d in rows_data:
             self._series.update_by_bar(
-                self._time(d[self._time_idx]),
+                _time(d[self._time_idx], self.timestamp_units),
                 d[self._open_idx], d[self._high_idx], d[self._low_idx], d[self._close_idx], 
                 d[self._volume_idx] if self._volume_idx else 0,
                 d[self._b_volume_idx] if self._b_volume_idx else 0
@@ -268,7 +288,7 @@ class AsOhlcvSeries(DataTransformer):
     def _proc_quotes(self, rows_data: List[List]):
         for d in rows_data:
             self._series.update(
-                self._time(d[self._time_idx]),
+                _time(d[self._time_idx], self.timestamp_units),
                 (d[self._ask_idx] + d[self._bid_idx])/2
             )
 
@@ -277,7 +297,7 @@ class AsOhlcvSeries(DataTransformer):
             a = d[self._taker_idx] if self._taker_idx else 0
             s = d[self._size_idx]
             b = s if a else 0 
-            self._series.update(self._time(d[self._time_idx]), d[self._price_idx], s, b)
+            self._series.update(_time(d[self._time_idx], self.timestamp_units), d[self._price_idx], s, b)
 
     def process_data(self, rows_data: List[List]) -> Any:
         if self._series is None:
@@ -302,10 +322,14 @@ class AsOhlcvSeries(DataTransformer):
 
 
 class AsQuotes(DataTransformer):
+    """
+    Tries to convert incoming data to list of Quote's
+    Data must have appropriate structure: bid, ask, bidsize, asksize and time
+    """
 
     def start_transform(self, name: str, column_names: List[str]):
         self.buffer = list()
-        self._time_idx = _find_column_index_in_list(column_names, 'time', 'timestamp', 'datetime')
+        self._time_idx = _FIND_TIME_COL_IDX(column_names)
         self._bid_idx = _find_column_index_in_list(column_names, 'bid')
         self._ask_idx = _find_column_index_in_list(column_names, 'ask')
         self._bidvol_idx = _find_column_index_in_list(column_names, 'bidvol', 'bid_vol', 'bidsize', 'bid_size')
@@ -320,6 +344,48 @@ class AsQuotes(DataTransformer):
                 bv = d[self._bidvol_idx]
                 av = d[self._askvol_idx]
                 self.buffer.append(Quote(t.as_unit('ns').asm8.item(), b, a, bv, av))
+                
+
+class AsTimestampedRecords(DataTransformer):
+    """
+    Convert incoming data to list or dictionaries with preprocessed timestamps ('timestamp_ns' and 'timestamp')
+    ```
+    [
+        {
+            'open_time': 1711944240000.0,
+            'open': 203.219,
+            'high': 203.33,
+            'low': 203.134,
+            'close': 203.175,
+            'volume': 10060.0,
+            ....
+            'timestamp_ns': 1711944240000000000,
+            'timestamp': Timestamp('2024-04-01 04:04:00')
+        },
+        ...
+    ] ```
+    """
+
+    def __init__(self, timestamp_units: str | None=None) -> None:
+        self.timestamp_units = timestamp_units
+
+    def start_transform(self, name: str, column_names: List[str]):
+        self.buffer = list()
+        self._time_idx = _FIND_TIME_COL_IDX(column_names)
+        self._column_names = column_names
+
+    def process_data(self, rows_data: Iterable) -> Any:
+        self.buffer.extend(rows_data)
+
+    def collect(self) -> Any:
+        res = []
+        for r in self.buffer:
+            t = r[self._time_idx]
+            if self.timestamp_units:
+                t = _time(t, self.timestamp_units)
+            di = dict(zip(self._column_names, r)) | { 'timestamp_ns': t, 'timestamp': pd.Timestamp(t) }
+            res.append(di)
+        return res
 
 
 class RestoreTicksFromOHLC(DataTransformer):
@@ -344,7 +410,7 @@ class RestoreTicksFromOHLC(DataTransformer):
     def start_transform(self, name: str, column_names: List[str]):
         self.buffer = []
         # - it will fail if receive data doesn't look as ohlcv 
-        self._time_idx = _find_column_index_in_list(column_names, 'time', 'timestamp', 'datetime', 'date')
+        self._time_idx = _FIND_TIME_COL_IDX(column_names)
         self._open_idx = _find_column_index_in_list(column_names, 'open')
         self._high_idx = _find_column_index_in_list(column_names, 'high')
         self._low_idx = _find_column_index_in_list(column_names, 'low')
