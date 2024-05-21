@@ -531,9 +531,9 @@ class QuestDBConnector(DataReader):
     def read(self, data_id: str, start: str|None=None, stop: str|None=None, 
              transform: DataTransformer = DataTransformer(),
              chunksize=0,  # TODO: use self._cursor.fetchmany in this case !!!!
-             timeframe: str='1m') -> Any:
+             timeframe: str='1m', suffix='candles_1m') -> Any:
         start, end = handle_start_stop(start, stop)
-        _req = self._prepare_data_sql(data_id, start, end, timeframe)
+        _req = self._prepare_data_sql(data_id, start, end, timeframe, suffix)
 
         self._cursor.execute(_req) # type: ignore
         records = self._cursor.fetchall() # TODO: for chunksize > 0 use fetchmany etc
@@ -573,7 +573,7 @@ class QuestDBConnector(DataReader):
             table_name = '.'.join(filter(lambda x: x, [_exch.lower(), _aliases.get(_mktype, _mktype), symb.lower(), sfx]))
         return table_name
 
-    def _prepare_data_sql(self, data_id: str, start: str|None, end: str|None, resample: str) -> str:
+    def _prepare_data_sql(self, data_id: str, start: str|None, end: str|None, resample: str, suffix: str) -> str:
         where = ''
         w0 = f"timestamp >= '{start}'" if start else ''
         w1 = f"timestamp <= '{end}'" if end else ''
@@ -586,7 +586,7 @@ class QuestDBConnector(DataReader):
         resample = QuestDBConnector._convert_time_delta_to_qdb_resample_format(resample) if resample else resample
         _rsmpl = f"SAMPLE by {resample}" if resample else ''
 
-        table_name = self._get_table_name(data_id, 'candles_1m')
+        table_name = self._get_table_name(data_id, suffix)
         return f"""
                 select timestamp, 
                 first(open) as open, 
