@@ -503,56 +503,27 @@ def _retry(fn):
     return wrapper
 
 
-class QuestDBConnector(DataReader):
+class QuestDBSqlBuilder:
     """
-    Very first version of QuestDB connector
-
-    ### Connect to an existing QuestDB instance
-    >>> db = QuestDBConnector()
-    >>> db.read('BINANCE.UM:ETHUSDT', '2024-01-01', transform=AsPandasFrame())
+    Generic sql builder for QuestDB data
     """
-    _reconnect_tries = 5
-    _reconnect_idle = 0.1  # wait seconds before retying
 
-    def __init__(self, host='localhost', user='admin', password='quest', port=8812) -> None:
-        self._connection = None
-        self._cursor = None
-        self._host = host
-        self._port = port
-        self.connection_url = f'user={user} password={password} host={host} port={port}'
-        self._connect()
+    def get_table_name(self, data_id: str, sfx: str='') -> str | None:
+        pass
 
-    def _connect(self):
-        self._connection = pg.connect(self.connection_url, autocommit=True)
-        self._cursor = self._connection.cursor()
-        logger.debug(f"Connected to QuestDB at {self._host}:{self._port}")
+    def prepare_data_sql(self, data_id: str, start: str|None, end: str|None, resample: str, suffix: str) -> str | None:
+        pass
 
-    @_retry
-    def read(self, data_id: str, start: str|None=None, stop: str|None=None, 
-             transform: DataTransformer = DataTransformer(),
-             chunksize=0,  # TODO: use self._cursor.fetchmany in this case !!!!
-             timeframe: str='1m', suffix='candles_1m') -> Any:
-        start, end = handle_start_stop(start, stop)
-        _req = self._prepare_data_sql(data_id, start, end, timeframe, suffix)
+    def prepare_names_sql(self) -> str:
+        return "select table_name from tables()"
 
-        self._cursor.execute(_req) # type: ignore
-        records = self._cursor.fetchall() # TODO: for chunksize > 0 use fetchmany etc
 
-        names = [d.name for d in self._cursor.description] # type: ignore
-        transform.start_transform(data_id, names)
+class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
+    """
+    Sql builder for candles data
+    """
 
-        transform.process_data(records)
-        return transform.collect()
-
-    @staticmethod
-    def _convert_time_delta_to_qdb_resample_format(c_tf: str):
-        if c_tf:
-            _t = re.match(r'(\d+)(\w+)', c_tf)
-            if _t and len(_t.groups()) > 1:
-                c_tf = f"{_t[1]}{_t[2][0].lower()}"
-        return c_tf 
-
-    def _get_table_name(self, data_id: str, sfx: str='') -> str:
+    def get_table_name(self, data_id: str, sfx: str='') -> str:
         """
         Get table name for data_id
         data_id can have format <exchange>.<type>:<symbol>
@@ -573,7 +544,15 @@ class QuestDBConnector(DataReader):
             table_name = '.'.join(filter(lambda x: x, [_exch.lower(), _aliases.get(_mktype, _mktype), symb.lower(), sfx]))
         return table_name
 
-    def _prepare_data_sql(self, data_id: str, start: str|None, end: str|None, resample: str, suffix: str) -> str:
+    @staticmethod
+    def _convert_time_delta_to_qdb_resample_format(c_tf: str):
+        if c_tf:
+            _t = re.match(r'(\d+)(\w+)', c_tf)
+            if _t and len(_t.groups()) > 1:
+                c_tf = f"{_t[1]}{_t[2][0].lower()}"
+        return c_tf 
+
+    def prepare_data_sql(self, data_id: str, start: str|None, end: str|None, resample: str, suffix: str) -> str:
         where = ''
         w0 = f"timestamp >= '{start}'" if start else ''
         w1 = f"timestamp <= '{end}'" if end else ''
@@ -583,10 +562,10 @@ class QuestDBConnector(DataReader):
             where = f'where {w0} and {w1}' if (w0 and w1) else f"where {(w0 or w1)}"
 
         # - check resample format
-        resample = QuestDBConnector._convert_time_delta_to_qdb_resample_format(resample) if resample else resample
+        resample = QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(resample) if resample else resample
         _rsmpl = f"SAMPLE by {resample}" if resample else ''
 
-        table_name = self._get_table_name(data_id, suffix)
+        table_name = self.get_table_name(data_id, suffix)
         return f"""
                 select timestamp, 
                 first(open) as open, 
@@ -601,12 +580,54 @@ class QuestDBConnector(DataReader):
                 from "{table_name}" {where} {_rsmpl};
             """ 
 
-    def _prepare_names_sql(self) -> str:
-        return "select table_name from tables()"
+
+class QuestDBConnector(DataReader):
+    """
+    Very first version of QuestDB connector
+
+    ### Connect to an existing QuestDB instance
+    >>> db = QuestDBConnector()
+    >>> db.read('BINANCE.UM:ETHUSDT', '2024-01-01', transform=AsPandasFrame())
+    """
+    _reconnect_tries = 5
+    _reconnect_idle = 0.1  # wait seconds before retying
+    _builder: QuestDBSqlBuilder
+
+    def __init__(self, builder: QuestDBSqlBuilder = QuestDBSqlCandlesBuilder(),
+                 host='localhost', user='admin', password='quest', port=8812) -> None:
+        self._connection = None
+        self._cursor = None
+        self._host = host
+        self._port = port
+        self.connection_url = f'user={user} password={password} host={host} port={port}'
+        self._builder = builder
+        self._connect()
+
+    def _connect(self):
+        self._connection = pg.connect(self.connection_url, autocommit=True)
+        self._cursor = self._connection.cursor()
+        logger.debug(f"Connected to QuestDB at {self._host}:{self._port}")
+
+    @_retry
+    def read(self, data_id: str, start: str|None=None, stop: str|None=None, 
+             transform: DataTransformer = DataTransformer(),
+             chunksize=0,  # TODO: use self._cursor.fetchmany in this case !!!!
+             timeframe: str='1m', suffix='candles_1m') -> Any:
+        start, end = handle_start_stop(start, stop)
+        _req = self._builder.prepare_data_sql(data_id, start, end, timeframe, suffix)
+
+        self._cursor.execute(_req) # type: ignore
+        records = self._cursor.fetchall() # TODO: for chunksize > 0 use fetchmany etc
+
+        names = [d.name for d in self._cursor.description] # type: ignore
+        transform.start_transform(data_id, names)
+
+        transform.process_data(records)
+        return transform.collect()
 
     @_retry
     def get_names(self) -> List[str] :
-        self._cursor.execute(self._prepare_names_sql()) # type: ignore
+        self._cursor.execute(self._builder.prepare_names_sql()) # type: ignore
         records = self._cursor.fetchall()
         return [r[0] for r in records]
 
@@ -652,14 +673,23 @@ class SnapshotsBuilder(DataTransformer):
         return self.buffer
 
 
+class QuestDBSqlOrderBookBilder(QuestDBSqlBuilder):
+    """
+    Sql builder for snapshot data
+    """
+
+    def get_table_name(self, data_id: str, sfx: str='') -> str:
+        return ''
+
+    def prepare_data_sql(self, data_id: str, start: str|None, end: str|None, resample: str, suffix: str) -> str:
+        return ''
+
+
 class QuestDBOrderBookConnector(QuestDBConnector):
     """
     Example of custom OrderBook data connector 
     """
 
-    def _prepare_data_sql(self, data_id: str, start: str|None, end: str|None, resample: str|None) -> str:
-        raise NotImplemented("TODO")
-
-    def _prepare_names_sql(self) -> str:
-        # return "select table_name from tables() where ..."
-        raise NotImplemented("TODO")
+    def __init__(self, host='localhost', user='admin', password='quest', port=8812) -> None:
+        super().__init__(QuestDBSqlOrderBookBilder(), host, user, password, port)
+    
