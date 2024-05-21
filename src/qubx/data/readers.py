@@ -507,23 +507,25 @@ class QuestDBConnector(DataReader):
     """
     Very first version of QuestDB connector
 
-    # Connect to an existing QuestDB instance
-    >>> db = QuestDBConnector('user=admin password=quest host=localhost port=8812', OhlcvPandasDataProcessor())
-    >>> db.read('BINANCEF.ETHUSDT', '2024-01-01')
+    ### Connect to an existing QuestDB instance
+    >>> db = QuestDBConnector()
+    >>> db.read('BINANCE.UM:ETHUSDT', '2024-01-01', transform=AsPandasFrame())
     """
     _reconnect_tries = 5
     _reconnect_idle = 0.1  # wait seconds before retying
 
-    def __init__(self, connection_url: str) -> None:
+    def __init__(self, host='localhost', user='admin', password='quest', port=8812) -> None:
         self._connection = None
         self._cursor = None
-        self.connection_url = connection_url
+        self._host = host
+        self._port = port
+        self.connection_url = f'user={user} password={password} host={host} port={port}'
         self._connect()
 
     def _connect(self):
-        logger.info("Connecting to QuestDB ...")
         self._connection = pg.connect(self.connection_url, autocommit=True)
         self._cursor = self._connection.cursor()
+        logger.debug(f"Connected to QuestDB at {self._host}:{self._port}")
 
     @_retry
     def read(self, data_id: str, start: str|None=None, stop: str|None=None, 
@@ -542,14 +544,49 @@ class QuestDBConnector(DataReader):
         transform.process_data(records)
         return transform.collect()
 
-    def _prepare_data_sql(self, data_id: str, start: str|None, end: str|None, resample: str) -> str:
-        # just a temp hack - actually we need to discuss symbology etc
-        symbol = data_id#.split('.')[-1]
+    @staticmethod
+    def _convert_time_delta_to_qdb_resample_format(c_tf: str):
+        if c_tf:
+            _t = re.match(r'(\d+)(\w+)', c_tf)
+            if _t and len(_t.groups()) > 1:
+                c_tf = f"{_t[1]}{_t[2][0].lower()}"
+        return c_tf 
 
+    def _get_table_name(self, data_id: str, sfx: str='') -> str:
+        """
+        Get table name for data_id
+        data_id can have format <exchange>.<type>:<symbol>
+        for example: 
+            BINANCE.UM:BTCUSDT or BINANCE:BTCUSDT for spot 
+        """
+        _aliases = {'um': 'umfutures', 'cm': 'cmfutures', 'f': 'futures'}
+        table_name = data_id
+        _ss = data_id.split(':')
+        if len(_ss) > 1:
+            _exch, symb = _ss
+            _mktype = 'spot'
+            _ss = _exch.split('.')
+            if len(_ss) > 1:
+                _exch = _ss[0]
+                _mktype = _ss[1]
+            _mktype = _mktype.lower()
+            table_name = '.'.join(filter(lambda x: x, [_exch.lower(), _aliases.get(_mktype, _mktype), symb.lower(), sfx]))
+        return table_name
+
+    def _prepare_data_sql(self, data_id: str, start: str|None, end: str|None, resample: str) -> str:
+        where = ''
         w0 = f"timestamp >= '{start}'" if start else ''
         w1 = f"timestamp <= '{end}'" if end else ''
-        where = f'where {w0} and {w1}' if (w0 and w1) else f"where {(w0 or w1)}"
 
+        # - fix: when no data ranges are provided we must skip empy where keyword
+        if w0 or w1: 
+            where = f'where {w0} and {w1}' if (w0 and w1) else f"where {(w0 or w1)}"
+
+        # - check resample format
+        resample = QuestDBConnector._convert_time_delta_to_qdb_resample_format(resample) if resample else resample
+        _rsmpl = f"SAMPLE by {resample}" if resample else ''
+
+        table_name = self._get_table_name(data_id, 'candles_1m')
         return f"""
                 select timestamp, 
                 first(open) as open, 
@@ -561,8 +598,7 @@ class QuestDBConnector(DataReader):
                 sum(count) as count,
                 sum(taker_buy_volume) as taker_buy_volume,
                 sum(taker_buy_quote_volume) as taker_buy_quote_volume
-                from "{symbol.upper()}" {where}
-                SAMPLE by {resample};
+                from "{table_name}" {where} {_rsmpl};
             """ 
 
     def _prepare_names_sql(self) -> str:
