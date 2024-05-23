@@ -11,6 +11,7 @@ from functools import wraps
 from qubx import logger
 from qubx.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
 from qubx.utils.time import infer_series_frequency, handle_start_stop
+from psycopg.types.datetime import TimestampLoader
 
 _DT = lambda x: pd.Timedelta(x).to_numpy().item()
 D1, H1 = _DT("1D"), _DT("1h")
@@ -18,6 +19,12 @@ D1, H1 = _DT("1D"), _DT("1h")
 DEFAULT_DAILY_SESSION = (_DT("00:00:00.100"), _DT("23:59:59.900"))
 STOCK_DAILY_SESSION = (_DT("9:30:00.100"), _DT("15:59:59.900"))
 CME_FUTURES_DAILY_SESSION = (_DT("8:30:00.100"), _DT("15:14:59.900"))
+
+
+class NpTimestampLoader(TimestampLoader):
+    def load(self, data) -> np.datetime64:
+        dt = super().load(data)
+        return np.datetime64(dt)
 
 
 def _recognize_t(t: Union[int, str], defaultvalue, timeunit) -> int:
@@ -46,7 +53,7 @@ def _find_column_index_in_list(xs, *args):
 
 
 _FIND_TIME_COL_IDX = lambda column_names: _find_column_index_in_list(
-    column_names, "time", "timestamp", "datetime", "date", "open_time"
+    column_names, "time", "timestamp", "datetime", "date", "open_time", "ts"
 )
 
 
@@ -761,7 +768,7 @@ class QuestDBConnector(DataReader):
         stop: str | None = None,
         transform: DataTransformer = DataTransformer(),
         chunksize=0,  # TODO: use self._cursor.fetchmany in this case !!!!
-        timeframe: str = "1m",
+        timeframe: str | None = "1m",
         data_type="candles_1m",
     ) -> Any:
         return self._read(
@@ -786,7 +793,7 @@ class QuestDBConnector(DataReader):
         stop: str | None,
         transform: DataTransformer,
         chunksize: int,  # TODO: use self._cursor.fetchmany in this case !!!!
-        timeframe: str,
+        timeframe: str | None,
         data_type: str,
         builder: QuestDBSqlBuilder,
     ) -> Any:
@@ -817,48 +824,14 @@ class QuestDBConnector(DataReader):
                 pass
 
 
-class SnapshotsBuilder(DataTransformer):
-    """
-    Snapshots assembler from OB updates
-    """
-
-    def __init__(
-        self,
-        levels: int = -1,  # how many levels restore, 1 - TOB, -1 - all
-        as_frame=False,  # result is dataframe
-    ):
-        self.buffer = []
-        self.levels = levels
-        self.as_frame = as_frame
-
-    def start_transform(self, name: str, column_names: List[str]):
-        # initialize buffer / series etc
-        # let's keep restored snapshots into some buffer etc
-        self.buffer = []
-
-        # do additional init stuff here
-
-    def process_data(self, rows_data: List[List]) -> Any:
-        for r in rows_data:
-            # restore snapshots and put into buffer or series
-            pass
-
-    def collect(self) -> Any:
-        # - may be convert it to pandas DataFrame ?
-        if self.as_frame:
-            return pd.DataFrame.from_records(self.buffer)  # or custom transform
-
-        # - or just returns as plain list
-        return self.buffer
-
-
-class QuestDBSqlOrderBookBilder(QuestDBSqlBuilder):
+class QuestDBSqlOrderBookBuilder(QuestDBSqlCandlesBuilder):
     """
     Sql builder for snapshot data
     """
 
-    def get_table_name(self, data_id: str, sfx: str = "") -> str:
-        return ""
+    MAX_TIME_DELTA = pd.Timedelta("5h")
+    SNAPSHOT_DELTA = pd.Timedelta("1h")
+    MIN_DELTA = pd.Timedelta("1s")
 
     def prepare_data_sql(
         self,
@@ -868,7 +841,23 @@ class QuestDBSqlOrderBookBilder(QuestDBSqlBuilder):
         resample: str,
         data_type: str,
     ) -> str:
-        return ""
+        if not start or not end:
+            raise ValueError("Start and end dates must be provided for orderbook data!")
+        start_dt, end_dt = pd.Timestamp(start), pd.Timestamp(end)
+        delta = end_dt - start_dt
+        if delta > self.MAX_TIME_DELTA:
+            raise ValueError(
+                f"Time range is too big for orderbook data: {delta}, max allowed: {self.MAX_TIME_DELTA}"
+            )
+
+        raw_start_dt = start_dt.floor(self.SNAPSHOT_DELTA) - self.MIN_DELTA
+
+        table_name = self.get_table_name(data_id, data_type)
+        query = f"""
+SELECT * FROM {table_name}
+WHERE timestamp BETWEEN '{raw_start_dt}' AND '{end_dt}'
+"""
+        return query
 
 
 class TradeSql(QuestDBSqlCandlesBuilder):
@@ -931,7 +920,7 @@ class MultiQdbConnector(QuestDBConnector):
     _TYPE_TO_BUILDER = {
         "candles_1m": QuestDBSqlCandlesBuilder(),
         "trade": TradeSql(),
-        "orderbook": QuestDBSqlOrderBookBilder(),
+        "orderbook": QuestDBSqlOrderBookBuilder(),
     }
 
     _TYPE_MAPPINGS = {
@@ -974,9 +963,9 @@ class MultiQdbConnector(QuestDBConnector):
         start: str | None = None,
         stop: str | None = None,
         transform: DataTransformer = DataTransformer(),
-        chunksize=0,  # TODO: use self._cursor.fetchmany in this case !!!!
+        chunksize: int = 0,  # TODO: use self._cursor.fetchmany in this case !!!!
         timeframe: str | None = None,
-        data_type="candles",
+        data_type: str = "candles",
     ) -> Any:
         _mapped_data_type = self._TYPE_MAPPINGS.get(data_type, data_type)
         return self._read(
