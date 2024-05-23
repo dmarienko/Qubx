@@ -63,7 +63,9 @@ class DataTransformer:
         self.buffer = []
         self._column_names = []
 
-    def start_transform(self, name: str, column_names: List[str]):
+    def start_transform(
+        self, name: str, column_names: List[str], start: str | None, stop: str | None
+    ):
         self._column_names = column_names
         self.buffer = []
 
@@ -804,7 +806,7 @@ class QuestDBConnector(DataReader):
         records = self._cursor.fetchall()  # TODO: for chunksize > 0 use fetchmany etc
 
         names = [d.name for d in self._cursor.description]  # type: ignore
-        transform.start_transform(data_id, names)
+        transform.start_transform(data_id, names, start=start, stop=stop)
 
         transform.process_data(records)
         return transform.collect()
