@@ -804,6 +804,8 @@ class QuestDBConnector(DataReader):
 
         self._cursor.execute(_req)  # type: ignore
         records = self._cursor.fetchall()  # TODO: for chunksize > 0 use fetchmany etc
+        if not records:
+            return None
 
         names = [d.name for d in self._cursor.description]  # type: ignore
         transform.start_transform(data_id, names, start=start, stop=stop)
@@ -820,7 +822,7 @@ class QuestDBConnector(DataReader):
     def __del__(self):
         for c in (self._cursor, self._connection):
             try:
-                logger.info("Closing connection")
+                logger.debug("Closing connection")
                 c.close()
             except:
                 pass
