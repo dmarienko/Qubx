@@ -8,10 +8,11 @@ from pathlib import Path
 
 def version() -> str:
     # - check current version
-    version = 'Dev'
-    try: 
+    version = "Dev"
+    try:
         import importlib_metadata
-        version = importlib_metadata.version('qubx')
+
+        version = importlib_metadata.version("qubx")
     except:
         pass
 
@@ -23,12 +24,7 @@ def install_pyx_recompiler_for_dev():
 
     # if version().lower() == 'dev':
     print(f" >  [{green('dev')}] {red('installing cython rebuilding hook')}")
-    pyx_install_loader([
-        'qubx.core', 
-        'qubx.ta', 
-        'qubx.data', 
-        'qubx.strategies'
-    ])
+    pyx_install_loader(["qubx.core", "qubx.ta", "qubx.data", "qubx.strategies"])
 
 
 def runtime_env():
@@ -42,29 +38,32 @@ def runtime_env():
     """
     try:
         from IPython.core.getipython import get_ipython
+
         shell = get_ipython().__class__.__name__
 
-        if shell == 'ZMQInteractiveShell':  # Jupyter notebook or qtconsole
-            return 'notebook'
-        elif shell.endswith('TerminalInteractiveShell'):  # Terminal running IPython
-            return 'shell'
+        if shell == "ZMQInteractiveShell":  # Jupyter notebook or qtconsole
+            return "notebook"
+        elif shell.endswith("TerminalInteractiveShell"):  # Terminal running IPython
+            return "shell"
         else:
-            return 'unknown'  # Other type (?)
+            return "unknown"  # Other type (?)
     except (NameError, ImportError):
-        return 'python'  # Probably standard Python interpreter
+        return "python"  # Probably standard Python interpreter
+
 
 _QUBX_FLDR = None
+
 
 def get_local_qubx_folder() -> str:
     global _QUBX_FLDR
 
     if _QUBX_FLDR is None:
-        _QUBX_FLDR = makedirs(os.getenv('QUBXSTORAGE', os.path.expanduser('~/.qubx')))
+        _QUBX_FLDR = makedirs(os.getenv("QUBXSTORAGE", os.path.expanduser("~/.qubx")))
 
     return _QUBX_FLDR
 
 
-def add_project_to_system_path(project_folder:str = '~/projects'):
+def add_project_to_system_path(project_folder: str = "~/projects"):
     """
     Add path to projects folder to system python path to be able importing any modules from project
     from test.Models.handy_utils import some_module
@@ -72,21 +71,23 @@ def add_project_to_system_path(project_folder:str = '~/projects'):
     import sys
     from os.path import expanduser, relpath
     from pathlib import Path
-    
+
     # we want to track folders with these files as separate paths
-    toml = Path('pyproject.toml')
-    src = Path('src')
-    
+    toml = Path("pyproject.toml")
+    src = Path("src")
+
     try:
         prj = Path(relpath(expanduser(project_folder)))
     except ValueError as e:
         # This error can occur on Windows if user folder and python file are on different drives
         print(f"Qube> Error during get path to projects folder:\n{e}")
     else:
-        insert_path_iff = lambda p: sys.path.insert(0, p.as_posix()) if p.as_posix() not in sys.path else None
+        insert_path_iff = lambda p: (
+            sys.path.insert(0, p.as_posix()) if p.as_posix() not in sys.path else None
+        )
         if prj.exists():
             insert_path_iff(prj)
-            
+
             for di in prj.iterdir():
                 _src = di / src
                 if (di / toml).exists():
@@ -96,11 +97,13 @@ def add_project_to_system_path(project_folder:str = '~/projects'):
                     else:
                         insert_path_iff(di)
         else:
-            print(f'Qube> Cant find {project_folder} folder for adding to python path !')
+            print(
+                f"Qube> Cant find {project_folder} folder for adding to python path !"
+            )
 
 
 def is_localhost(host):
-    return host.lower() == 'localhost' or host == '127.0.0.1'
+    return host.lower() == "localhost" or host == "127.0.0.1"
 
 
 def __wrap_with_color(code):
@@ -114,13 +117,13 @@ def __wrap_with_color(code):
 
 
 red, green, yellow, blue, magenta, cyan, white = (
-    __wrap_with_color('31'),
-    __wrap_with_color('32'),
-    __wrap_with_color('33'),
-    __wrap_with_color('34'),
-    __wrap_with_color('35'),
-    __wrap_with_color('36'),
-    __wrap_with_color('37'),
+    __wrap_with_color("31"),
+    __wrap_with_color("32"),
+    __wrap_with_color("33"),
+    __wrap_with_color("34"),
+    __wrap_with_color("35"),
+    __wrap_with_color("36"),
+    __wrap_with_color("37"),
 )
 
 
@@ -128,12 +131,13 @@ def logo():
     """
     Some fancy Qubx logo
     """
-    print(f"""
+    print(
+        f"""
 ⠀⠀⡰⡖⠒⠒⢒⢦⠀⠀   
 ⠀⢠⠃⠈⢆⣀⣎⣀⣱⡀  {red("QUBX")} | {cyan("Quantitative Backtesting Environment")} 
 ⠀⢳⠒⠒⡞⠚⡄⠀⡰⠁         (c) 2024, ver. {magenta(version().rstrip())}
 ⠀⠀⠱⣜⣀⣀⣈⣦⠃⠀⠀⠀ 
-        """ 
+        """
     )
 
 
@@ -146,9 +150,9 @@ class Struct:
     >>> print(a)
 
     Struct(x=1, y=2, z='Hello')
-    
+
     >>> Struct(a=234, b=Struct(c=222)).to_dict()
-    
+
     {'a': 234, 'b': {'c': 222}}
 
     >>> Struct({'a': 555}, a=123, b=Struct(c=222)).to_dict()
@@ -167,7 +171,7 @@ class Struct:
 
     def __initialize(self, fields, values):
         self._fields = list(fields)
-        self._meta = namedtuple('Struct', ' '.join(fields))
+        self._meta = namedtuple("Struct", " ".join(fields))
         self._inst = self._meta(*values)
 
     def fields(self) -> list:
@@ -179,7 +183,7 @@ class Struct:
     def __getattr__(self, k):
         return getattr(self._inst, k)
 
-    def __or__(self, other: Union[dict, 'Struct']):
+    def __or__(self, other: Union[dict, "Struct"]):
         if isinstance(other, dict):
             other = Struct.dict2struct(other)
         elif not isinstance(other, Struct):
@@ -195,7 +199,7 @@ class Struct:
         return self._inst.__repr__()
 
     def __setattr__(self, k, v):
-        if k not in ['_inst', '_meta', '_fields']:
+        if k not in ["_inst", "_meta", "_fields"]:
             new_vals = {**self._inst._asdict(), **{k: v}}
             self.__initialize(new_vals.keys(), new_vals.values())
         else:
@@ -220,14 +224,14 @@ class Struct:
         """
         return self.__ms2d(self)
 
-    def copy(self) -> 'Struct':
+    def copy(self) -> "Struct":
         """
         Returns copy of this structure
         """
         return Struct(self.to_dict())
 
     @staticmethod
-    def dict2struct(d: dict) -> 'Struct':
+    def dict2struct(d: dict) -> "Struct":
         """
         Convert dictionary to structure
         >>> s = dict2struct({'f_1_0': 1, 'z': {'x': 1, 'y': 2}})
@@ -249,52 +253,58 @@ class Struct:
 def makedirs(path: str, *args) -> str:
     path = os.path.expanduser(os.path.join(*[path, *args]))
     if not exists(path):
-        os.makedirs(path)
+        os.makedirs(path, exist_ok=True)
     return path
 
 
 class Stopwatch:
     """
-    Stopwatch timer for performance 
+    Stopwatch timer for performance
     """
-    starts: Dict[str|None, int] = {} 
-    counts: Dict[str|None, int] = defaultdict(lambda: 0)
-    latencies: Dict[str|None, int] = {} 
-    
+
+    starts: Dict[str | None, int] = {}
+    counts: Dict[str | None, int] = defaultdict(lambda: 0)
+    latencies: Dict[str | None, int] = {}
+
     def __new__(cls):
-        if not hasattr(cls, 'instance'):
+        if not hasattr(cls, "instance"):
             cls.instance = super(Stopwatch, cls).__new__(cls)
         return cls.instance
-    
+
     def start(self, scope: str | None):
         self.starts[scope] = time.perf_counter_ns()
         self.counts[scope] += 1
-        
-    def stop(self, scope: str|None=None) -> int | None:
+
+    def stop(self, scope: str | None = None) -> int | None:
         t = time.perf_counter_ns()
         s = self.starts.get(scope, None)
         lat = None
         if s:
             lat = t - s
             n = self.counts[scope]
-            self.latencies[scope] = (lat * (n - 1) + self.latencies.get(scope, lat)) // n
+            self.latencies[scope] = (
+                lat * (n - 1) + self.latencies.get(scope, lat)
+            ) // n
             del self.starts[scope]
         return lat
 
     def latency_sec(self, scope: str | None) -> float:
         return self.latencies.get(scope, 0) / 1e9
 
-    def watch(self, scope='global'):
+    def watch(self, scope="global"):
         def _decorator(func):
-            info = scope + '.' + func.__name__
+            info = scope + "." + func.__name__
+
             def wrapper(*args, **kwargs):
                 self.start(info)
                 output = func(*args, **kwargs)
                 self.stop(info)
                 return output
+
             return wrapper
+
         return _decorator
-    
+
     def reset(self):
         self.starts.clear()
         self.counts.clear()
@@ -307,7 +317,7 @@ class Stopwatch:
         return r
 
 
-def quotify(sx: Union[str, List[str]], quote='USDT'):
+def quotify(sx: Union[str, List[str]], quote="USDT"):
     """
     Make XXX<quote> from anything if that anything doesn't end with <quote>
     """
@@ -318,14 +328,14 @@ def quotify(sx: Union[str, List[str]], quote='USDT'):
     raise ValueError("Can't process input data !")
 
 
-def dequotify(sx: Union[str, List[str]], quote='USDT'):
+def dequotify(sx: Union[str, List[str]], quote="USDT"):
     """
     Turns XXX<quote> to XXX (reverse of quotify)
     """
     if isinstance(sx, str):
         quote = quote.upper()
-        if (s:=sx.upper()).endswith(quote):
-            s = s.split(':')[1] if ':' in s else s # remove exch: if presented
+        if (s := sx.upper()).endswith(quote):
+            s = s.split(":")[1] if ":" in s else s  # remove exch: if presented
             return s.split(quote)[0]
     elif isinstance(sx, (list, set, tuple)):
         return [dequotify(s, quote) for s in sx]
