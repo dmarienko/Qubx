@@ -709,7 +709,7 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
                 resample
             )
             if resample
-            else resample
+            else '1m'  # if resample is empty let's use 1 minute timeframe
         )
         _rsmpl = f"SAMPLE by {resample}" if resample else ""
 
