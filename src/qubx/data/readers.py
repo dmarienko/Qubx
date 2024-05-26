@@ -763,9 +763,13 @@ class QuestDBConnector(DataReader):
         self._connect()
 
     def __getstate__(self):
+        if self._connection:
+            self._connection.close()
+            self._connection = None
+        if self._cursor:
+            self._cursor.close()
+            self._cursor = None
         state = self.__dict__.copy()
-        state["_connection"] = None
-        state["_cursor"] = None
         return state
 
     def _connect(self):
