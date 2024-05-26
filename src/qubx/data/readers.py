@@ -621,10 +621,8 @@ def _retry(fn):
             # print(x, cls._reconnect_tries)
             try:
                 return fn(*args, **kw)
-            except (pg.InterfaceError, pg.OperationalError) as e:
-                logger.warning(
-                    "Database Connection [InterfaceError or OperationalError]"
-                )
+            except (pg.InterfaceError, pg.OperationalError, AttributeError) as e:
+                logger.debug("Database Connection [InterfaceError or OperationalError]")
                 # print ("Idle for %s seconds" % (cls._reconnect_idle))
                 # time.sleep(cls._reconnect_idle)
                 cls._connect()
@@ -763,6 +761,12 @@ class QuestDBConnector(DataReader):
         self.connection_url = f"user={user} password={password} host={host} port={port}"
         self._builder = builder
         self._connect()
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_connection"] = None
+        state["_cursor"] = None
+        return state
 
     def _connect(self):
         self._connection = pg.connect(self.connection_url, autocommit=True)
