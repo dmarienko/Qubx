@@ -64,7 +64,11 @@ class DataTransformer:
         self._column_names = []
 
     def start_transform(
-        self, name: str, column_names: List[str], start: str | None, stop: str | None
+        self,
+        name: str,
+        column_names: List[str],
+        start: str | None = None,
+        stop: str | None = None,
     ):
         self._column_names = column_names
         self.buffer = []
@@ -190,7 +194,9 @@ class CsvStorageDataReader(DataReader):
 
             def _iter_chunks():
                 for n in range(0, length // chunksize + 1):
-                    transform.start_transform(data_id, fieldnames)
+                    transform.start_transform(
+                        data_id, fieldnames, start=start, stop=stop
+                    )
                     raw_data = (
                         selected_table[n * chunksize : min((n + 1) * chunksize, length)]
                         .to_pandas()
@@ -201,7 +207,7 @@ class CsvStorageDataReader(DataReader):
 
             return _iter_chunks()
 
-        transform.start_transform(data_id, fieldnames)
+        transform.start_transform(data_id, fieldnames, start=start, stop=stop)
         raw_data = selected_table.to_pandas().to_numpy()
         transform.process_data(raw_data)
         return transform.collect()
@@ -222,7 +228,7 @@ class AsPandasFrame(DataTransformer):
     def __init__(self, timestamp_units=None) -> None:
         self.timestamp_units = timestamp_units
 
-    def start_transform(self, name: str, column_names: List[str]):
+    def start_transform(self, name: str, column_names: List[str], **kwargs):
         self._time_idx = _FIND_TIME_COL_IDX(column_names)
         self._column_names = column_names
         self._frame = pd.DataFrame()
@@ -265,7 +271,7 @@ class AsOhlcvSeries(DataTransformer):
         self._data_type = None
         self.timestamp_units = timestamp_units
 
-    def start_transform(self, name: str, column_names: List[str]):
+    def start_transform(self, name: str, column_names: List[str], **kwargs):
         self._time_idx = _FIND_TIME_COL_IDX(column_names)
         self._volume_idx = None
         self._b_volume_idx = None
@@ -385,7 +391,7 @@ class AsQuotes(DataTransformer):
     Data must have appropriate structure: bid, ask, bidsize, asksize and time
     """
 
-    def start_transform(self, name: str, column_names: List[str]):
+    def start_transform(self, name: str, column_names: List[str], **kwargs):
         self.buffer = list()
         self._time_idx = _FIND_TIME_COL_IDX(column_names)
         self._bid_idx = _find_column_index_in_list(column_names, "bid")
@@ -431,7 +437,7 @@ class AsTimestampedRecords(DataTransformer):
     def __init__(self, timestamp_units: str | None = None) -> None:
         self.timestamp_units = timestamp_units
 
-    def start_transform(self, name: str, column_names: List[str]):
+    def start_transform(self, name: str, column_names: List[str], **kwargs):
         self.buffer = list()
         self._time_idx = _FIND_TIME_COL_IDX(column_names)
         self._column_names = column_names
@@ -474,7 +480,7 @@ class RestoreTicksFromOHLC(DataTransformer):
         self._d_session_start = daily_session_start_end[0]
         self._d_session_end = daily_session_start_end[1]
 
-    def start_transform(self, name: str, column_names: List[str]):
+    def start_transform(self, name: str, column_names: List[str], **kwargs):
         self.buffer = []
         # - it will fail if receive data doesn't look as ohlcv
         self._time_idx = _FIND_TIME_COL_IDX(column_names)
@@ -709,7 +715,7 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
                 resample
             )
             if resample
-            else '1m'  # if resample is empty let's use 1 minute timeframe
+            else "1m"  # if resample is empty let's use 1 minute timeframe
         )
         _rsmpl = f"SAMPLE by {resample}" if resample else ""
 
@@ -924,6 +930,7 @@ class MultiQdbConnector(QuestDBConnector):
     _TYPE_TO_BUILDER = {
         "candles_1m": QuestDBSqlCandlesBuilder(),
         "trade": TradeSql(),
+        "agg_trade": TradeSql(),
         "orderbook": QuestDBSqlOrderBookBuilder(),
     }
 
@@ -933,6 +940,9 @@ class MultiQdbConnector(QuestDBConnector):
         "ob": "orderbook",
         "trd": "trade",
         "td": "trade",
+        "aggTrade": "agg_trade",
+        "agg_trades": "agg_trade",
+        "aggTrades": "agg_trade",
     }
 
     def __init__(
