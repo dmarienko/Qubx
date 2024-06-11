@@ -912,6 +912,111 @@ class TradeSql(QuestDBSqlCandlesBuilder):
             sql = f"""select timestamp, price, size, market_maker from "{table_name}" {where};"""
 
         return sql
+    
+
+class LiquidationSql(QuestDBSqlCandlesBuilder):
+
+    def prepare_data_sql(
+        self,
+        data_id: str,
+        start: str | None,
+        end: str | None,
+        resample: str,
+        data_type: str,
+    ) -> str:
+        table_name = self.get_table_name(data_id, data_type)
+        where = ""
+        w0 = f"timestamp >= '{start}'" if start else ""
+        w1 = f"timestamp <= '{end}'" if end else ""
+
+        if w0 or w1:
+            where = f"where {w0} and {w1}" if (w0 and w1) else f"where {(w0 or w1)}"
+
+        resample = (
+            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(
+                resample
+            )
+            if resample
+            else resample
+        )
+        if resample:
+            sql = f"""
+                select timestamp, side, price, average_price, size, filled_size
+                from "{table_name}" {where} SAMPLE by {resample};"""
+        else:
+            sql = f"""select timestamp, side, price, average_price, size, filled_size
+                from "{table_name}" {where};"""
+        return sql
+    
+
+class FundingRateSql(QuestDBSqlCandlesBuilder):
+
+    def prepare_data_sql(
+        self,
+        data_id: str,
+        start: str | None,
+        end: str | None,
+        resample: str,
+        data_type: str,
+    ) -> str:
+        table_name = self.get_table_name(data_id, data_type)
+        where = ""
+        w0 = f"timestamp >= '{start}'" if start else ""
+        w1 = f"timestamp <= '{end}'" if end else ""
+
+        if w0 or w1:
+            where = f"where {w0} and {w1}" if (w0 and w1) else f"where {(w0 or w1)}"
+
+        resample = (
+            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(
+                resample
+            )
+            if resample
+            else resample
+        )
+        if resample:
+            sql = f"""
+                select timestamp, funding_rate, next_funding_ts, mark_price, index_price
+                from "{table_name}" {where} SAMPLE by {resample};"""
+        else:
+            sql = f"""select timestamp, funding_rate, next_funding_ts, mark_price, index_price
+                from "{table_name}" {where};"""
+        return sql
+    
+
+class OpenInterestSql(QuestDBSqlCandlesBuilder):
+
+    def prepare_data_sql(
+        self,
+        data_id: str,
+        start: str | None,
+        end: str | None,
+        resample: str,
+        data_type: str,
+    ) -> str:
+        table_name = self.get_table_name(data_id, data_type)
+        where = ""
+        w0 = f"ts >= '{start}'" if start else ""
+        w1 = f"ts <= '{end}'" if end else ""
+
+        if w0 or w1:
+            where = f"where {w0} and {w1}" if (w0 and w1) else f"where {(w0 or w1)}"
+
+        resample = (
+            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(
+                resample
+            )
+            if resample
+            else resample
+        )
+        if resample:
+            sql = f"""
+                select ts as timestamp, open_interest
+                from "{table_name}" {where} SAMPLE by {resample};"""
+        else:
+            sql = f"""select ts as timestamp, open_interest
+                from "{table_name}" {where};"""
+        return sql
 
 
 class MultiQdbConnector(QuestDBConnector):
@@ -940,6 +1045,9 @@ class MultiQdbConnector(QuestDBConnector):
         "trade": TradeSql(),
         "agg_trade": TradeSql(),
         "orderbook": QuestDBSqlOrderBookBuilder(),
+        "liquidation": LiquidationSql(),
+        "funding_rate": FundingRateSql(),
+        "open_interest": OpenInterestSql()
     }
 
     _TYPE_MAPPINGS = {
@@ -951,6 +1059,12 @@ class MultiQdbConnector(QuestDBConnector):
         "aggTrade": "agg_trade",
         "agg_trades": "agg_trade",
         "aggTrades": "agg_trade",
+        "liquidations": "liquidation",
+        "liquidation": "liquidation",
+        "funding_rate": "funding_rate",
+        "funding rate": "funding_rate",
+        "open_interest": "open_interest",
+        "open interest": "open_interest",
     }
 
     def __init__(
