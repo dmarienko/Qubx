@@ -256,3 +256,67 @@ cdef class Std(Indicator):
 def std(series:TimeSeries, period:int, mean=0):
     return Std.wrap(series, period)
 # - - - - TODO !!!!!!!
+
+
+cdef double norm_pdf(double x):
+    return np.exp(-x ** 2 / 2) / np.sqrt(2 * np.pi)
+
+
+cdef double lognorm_pdf(double x, double s):
+    return np.exp(-np.log(x) ** 2 / (2 * s ** 2)) / (x * s * np.sqrt(2 * np.pi))
+
+
+cdef class Pewma(Indicator):
+    cdef public TimeSeries std
+    cdef double alpha, beta
+    cdef int T
+
+    cdef double _mean, _std, _var
+    cdef long _i
+
+    def __init__(self, str name, TimeSeries series, double alpha, double beta, int T):
+        self.alpha = alpha 
+        self.beta = beta
+        self.T = T
+
+        # - local variables
+        self._i = 0
+        self.std = TimeSeries('std', series.timeframe, series.max_series_length)
+        super().__init__(name, series)
+
+    cpdef double calculate(self, long long time, double x, short new_item_started):
+        cdef double diff, p, a_t, incr, v
+
+        if self._i < 1:
+            self._mean = x
+            self._std = 0.0
+            self._var = 0.0
+            incr = 0.0
+            v = 0.0
+        else:
+            diff = x - self._mean
+            # prob of observing diff
+            p = norm_pdf(diff / self._std) if self._std != 0.0 else 0.0  
+
+            # weight to give to this point
+            a_t = self.alpha * (1 - self.beta * p) if self._i > self.T else (1.0 - 1.0 / self._i)  
+            incr = (1.0 - a_t) * diff
+            v = a_t * (self._var + diff * incr)
+            self.std.update(time, np.sqrt(v))
+
+        if new_item_started:
+            self._mean += incr
+            self._i += 1
+            self._var = v
+            self._std = np.sqrt(v)
+            self.std.update(time, self._std)
+
+        return self._mean
+
+
+def pewma(series:TimeSeries, alpha: float, beta: float, T:int=30):
+    """
+    Implementation of probabilistic exponential weighted ma (https://sci-hub.shop/10.1109/SSP.2012.6319708)
+    See pandas version here: qubx.pandaz.ta::pwma 
+    """
+    return Pewma.wrap(series, alpha, beta, T)
