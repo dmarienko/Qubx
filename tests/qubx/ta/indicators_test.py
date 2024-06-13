@@ -1,43 +1,56 @@
 import numpy as np
 import pandas as pd
 
-from qubx.core.series import (TimeSeries, lag, compare, OHLCV)
-from qubx.ta.indicators import (sma, ema, tema, dema, kama, highest, lowest)
-from qubx.data.readers import CsvStorageDataReader, AsQuotes
+from qubx.core.series import TimeSeries, lag, compare, OHLCV
+from qubx.ta.indicators import sma, ema, tema, dema, kama, highest, lowest, pewma, psar
+from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsQuotes
+import qubx.pandaz.ta as pta
 import tests.qubx.ta.utils_for_testing as test
 
 
 MIN1_UPDATES = [
-    ('2024-01-01 00:00', 9), ('2024-01-01 00:00', 1),
-    ('2024-01-01 00:01', 2), ('2024-01-01 00:01', 3),   ('2024-01-01 00:01', 2),
-    ('2024-01-01 00:02', 3),
-    ('2024-01-01 00:03', 4),
-    ('2024-01-01 00:04', 5), ('2024-01-01 00:04', 5.1), ('2024-01-01 00:04:20', 5),
-    ('2024-01-01 00:05', 6), ('2024-01-01 00:05', 7),   ('2024-01-01 00:05', 6),
-    ('2024-01-01 00:07', 8), ('2024-01-01 00:07', -1),  ('2024-01-01 00:07', 8),
-    ('2024-01-01 00:08', 8),
-    ('2024-01-01 00:09', 8),
-    ('2024-01-01 00:10', 12),('2024-01-01 00:10:01', 21),('2024-01-01 00:10:30', 1),('2024-01-01 00:10:31', 5),
-    ('2024-01-01 00:11', 13),
-    ('2024-01-01 00:12', 14),
-    ('2024-01-01 00:13', 15),
-    ('2024-01-01 00:14', 17),
-    ('2024-01-01 00:15', 4),
+    ("2024-01-01 00:00", 9),
+    ("2024-01-01 00:00", 1),
+    ("2024-01-01 00:01", 2),
+    ("2024-01-01 00:01", 3),
+    ("2024-01-01 00:01", 2),
+    ("2024-01-01 00:02", 3),
+    ("2024-01-01 00:03", 4),
+    ("2024-01-01 00:04", 5),
+    ("2024-01-01 00:04", 5.1),
+    ("2024-01-01 00:04:20", 5),
+    ("2024-01-01 00:05", 6),
+    ("2024-01-01 00:05", 7),
+    ("2024-01-01 00:05", 6),
+    ("2024-01-01 00:07", 8),
+    ("2024-01-01 00:07", -1),
+    ("2024-01-01 00:07", 8),
+    ("2024-01-01 00:08", 8),
+    ("2024-01-01 00:09", 8),
+    ("2024-01-01 00:10", 12),
+    ("2024-01-01 00:10:01", 21),
+    ("2024-01-01 00:10:30", 1),
+    ("2024-01-01 00:10:31", 5),
+    ("2024-01-01 00:11", 13),
+    ("2024-01-01 00:12", 14),
+    ("2024-01-01 00:13", 15),
+    ("2024-01-01 00:14", 17),
+    ("2024-01-01 00:15", 4),
 ]
 
 
 class TestIndicators:
 
-    def generate_random_series(self, n=100_000, freq='1Min'):
-        T = pd.date_range('2024-01-01 00:00', freq=freq, periods=n)
-        ds = 1 + (2*np.random.randn(len(T))).cumsum()
+    def generate_random_series(self, n=100_000, freq="1Min"):
+        T = pd.date_range("2024-01-01 00:00", freq=freq, periods=n)
+        ds = 1 + (2 * np.random.randn(len(T))).cumsum()
         data = list(zip(T, ds))
         return T, ds, data
 
     def test_indicators_on_series(self):
         _, _, data = self.generate_random_series()
 
-        ts = TimeSeries('close', '1h')
+        ts = TimeSeries("close", "1h")
         s1 = sma(ts, 50)
         e1 = ema(ts, 50)
         d1 = dema(ts, 50)
@@ -56,7 +69,7 @@ class TestIndicators:
 
     def test_indicators_lagged(self):
         _, _, data = self.generate_random_series()
-        ts = TimeSeries('close', '1h')
+        ts = TimeSeries("close", "1h")
         l1 = lag(ts, 1)
         l2 = lag(lag(ts, 1), 4)
         test.push(ts, data)
@@ -65,23 +78,23 @@ class TestIndicators:
     def test_indicators_comparison(self):
         _, _, data = self.generate_random_series()
         # - precalculated
-        xs = test.push(TimeSeries('close', '10Min'), data)
-        r = test.scols(xs.to_series(), lag(xs, 1).to_series(), names=['a', 'b'])
+        xs = test.push(TimeSeries("close", "10Min"), data)
+        r = test.scols(xs.to_series(), lag(xs, 1).to_series(), names=["a", "b"])
         assert len(compare(xs, lag(xs, 1)).to_series()) > 0
         assert all(np.sign(r.a - r.b).dropna() == compare(xs, lag(xs, 1)).to_series().dropna())
 
         # - on streamed data
-        xs1 = TimeSeries('close', '10Min')
+        xs1 = TimeSeries("close", "10Min")
         c1 = compare(xs1, lag(xs1, 1))
         test.push(xs1, data)
-        r = test.scols(xs1.to_series(), lag(xs1, 1).to_series(), names=['a', 'b'])
+        r = test.scols(xs1.to_series(), lag(xs1, 1).to_series(), names=["a", "b"])
         assert len(c1.to_series()) > 0
         assert all(np.sign(r.a - r.b).dropna() == c1.to_series().dropna())
 
     def test_indicators_highest_lowest(self):
         _, _, data = self.generate_random_series()
 
-        xs = TimeSeries('close', '12Min')
+        xs = TimeSeries("close", "12Min")
         hh = highest(xs, 13)
         ll = lowest(xs, 13)
         test.push(xs, data)
@@ -92,7 +105,7 @@ class TestIndicators:
         assert all(abs(ll.pd().dropna() - rl.dropna()) <= 1e-4)
 
     def test_indicators_on_ohlc(self):
-        ohlc = OHLCV('TEST', '1Min')
+        ohlc = OHLCV("TEST", "1Min")
         s1 = sma(ohlc.close, 5)
         test.push(ohlc, MIN1_UPDATES, 1)
         print(ohlc.to_series())
@@ -101,7 +114,7 @@ class TestIndicators:
         s2s = sma(ohlc.close, 5).to_series()
         print(s2s)
 
-        # - TODO: fix this behaviour (nan) ! 
+        # - TODO: fix this behaviour (nan) !
         assert test.N(s2s) == s1.to_series()
 
     def test_bsf_calcs(self):
@@ -109,25 +122,25 @@ class TestIndicators:
 
         def test_i(ts: TimeSeries):
             ds = ts - ts.shift(1)
-            a1 = sma(ds * (ds > 0), 14) 
-            a2 = ds 
+            a1 = sma(ds * (ds > 0), 14)
+            a2 = ds
             return (a1 - a2) / (a1 + a2)
 
         # - incremental calcs
-        ts_i = TimeSeries('close', '1h')
+        ts_i = TimeSeries("close", "1h")
         r1_i = test_i(ts_i)
         test.push(ts_i, data)
 
         # - calc on ready data
-        ts_p = TimeSeries('close', '1h')
+        ts_p = TimeSeries("close", "1h")
         test.push(ts_p, data)
         r1_p = test_i(ts_p)
 
-        # - pandas 
+        # - pandas
         ds = ts_i.pd().diff()
         a1 = test.apply_to_frame(test.sma, ds * (ds > 0), 14)
         a2 = ds
-        gauge =(a1 - a2) / (a1 + a2)
+        gauge = (a1 - a2) / (a1 + a2)
 
         s1 = sum(abs(r1_p.pd() - gauge).dropna())
         s2 = sum(abs(r1_i.pd() - gauge).dropna())
@@ -137,11 +150,11 @@ class TestIndicators:
 
         # - another case
         def test_ii(ts: TimeSeries):
-            a1 = sma(ts, 5) 
+            a1 = sma(ts, 5)
             a2 = sma(ts, 10) * 1000
             return a1 - a2
 
-        ts_ii = TimeSeries('close', '10Min')
+        ts_ii = TimeSeries("close", "10Min")
         r_ii = test_ii(ts_ii)
         test.push(ts_ii, data[:1000])
 
@@ -149,39 +162,77 @@ class TestIndicators:
         a2 = 1000 * test.apply_to_frame(test.sma, ts_ii.pd(), 10)
         err = np.std(abs((a1 - a2) - r_ii.pd()).dropna())
         assert err < 1e-10
-        
-    def test_on_ready_series(self):
-        r0 = CsvStorageDataReader('tests/data/csv/')
-        ticks = r0.read('quotes', transform=AsQuotes())
 
-        s0 = TimeSeries('T0', '1Min')
-        control = TimeSeries('T0', '1Min')
+    def test_on_ready_series(self):
+        r0 = CsvStorageDataReader("tests/data/csv/")
+        ticks = r0.read("quotes", transform=AsQuotes())
+
+        s0 = TimeSeries("T0", "1Min")
+        control = TimeSeries("T0", "1Min")
 
         # this indicator is being calculated on streamed data
         m0 = sma(s0, 3)
 
         for q in ticks:
-            s0.update(q.time, 0.5*(q.ask + q.bid))
-            control.update(q.time, 0.5*(q.ask + q.bid))
+            s0.update(q.time, 0.5 * (q.ask + q.bid))
+            control.update(q.time, 0.5 * (q.ask + q.bid))
 
         # calculate indicator on already formed series
         m1 = sma(control, 3)
-        mx = test.scols(s0, m0, m1, names=['series', 'streamed', 'finished']).dropna()
+        mx = test.scols(s0, m0, m1, names=["series", "streamed", "finished"]).dropna()
 
         assert test.N(mx.streamed) == mx.finished
 
     def test_on_formed_only(self):
-        r0 = CsvStorageDataReader('tests/data/csv/')
-        ticks = r0.read('quotes', transform=AsQuotes())
+        r0 = CsvStorageDataReader("tests/data/csv/")
+        ticks = r0.read("quotes", transform=AsQuotes())
 
         # - ask to calculate indicators on closed bars only
-        s0 = TimeSeries('T0', '30Sec', process_every_update=False)
+        s0 = TimeSeries("T0", "30Sec", process_every_update=False)
         m0 = ema(s0, 5)
-        for q in ticks: s0.update(q.time, 0.5*(q.ask + q.bid))
+        for q in ticks:
+            s0.update(q.time, 0.5 * (q.ask + q.bid))
 
         # - prepare series
-        s1 = TimeSeries('T0', '30Sec')
-        for q in ticks: s1.update(q.time, 0.5*(q.ask + q.bid))
+        s1 = TimeSeries("T0", "30Sec")
+        for q in ticks:
+            s1.update(q.time, 0.5 * (q.ask + q.bid))
 
         # - indicator on already formed series must be equal to calculated on bars
         assert np.nansum((ema(s1, 5) - m0).pd()) == 0
+
+    def test_pewma(self):
+        r = CsvStorageDataReader("tests/data/csv/")
+        ohlc = r.read("SOLUSDT", start="2024-04-01", stop="+15h", transform=AsOhlcvSeries("1Min", "ms"))
+
+        ohlc_p = ohlc.pd()
+        qs = ohlc.close
+        ps = ohlc_p["close"]
+
+        p0 = pta.pwma(ps, 0.99, 0.01, 30)
+        p1 = pewma(qs, 0.99, 0.01, 30)
+        assert abs(np.mean(p1.pd() - p0.Mean)) < 1e-3
+        assert abs(np.mean(p1.std.pd() - p0.Std)) < 1e-3
+
+    def test_psar(self):
+        r = CsvStorageDataReader("tests/data/csv/")
+
+        ohlc = r.read("SOLUSDT", start="2024-04-01", stop="+360Min", transform=AsOhlcvSeries("1Min", "ms"))
+        v = psar(ohlc)
+        e = pta.psar(ohlc.pd())
+
+        assert np.mean(abs(v.pd() - e.psar)) < 1e-3
+        assert np.mean(abs(v.up.pd() - e.up)) < 1e-3
+        assert np.mean(abs(v.down.pd() - e.down)) < 1e-3
+
+        # - test streaming data
+        ohlc10 = OHLCV("test", "5Min")
+        v10 = psar(ohlc10)
+
+        for b in ohlc[::-1]:
+            ohlc10.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume)
+
+        e10 = pta.psar(ohlc10.pd())
+        assert np.mean(abs(v10.pd() - e10.psar)) < 1e-3
+        assert np.mean(abs(v10.up.pd() - e10.up)) < 1e-3
+        assert np.mean(abs(v10.down.pd() - e10.down)) < 1e-3

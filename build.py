@@ -103,12 +103,13 @@ def _build_extensions() -> list[Extension]:
         Extension(
             name=str(pyx.relative_to(".")).replace(os.path.sep, ".")[:-4],
             sources=[str(pyx)],
-            include_dirs=[np.get_include()], #, *RUST_INCLUDES],
+            include_dirs=[np.get_include()],  # , *RUST_INCLUDES],
             define_macros=define_macros,
             language="c",
             extra_link_args=extra_link_args,
             extra_compile_args=extra_compile_args,
-        ) for pyx in itertools.chain(Path("src/qubx").rglob("*.pyx"))
+        )
+        for pyx in itertools.chain(Path("src/qubx").rglob("*.pyx"))
     ]
 
 
@@ -159,7 +160,9 @@ def _strip_unneeded_symbols() -> None:
             elif platform.system() == "Darwin":
                 strip_cmd = ["strip", "-x", so]
             else:
-                raise RuntimeError(f"Cannot strip symbols for platform {platform.system()}")
+                raise RuntimeError(
+                    f"Cannot strip symbols for platform {platform.system()}"
+                )
             subprocess.run(
                 strip_cmd,  # type: ignore [arg-type] # noqa
                 check=True,
@@ -176,7 +179,7 @@ def build() -> None:
     # _build_rust_libs()
     # _copy_rust_dylibs_to_project()
 
-    if True: #not PYO3_ONLY:
+    if True:  # not PYO3_ONLY:
         # Create C Extensions to feed into cythonize()
         extensions = _build_extensions()
         distribution = _build_distribution(extensions)
@@ -185,7 +188,7 @@ def build() -> None:
         print("Compiling C extension modules...")
         cmd: build_ext = build_ext(distribution)
         # if PARALLEL_BUILD:
-            # cmd.parallel = os.cpu_count()
+        # cmd.parallel = os.cpu_count()
         cmd.ensure_finalized()
         cmd.run()
 
@@ -198,18 +201,21 @@ def build() -> None:
         _strip_unneeded_symbols()
 
 
+RED, BLUE, GREEN, YLW, RES = "\033[31m", "\033[36m", "\033[32m", "\033[33m", "\033[0m"
 if __name__ == "__main__":
     qubx_platform = toml.load("pyproject.toml")["tool"]["poetry"]["version"]
-    print("\033[36m")
+    print(BLUE)
     print("=====================================================================")
     print(f"Qubx Builder {qubx_platform}")
-    print("=====================================================================\033[0m")
-    print(f"System: {platform.system()} {platform.machine()}")
-    # print(f"Clang:  {_get_clang_version()}")
-    # print(f"Rust:   {_get_rustc_version()}")
-    print(f"Python: {platform.python_version()}")
-    print(f"Cython: {cython_compiler_version}")
-    print(f"NumPy:  {np.__version__}\n")
+    print(
+        "=====================================================================\033[0m"
+    )
+    print(f"System: {GREEN}{platform.system()} {platform.machine()}{RES}")
+    # print(f"Clang:  {GREEN}{_get_clang_version()}{RES}")
+    # print(f"Rust:   {GREEN}{_get_rustc_version()}{RES}")
+    print(f"Python: {GREEN}{platform.python_version()}{RES}")
+    print(f"Cython: {GREEN}{cython_compiler_version}{RES}")
+    print(f"NumPy:  {GREEN}{np.__version__}{RES}\n")
 
     print(f"BUILD_MODE={BUILD_MODE}")
     print(f"BUILD_DIR={BUILD_DIR}")
@@ -222,8 +228,10 @@ if __name__ == "__main__":
     print("Starting build...")
     ts_start = datetime.datetime.now(datetime.timezone.utc)
     build()
-    print(f"Build time: {datetime.datetime.now(datetime.timezone.utc) - ts_start}")
-    print("\033[32m" + "Build completed" + "\033[0m")
+    print(
+        f"Build time: {YLW}{datetime.datetime.now(datetime.timezone.utc) - ts_start}{RES}"
+    )
+    print(GREEN + "Build completed" + RES)
 
 # # See if Cython is installed
 # try:
