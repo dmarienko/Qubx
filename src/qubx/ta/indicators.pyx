@@ -3,7 +3,7 @@ cimport numpy as np
 from scipy.special.cython_special import ndtri
 from collections import deque
 
-from qubx.core.series cimport TimeSeries, Indicator, RollingSum, nans
+from qubx.core.series cimport TimeSeries, Indicator, IndicatorOHLC, RollingSum, nans, OHLCV, Bar
 
 
 cdef extern from "math.h":
@@ -413,8 +413,133 @@ cdef class PewmaOutliersDetector(Indicator):
             self.outliers.update(time, np.nan)
         return mean
 
+
 def pewma_outliers_detector(series:TimeSeries, alpha: float, beta: float, T:int=30, threshold=0.05):
     """
     Outliers detector based on pwma
     """
     return PewmaOutliersDetector.wrap(series, alpha, beta, T, threshold)
+
+
+cdef class Psar(IndicatorOHLC):
+    cdef int _bull
+    cdef double _af
+    cdef double _psar
+    cdef double _lp
+    cdef double _hp
+
+    cdef int bull
+    cdef double af
+    cdef double psar
+    cdef double lp
+    cdef double hp
+
+    cdef public TimeSeries up
+    cdef public TimeSeries down
+
+    cdef double iaf
+    cdef double maxaf
+
+    def __init__(self, name, series, iaf, maxaf):
+        self.iaf = iaf
+        self.maxaf = maxaf
+        self.up = TimeSeries('up', series.timeframe, series.max_series_length)
+        self.down = TimeSeries('down', series.timeframe, series.max_series_length)
+        super().__init__(name, series)
+
+    cdef _store(self):
+        self.bull = self._bull
+        self.af = self._af
+        self.psar = self._psar
+        self.lp = self._lp
+        self.hp = self._hp
+
+    cdef _restore(self):
+        self._bull = self.bull
+        self._af = self.af
+        self._psar = self.psar
+        self._lp = self.lp
+        self._hp = self.hp
+
+    cpdef double calculate(self, long long time, Bar bar, short new_item_started):
+        cdef short reverse = 1
+
+        if len(self.series) <= 2:
+            self._bull = 1
+            self._af = self.iaf
+            self._psar = bar.close
+
+            if len(self.series) == 1:
+                self._lp = bar.low
+                self._hp = bar.high
+            self._store()
+            return self._psar
+
+        if not new_item_started:
+            self._store()
+        else:
+            self._restore()
+
+        bar1 = self.series[1]
+        bar2 = self.series[2]
+        cdef double h0 = bar.high
+        cdef double l0 = bar.low
+        cdef double h1 = bar1.high
+        cdef double l1 = bar1.low
+        cdef double h2 = bar2.high
+        cdef double l2 = bar2.low
+
+        if self.bull:
+            self.psar += self.af * (self.hp - self.psar)
+        else:
+            self.psar += self.af * (self.lp - self.psar)
+
+        reverse = 0
+        if self.bull:
+            if l0 < self.psar:
+                self.bull = 0
+                reverse = 1
+                self.psar = self.hp
+                self.lp = l0
+                self.af = self.iaf
+        else:
+            if h0 > self.psar:
+                self.bull = 1
+                reverse = 1
+                self.psar = self.lp
+                self.hp = h0
+                self.af = self.iaf
+
+        if not reverse:
+            if self.bull:
+                if h0 > self.hp:
+                    self.hp = h0
+                    self.af = min(self.af + self.iaf, self.maxaf)
+                if l1 < self.psar:
+                    self.psar = l1
+                if l2 < self.psar:
+                    self.psar = l2
+            else:
+                if l0 < self.lp:
+                    self.lp = l0
+                    self.af = min(self.af + self.iaf, self.maxaf)
+                if h1 > self.psar:
+                    self.psar = h1
+                if h2 > self.psar:
+                    self.psar = h2
+
+        if self.bull:
+            self.down.update(time, self.psar)
+            self.up.update(time, np.nan)
+        else:
+            self.up.update(time, self.psar)
+            self.down.update(time, np.nan)
+
+        return self.psar
+
+
+def psar(series: OHLCV, iaf: float=0.02, maxaf: float=0.2):
+    if not isinstance(series, OHLCV):
+        raise ValueError('Series must be OHLCV !')
+
+    return Psar.wrap(series, iaf, maxaf)

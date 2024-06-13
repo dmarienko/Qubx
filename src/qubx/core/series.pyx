@@ -300,6 +300,9 @@ def _wrap_indicator(series: TimeSeries, clz, *args, **kwargs):
 
 
 cdef class Indicator(TimeSeries):
+    """
+    Basic class for indicator that can be attached to TimeSeries
+    """
 
     def __init__(self, str name, TimeSeries series):
         if not name:
@@ -309,7 +312,7 @@ cdef class Indicator(TimeSeries):
         self.name = name
 
         # - we need to make a empty copy and fill it 
-        self.series = TimeSeries(series.name, series.timeframe, series.max_series_length)
+        self.series = self._instantiate_base_series(series.name, series.timeframe, series.max_series_length)
         self.parent = series 
         
         # - notify the parent series that indicator has been attached
@@ -317,6 +320,9 @@ cdef class Indicator(TimeSeries):
 
         # - recalculate indicator on data as if it would being streamed
         self._initial_data_recalculate(series)
+
+    def _instantiate_base_series(self, str name, long long timeframe, float max_series_length):
+        return TimeSeries(name, timeframe, max_series_length)
 
     def _on_attach_indicator(self, indicator: Indicator, indicator_input: TimeSeries):
         self.parent._on_attach_indicator(indicator, indicator_input)
@@ -343,6 +349,17 @@ cdef class Indicator(TimeSeries):
     @classmethod
     def wrap(clz, series:TimeSeries, *args, **kwargs):
         return _wrap_indicator(series, clz, *args, **kwargs)
+
+
+cdef class IndicatorOHLC(Indicator):
+    """
+    Extension of indicator class to be used for OHLCV series
+    """
+    def _instantiate_base_series(self, str name, long long timeframe, float max_series_length):
+        return OHLCV(name, timeframe, max_series_length)
+
+    def calculate(self, long long time, Bar value, short new_item_started) -> object:
+        raise ValueError("Indicator must implement calculate() method")
 
 
 cdef class Lag(Indicator):

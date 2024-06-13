@@ -15,7 +15,7 @@ cdef class TimeSeries:
     cdef public long long timeframe
     cdef public Indexed times
     cdef public Indexed values
-    cdef float max_series_length
+    cdef public float max_series_length
     cdef unsigned short _is_new_item
     cdef public str name
     cdef dict indicators        # it's used for indicators caching
@@ -28,8 +28,12 @@ cdef class TimeSeries:
 
 
 cdef class Indicator(TimeSeries):
-    cdef TimeSeries series
-    cdef TimeSeries parent
+    cdef public TimeSeries series
+    cdef public TimeSeries parent
+
+
+cdef class IndicatorOHLC(Indicator):
+    pass
 
 
 cdef class RollingSum:
