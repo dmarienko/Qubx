@@ -8,16 +8,14 @@ import statsmodels.api as sm
 from statsmodels.regression.linear_model import OLS
 from numba import njit
 
-from qubx.pandaz.utils import (
-    check_frame_columns, continuous_periods, has_columns, ohlc_resample, scols, srows
-)
+from qubx.pandaz.utils import check_frame_columns, continuous_periods, has_columns, ohlc_resample, scols, srows
 from qubx.utils.misc import Struct
 from qubx.utils.time import infer_series_frequency
 
 
 def __apply_to_frame(func: types.FunctionType, x: pd.Series | pd.DataFrame, *args, **kwargs):
     """
-    Utility applies given function to x and converts result to incoming type 
+    Utility applies given function to x and converts result to incoming type
 
     >>> from qubx.ta.pandaz import ema
     >>> apply_to_frame(ema, data['EURUSD'], 50)
@@ -30,19 +28,19 @@ def __apply_to_frame(func: types.FunctionType, x: pd.Series | pd.DataFrame, *arg
     :return: result of function's application
     """
     _keep_names = False
-    if 'keep_names' in kwargs:
-        _keep_names = kwargs.pop('keep_names')
+    if "keep_names" in kwargs:
+        _keep_names = kwargs.pop("keep_names")
 
     if func is None or not isinstance(func, types.FunctionType):
-        raise ValueError(str(func) + ' must be callable object')
+        raise ValueError(str(func) + " must be callable object")
 
     xp = column_vector(func(x, *args, **kwargs))
     _name = None
     if not _keep_names:
-        _name = func.__name__ + '_' + '_'.join([str(i) for i in args])
+        _name = func.__name__ + "_" + "_".join([str(i) for i in args])
 
     if isinstance(x, pd.DataFrame):
-        c_names = x.columns if _keep_names else ['%s_%s' % (c, _name) for c in x.columns]
+        c_names = x.columns if _keep_names else ["%s_%s" % (c, _name) for c in x.columns]
         return pd.DataFrame(xp, index=x.index, columns=c_names)
 
     elif isinstance(x, pd.Series):
@@ -54,11 +52,11 @@ def __apply_to_frame(func: types.FunctionType, x: pd.Series | pd.DataFrame, *arg
 def column_vector(x) -> np.ndarray:
     """
     Convert any vector to column vector. Matrices remain unchanged.
-     
-    :param x: vector 
-    :return: column vector 
+
+    :param x: vector
+    :return: column vector
     """
-    if isinstance(x, (pd.DataFrame, pd.Series)): 
+    if isinstance(x, (pd.DataFrame, pd.Series)):
         x = x.values
     return np.reshape(x, (x.shape[0], -1))
 
@@ -68,18 +66,18 @@ def shift(xs: np.ndarray, n: int, fill=np.nan) -> np.ndarray:
     """
     Shift data in numpy array (aka lag function):
 
-    shift(np.array([[1.,2.], 
-                    [11.,22.], 
+    shift(np.array([[1.,2.],
+                    [11.,22.],
                     [33.,44.]]), 1)
 
     >> array([[ nan,  nan],
               [  1.,   2.],
               [ 11.,  22.]])
 
-    :param xs: 
-    :param n: 
-    :param fill: value to use for  
-    :return: 
+    :param xs:
+    :param n:
+    :param fill: value to use for
+    :return:
     """
     e = np.empty_like(xs)
     if n >= 0:
@@ -96,12 +94,12 @@ def sink_nans_down(x_in, copy=False) -> Tuple[np.ndarray, np.ndarray]:
     Move all starting nans 'down to the bottom' in every column.
 
     NaN = np.nan
-    x = np.array([[NaN, 1, NaN], 
-                  [NaN, 2, NaN], 
-                  [NaN, 3, NaN], 
-                  [10,  4, NaN], 
-                  [20,  5, NaN], 
-                  [30,  6, 100], 
+    x = np.array([[NaN, 1, NaN],
+                  [NaN, 2, NaN],
+                  [NaN, 3, NaN],
+                  [10,  4, NaN],
+                  [20,  5, NaN],
+                  [30,  6, 100],
                   [40,  7, 200]])
 
     x1, nx = sink_nans_down(x)
@@ -125,7 +123,7 @@ def sink_nans_down(x_in, copy=False) -> Tuple[np.ndarray, np.ndarray]:
         f_n = np.where(~np.isnan(x[:, i]))[0]
         if len(f_n) > 0:
             if f_n[0] != 0:
-                x[:, i] = np.concatenate((x[f_n[0]:, i], x[:f_n[0], i]))
+                x[:, i] = np.concatenate((x[f_n[0] :, i], x[: f_n[0], i]))
             n_ix[i] = f_n[0]
     return x, n_ix
 
@@ -135,12 +133,12 @@ def lift_nans_up(x_in, n_ix, copy=False) -> np.ndarray:
     Move all ending nans 'up to top' of every column.
 
     NaN = np.nan
-    x = np.array([[NaN, 1, NaN], 
-                  [NaN, 2, NaN], 
-                  [NaN, 3, NaN], 
-                  [10,  4, NaN], 
-                  [20,  5, NaN], 
-                  [30,  6, 100], 
+    x = np.array([[NaN, 1, NaN],
+                  [NaN, 2, NaN],
+                  [NaN, 3, NaN],
+                  [10,  4, NaN],
+                  [20,  5, NaN],
+                  [30,  6, 100],
                   [40, 7, 200]])
 
     x1, nx = sink_nans_down(x)
@@ -182,9 +180,9 @@ def lift_nans_up(x_in, n_ix, copy=False) -> np.ndarray:
 def nans(dims):
     """
     nans((M,N,P,...)) is an M-by-N-by-P-by-... array of NaNs.
-    
-    :param dims: dimensions tuple 
-    :return: nans matrix 
+
+    :param dims: dimensions tuple
+    :return: nans matrix
     """
     return np.nan * np.ones(dims)
 
@@ -196,7 +194,7 @@ def rolling_sum(x: np.ndarray, n: int) -> np.ndarray:
 
     Example:
     >>> rolling_sum(column_vector(np.array([[1,2,3,4,5,6,7,8,9], [11,22,33,44,55,66,77,88,99]]).T), n=5)
-    
+
     array([[  nan,   nan],
        [  nan,   nan],
        [  nan,   nan],
@@ -215,7 +213,7 @@ def rolling_sum(x: np.ndarray, n: int) -> np.ndarray:
     for i in range(0, x.shape[1]):
         ret = np.nancumsum(x[:, i])
         ret[n:] = ret[n:] - ret[:-n]
-        xs[(n-1):, i] = ret[n - 1:]
+        xs[(n - 1) :, i] = ret[n - 1 :]
     return xs
 
 
@@ -252,7 +250,7 @@ def running_view(arr, window, axis=-1):
     :return: lagged matrix
     """
     shape = list(arr.shape)
-    shape[axis] -= (window - 1)
+    shape[axis] -= window - 1
     return np.lib.index_tricks.as_strided(arr, shape + [window], arr.strides + (arr.strides[axis],))
 
 
@@ -266,7 +264,8 @@ def detrend(y, order):
     :param order:
     :return:
     """
-    if order == -1: return y
+    if order == -1:
+        return y
     return OLS(y, np.vander(np.linspace(-1, 1, len(y)), order + 1)).fit().resid
 
 
@@ -291,8 +290,8 @@ def moving_detrend(y: pd.Series, order: int, window: int) -> pd.DataFrame:
         betas[n - 1 + i, :] = lr.params
 
     # return pandas frame if input is series/frame
-    r = pd.DataFrame({'resid': resid, 'r2': r_sqr}, index=y.index, columns=['resid', 'r2'])
-    betas_fr = pd.DataFrame(betas, index=y.index, columns=['b%d' % i for i in range(order + 1)])
+    r = pd.DataFrame({"resid": resid, "r2": r_sqr}, index=y.index, columns=["resid", "r2"])
+    betas_fr = pd.DataFrame(betas, index=y.index, columns=["b%d" % i for i in range(order + 1)])
     return pd.concat((r, betas_fr), axis=1)
 
 
@@ -323,21 +322,21 @@ def moving_ols(y, x, window):
     y = column_vector(y)
     nx = len(x)
     if nx != len(y):
-        raise ValueError('Series must contain equal number of points')
+        raise ValueError("Series must contain equal number of points")
 
     if y.shape[1] != 1:
-        raise ValueError('Response variable y must be column array or series object')
+        raise ValueError("Response variable y must be column array or series object")
 
     if window > nx:
-        raise ValueError('Window size must be less than number of observations')
+        raise ValueError("Window size must be less than number of observations")
 
-    betas = nans(x.shape);
-    err = nans((nx));
-    sd = nans((nx));
+    betas = nans(x.shape)
+    err = nans((nx))
+    sd = nans((nx))
 
     for i in range(window, nx + 1):
-        ys = y[(i - window):i]
-        xs = x[(i - window):i, :]
+        ys = y[(i - window) : i]
+        xs = x[(i - window) : i, :]
         lr = OLS(ys, xs).fit()
         betas[i - 1, :] = lr.params
         err[i - 1] = y[i - 1] - (x[i - 1, :] * lr.params).sum()
@@ -346,10 +345,8 @@ def moving_ols(y, x, window):
     # convert to dataframe if need
     if x_col_names is not None and idx_line is not None:
         _non_empy = lambda c, idx: c if c else idx
-        _bts = pd.DataFrame({
-            _non_empy(c, i): betas[:, i] for i, c in enumerate(x_col_names)
-        }, index=idx_line)
-        return pd.concat((_bts, pd.DataFrame({'error': err, 'stdev': sd}, index=idx_line)), axis=1)
+        _bts = pd.DataFrame({_non_empy(c, i): betas[:, i] for i, c in enumerate(x_col_names)}, index=idx_line)
+        return pd.concat((_bts, pd.DataFrame({"error": err, "stdev": sd}, index=idx_line)), axis=1)
     else:
         return betas, err, sd
 
@@ -365,7 +362,8 @@ def holt_winters_second_order_ewma(x: pd.Series, span: int, beta: float) -> pd.D
     :param beta: trend smoothing factor, 0 < beta < 1
     :return: tuple of smoothed series and smoothed trend
     """
-    if span < 0: raise ValueError("Span value must be positive")
+    if span < 0:
+        raise ValueError("Span value must be positive")
 
     if isinstance(x, (pd.DataFrame, pd.Series)):
         x = x.values
@@ -380,7 +378,7 @@ def holt_winters_second_order_ewma(x: pd.Series, span: int, beta: float) -> pd.D
     for i in range(1, x.shape[0]):
         s[i, :] = alpha * x[i, :] + r_alpha * (s[i - 1, :] + b[i - 1, :])
         b[i, :] = beta * (s[i, :] - s[i - 1, :]) + r_beta * b[i - 1, :]
-    return pd.DataFrame({'smoothed': s, 'trend': b}, index=x.index)
+    return pd.DataFrame({"smoothed": s, "trend": b}, index=x.index)
 
 
 @__wrap_dataframe_decorator
@@ -393,7 +391,7 @@ def sma(x, period):
     :return: smoothed values
     """
     if period <= 0:
-        raise ValueError('Period must be positive and greater than zero !!!')
+        raise ValueError("Period must be positive and greater than zero !!!")
 
     x = column_vector(x)
     x, ix = sink_nans_down(x, copy=True)
@@ -408,7 +406,7 @@ def _calc_kama(x, period, fast_span, slow_span):
         nan_start = np.where(~np.isnan(x[:, i]))[0][0]
         x_s = x[:, i][nan_start:]
         if period >= len(x_s):
-            raise ValueError('Wrong value for period. period parameter must be less than number of input observations')
+            raise ValueError("Wrong value for period. period parameter must be less than number of input observations")
         abs_diff = np.abs(x_s - shift(x_s, 1))
         er = np.abs(x_s - shift(x_s, period)) / rolling_sum(np.reshape(abs_diff, (len(abs_diff), -1)), period)[:, 0]
         sc = np.square((er * (2.0 / (fast_span + 1) - 2.0 / (slow_span + 1.0)) + 2 / (slow_span + 1.0)))
@@ -467,7 +465,7 @@ def _calc_ema(x, span, init_mean=True, min_periods=0):
             s[n] = alpha * x_s[n] + a_1 * s[n - 1]
 
         if min_periods > 0:
-            s[:min_periods - 1] = np.nan
+            s[: min_periods - 1] = np.nan
 
         x[:, i] = np.concatenate((nans(nan_start), s))
 
@@ -559,7 +557,7 @@ def wma(x, period: int, weights=None):
     for i in range(0, x.shape[1]):
         nan_start = np.where(~np.isnan(x[:, i]))[0][0]
         y_s = y[:, i][nan_start:]
-        wm = np.concatenate((nans(period - 1), np.convolve(y_s, w, 'valid')))
+        wm = np.concatenate((nans(period - 1), np.convolve(y_s, w, "valid")))
         y[:, i] = np.concatenate((nans(nan_start), wm))
 
     return y
@@ -571,14 +569,14 @@ def hma(x, period: int):
     Hull moving average
 
     :param x: values to be averaged
-    :param period: period 
+    :param period: period
     :return: weighted values
     """
     return wma(2 * wma(x, period // 2) - wma(x, period), int(np.sqrt(period)))
 
 
 @__wrap_dataframe_decorator
-def bidirectional_ema(x: pd.Series, span: int, smoother='ema') -> np.ndarray:
+def bidirectional_ema(x: pd.Series, span: int, smoother="ema") -> np.ndarray:
     """
     EMA function is really appropriate for stationary data, i.e., data without trends or seasonality.
     In particular, the EMA function resists trends away from the current mean that it’s already “seen”.
@@ -592,13 +590,13 @@ def bidirectional_ema(x: pd.Series, span: int, smoother='ema') -> np.ndarray:
     :param smoother: smoothing function (default 'ema' or 'tema')
     :return: smoohted data
     """
-    if smoother == 'tema':
+    if smoother == "tema":
         fwd = tema(x, span, init_mean=False)  # take TEMA in forward direction
         bwd = tema(x[::-1], span, init_mean=False)  # take TEMA in backward direction
     else:
         fwd = ema(x, span=span, init_mean=False)  # take EMA in forward direction
         bwd = ema(x[::-1], span=span, init_mean=False)  # take EMA in backward direction
-    return (fwd + bwd[::-1]) / 2.
+    return (fwd + bwd[::-1]) / 2.0
 
 
 def series_halflife(series: pd.Series | np.ndarray) -> float:
@@ -635,7 +633,7 @@ def rolling_std_with_mean(x: pd.Series, mean: float | pd.Series, window: int):
     return np.sqrt((((x - mean) ** 2).rolling(window=window).sum() / (window - 1)))
 
 
-def bollinger(x: pd.Series, window=14, nstd=2, mean='sma') -> pd.DataFrame:
+def bollinger(x: pd.Series, window=14, nstd=2, mean="sma") -> pd.DataFrame:
     """
     Bollinger Bands indicator
 
@@ -653,10 +651,10 @@ def bollinger(x: pd.Series, window=14, nstd=2, mean='sma') -> pd.DataFrame:
     lower_band = rolling_mean - (rolling_std * nstd)
 
     _bb = rolling_mean, upper_band, lower_band
-    return pd.concat(_bb, axis=1, keys=['Median', 'Upper', 'Lower'])
+    return pd.concat(_bb, axis=1, keys=["Median", "Upper", "Lower"])
 
 
-def bollinger_atr(x: pd.DataFrame, window=14, atr_window=14, natr=2, mean='sma', atr_mean='ema') -> pd.DataFrame:
+def bollinger_atr(x: pd.DataFrame, window=14, atr_window=14, natr=2, mean="sma", atr_mean="ema") -> pd.DataFrame:
     """
     Bollinger Bands indicator where ATR is used for bands range estimating
     :param x: input data
@@ -668,15 +666,15 @@ def bollinger_atr(x: pd.DataFrame, window=14, atr_window=14, natr=2, mean='sma',
     :param as_frame: if true result is returned as DataFrame
     :return: mean, upper and lower bands
     """
-    check_frame_columns(x, 'open', 'high', 'low', 'close')
+    check_frame_columns(x, "open", "high", "low", "close")
 
-    b = bollinger(x['close'], window, 0, mean)
+    b = bollinger(x["close"], window, 0, mean)
     a = natr * atr(x, atr_window, atr_mean)
-    m = b['Median']
-    return scols(*(m, m + a, m - a), names=['Median', 'Upper', 'Lower'])
+    m = b["Median"]
+    return scols(*(m, m + a, m - a), names=["Median", "Upper", "Lower"])
 
 
-def macd(x: pd.Series, fast=12, slow=26, signal=9, method='ema', signal_method='ema') -> pd.Series:
+def macd(x: pd.Series, fast=12, slow=26, signal=9, method="ema", signal_method="ema") -> pd.Series:
     """
     Moving average convergence divergence (MACD) is a trend-following momentum indicator that shows the relationship
     between two moving averages of prices. The MACD is calculated by subtracting the 26-day slow moving average from the
@@ -694,10 +692,10 @@ def macd(x: pd.Series, fast=12, slow=26, signal=9, method='ema', signal_method='
     x_diff = smooth(x, method, fast) - smooth(x, method, slow)
 
     # averaging signal
-    return smooth(x_diff, signal_method, signal).rename('macd')
+    return smooth(x_diff, signal_method, signal).rename("macd")
 
 
-def atr(x: pd.Series, window=14, smoother='sma', percentage=False) -> pd.Series:
+def atr(x: pd.Series, window=14, smoother="sma", percentage=False) -> pd.Series:
     """
     Average True Range indicator
 
@@ -707,20 +705,20 @@ def atr(x: pd.Series, window=14, smoother='sma', percentage=False) -> pd.Series:
     :param percentage: if True ATR presented as percentage to close price: 100*ATR[i]/close[i]
     :return: average true range
     """
-    check_frame_columns(x, 'open', 'high', 'low', 'close')
+    check_frame_columns(x, "open", "high", "low", "close")
 
-    close = x['close'].shift(1)
-    h_l = abs(x['high'] - x['low'])
-    h_pc = abs(x['high'] - close)
-    l_pc = abs(x['low'] - close)
+    close = x["close"].shift(1)
+    h_l = abs(x["high"] - x["low"])
+    h_pc = abs(x["high"] - close)
+    l_pc = abs(x["low"] - close)
     tr = pd.concat((h_l, h_pc, l_pc), axis=1).max(axis=1)
 
     # smoothing
-    a = smooth(tr, smoother, window).rename('atr')
+    a = smooth(tr, smoother, window).rename("atr")
     return (100 * a / close) if percentage else a
 
 
-def rolling_atr(x, window, periods, smoother='sma') -> pd.Series:
+def rolling_atr(x, window, periods, smoother="sma") -> pd.Series:
     """
     Average True Range indicator calculated on rolling window
 
@@ -730,13 +728,13 @@ def rolling_atr(x, window, periods, smoother='sma') -> pd.Series:
     :param smoother: smoother (sma is default)
     :return: ATR
     """
-    check_frame_columns(x, 'open', 'high', 'low', 'close')
+    check_frame_columns(x, "open", "high", "low", "close")
 
     window = pd.Timedelta(window) if isinstance(window, str) else window
     tf_orig = pd.Timedelta(infer_series_frequency(x))
 
     if window < tf_orig:
-        raise ValueError('window size must be great or equal to OHLC series timeframe !!!')
+        raise ValueError("window size must be great or equal to OHLC series timeframe !!!")
 
     wind_delta = window + tf_orig
     n_min_periods = wind_delta // tf_orig
@@ -753,8 +751,9 @@ def rolling_atr(x, window, periods, smoother='sma') -> pd.Series:
     return _tr
 
 
-def trend_detector(data, period, nstd,
-                   method='bb', exit_on_mid=False, avg='sma', atr_period=12, atr_avg='kama') -> pd.DataFrame:
+def trend_detector(
+    data, period, nstd, method="bb", exit_on_mid=False, avg="sma", atr_period=12, atr_avg="kama"
+) -> pd.DataFrame:
     """
     Trend detector method
 
@@ -775,17 +774,17 @@ def trend_detector(data, period, nstd,
     # just taking close prices
     x = data.close if isinstance(data, pd.DataFrame) else data
 
-    if method in ['bb', 'bb_atr', 'bbatr', 'bollinger', 'bollinger_atr']:
-        if 'atr' in method:
+    if method in ["bb", "bb_atr", "bbatr", "bollinger", "bollinger_atr"]:
+        if "atr" in method:
             _bb = bollinger_atr(data, period, atr_period, nstd, avg, atr_avg)
         else:
             _bb = bollinger(x, period, nstd, avg)
 
-        midle, smax, smin = _bb['Median'], _bb['Upper'], _bb['Lower']
-    elif method in ['hl', 'hilo', 'hhll']:
-        check_frame_columns(data, ['high', 'low', 'close'])
+        midle, smax, smin = _bb["Median"], _bb["Upper"], _bb["Lower"]
+    elif method in ["hl", "hilo", "hhll"]:
+        check_frame_columns(data, ["high", "low", "close"])
 
-        midle = (data['high'].rolling(period).max() + data['low'].rolling(period).min()) / 2
+        midle = (data["high"].rolling(period).max() + data["low"].rolling(period).min()) / 2
         smax = midle + nstd * atr(data, period)
         smin = midle - nstd * atr(data, period)
     else:
@@ -796,7 +795,7 @@ def trend_detector(data, period, nstd,
     # some special case if we want to exit when close is on the opposite side of median price
     if exit_on_mid:
         lom, him = ((x < midle).values, (x > midle).values)
-        t = 0;
+        t = 0
         _t = trend.values.tolist()
         for i in range(len(trend)):
             t0 = _t[i]
@@ -810,23 +809,23 @@ def trend_detector(data, period, nstd,
 
     # making resulting frame
     m = x.to_frame().copy()
-    m['trend'] = trend
-    m['blk'] = (m.trend.shift(1) != m.trend).astype(int).cumsum()
-    m['x'] = abs(m.trend) * (smax * (-m.trend + 1) - smin * (1 + m.trend)) / 2
-    _g0 = m.reset_index().groupby(['blk', 'trend'])
-    m['x'] = flatten(abs(_g0['x'].apply(np.array).transform(np.minimum.accumulate).values))
-    m['utl'] = m.x.where(m.trend > 0)
-    m['dtl'] = m.x.where(m.trend < 0)
+    m["trend"] = trend
+    m["blk"] = (m.trend.shift(1) != m.trend).astype(int).cumsum()
+    m["x"] = abs(m.trend) * (smax * (-m.trend + 1) - smin * (1 + m.trend)) / 2
+    _g0 = m.reset_index().groupby(["blk", "trend"])
+    m["x"] = flatten(abs(_g0["x"].apply(np.array).transform(np.minimum.accumulate).values))
+    m["utl"] = m.x.where(m.trend > 0)
+    m["dtl"] = m.x.where(m.trend < 0)
 
     # signals
-    tsi = pd.DatetimeIndex(_g0['time'].apply(lambda x: x.values[0]).values)
-    m['uts'] = m.loc[tsi].utl
-    m['dts'] = m.loc[tsi].dtl
+    tsi = pd.DatetimeIndex(_g0["time"].apply(lambda x: x.values[0]).values)
+    m["uts"] = m.loc[tsi].utl
+    m["dts"] = m.loc[tsi].dtl
 
-    return m.filter(items=['uts', 'dts', 'trend', 'utl', 'dtl'])
+    return m.filter(items=["uts", "dts", "trend", "utl", "dtl"])
 
 
-def denoised_trend(x: pd.DataFrame, period: int, window=0, mean: str = 'kama', bar_returns: bool = True) -> pd.Series:
+def denoised_trend(x: pd.DataFrame, period: int, window=0, mean: str = "kama", bar_returns: bool = True) -> pd.Series:
     """
     Returns denoised trend (T_i).
 
@@ -849,7 +848,7 @@ def denoised_trend(x: pd.DataFrame, period: int, window=0, mean: str = 'kama', b
     :param bar_returns: if True use R_i = close_i - open_i
     :return: trend with removed noise
     """
-    check_frame_columns(x, 'open', 'close')
+    check_frame_columns(x, "open", "close")
 
     if bar_returns:
         ri = x.close - x.open
@@ -873,7 +872,9 @@ def denoised_trend(x: pd.DataFrame, period: int, window=0, mean: str = 'kama', b
     return filtered_trend
 
 
-def rolling_percentiles(x, window, pctls=(0, 1, 2, 3, 5, 10, 15, 25, 45, 50, 55, 75, 85, 90, 95, 97, 98, 99, 100)) -> pd.DataFrame:
+def rolling_percentiles(
+    x, window, pctls=(0, 1, 2, 3, 5, 10, 15, 25, 45, 50, 55, 75, 85, 90, 95, 97, 98, 99, 100)
+) -> pd.DataFrame:
     """
     Calculates percentiles from x on rolling window basis
 
@@ -890,7 +891,7 @@ def rolling_percentiles(x, window, pctls=(0, 1, 2, 3, 5, 10, 15, 25, 45, 50, 55,
         r[i, :] = np.percentile(v, pctls)
         i += 1
 
-    return pd.DataFrame(r, index=x.index, columns=['Q%d' % q for q in pctls])
+    return pd.DataFrame(r, index=x.index, columns=["Q%d" % q for q in pctls])
 
 
 def trend_locker(y: pd.Series, order, window, lock_forward_window=1, use_projections=False) -> pd.DataFrame:
@@ -907,7 +908,7 @@ def trend_locker(y: pd.Series, order, window, lock_forward_window=1, use_project
     """
 
     if lock_forward_window < 1:
-        raise ValueError('lock_forward_window must be positive non zero integer')
+        raise ValueError("lock_forward_window must be positive non zero integer")
 
     n = window + lock_forward_window
     yy = running_view(column_vector(y).T[0], window=n)
@@ -930,21 +931,21 @@ def trend_locker(y: pd.Series, order, window, lock_forward_window=1, use_project
         fwd_data = pl - fwd_prj
 
         # store forward data
-        np.fill_diagonal(resid[window + i: n + i + 1, :], fwd_data)
+        np.fill_diagonal(resid[window + i : n + i + 1, :], fwd_data)
 
         # if we asked for projections
         if use_projections:
-            np.fill_diagonal(proj[window + i: n + i + 1, :], fwd_prj)
+            np.fill_diagonal(proj[window + i : n + i + 1, :], fwd_prj)
 
     # return pandas frame if input is series/frame
-    y = pd.Series(y, name='X')
+    y = pd.Series(y, name="X")
     y_idx = y.index
-    f_res = pd.DataFrame(data=resid, index=y_idx, columns=['R%d' % i for i in range(1, lock_forward_window + 1)])
+    f_res = pd.DataFrame(data=resid, index=y_idx, columns=["R%d" % i for i in range(1, lock_forward_window + 1)])
     f_prj = None
     if use_projections:
-        f_prj = pd.DataFrame(data=proj, index=y_idx, columns=['L%d' % i for i in range(1, lock_forward_window + 1)])
-    r = pd.DataFrame({'r2': r_sqr}, index=y_idx, columns=['r2'])
-    betas_fr = pd.DataFrame(betas, index=y_idx, columns=['b%d' % i for i in range(order + 1)])
+        f_prj = pd.DataFrame(data=proj, index=y_idx, columns=["L%d" % i for i in range(1, lock_forward_window + 1)])
+    r = pd.DataFrame({"r2": r_sqr}, index=y_idx, columns=["r2"])
+    betas_fr = pd.DataFrame(betas, index=y_idx, columns=["b%d" % i for i in range(order + 1)])
     return pd.concat((y, f_res, f_prj, r, betas_fr), axis=1)
 
 
@@ -959,7 +960,7 @@ def __slope_angle(p, t):
     return 180 * np.arctan(p / t) / np.pi
 
 
-def rolling_series_slope(x: pd.Series, period: int, method='ols', scaling='transform', n_bins=5) -> pd.Series:
+def rolling_series_slope(x: pd.Series, period: int, method="ols", scaling="transform", n_bins=5) -> pd.Series:
     """
     Rolling slope indicator. May be used as trend indicator
 
@@ -970,6 +971,7 @@ def rolling_series_slope(x: pd.Series, period: int, method='ols', scaling='trans
     :param scaling: how to scale slope 'transform' / 'binarize' / nothing
     :return: series slope metric
     """
+
     def __binarize(_x: pd.Series, n, limits=(None, None), center=False):
         n0 = n // 2 if center else 0
         _min = np.min(_x) if limits[0] is None else limits[0]
@@ -990,14 +992,14 @@ def rolling_series_slope(x: pd.Series, period: int, method='ols', scaling='trans
             ni = np.interp(x, (_lmin, _lmax), (-n, +n))
         return pd.Series(ni, index=x.index)
 
-    if method == 'ols':
+    if method == "ols":
         slp_meth = lambda z: __slope_ols(z)
         _lmts = (-1, 1)
-    elif method == 'angle':
+    elif method == "angle":
         slp_meth = lambda z: __slope_angle(z[-1] - z[0], len(z))
         _lmts = (-90, 90)
     else:
-        raise ValueError('Unknown Method %s' % method)
+        raise ValueError("Unknown Method %s" % method)
 
     _min_p = period
     if isinstance(period, str):
@@ -1005,15 +1007,15 @@ def rolling_series_slope(x: pd.Series, period: int, method='ols', scaling='trans
 
     roll_slope = x.rolling(period, min_periods=_min_p).apply(slp_meth)
 
-    if scaling == 'transform':
+    if scaling == "transform":
         return __scaling_transform(roll_slope, n=n_bins, limits=_lmts)
-    elif scaling == 'binarize':
+    elif scaling == "binarize":
         return __binarize(roll_slope, n=(n_bins - 1) * 4, limits=_lmts, center=True) / 2
 
     return roll_slope
 
 
-def adx(ohlc: pd.DataFrame, period: int, smoother='kama') -> pd.DataFrame:
+def adx(ohlc: pd.DataFrame, period: int, smoother="kama") -> pd.DataFrame:
     """
     Average Directional Index.
 
@@ -1032,12 +1034,12 @@ def adx(ohlc: pd.DataFrame, period: int, smoother='kama') -> pd.DataFrame:
     :param ohlc: DataFrame with ohlc data
     :param period: indicator period
     :param smoother: smoothing function (kama is default)
-    :param as_frame: set to True if DataFrame needed as result (default false) 
+    :param as_frame: set to True if DataFrame needed as result (default false)
     :return: adx, DIp, DIm or DataFrame
     """
-    check_frame_columns(ohlc, 'open', 'high', 'low', 'close')
+    check_frame_columns(ohlc, "open", "high", "low", "close")
 
-    h, l = ohlc['high'], ohlc['low']
+    h, l = ohlc["high"], ohlc["low"]
     _atr = atr(ohlc, period, smoother=smoother)
 
     Mu, Md = h.diff(), -l.diff()
@@ -1047,7 +1049,7 @@ def adx(ohlc: pd.DataFrame, period: int, smoother='kama') -> pd.DataFrame:
     DIm = 100 * smooth(DMm, smoother, period) / _atr
     _adx = 100 * smooth(abs((DIp - DIm) / (DIp + DIm)), smoother, period)
 
-    return pd.concat((_adx.rename('ADX'), DIp.rename('DIp'), DIm.rename('DIm')), axis=1)
+    return pd.concat((_adx.rename("ADX"), DIp.rename("DIp"), DIm.rename("DIm")), axis=1)
 
 
 def rsi(x, periods, smoother=sma) -> pd.Series:
@@ -1059,105 +1061,105 @@ def rsi(x, periods, smoother=sma) -> pd.Series:
     RSI = 100 * E[U, n] / (E[U, n] + E[D, n])
 
     """
-    xx = pd.concat((x, x.shift(1)), axis=1, keys=['c', 'p'])
-    df = (xx.c - xx.p)
+    xx = pd.concat((x, x.shift(1)), axis=1, keys=["c", "p"])
+    df = xx.c - xx.p
     mu = smooth(df.where(df > 0, 0), smoother, periods)
     md = smooth(abs(df.where(df < 0, 0)), smoother, periods)
 
     return 100 * mu / (mu + md)
 
 
-def pivot_point(data: pd.DataFrame, method='classic', timeframe='D', timezone=None) -> pd.DataFrame:
+def pivot_point(data: pd.DataFrame, method="classic", timeframe="D", timezone=None) -> pd.DataFrame:
     """
     Pivot points indicator based for daily/weekly/monthly levels.
     It supports 'classic', 'woodie' and 'camarilla' species.
     """
-    if timeframe not in ['D', 'W', 'M']:
+    if timeframe not in ["D", "W", "M"]:
         raise ValueError(f"Unsupported pivots timeframe {timeframe}: only 'D', 'W', 'M' allowed !")
 
-    tf_resample = f'1{timeframe}'
+    tf_resample = f"1{timeframe}"
     x: pd.DataFrame | dict = ohlc_resample(data, tf_resample, resample_tz=timezone)
 
     pp = pd.DataFrame()
-    if method == 'classic':
-        pvt = (x['high'] + x['low'] + x['close']) / 3
-        _range = x['high'] - x['low']
+    if method == "classic":
+        pvt = (x["high"] + x["low"] + x["close"]) / 3
+        _range = x["high"] - x["low"]
 
-        pp['R4'] = pvt + 3 * _range
-        pp['R3'] = pvt + 2 * _range
-        pp['R2'] = pvt + _range
-        pp['R1'] = pvt * 2 - x['low']
-        pp['P'] = pvt
-        pp['S1'] = pvt * 2 - x['high']
-        pp['S2'] = pvt - _range
-        pp['S3'] = pvt - 2 * _range
-        pp['S4'] = pvt - 3 * _range
+        pp["R4"] = pvt + 3 * _range
+        pp["R3"] = pvt + 2 * _range
+        pp["R2"] = pvt + _range
+        pp["R1"] = pvt * 2 - x["low"]
+        pp["P"] = pvt
+        pp["S1"] = pvt * 2 - x["high"]
+        pp["S2"] = pvt - _range
+        pp["S3"] = pvt - 2 * _range
+        pp["S4"] = pvt - 3 * _range
 
         # rearrange
-        pp = pp[['R4', 'R3', 'R2', 'R1', 'P', 'S1', 'S2', 'S3', 'S4']]
+        pp = pp[["R4", "R3", "R2", "R1", "P", "S1", "S2", "S3", "S4"]]
 
-    elif method == 'woodie':
+    elif method == "woodie":
         pvt = (x.high + x.low + x.open + x.open) / 4
         _range = x.high - x.low
 
-        pp['R3'] = x.high + 2 * (pvt - x.low)
-        pp['R2'] = pvt + _range
-        pp['R1'] = pvt * 2 - x.low
-        pp['P'] = pvt
-        pp['S1'] = pvt * 2 - x.high
-        pp['S2'] = pvt - _range
-        pp['S3'] = x.low + 2 * (x.high - pvt)
-        pp = pp[['R3', 'R2', 'R1', 'P', 'S1', 'S2', 'S3']]
+        pp["R3"] = x.high + 2 * (pvt - x.low)
+        pp["R2"] = pvt + _range
+        pp["R1"] = pvt * 2 - x.low
+        pp["P"] = pvt
+        pp["S1"] = pvt * 2 - x.high
+        pp["S2"] = pvt - _range
+        pp["S3"] = x.low + 2 * (x.high - pvt)
+        pp = pp[["R3", "R2", "R1", "P", "S1", "S2", "S3"]]
 
-    elif method == 'camarilla':
+    elif method == "camarilla":
         """
-            R4 = C + RANGE * 1.1/2
-            R3 = C + RANGE * 1.1/4
-            R2 = C + RANGE * 1.1/6
-            R1 = C + RANGE * 1.1/12
-            PP = (HIGH + LOW + CLOSE) / 3
-            S1 = C - RANGE * 1.1/12
-            S2 = C - RANGE * 1.1/6
-            S3 = C - RANGE * 1.1/4
-            S4 = C - RANGE * 1.1/2        
+        R4 = C + RANGE * 1.1/2
+        R3 = C + RANGE * 1.1/4
+        R2 = C + RANGE * 1.1/6
+        R1 = C + RANGE * 1.1/12
+        PP = (HIGH + LOW + CLOSE) / 3
+        S1 = C - RANGE * 1.1/12
+        S2 = C - RANGE * 1.1/6
+        S3 = C - RANGE * 1.1/4
+        S4 = C - RANGE * 1.1/2
         """
         pvt = (x.high + x.low + x.close) / 3
         _range = x.high - x.low
 
-        pp['R4'] = x.close + _range * 1.1 / 2
-        pp['R3'] = x.close + _range * 1.1 / 4
-        pp['R2'] = x.close + _range * 1.1 / 6
-        pp['R1'] = x.close + _range * 1.1 / 12
-        pp['P'] = pvt
-        pp['S1'] = x.close - _range * 1.1 / 12
-        pp['S2'] = x.close - _range * 1.1 / 6
-        pp['S3'] = x.close - _range * 1.1 / 4
-        pp['S4'] = x.close - _range * 1.1 / 2
-        pp = pp[['R4', 'R3', 'R2', 'R1', 'P', 'S1', 'S2', 'S3', 'S4']]
+        pp["R4"] = x.close + _range * 1.1 / 2
+        pp["R3"] = x.close + _range * 1.1 / 4
+        pp["R2"] = x.close + _range * 1.1 / 6
+        pp["R1"] = x.close + _range * 1.1 / 12
+        pp["P"] = pvt
+        pp["S1"] = x.close - _range * 1.1 / 12
+        pp["S2"] = x.close - _range * 1.1 / 6
+        pp["S3"] = x.close - _range * 1.1 / 4
+        pp["S4"] = x.close - _range * 1.1 / 2
+        pp = pp[["R4", "R3", "R2", "R1", "P", "S1", "S2", "S3", "S4"]]
     else:
         raise ValueError("Unknown method %s. Available methods are: 'classic', 'woodie', 'camarilla'" % method)
 
-    pp.index = pp.index + pd.Timedelta('1D')
+    pp.index = pp.index + pd.Timedelta("1D")
     return data.combine_first(pp).ffill(axis=0)[pp.columns]
 
 
-def intraday_min_max(data: pd.DataFrame, timezone='UTC') -> pd.DataFrame:
+def intraday_min_max(data: pd.DataFrame, timezone="UTC") -> pd.DataFrame:
     """
     Intradeay min and max values
     :param data: ohlcv series
     :param timezone: timezone (default EET) used for find day's start/end (EET for forex data)
     :return: series with min and max values intraday
     """
-    check_frame_columns(data, 'open', 'high', 'low', 'close')
+    check_frame_columns(data, "open", "high", "low", "close")
 
     def _day_min_max(d):
         _d_min = np.minimum.accumulate(d.low)
         _d_max = np.maximum.accumulate(d.high)
-        return scols(_d_min, _d_max, keys=['Min', 'Max'])
+        return scols(_d_min, _d_max, keys=["Min", "Max"])
 
     source_tz = data.index.tz
     if not source_tz:
-        x = data.tz_localize('GMT')
+        x = data.tz_localize("GMT")
     else:
         x = data
 
@@ -1165,7 +1167,7 @@ def intraday_min_max(data: pd.DataFrame, timezone='UTC') -> pd.DataFrame:
     return x.groupby(x.index.date).apply(_day_min_max).tz_convert(source_tz)
 
 
-def stochastic(x: pd.Series | pd.DataFrame, period: int, smooth_period: int, smoother='sma') -> pd.DataFrame:
+def stochastic(x: pd.Series | pd.DataFrame, period: int, smooth_period: int, smoother="sma") -> pd.DataFrame:
     """
     Classical stochastic oscillator indicator
     :param x: series or OHLC dataframe
@@ -1175,8 +1177,8 @@ def stochastic(x: pd.Series | pd.DataFrame, period: int, smooth_period: int, smo
     :return: K and D series as DataFrame
     """
     # in case we received HLC data
-    if has_columns(x, 'close', 'high', 'low'):
-        hi, li, xi = x['high'], x['low'], x['close']
+    if has_columns(x, "close", "high", "low"):
+        hi, li, xi = x["high"], x["low"], x["close"]
     else:
         hi, li, xi = x, x, x
 
@@ -1184,13 +1186,12 @@ def stochastic(x: pd.Series | pd.DataFrame, period: int, smooth_period: int, smo
     ll = li.rolling(period).min()
     k = 100 * (xi - ll) / (hh - ll)
     d = smooth(k, smoother, smooth_period)
-    return scols(k, d, names=['K', 'D'])
+    return scols(k, d, names=["K", "D"])
 
 
 @njit
 def _laguerre_calc(xx, g):
-    l0, l1, l2, l3, f = np.zeros(len(xx)), np.zeros(len(xx)), np.zeros(len(xx)), np.zeros(len(xx)), np.zeros(
-        len(xx))
+    l0, l1, l2, l3, f = np.zeros(len(xx)), np.zeros(len(xx)), np.zeros(len(xx)), np.zeros(len(xx)), np.zeros(len(xx))
     for i in range(1, len(xx)):
         l0[i] = (1 - g) * xx[i] + g * l0[i - 1]
         l1[i] = -g * l0[i] + l0[i - 1] + g * l1[i - 1]
@@ -1209,8 +1210,7 @@ def laguerre_filter(x, gamma=0.8) -> pd.Series:
 
 @njit
 def _lrsi_calc(xx, g):
-    l0, l1, l2, l3, f = np.zeros(len(xx)), np.zeros(len(xx)), np.zeros(len(xx)), np.zeros(len(xx)), np.zeros(
-        len(xx))
+    l0, l1, l2, l3, f = np.zeros(len(xx)), np.zeros(len(xx)), np.zeros(len(xx)), np.zeros(len(xx)), np.zeros(len(xx))
     for i in range(1, len(xx)):
         l0[i] = (1 - g) * xx[i] + g * l0[i - 1]
         l1[i] = -g * l0[i] + l0[i - 1] + g * l1[i - 1]
@@ -1276,14 +1276,16 @@ def calc_ema_time(t, vv, period, min_time_quant, with_correction=True):
     return index, values
 
 
-def ema_time(x: pd.Series, period: str | pd.Timedelta, min_time_quant=pd.Timedelta('1ms'), with_correction=True) -> pd.Series:
+def ema_time(
+    x: pd.Series, period: str | pd.Timedelta, min_time_quant=pd.Timedelta("1ms"), with_correction=True
+) -> pd.Series:
     """
     EMA on non consistent time series
 
     https://stackoverflow.com/questions/1023860/exponential-moving-average-sampled-at-varying-times
     """
     if not isinstance(x, pd.Series):
-        raise ValueError('Input series must be instance of pandas Series class')
+        raise ValueError("Input series must be instance of pandas Series class")
 
     t = x.index.values
     vv = x.values
@@ -1291,11 +1293,11 @@ def ema_time(x: pd.Series, period: str | pd.Timedelta, min_time_quant=pd.Timedel
     if isinstance(period, str):
         period = pd.Timedelta(period)
 
-    index, values = calc_ema_time(t.astype('int64'), vv, period.value, min_time_quant.value, with_correction)
+    index, values = calc_ema_time(t.astype("int64"), vv, period.value, min_time_quant.value, with_correction)
 
-    old_ser_name = 'UnknownSeries' if x.name is None else x.name
-    res = pd.Series(values, pd.to_datetime(index), name='EMAT_%d_sec_%s' % (period.seconds, old_ser_name))
-    res = res.loc[~res.index.duplicated(keep='first')]
+    old_ser_name = "UnknownSeries" if x.name is None else x.name
+    res = pd.Series(values, pd.to_datetime(index), name="EMAT_%d_sec_%s" % (period.seconds, old_ser_name))
+    res = res.loc[~res.index.duplicated(keep="first")]
     return res
 
 
@@ -1304,7 +1306,7 @@ def _rolling_rank(x, period, pctls):
     x = np.reshape(x, (x.shape[0], -1)).flatten()
     r = nans((len(x)))
     for i in range(period, len(x)):
-        v = x[i - period:i]
+        v = x[i - period : i]
         r[i] = np.argmax(np.sign(np.append(np.percentile(v, pctls), np.inf) - x[i]))
     return r
 
@@ -1321,7 +1323,7 @@ def rolling_rank(x, period, pctls=(25, 50, 75)):
     :return: series/frame of ranks
     """
     if period > len(x):
-        raise ValueError(f'Period {period} exceeds number of data records {len(x)} ')
+        raise ValueError(f"Period {period} exceeds number of data records {len(x)} ")
 
     if isinstance(x, pd.DataFrame):
         z = pd.DataFrame.from_dict({c: rolling_rank(s, period, pctls) for c, s in x.iteritems()})
@@ -1336,10 +1338,10 @@ def rolling_vwap(ohlc, period):
     """
     Calculate rolling volume weighted average price using specified rolling period
     """
-    check_frame_columns(ohlc, 'close', 'volume')
+    check_frame_columns(ohlc, "close", "volume")
 
     if period > len(ohlc):
-        raise ValueError(f'Period {period} exceeds number of data records {len(ohlc)} ')
+        raise ValueError(f"Period {period} exceeds number of data records {len(ohlc)} ")
 
     def __rollsum(x, window):
         rs = pd.DataFrame(rolling_sum(column_vector(x.values.copy()), window), index=x.index)
@@ -1352,28 +1354,22 @@ def rolling_vwap(ohlc, period):
 def fractals(data, nf, actual_time=True, align_with_index=False) -> pd.DataFrame:
     """
     Calculates fractals indicator
-    
+
     :param data: OHLC bars series
     :param nf: fractals lookback/foreahed parameter
     :param actual_time: if true fractals timestamps at bars where they would be observed
     :param align_with_index: if true result will be reindexed as input ohlc data
     :return: pd.DataFrame with U (upper) and L (lower) fractals columns
     """
-    check_frame_columns(data, 'high', 'low')
+    check_frame_columns(data, "high", "low")
 
-    ohlc = scols(data.close.ffill(), data, keys=['A', 'ohlc']).ffill(axis=1)['ohlc']
+    ohlc = scols(data.close.ffill(), data, keys=["A", "ohlc"]).ffill(axis=1)["ohlc"]
     ru, rd = None, None
     for i in range(1, nf + 1):
         ru = scols(
-            ru,
-            (ohlc.high - ohlc.high.shift(i)).rename(f'p{i}'),
-            (ohlc.high - ohlc.high.shift(-i)).rename(f'p_{i}')
+            ru, (ohlc.high - ohlc.high.shift(i)).rename(f"p{i}"), (ohlc.high - ohlc.high.shift(-i)).rename(f"p_{i}")
         )
-        rd = scols(
-            rd,
-            (ohlc.low.shift(i) - ohlc.low).rename(f'p{i}'),
-            (ohlc.low.shift(-i) - ohlc.low).rename(f'p_{i}')
-        )
+        rd = scols(rd, (ohlc.low.shift(i) - ohlc.low).rename(f"p{i}"), (ohlc.low.shift(-i) - ohlc.low).rename(f"p_{i}"))
 
     ru, rd = ru.dropna(), rd.dropna()
 
@@ -1388,7 +1384,7 @@ def fractals(data, nf, actual_time=True, align_with_index=False) -> pd.DataFrame
         ht = ht.dropna()
         lt = lt.dropna()
 
-    return scols(ht, lt, names=['U', 'L'])
+    return scols(ht, lt, names=["U", "L"])
 
 
 @njit
@@ -1428,13 +1424,14 @@ def jma(x, period, phase=0, power=2):
     """
     x = column_vector(x)
     if len(x) < period:
-        raise ValueError('Not enough data for calculate jma !')
+        raise ValueError("Not enough data for calculate jma !")
 
     return _jma(x, period, phase, power)
 
 
-def super_trend(data, length: int = 22, mult: float = 3, src: str = 'hl2',
-                wicks: bool = True, atr_smoother='sma') -> pd.DataFrame:
+def super_trend(
+    data, length: int = 22, mult: float = 3, src: str = "hl2", wicks: bool = True, atr_smoother="sma"
+) -> pd.DataFrame:
     """
     SuperTrend indicator (implementation from https://www.tradingview.com/script/VLWVV7tH-SuperTrend/)
 
@@ -1446,39 +1443,40 @@ def super_trend(data, length: int = 22, mult: float = 3, src: str = 'hl2',
     :param atr_smoother: ATR smoothing function (default sma)
     :return:
     """
-    check_frame_columns(data, 'open', 'high', 'low', 'close')
+    check_frame_columns(data, "open", "high", "low", "close")
 
     def calc_src(data, src):
-        if src == 'close':
-            return data['close']
-        elif src == 'hl2':
-            return (data['high'] + data['low']) / 2
-        elif src == 'hlc3':
-            return (data['high'] + data['low'] + data['close']) / 3
-        elif src == 'ohlc4':
-            return (data['open'] + data['high'] + data['low'] + data['close']) / 4
+        if src == "close":
+            return data["close"]
+        elif src == "hl2":
+            return (data["high"] + data["low"]) / 2
+        elif src == "hlc3":
+            return (data["high"] + data["low"] + data["close"]) / 3
+        elif src == "ohlc4":
+            return (data["open"] + data["high"] + data["low"] + data["close"]) / 4
         else:
-            raise ValueError('unsupported src: %s' % src)
+            raise ValueError("unsupported src: %s" % src)
 
     atr_data = abs(mult) * atr(data, length, smoother=atr_smoother)
     src_data = calc_src(data, src)
-    high_price = data['high'] if wicks else data['close']
-    low_price = data['low'] if wicks else data['close']
-    doji4price = (data['open'] == data['close']) & (data['open'] == data['low']) & (data['open'] == data['high'])
+    high_price = data["high"] if wicks else data["close"]
+    low_price = data["low"] if wicks else data["close"]
+    doji4price = (data["open"] == data["close"]) & (data["open"] == data["low"]) & (data["open"] == data["high"])
 
     p_high_price = high_price.shift(1)
     p_low_price = low_price.shift(1)
 
-    longstop = (src_data - atr_data)
-    shortstop = (src_data + atr_data)
+    longstop = src_data - atr_data
+    shortstop = src_data + atr_data
 
     prev_longstop = np.nan
     prev_shortstop = np.nan
 
     longstop_d = {}
     shortstop_d = {}
-    for i, ls, ss, lp, hp, d4 in zip(src_data.index, longstop.values, shortstop.values, p_low_price.values,
-                                     p_high_price.values, doji4price.values):
+    for i, ls, ss, lp, hp, d4 in zip(
+        src_data.index, longstop.values, shortstop.values, p_low_price.values, p_high_price.values, doji4price.values
+    ):
         # longs
         if np.isnan(prev_longstop):
             prev_longstop = ls
@@ -1522,10 +1520,10 @@ def super_trend(data, length: int = 22, mult: float = 3, src: str = 'hl2',
     shortstop_res[direction == -1] = shortstop[direction == -1]
     longstop_res[direction == 1] = longstop[direction == 1]
 
-    return scols(longstop_res, shortstop_res, direction, names=['utl', 'dtl', 'trend'])
+    return scols(longstop_res, shortstop_res, direction, names=["utl", "dtl", "trend"])
 
 
-def choppyness(data, period, upper=61.8, lower=38.2, atr_smoother='sma') -> pd.Series:
+def choppyness(data, period, upper=61.8, lower=38.2, atr_smoother="sma") -> pd.Series:
     """
     Volatile market leads to false breakouts, and not respecting support/resistance levels (being choppy),
     We cannot know whether we are in a trend or in a range.
@@ -1540,13 +1538,15 @@ def choppyness(data, period, upper=61.8, lower=38.2, atr_smoother='sma') -> pd.S
     :param atr_smoother: used ATR smoother (SMA)
     :return: series of choppyness indication (True - market is 'choppy', False - market is trend)
     """
-    check_frame_columns(data, 'open', 'high', 'low', 'close')
+    check_frame_columns(data, "open", "high", "low", "close")
 
-    xr = data[['open', 'high', 'low', 'close']]
+    xr = data[["open", "high", "low", "close"]]
     a = atr(xr, period, atr_smoother)
 
-    rng = xr['high'].rolling(window=period, min_periods=period).max() \
-          - xr['low'].rolling(window=period, min_periods=period).min()
+    rng = (
+        xr["high"].rolling(window=period, min_periods=period).max()
+        - xr["low"].rolling(window=period, min_periods=period).min()
+    )
 
     rs = pd.Series(rolling_sum(column_vector(a.copy()), period).flatten(), a.index)
     ci = 100 * np.log(rs / rng) * (1 / np.log(period))
@@ -1563,7 +1563,7 @@ def __psar(close, high, low, iaf, maxaf):
     PSAR loop in numba
     """
     length = len(close)
-    psar = close[0:len(close)].copy()
+    psar = close[0 : len(close)].copy()
 
     psarbull, psarbear = np.ones(length) * np.nan, np.ones(length) * np.nan
 
@@ -1621,10 +1621,10 @@ def psar(ohlc, iaf=0.02, maxaf=0.2) -> pd.DataFrame:
     """
     Parabolic SAR indicator
     """
-    check_frame_columns(ohlc, 'high', 'low', 'close')
+    check_frame_columns(ohlc, "high", "low", "close")
 
     # do cycle in numba
-    psar_i, psarbear, psarbull = __psar(ohlc['close'].values, ohlc['high'].values, ohlc['low'].values, iaf, maxaf)
+    psar_i, psarbear, psarbull = __psar(ohlc["close"].values, ohlc["high"].values, ohlc["low"].values, iaf, maxaf)
 
     return pd.DataFrame({"psar": psar_i, "up": psarbear, "down": psarbull}, index=ohlc.index)
 
@@ -1695,18 +1695,18 @@ def __mcginley(xs, es, period):
     for x, e in zip(xs, es):
         if g == 0.0:
             g = e
-        g = g + (x - g)/(period * np.power(x/g, 4)) 
+        g = g + (x - g) / (period * np.power(x / g, 4))
         gs.append(g)
     return gs
 
-    
+
 def mcginley(xs: pd.Series, period: int) -> pd.Series:
     """
     McGinley dynamic moving average
     """
     x = column_vector(xs)
     es0 = ema(xs, period, init_mean=False)
-    return pd.Series(__mcginley(x.reshape(1, -1)[0], es0.reshape(1, -1)[0], period), index=xs.index) 
+    return pd.Series(__mcginley(x.reshape(1, -1)[0], es0.reshape(1, -1)[0], period), index=xs.index)
 
 
 def stdev(x, window: int) -> pd.Series:
@@ -1714,22 +1714,29 @@ def stdev(x, window: int) -> pd.Series:
     Standard deviation of x on rolling basis period (as in tranding view)
     """
     x = x.copy()
-    a = smooth(np.power(x, 2), 'sma', window)
+    a = smooth(np.power(x, 2), "sma", window)
     sm = pd.Series(rolling_sum(column_vector(x), window).reshape(1, -1)[0], x.index)
     b = np.power(sm, 2) / np.power(window, 2)
     return np.sqrt(a - b)
 
 
-def waexplosion(data: pd.DataFrame, 
-                fastLength=20, slowLength=40, channelLength=20, sensitivity=150, mult=2.0, source='close', 
-                tuning_F1 = 3.7, tuning_atr_period=100,
-                tuning_macd_smoother = 'ema'
-    ) -> pd.DataFrame:
+def waexplosion(
+    data: pd.DataFrame,
+    fastLength=20,
+    slowLength=40,
+    channelLength=20,
+    sensitivity=150,
+    mult=2.0,
+    source="close",
+    tuning_F1=3.7,
+    tuning_atr_period=100,
+    tuning_macd_smoother="ema",
+) -> pd.DataFrame:
     """
     Waddah Attar Explosion indicator (version from TradingView)
 
     Example:
-    - - - - 
+    - - - -
 
     wae = waexplosion(ohlc)
     LookingGlass(ohlc, {
@@ -1739,27 +1746,25 @@ def waexplosion(data: pd.DataFrame,
         }).look('2023-Feb-01', '2023-Feb-17').hover()
 
     """
-    check_frame_columns(data, 'open', 'high', 'low', 'close')
+    check_frame_columns(data, "open", "high", "low", "close")
     x = data[source]
-    
-    dead_zone = tuning_F1 * atr(data, 2 * tuning_atr_period + 1, 'ema')
+
+    dead_zone = tuning_F1 * atr(data, 2 * tuning_atr_period + 1, "ema")
     macd1 = smooth(x, tuning_macd_smoother, fastLength) - smooth(x, tuning_macd_smoother, slowLength)
     t1 = sensitivity * macd1.diff()
-    
+
     e1 = 2 * mult * stdev(x, channelLength)
     trend_up = t1.where(t1 > 0, 0)
     trend_dw = -t1.where(t1 < 0, 0)
 
-    return scols(
-        dead_zone, e1, trend_up, trend_dw, names=['dead_zone', 'explosion', 'trend_up', 'trend_down'] 
-    )
+    return scols(dead_zone, e1, trend_up, trend_dw, names=["dead_zone", "explosion", "trend_up", "trend_down"])
 
 
-def rad_indicator(x: pd.DataFrame, period: int, mult: float=2, smoother='sma') -> pd.DataFrame:
+def rad_indicator(x: pd.DataFrame, period: int, mult: float = 2, smoother="sma") -> pd.DataFrame:
     """
-    RAD chandelier indicator 
+    RAD chandelier indicator
     """
-    check_frame_columns(x, 'open', 'high', 'low', 'close')
+    check_frame_columns(x, "open", "high", "low", "close")
 
     a = atr(x, period, smoother=smoother)
 
@@ -1776,30 +1781,29 @@ def rad_indicator(x: pd.DataFrame, period: int, mult: float=2, smoother='sma') -
     sw.loc[brk_d] = +1
     sw.loc[brk_u] = -1
     sw = sw.ffill()
-    
+
     radU = rad_short[sw[sw > 0].index]
     radD = rad_long[sw[sw < 0].index]
     # rad = srows(radU, radD)
-    
+
     # stop level
     mu, md = -np.inf, np.inf
     rs = {}
     for t, s in zip(sw.index, sw.values):
         if s < 0:
             mu = max(mu, rad_long.loc[t])
-            rs[t] = mu 
+            rs[t] = mu
             md = np.inf
         if s > 0:
             md = min(md, rad_short.loc[t])
             rs[t] = md
             mu = -np.inf
 
-    return scols(pd.Series(rs), rad_long, rad_short, radU, radD, names=['rad', 'long', 'short', 'U', 'D'])
+    return scols(pd.Series(rs), rad_long, rad_short, radU, radD, names=["rad", "long", "short", "U", "D"])
+
 
 @njit
-def __calc_qqe_mod_core_fast(
-    rs_index_values, newlongband_values, newshortband_values
-) -> list:
+def __calc_qqe_mod_core_fast(rs_index_values, newlongband_values, newshortband_values) -> list:
     ri1, lb1, sb1, tr1, lb2, sb2 = np.nan, 0, 0, np.nan, np.nan, np.nan
     c1 = 0
     fast_atr_rsi_tl = []
@@ -1811,7 +1815,7 @@ def __calc_qqe_mod_core_fast(
             tr1 = 1 if tr else -1 if c1 else tr1
 
             lb2, sb2 = lb1, sb1
-            lb1 = max(lb1, nl) if (ri1 > lb1) and ri > lb1 else nl 
+            lb1 = max(lb1, nl) if (ri1 > lb1) and ri > lb1 else nl
             sb1 = min(sb1, ns) if (ri1 < sb1) and ri < sb1 else ns
 
             fast_atr_rsi_tl.append(lb1 if tr1 == 1 else sb1)
@@ -1828,11 +1832,11 @@ def _calc_qqe_mod_core(src: pd.Series, rsi_period, sf, qqe) -> Tuple[pd.Series, 
     wilders_period = rsi_period * 2 - 1
 
     rsi_i = rsi(src, wilders_period, smoother=ema)
-    rsi_ma = smooth(rsi_i, 'ema', sf)
+    rsi_ma = smooth(rsi_i, "ema", sf)
 
     atr_rsi = abs(rsi_ma.diff())
-    ma_atr_rsi = smooth(atr_rsi, 'ema', wilders_period)
-    dar = smooth(ma_atr_rsi, 'ema', wilders_period) * qqe
+    ma_atr_rsi = smooth(atr_rsi, "ema", wilders_period)
+    dar = smooth(ma_atr_rsi, "ema", wilders_period) * qqe
 
     delta_fast_atr_rsi = dar
     rs_index = rsi_ma
@@ -1841,14 +1845,14 @@ def _calc_qqe_mod_core(src: pd.Series, rsi_period, sf, qqe) -> Tuple[pd.Series, 
     newlongband = rs_index - delta_fast_atr_rsi
 
     fast_atr_rsi_tl = __calc_qqe_mod_core_fast(rs_index.values, newlongband.values, newshortband.values)
-    fast_atr_rsi_tl = pd.Series(fast_atr_rsi_tl, index=rs_index.index, name='fast_atr_rsi_tl')
+    fast_atr_rsi_tl = pd.Series(fast_atr_rsi_tl, index=rs_index.index, name="fast_atr_rsi_tl")
 
     # - old approach - 10 times slower
     # ri1, lb1, sb1, tr1, lb2, sb2 = np.nan, 0, 0, np.nan, np.nan, np.nan
     # c1 = 0
     # fast_atr_rsi_tl = {}
 
-    # for t, ri, nl, ns in zip(rs_index.index, 
+    # for t, ri, nl, ns in zip(rs_index.index,
     #                          rs_index.values, newlongband.values, newshortband.values):
     #     if not np.isnan(ri1):
     #         c1 = ((ri1 <= lb2) & (ri > lb1)) | ((ri1 >= lb2) & (ri < lb1))
@@ -1856,7 +1860,7 @@ def _calc_qqe_mod_core(src: pd.Series, rsi_period, sf, qqe) -> Tuple[pd.Series, 
     #         tr1 = 1 if tr else -1 if c1 else tr1
 
     #         lb2, sb2 = lb1, sb1
-    #         lb1 = max(lb1, nl) if (ri1 > lb1) and ri > lb1 else nl 
+    #         lb1 = max(lb1, nl) if (ri1 > lb1) and ri > lb1 else nl
     #         sb1 = min(sb1, ns) if (ri1 < sb1) and ri < sb1 else ns
 
     #         fast_atr_rsi_tl[t] = lb1 if tr1 == 1 else sb1
@@ -1868,19 +1872,29 @@ def _calc_qqe_mod_core(src: pd.Series, rsi_period, sf, qqe) -> Tuple[pd.Series, 
     return rsi_ma, fast_atr_rsi_tl
 
 
-def qqe_mod(data: pd.DataFrame, rsi_period = 6, sf = 5, qqe = 3, 
-            source = 'close', length = 50, mult = 0.35, source2 = 'close',
-            rsi_period2 = 6, sf2 = 5, qqe2 = 1.61, threshhold2 = 3
-            ) -> pd.DataFrame:
+def qqe_mod(
+    data: pd.DataFrame,
+    rsi_period=6,
+    sf=5,
+    qqe=3,
+    source="close",
+    length=50,
+    mult=0.35,
+    source2="close",
+    rsi_period2=6,
+    sf2=5,
+    qqe2=1.61,
+    threshhold2=3,
+) -> pd.DataFrame:
     """
     QQE_MOD indicator
     """
-    check_frame_columns(data, 'open', 'high', 'low', 'close')
+    check_frame_columns(data, "open", "high", "low", "close")
 
     src = data[source]
     rsi_ma, fast_atr_rsi_tl = _calc_qqe_mod_core(src, rsi_period, sf, qqe)
 
-    basis = smooth(fast_atr_rsi_tl - 50, 'sma', length)
+    basis = smooth(fast_atr_rsi_tl - 50, "sma", length)
     dev = mult * stdev(fast_atr_rsi_tl - 50, length)
     upper = basis + dev
     lower = basis - dev
@@ -1892,7 +1906,7 @@ def qqe_mod(data: pd.DataFrame, rsi_period = 6, sf = 5, qqe = 3,
     histo1 = rsi_ma - 50
     histo2 = rsi_ma2 - 50
 
-    m = scols(histo1, histo2, upper, lower, names=['H1', 'H2', 'U', 'L'])
+    m = scols(histo1, histo2, upper, lower, names=["H1", "H2", "U", "L"])
     _gb_cond = (m.H2 > threshhold2) & (m.H1 > m.U)
     _rb_cond = (m.H2 < -threshhold2) & (m.H1 < m.L)
     _sb_cond = ((histo2 > threshhold2) | (histo2 < -threshhold2)) & ~_gb_cond & ~_rb_cond
@@ -1900,26 +1914,38 @@ def qqe_mod(data: pd.DataFrame, rsi_period = 6, sf = 5, qqe = 3,
     red_bars = m[_rb_cond].H2
     silver_bars = m[_sb_cond].H2
 
-    res = scols(qqe_line, green_bars, red_bars, silver_bars, names=['qqe', 'green', 'red', 'silver'])
+    res = scols(qqe_line, green_bars, red_bars, silver_bars, names=["qqe", "green", "red", "silver"])
     res = res.assign(
         # here we code hist bars:
-        #  -1 -> silver < 0, +1 -> silver > 0, +2 -> green, -2 -> red 
-        code = -1 * (res.silver < 0) + 1 * (res.silver > 0) + 2 * (res.green > 0) - 2 * (res.red < 0)
+        #  -1 -> silver < 0, +1 -> silver > 0, +2 -> green, -2 -> red
+        code=-1 * (res.silver < 0)
+        + 1 * (res.silver > 0)
+        + 2 * (res.green > 0)
+        - 2 * (res.red < 0)
     )
-    
+
     return res
 
 
-def ssl_exits(data: pd.DataFrame, baseline_type='hma', baseline_period=60, exit_type='hma', exit_period=15, atr_type='ema', atr_period=14, multy=0.2) ->pd.DataFrame:
+def ssl_exits(
+    data: pd.DataFrame,
+    baseline_type="hma",
+    baseline_period=60,
+    exit_type="hma",
+    exit_period=15,
+    atr_type="ema",
+    atr_period=14,
+    multy=0.2,
+) -> pd.DataFrame:
     """
     Exits generator based on momentum reversal (from SSL Hybrid in TV)
     """
-    check_frame_columns(data, 'high', 'low', 'close')
+    check_frame_columns(data, "high", "low", "close")
     close = data.close
     lows = data.low
     highs = data.high
 
-    base_line = smooth(close, baseline_type, baseline_period) 
+    base_line = smooth(close, baseline_type, baseline_period)
     exit_hi = smooth(highs, exit_type, exit_period)
     exit_lo = smooth(lows, exit_type, exit_period)
 
@@ -1933,10 +1959,19 @@ def ssl_exits(data: pd.DataFrame, baseline_type='hma', baseline_period=60, exit_
     hlv3 = hlv3.ffill()
 
     ssl_exit = srows(exit_hi[hlv3 < 0], exit_lo[hlv3 > 0])
-    m = scols(ssl_exit, close, lows, highs, base_line, upperk, lowerk, names=['exit', 'close', 'low', 'high', 'base_line', 'upperk', 'lowerk'])
-    
-    exit_short = m[(m.close.shift(1) <= m.exit.shift(1)) & (m.close >  m.exit)].low
-    exit_long = m[(m.close.shift(1) >= m.exit.shift(1)) & (m.close <  m.exit)].high
+    m = scols(
+        ssl_exit,
+        close,
+        lows,
+        highs,
+        base_line,
+        upperk,
+        lowerk,
+        names=["exit", "close", "low", "high", "base_line", "upperk", "lowerk"],
+    )
+
+    exit_short = m[(m.close.shift(1) <= m.exit.shift(1)) & (m.close > m.exit)].low
+    exit_long = m[(m.close.shift(1) >= m.exit.shift(1)) & (m.close < m.exit)].high
 
     grow_line = pd.Series(np.nan, index=m.index)
     decl_line = pd.Series(np.nan, index=m.index)
@@ -1945,16 +1980,20 @@ def ssl_exits(data: pd.DataFrame, baseline_type='hma', baseline_period=60, exit_
     d = m[m.close < m.lowerk].base_line
     grow_line[g.index] = g
     decl_line[d.index] = d
-    
+
     return scols(
-        exit_long, exit_short, grow_line, decl_line, m.base_line, 
-        names=['exit_long', 'exit_short', 'grow', 'decline', 'base']
+        exit_long,
+        exit_short,
+        grow_line,
+        decl_line,
+        m.base_line,
+        names=["exit_long", "exit_short", "grow", "decline", "base"],
     )
 
 
 def streaks(xs: pd.Series):
     """
-    Count consequently rising values in input series, actually it measures the duration of the trend. 
+    Count consequently rising values in input series, actually it measures the duration of the trend.
     It is the number of points in a row with value has been higher (up) or lower (down) than the previous one.
 
     streaks(pd.Series([1,2,1,2,3,4,5,1]))
@@ -1969,9 +2008,11 @@ def streaks(xs: pd.Series):
         7   -1.0
 
     """
+
     def consecutive_count(b):
         cs = b.astype(int).cumsum()
         return cs.sub(cs.mask(b).ffill().fillna(0))
+
     prev = xs.shift(1)
     return consecutive_count(xs > prev) - consecutive_count(xs < prev)
 
@@ -1994,11 +2035,11 @@ def connors_rsi(close, rsi_period=3, streaks_period=2, percent_rank_period=100) 
     return (rsi(close, rsi_period) + rsi(streaks(close), streaks_period) + percentrank(close, percent_rank_period)) / 3
 
 
-def swings(ohlc: pd.DataFrame, trend_indicator: Callable=psar, **indicator_args) -> Struct:
+def swings(ohlc: pd.DataFrame, trend_indicator: Callable = psar, **indicator_args) -> Struct:
     """
     Swing detector based on trend indicator
     """
-    check_frame_columns(ohlc, 'high', 'low', 'close')
+    check_frame_columns(ohlc, "high", "low", "close")
 
     def _find_reversal_pts(highs, lows, indicator, is_lows):
         pts = {}
@@ -2011,13 +2052,13 @@ def swings(ohlc: pd.DataFrame, trend_indicator: Callable=psar, **indicator_args)
     trend_detector = trend_indicator(ohlc, **indicator_args)
     down, up = None, None
     if trend_detector is not None and isinstance(trend_detector, pd.DataFrame):
-        _d = 'down' if 'down' in trend_detector.columns else 'utl'
-        _u = 'up' if 'up' in trend_detector.columns else 'dtl'
+        _d = "down" if "down" in trend_detector.columns else "utl"
+        _u = "up" if "up" in trend_detector.columns else "dtl"
         down = trend_detector[_d]
         up = trend_detector[_u]
 
-    hp = pd.Series(_find_reversal_pts(ohlc.high, ohlc.low, down, True), name='H')
-    lp = pd.Series(_find_reversal_pts(ohlc.high, ohlc.low, up, False), name='L')
+    hp = pd.Series(_find_reversal_pts(ohlc.high, ohlc.low, down, True), name="H")
+    lp = pd.Series(_find_reversal_pts(ohlc.high, ohlc.low, up, False), name="L")
 
     u_tr, d_tr = {}, {}
     prev_t, prev_pt = None, None
@@ -2026,36 +2067,38 @@ def swings(ohlc: pd.DataFrame, trend_indicator: Callable=psar, **indicator_args)
         if np.isnan(h):
             if prev_pt:
                 length = abs(prev_pt - l)
-                u_tr[prev_t] = {'start_price': prev_pt, 'end_price': l, 'delta':length, 'end': t}
-                swings[prev_t] = {'p0': prev_pt, 'p1': l, 'direction': -1, 'duration': t-prev_t, 'length': length}
+                u_tr[prev_t] = {"start_price": prev_pt, "end_price": l, "delta": length, "end": t}
+                swings[prev_t] = {"p0": prev_pt, "p1": l, "direction": -1, "duration": t - prev_t, "length": length}
             prev_pt = l
             prev_t = t
-            
+
         elif np.isnan(l):
             if prev_pt:
                 length = abs(prev_pt - h)
-                d_tr[prev_t] = {'start_price': prev_pt, 'end_price': h, 'delta':length, 'end': t}
-                swings[prev_t] = {'p0': prev_pt, 'p1': h, 'direction': +1, 'duration': t-prev_t, 'length': length}
+                d_tr[prev_t] = {"start_price": prev_pt, "end_price": h, "delta": length, "end": t}
+                swings[prev_t] = {"p0": prev_pt, "p1": h, "direction": +1, "duration": t - prev_t, "length": length}
             prev_pt = h
             prev_t = t
 
     trends_splits = scols(
-        pd.DataFrame.from_dict(u_tr, orient='index'), 
-        pd.DataFrame.from_dict(d_tr, orient='index'), keys=['UpTrends', 'DownTrends'])
-    
-    swings = pd.DataFrame.from_dict(swings, orient='index') 
-    
+        pd.DataFrame.from_dict(u_tr, orient="index"),
+        pd.DataFrame.from_dict(d_tr, orient="index"),
+        keys=["DownTrends", "UpTrends"],
+    )
+
+    swings = pd.DataFrame.from_dict(swings, orient="index")
+
     return Struct(swings=swings, trends=trends_splits, tops=hp, bottoms=lp)
 
 
 @njit
 def norm_pdf(x):
-    return np.exp(-x ** 2 / 2) / np.sqrt(2 * np.pi)
+    return np.exp(-(x**2) / 2) / np.sqrt(2 * np.pi)
 
 
 @njit
 def lognorm_pdf(x, s):
-    return np.exp(-np.log(x) ** 2 / (2 * s ** 2)) / (x * s * np.sqrt(2 * np.pi))
+    return np.exp(-np.log(x) ** 2 / (2 * s**2)) / (x * s * np.sqrt(2 * np.pi))
 
 
 @njit
@@ -2083,13 +2126,13 @@ def pwma(x: pd.Series, alpha: float, beta: float, T: int) -> pd.DataFrame:
     Implementation of probabilistic exponential weighted ma (https://sci-hub.shop/10.1109/SSP.2012.6319708)
     """
     m, v, s = _pwma(x.values, alpha, beta, T)
-    return pd.DataFrame({'Mean': m, 'Var': v, 'Std': s}, index=x.index)
+    return pd.DataFrame({"Mean": m, "Var": v, "Std": s}, index=x.index)
 
 
 @njit
 def _pwma_outliers_detector(x, a, beta, T, z_th, dist):
     x0 = 0 if np.isnan(x[0]) else x[0]
-    s1, s2, s1_n, std_n = x0, x0 ** 2, x0, 0
+    s1, s2, s1_n, std_n = x0, x0**2, x0, 0
 
     s1a, stda, za, probs = np.zeros(x.shape), np.zeros(x.shape), np.zeros(x.shape), np.zeros(x.shape)
     uba, lba = np.zeros(x.shape), np.zeros(x.shape)
@@ -2110,7 +2153,7 @@ def _pwma_outliers_detector(x, a, beta, T, z_th, dist):
         # Update Mean, Var, Std
         if not np.isnan(xi):
             s1 = a_t * s1 + (1 - a_t) * xi
-            s2 = a_t * s2 + (1 - a_t) * xi ** 2
+            s2 = a_t * s2 + (1 - a_t) * xi**2
             s1_n = s1
             std_n = np.sqrt(abs(s2 - np.square(s1)))
 
@@ -2131,19 +2174,25 @@ def _pwma_outliers_detector(x, a, beta, T, z_th, dist):
     return s1a, stda, probs, za, uba, lba, outliers
 
 
-def pwma_outliers_detector(x: pd.Series, alpha: float, beta: float, T=30, threshold=0.05, dist='norm') -> Struct:
+def pwma_outliers_detector(x: pd.Series, alpha: float, beta: float, T=30, threshold=0.05, dist="norm") -> Struct:
     """
     Outliers detector based on pwma
     """
     import scipy.stats
+
     z_thr = scipy.stats.norm.ppf(1 - threshold / 2)
     m, s, p, z, u, l, oi = _pwma_outliers_detector(x.values, alpha, beta, T, z_thr, dist)
-    res = pd.DataFrame({'Mean': m, 'Std': s, 'Za': z, 'Uba': u, 'Lba': l, 'Prob': p}, index=x.index)
+    res = pd.DataFrame({"Mean": m, "Std": s, "Za": z, "Uba": u, "Lba": l, "Prob": p}, index=x.index)
 
     return Struct(
-        m=res['Mean'], s=res['Std'], z=res['Za'], u=res['Uba'], l=res['Lba'], p=res['Prob'],
+        m=res["Mean"],
+        s=res["Std"],
+        z=res["Za"],
+        u=res["Uba"],
+        l=res["Lba"],
+        p=res["Prob"],
         outliers=x.iloc[oi] if len(oi) else None,
-        z_bounds=(z_thr, -z_thr)
+        z_bounds=(z_thr, -z_thr),
     )
 
 
@@ -2152,7 +2201,8 @@ def __fast_ols(x, y):
     n = len(x)
     p, _, _, _ = np.linalg.lstsq(x, y, rcond=-1)
     r2 = (n * np.sum(x * y) - np.sum(x) * np.sum(y)) ** 2 / (
-                (n * np.sum(x ** 2) - np.sum(x) ** 2) * (n * np.sum(y ** 2) - np.sum(y) ** 2))
+        (n * np.sum(x**2) - np.sum(x) ** 2) * (n * np.sum(y**2) - np.sum(y) ** 2)
+    )
     return p[0][0], p[1][0], r2
 
 
@@ -2165,9 +2215,9 @@ def fast_ols(x, y) -> Struct:
 def fast_alpha(x, order=1, factor=10, min_threshold=1e-10):
     """
     Returns alpha based on following calculations:
-    
+
     alpha = exp(-F*(1 - R2))
-    
+
     where R2 - r squared metric from regression of x data against straight line y = x
     """
     x = x[~np.isnan(x)]
@@ -2188,7 +2238,7 @@ def __rolling_slope(x, period, alpha_factor):
     ri = nans((len(x), 2))
 
     for i in range(period, x.shape[0]):
-        a, r2, s, _ = fast_alpha(x[i - period:i], factor=alpha_factor)
+        a, r2, s, _ = fast_alpha(x[i - period : i], factor=alpha_factor)
         ri[i, :] = [r2, s]
 
     return ri
@@ -2196,26 +2246,27 @@ def __rolling_slope(x, period, alpha_factor):
 
 def rolling_slope(x: pd.Series, period: int, alpha_factor=10) -> pd.DataFrame:
     """
-    Calculates slope/R2 on rolling basis for series from x 
+    Calculates slope/R2 on rolling basis for series from x
     returns DataFrame with 2 columns: R2, Slope
     """
-    return pd.DataFrame(__rolling_slope(column_vector(x), period, alpha_factor), index=x.index, columns=['R2', 'Slope'])
+    return pd.DataFrame(__rolling_slope(column_vector(x), period, alpha_factor), index=x.index, columns=["R2", "Slope"])
 
 
-def find_movements_hilo(x: pd.DataFrame, 
-                        threshold: float=-np.inf, 
-                        pcntg=0.75,
-                        t_window: List | Tuple | int = 10,
-                        use_prev_movement_size_for_percentage=True,
-                        result_as_frame=False, 
-                        collect_log=False,
-                        init_direction=0,
-                        silent=False,
-                    ):
+def find_movements_hilo(
+    x: pd.DataFrame,
+    threshold: float = -np.inf,
+    pcntg=0.75,
+    t_window: List | Tuple | int = 10,
+    use_prev_movement_size_for_percentage=True,
+    result_as_frame=False,
+    collect_log=False,
+    init_direction=0,
+    silent=False,
+):
     """
     Finds all movements in DataFrame x (should be pandas Dataframe object with low & high columns) which have absolute magnitude >= threshold
     and lasts not more than t_window bars.
-    
+
     # Example:
     # -----------------
 
@@ -2265,7 +2316,7 @@ def find_movements_hilo(x: pd.DataFrame,
     """
 
     # check input arguments
-    check_frame_columns(x, 'high', 'low')
+    check_frame_columns(x, "high", "low")
 
     direction = init_direction
     mi, mx = 0, 0
@@ -2279,7 +2330,8 @@ def find_movements_hilo(x: pd.DataFrame,
     elif len(t_window) != 2 or t_window[0] >= t_window[1]:
         raise ValueError("t_window must have 2 ascending elements")
 
-    if not silent: print(' -[', end='')
+    if not silent:
+        print(" -[", end="")
     n_p_len = max(int(len(x) / 100), 1)
 
     prev_vL = 0
@@ -2289,8 +2341,8 @@ def find_movements_hilo(x: pd.DataFrame,
     last_drop = None
     last_grow = None
 
-    LO = x['low'].values
-    HI = x['high'].values
+    LO = x["low"].values
+    HI = x["high"].values
 
     xL_mi = LO[mi]
     xH_mx = HI[mx]
@@ -2299,7 +2351,7 @@ def find_movements_hilo(x: pd.DataFrame,
     i = 1
     x_len = len(x)
     while i < x_len:
-        vL, vH  = LO[i], HI[i]
+        vL, vH = LO[i], HI[i]
 
         if direction <= 0:
             if direction < 0 and vH > prev_vH and last_grow is not None:
@@ -2328,7 +2380,7 @@ def find_movements_hilo(x: pd.DataFrame,
                 else:
                     l_mv = pcntg * xL_mi
 
-                # check condition    
+                # check condition
                 if (vL - xL_mi >= threshold) or (l_mv < vL - xL_mi):
 
                     # case when HighLow of a one bar are extreme points, to avoid infinite loop
@@ -2340,7 +2392,7 @@ def find_movements_hilo(x: pd.DataFrame,
                     # i_drops.append([mx, mi])
                     if last_grow:
                         # check if not violate the previous drop
-                        min_idx = np.argmin(LO[last_grow[0]: last_grow[1] + 1])
+                        min_idx = np.argmin(LO[last_grow[0] : last_grow[1] + 1])
                         if last_grow[1] > (last_grow[0] + 1) and min_idx > 0 and len(i_drops) > 0:
                             # we have low, which is lower than start of uptrend,
                             # remove the previous drop and replace it with the new one
@@ -2355,7 +2407,7 @@ def find_movements_hilo(x: pd.DataFrame,
                     prev_mi = mi
 
                     if collect_log:
-                        log_rec[timeline[i]] = {'Type': '-', 'Time': timeline[mi], 'Price': xL_mi}
+                        log_rec[timeline[i]] = {"Type": "-", "Time": timeline[mi], "Price": xL_mi}
 
                     # need to move back to the end of last drop
                     i = mi
@@ -2400,7 +2452,7 @@ def find_movements_hilo(x: pd.DataFrame,
                     last_grow = [mi, mx]
                     if last_drop:
                         # check if not violate the previous drop
-                        max_idx = np.argmax(HI[last_drop[0]: last_drop[1] + 1])
+                        max_idx = np.argmax(HI[last_drop[0] : last_drop[1] + 1])
                         if last_drop[1] > (last_drop[0] + 1) and max_idx > 0 and len(i_grows) > 0:
                             # more than 1 bar between points
                             # we have low, which is lower than start of uptrend,
@@ -2416,7 +2468,7 @@ def find_movements_hilo(x: pd.DataFrame,
                     prev_mx = mx
 
                     if collect_log:
-                        log_rec[timeline[i]] = {'Type': '+', 'Time': timeline[mx], 'Price': xH_mx}
+                        log_rec[timeline[i]] = {"Type": "+", "Time": timeline[mx], "Price": xH_mx}
 
                     # need to move back to the end of last grow
                     i = mx
@@ -2426,7 +2478,8 @@ def find_movements_hilo(x: pd.DataFrame,
                     direction = -1
 
         i += 1
-        if not silent and not (i % n_p_len): print(':', end='')
+        if not silent and not (i % n_p_len):
+            print(":", end="")
 
     if last_grow:
         i_grows.append(last_grow)
@@ -2436,28 +2489,31 @@ def find_movements_hilo(x: pd.DataFrame,
         i_drops.append(last_drop)
         last_drop = None
 
-    if not silent: print(']-')
+    if not silent:
+        print("]-")
     i_drops = np.array(i_drops)
     i_grows = np.array(i_grows)
 
-    # Nothing is found 
+    # Nothing is found
     if len(i_drops) == 0 or len(i_grows) == 0:
         if not silent:
             print("\n\t[WARNING] find_movements_hilo: No trends found for given conditions !")
-        return pd.DataFrame({'UpTrends': [], 'DownTrends': []}) if result_as_frame else ([], [], [], [])
+        return pd.DataFrame({"UpTrends": [], "DownTrends": []}) if result_as_frame else ([], [], [], [])
 
     # retain only movements equal or exceed specified threshold
     if not np.isinf(threshold):
         if i_drops.size:
-            i_drops = i_drops[abs(x['low'][i_drops[:, 1]].values - x['high'][i_drops[:, 0]].values) >= threshold, :]
+            i_drops = i_drops[abs(x["low"][i_drops[:, 1]].values - x["high"][i_drops[:, 0]].values) >= threshold, :]
         if i_grows.size:
-            i_grows = i_grows[abs(x['high'][i_grows[:, 1]].values - x['low'][i_grows[:, 0]].values) >= threshold, :]
+            i_grows = i_grows[abs(x["high"][i_grows[:, 1]].values - x["low"][i_grows[:, 0]].values) >= threshold, :]
 
     # retain only movements which shorter than specified window
     __drops_len = abs(i_drops[:, 1] - i_drops[:, 0])
     __grows_len = abs(i_grows[:, 1] - i_grows[:, 0])
-    if i_drops.size: i_drops = i_drops[(__drops_len >= t_window[0]) & (__drops_len <= t_window[1]), :]
-    if i_grows.size: i_grows = i_grows[(__grows_len >= t_window[0]) & (__grows_len <= t_window[1]), :]
+    if i_drops.size:
+        i_drops = i_drops[(__drops_len >= t_window[0]) & (__drops_len <= t_window[1]), :]
+    if i_grows.size:
+        i_grows = i_grows[(__grows_len >= t_window[0]) & (__grows_len <= t_window[1]), :]
 
     # Removed - filter out all movements which cover period from 16:00 till 9:30 next day
 
@@ -2466,11 +2522,11 @@ def find_movements_hilo(x: pd.DataFrame,
     # drops and grows magnitudes
     v_drops = []
     if i_drops.size:
-        v_drops = abs(x['low'][i_drops[:, 1]].values - x['high'][i_drops[:, 0]].values)
+        v_drops = abs(x["low"][i_drops[:, 1]].values - x["high"][i_drops[:, 0]].values)
 
     v_grows = []
     if i_grows.size:
-        v_grows = abs(x['high'][i_grows[:, 1]].values - x['low'][i_grows[:, 0]].values)
+        v_grows = abs(x["high"][i_grows[:, 1]].values - x["low"][i_grows[:, 0]].values)
 
     # - return results
     indexes = np.array(x.index)
@@ -2478,31 +2534,35 @@ def find_movements_hilo(x: pd.DataFrame,
     x_d = np.array([x.high[i_d[:, 0]].values, x.low[i_d[:, 1]].values]).transpose()
     x_g = np.array([x.low[i_g[:, 0]].values, x.high[i_g[:, 1]].values]).transpose()
 
-    d = pd.DataFrame(OrderedDict({
-        'start_price': x_d[:, 0],
-        'end_price': x_d[:, 1],
-        'delta': v_drops,
-        'end': i_d[:, 1]
-    }), index=i_d[:, 0])
+    d = pd.DataFrame(
+        OrderedDict({"start_price": x_d[:, 0], "end_price": x_d[:, 1], "delta": v_drops, "end": i_d[:, 1]}),
+        index=i_d[:, 0],
+    )
 
-    g = pd.DataFrame(OrderedDict({
-        'start_price': x_g[:, 0],
-        'end_price': x_g[:, 1],
-        'delta': v_grows,
-        'end': i_g[:, 1]
-    }), index=i_g[:, 0])
+    g = pd.DataFrame(
+        OrderedDict({"start_price": x_g[:, 0], "end_price": x_g[:, 1], "delta": v_grows, "end": i_g[:, 1]}),
+        index=i_g[:, 0],
+    )
 
-    trends = pd.concat((g, d), axis=1, keys=['UpTrends', 'DownTrends'])
+    trends = pd.concat((g, d), axis=1, keys=["UpTrends", "DownTrends"])
     if collect_log:
-        return trends, pd.DataFrame.from_dict(log_rec, orient='index')
+        return trends, pd.DataFrame.from_dict(log_rec, orient="index")
 
     return trends
 
 
 _SMOOTHERS = {
-    'sma': sma, 'ema': ema, 'tema': tema, 'dema': dema,
-    'zlema': zlema, 'kama': kama, 'jma': jma, 'wma': wma, 
-    'mcginley': mcginley, 'hma': hma, 'ema_time': ema_time
+    "sma": sma,
+    "ema": ema,
+    "tema": tema,
+    "dema": dema,
+    "zlema": zlema,
+    "kama": kama,
+    "jma": jma,
+    "wma": wma,
+    "mcginley": mcginley,
+    "hma": hma,
+    "ema_time": ema_time,
 }
 
 
@@ -2516,7 +2576,9 @@ def smooth(x: pd.Series, smoother: str | Callable[[pd.Series, Any], pd.Series], 
         if smoother in _SMOOTHERS:
             f_sm = _SMOOTHERS.get(smoother)
         else:
-            raise ValueError(f"Smoothing method '{smoother}' is not supported, supported methods: {list(_SMOOTHERS.keys())}")
+            raise ValueError(
+                f"Smoothing method '{smoother}' is not supported, supported methods: {list(_SMOOTHERS.keys())}"
+            )
 
     if isinstance(smoother, types.FunctionType):
         f_sm = smoother

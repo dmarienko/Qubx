@@ -1,6 +1,7 @@
 """
    Misc graphics handy utilitites to be used in interactive analysis
 """
+
 import numpy as np
 import pandas as pd
 import statsmodels.tsa.stattools as st
@@ -19,80 +20,117 @@ from matplotlib.patches import Rectangle
 from matplotlib.transforms import Affine2D
 from cycler import cycler
 
+from qubx.utils.misc import Struct
 from qubx.utils.time import infer_series_frequency
 
 
 DARK_MATLPLOT_THEME = [
-    ('backend', 'module://matplotlib_inline.backend_inline'),
-    ('interactive', True),
-    ('lines.color', '#5050f0'),
-    ('text.color', '#d0d0d0'),
-    ('axes.facecolor', '#000000'),
-    ('axes.edgecolor', '#404040'),
-    ('axes.grid', True),
-    ('axes.labelsize', 'large'),
-    ('axes.labelcolor', 'green'),
-    ('axes.prop_cycle', cycler('color', ['#08F7FE', '#00ff41', '#FE53BB', '#F5D300', '#449AcD', 'g',
-                                         '#f62841', 'y', '#088487', '#E24A33', '#f01010'])),
-    ('legend.fontsize', 'small'),
-    ('legend.fancybox', False),
-    ('legend.edgecolor', '#305030'),
-    ('legend.shadow', False),
-    ('lines.antialiased', True),
-    ('lines.linewidth', 0.8),  # reduced line width
-    ('patch.linewidth', 0.5),
-    ('patch.antialiased', True),
-    ('xtick.color', '#909090'),
-    ('ytick.color', '#909090'),
-    ('xtick.labelsize', 'large'),
-    ('ytick.labelsize', 'large'),
-    ('grid.color', '#404040'),
-    ('grid.linestyle', '--'),
-    ('grid.linewidth', 0.5),
-    ('grid.alpha', 0.8),
-    ('figure.figsize', [12.0, 5.0]),
-    ('figure.dpi', 80.0),
-    ('figure.facecolor', '#050505'),
-    ('figure.edgecolor', (1, 1, 1, 0)),
-    ('figure.subplot.bottom', 0.125),
-    ('savefig.facecolor', '#000000'),
+    ("backend", "module://matplotlib_inline.backend_inline"),
+    ("interactive", True),
+    ("lines.color", "#5050f0"),
+    ("text.color", "#d0d0d0"),
+    ("axes.facecolor", "#000000"),
+    ("axes.edgecolor", "#404040"),
+    ("axes.grid", True),
+    ("axes.labelsize", "large"),
+    ("axes.labelcolor", "green"),
+    (
+        "axes.prop_cycle",
+        cycler(
+            "color",
+            [
+                "#08F7FE",
+                "#00ff41",
+                "#FE53BB",
+                "#F5D300",
+                "#449AcD",
+                "g",
+                "#f62841",
+                "y",
+                "#088487",
+                "#E24A33",
+                "#f01010",
+            ],
+        ),
+    ),
+    ("legend.fontsize", "small"),
+    ("legend.fancybox", False),
+    ("legend.edgecolor", "#305030"),
+    ("legend.shadow", False),
+    ("lines.antialiased", True),
+    ("lines.linewidth", 0.8),  # reduced line width
+    ("patch.linewidth", 0.5),
+    ("patch.antialiased", True),
+    ("xtick.color", "#909090"),
+    ("ytick.color", "#909090"),
+    ("xtick.labelsize", "large"),
+    ("ytick.labelsize", "large"),
+    ("grid.color", "#404040"),
+    ("grid.linestyle", "--"),
+    ("grid.linewidth", 0.5),
+    ("grid.alpha", 0.8),
+    ("figure.figsize", [12.0, 5.0]),
+    ("figure.dpi", 80.0),
+    ("figure.facecolor", "#050505"),
+    ("figure.edgecolor", (1, 1, 1, 0)),
+    ("figure.subplot.bottom", 0.125),
+    ("savefig.facecolor", "#000000"),
 ]
 
 LIGHT_MATPLOT_THEME = [
-    ('backend', 'module://matplotlib_inline.backend_inline'),
-    ('interactive', True),
-    ('lines.color', '#101010'),
-    ('text.color', '#303030'),
-    ('lines.antialiased', True),
-    ('lines.linewidth', 1),
-    ('patch.linewidth', 0.5),
-    ('patch.facecolor', '#348ABD'),
-    ('patch.edgecolor', '#eeeeee'),
-    ('patch.antialiased', True),
-    ('axes.facecolor', '#fafafa'),
-    ('axes.edgecolor', '#d0d0d0'),
-    ('axes.linewidth', 1),
-    ('axes.titlesize', 'x-large'),
-    ('axes.labelsize', 'large'),
-    ('axes.labelcolor', '#555555'),
-    ('axes.axisbelow', True),
-    ('axes.grid', True),
-    ('axes.prop_cycle', cycler('color', ['#6792E0', '#27ae60', '#c44e52', '#975CC3', '#ff914d', '#77BEDB',
-                                         '#303030', '#4168B7', '#93B851', '#e74c3c', '#bc89e0', '#ff711a',
-                                         '#3498db', '#6C7A89'])),
-    ('legend.fontsize', 'small'),
-    ('legend.fancybox', False),
-    ('xtick.color', '#707070'),
-    ('ytick.color', '#707070'),
-    ('grid.color', '#606060'),
-    ('grid.linestyle', '--'),
-    ('grid.linewidth', 0.5),
-    ('grid.alpha', 0.3),
-    ('figure.figsize', [8.0, 5.0]),
-    ('figure.dpi', 80.0),
-    ('figure.facecolor', '#ffffff'),
-    ('figure.edgecolor', '#ffffff'),
-    ('figure.subplot.bottom', 0.1)
+    ("backend", "module://matplotlib_inline.backend_inline"),
+    ("interactive", True),
+    ("lines.color", "#101010"),
+    ("text.color", "#303030"),
+    ("lines.antialiased", True),
+    ("lines.linewidth", 1),
+    ("patch.linewidth", 0.5),
+    ("patch.facecolor", "#348ABD"),
+    ("patch.edgecolor", "#eeeeee"),
+    ("patch.antialiased", True),
+    ("axes.facecolor", "#fafafa"),
+    ("axes.edgecolor", "#d0d0d0"),
+    ("axes.linewidth", 1),
+    ("axes.titlesize", "x-large"),
+    ("axes.labelsize", "large"),
+    ("axes.labelcolor", "#555555"),
+    ("axes.axisbelow", True),
+    ("axes.grid", True),
+    (
+        "axes.prop_cycle",
+        cycler(
+            "color",
+            [
+                "#6792E0",
+                "#27ae60",
+                "#c44e52",
+                "#975CC3",
+                "#ff914d",
+                "#77BEDB",
+                "#303030",
+                "#4168B7",
+                "#93B851",
+                "#e74c3c",
+                "#bc89e0",
+                "#ff711a",
+                "#3498db",
+                "#6C7A89",
+            ],
+        ),
+    ),
+    ("legend.fontsize", "small"),
+    ("legend.fancybox", False),
+    ("xtick.color", "#707070"),
+    ("ytick.color", "#707070"),
+    ("grid.color", "#606060"),
+    ("grid.linestyle", "--"),
+    ("grid.linewidth", 0.5),
+    ("grid.alpha", 0.3),
+    ("figure.figsize", [8.0, 5.0]),
+    ("figure.dpi", 80.0),
+    ("figure.facecolor", "#ffffff"),
+    ("figure.edgecolor", "#ffffff"),
+    ("figure.subplot.bottom", 0.1),
 ]
 
 
@@ -106,7 +144,7 @@ def fig(w=16, h=5, dpi=96, facecolor=None, edgecolor=None, num=None):
 def subplot(shape, loc, rowspan=2, colspan=1):
     """
     Some handy grid splitting for plots. Example for 2x2:
-    
+
     >>> subplot(22, 1); plt.plot([-1,2,-3])
     >>> subplot(22, 2); plt.plot([1,2,3])
     >>> subplot(22, 3); plt.plot([1,2,3])
@@ -157,7 +195,7 @@ def sbp(shape, loc, r=1, c=1):
     return subplot(shape, loc, rowspan=r, colspan=c)
 
 
-def vline(ax, x, c, lw=1, ls='--'):
+def vline(ax, x, c, lw=1, ls="--"):
     x = pd.to_datetime(x) if isinstance(x, str) else x
     if not isinstance(ax, (list, tuple)):
         ax = [ax]
@@ -166,16 +204,17 @@ def vline(ax, x, c, lw=1, ls='--'):
 
 
 def hline(*zs, mirror=True):
-    [plt.axhline(z, ls='--', c='r', lw=0.5) for z in zs]
+    [plt.axhline(z, ls="--", c="r", lw=0.5) for z in zs]
     if mirror:
-        [plt.axhline(-z, ls='--', c='r', lw=0.5) for z in zs]
+        [plt.axhline(-z, ls="--", c="r", lw=0.5) for z in zs]
 
 
-def ellips(ax, x, y, c='r', r=2.5, lw=2, ls='-'):
+def ellips(ax, x, y, c="r", r=2.5, lw=2, ls="-"):
     """
     Draw ellips annotation on specified plot at (x,y) point
     """
     from matplotlib.patches import Ellipse
+
     x = pd.to_datetime(x) if isinstance(x, str) else x
     w, h = (r, r) if np.isscalar(r) else (r[0], r[1])
     ax.add_artist(Ellipse(xy=[x, y], width=w, height=h, angle=0, fill=False, color=c, lw=lw, ls=ls))
@@ -184,14 +223,14 @@ def ellips(ax, x, y, c='r', r=2.5, lw=2, ls='-'):
 def set_mpl_theme(theme: str):
     import plotly.io as pio
 
-    if 'dark' in theme.lower():
+    if "dark" in theme.lower():
         pio.templates.default = "plotly_dark"
-        for (k, v) in DARK_MATLPLOT_THEME:
+        for k, v in DARK_MATLPLOT_THEME:
             matplotlib.rcParams[k] = v
 
-    elif 'light' in theme.lower():
+    elif "light" in theme.lower():
         pio.templates.default = "plotly_white"
-        for (k, v) in LIGHT_MATPLOT_THEME:
+        for k, v in LIGHT_MATPLOT_THEME:
             matplotlib.rcParams[k] = v
 
 
@@ -204,7 +243,7 @@ def adjust_lightness(color, amount=0.5):
     return colorsys.hls_to_rgb(c[0], max(0, min(1, amount * c[1])), c[2])
 
 
-def plot_day_summary_oclh(ax, quotes, ticksize=3, colorup='k', colordown='r'):
+def plot_day_summary_oclh(ax, quotes, ticksize=3, colorup="k", colordown="r"):
     """Plots day summary
 
         Represent the time, open, close, high, low as a vertical line
@@ -229,12 +268,10 @@ def plot_day_summary_oclh(ax, quotes, ticksize=3, colorup='k', colordown='r'):
     lines : list
         list of tuples of the lines added (one tuple per quote)
     """
-    return _plot_day_summary(ax, quotes, ticksize=ticksize,
-                             colorup=colorup, colordown=colordown,
-                             ochl=True)
+    return _plot_day_summary(ax, quotes, ticksize=ticksize, colorup=colorup, colordown=colordown, ochl=True)
 
 
-def plot_day_summary_ohlc(ax, quotes, ticksize=3, colorup='k', colordown='r'):
+def plot_day_summary_ohlc(ax, quotes, ticksize=3, colorup="k", colordown="r"):
     """Plots day summary
 
         Represent the time, open, high, low, close as a vertical line
@@ -259,12 +296,10 @@ def plot_day_summary_ohlc(ax, quotes, ticksize=3, colorup='k', colordown='r'):
     lines : list
         list of tuples of the lines added (one tuple per quote)
     """
-    return _plot_day_summary(ax, quotes, ticksize=ticksize,
-                             colorup=colorup, colordown=colordown,
-                             ochl=False)
+    return _plot_day_summary(ax, quotes, ticksize=ticksize, colorup=colorup, colordown=colordown, ochl=False)
 
 
-def _plot_day_summary(ax, quotes, ticksize=3, colorup='k', colordown='r', ochl=True):
+def _plot_day_summary(ax, quotes, ticksize=3, colorup="k", colordown="r", ochl=True):
     """Plots day summary
 
 
@@ -308,23 +343,25 @@ def _plot_day_summary(ax, quotes, ticksize=3, colorup='k', colordown='r', ochl=T
         else:
             color = colordown
 
-        vline = Line2D(xdata=(t, t), ydata=(low, high),
-                       color=color,
-                       antialiased=False,  # no need to antialias vert lines
-                       )
+        vline = Line2D(
+            xdata=(t, t),
+            ydata=(low, high),
+            color=color,
+            antialiased=False,  # no need to antialias vert lines
+        )
 
-        oline = Line2D(xdata=(t, t), ydata=(open, open),
-                       color=color,
-                       antialiased=False,
-                       marker=TICKLEFT,
-                       markersize=ticksize,
-                       )
+        oline = Line2D(
+            xdata=(t, t),
+            ydata=(open, open),
+            color=color,
+            antialiased=False,
+            marker=TICKLEFT,
+            markersize=ticksize,
+        )
 
-        cline = Line2D(xdata=(t, t), ydata=(close, close),
-                       color=color,
-                       antialiased=False,
-                       markersize=ticksize,
-                       marker=TICKRIGHT)
+        cline = Line2D(
+            xdata=(t, t), ydata=(close, close), color=color, antialiased=False, markersize=ticksize, marker=TICKRIGHT
+        )
 
         lines.extend((vline, oline, cline))
         ax.add_line(vline)
@@ -336,7 +373,7 @@ def _plot_day_summary(ax, quotes, ticksize=3, colorup='k', colordown='r', ochl=T
     return lines
 
 
-def candlestick_ochl(ax, quotes, width=0.2, colorup='k', colordown='r', alpha=1.0):
+def candlestick_ochl(ax, quotes, width=0.2, colorup="k", colordown="r", alpha=1.0):
     """
     Plot the time, open, close, high, low as a vertical line ranging
     from low to high.  Use a rectangular bar to represent the
@@ -369,12 +406,10 @@ def candlestick_ochl(ax, quotes, width=0.2, colorup='k', colordown='r', alpha=1.
         added and patches is a list of the rectangle patches added
 
     """
-    return _candlestick(ax, quotes, width=width, colorup=colorup,
-                        colordown=colordown,
-                        alpha=alpha, ochl=True)
+    return _candlestick(ax, quotes, width=width, colorup=colorup, colordown=colordown, alpha=alpha, ochl=True)
 
 
-def candlestick_ohlc(ax, quotes, width=0.2, colorup='k', colordown='r', alpha=1.0):
+def candlestick_ohlc(ax, quotes, width=0.2, colorup="k", colordown="r", alpha=1.0):
     """
     Plot the time, open, high, low, close as a vertical line ranging
     from low to high.  Use a rectangular bar to represent the
@@ -407,12 +442,10 @@ def candlestick_ohlc(ax, quotes, width=0.2, colorup='k', colordown='r', alpha=1.
         added and patches is a list of the rectangle patches added
 
     """
-    return _candlestick(ax, quotes, width=width, colorup=colorup,
-                        colordown=colordown,
-                        alpha=alpha, ochl=False)
+    return _candlestick(ax, quotes, width=width, colorup=colorup, colordown=colordown, alpha=alpha, ochl=False)
 
 
-def _candlestick(ax, quotes, width=0.2, colorup='k', colordown='r', alpha=1.0, ochl=True):
+def _candlestick(ax, quotes, width=0.2, colorup="k", colordown="r", alpha=1.0, ochl=True):
     """
     Plot the time, open, high, low, close as a vertical line ranging
     from low to high.  Use a rectangular bar to represent the
@@ -469,7 +502,8 @@ def _candlestick(ax, quotes, width=0.2, colorup='k', colordown='r', alpha=1.0, o
             height = open - close
 
         vline = Line2D(
-            xdata=(t, t), ydata=(low, high),
+            xdata=(t, t),
+            ydata=(low, high),
             # color=adjust_lightness(color, 1.3),
             color=color,
             linewidth=1,
@@ -484,8 +518,7 @@ def _candlestick(ax, quotes, width=0.2, colorup='k', colordown='r', alpha=1.0, o
             # edgecolor=color,
             # facecolor=adjust_lightness(color, 1.3),
             edgecolor=edgecolor,
-            lw=0.75
-
+            lw=0.75,
         )
         rect.set_alpha(alpha)
 
@@ -538,19 +571,22 @@ def _check_input(opens, closes, highs, lows, miss=-1):
 
     same_length = len(opens) == len(highs) == len(lows) == len(closes)
     _missopens = _missing(opens)
-    same_missing = ((_missopens == _missing(highs)).all() and
-                    (_missopens == _missing(lows)).all() and
-                    (_missopens == _missing(closes)).all())
+    same_missing = (
+        (_missopens == _missing(highs)).all()
+        and (_missopens == _missing(lows)).all()
+        and (_missopens == _missing(closes)).all()
+    )
 
     if not (same_length and same_missing):
-        msg = ("*opens*, *highs*, *lows* and *closes* must have the same"
-               " length. NOTE: this code assumes if any value open, high,"
-               " low, close is missing (*-1*) they all must be missing.")
+        msg = (
+            "*opens*, *highs*, *lows* and *closes* must have the same"
+            " length. NOTE: this code assumes if any value open, high,"
+            " low, close is missing (*-1*) they all must be missing."
+        )
         raise ValueError(msg)
 
 
-def plot_day_summary2_ochl(ax, opens, closes, highs, lows, ticksize=4,
-                           colorup='k', colordown='r'):
+def plot_day_summary2_ochl(ax, opens, closes, highs, lows, ticksize=4, colorup="k", colordown="r"):
     """Represent the time, open, close, high, low,  as a vertical line
     ranging from low to high.  The left tick is the open and the right
     tick is the close.
@@ -576,12 +612,10 @@ def plot_day_summary2_ochl(ax, opens, closes, highs, lows, ticksize=4,
         a list of lines added to the axes
     """
 
-    return plot_day_summary2_ohlc(ax, opens, highs, lows, closes, ticksize,
-                                  colorup, colordown)
+    return plot_day_summary2_ohlc(ax, opens, highs, lows, closes, ticksize, colorup, colordown)
 
 
-def plot_day_summary2_ohlc(ax, opens, highs, lows, closes, ticksize=4,
-                           colorup='k', colordown='r'):
+def plot_day_summary2_ohlc(ax, opens, highs, lows, closes, ticksize=4, colorup="k", colordown="r"):
     """Represent the time, open, high, low, close as a vertical line
     ranging from low to high.  The left tick is the open and the right
     tick is the close.
@@ -616,8 +650,7 @@ def plot_day_summary2_ohlc(ax, opens, highs, lows, closes, ticksize=4,
 
     _check_input(opens, highs, lows, closes)
 
-    rangeSegments = [((i, low), (i, high)) for i, low, high in
-                     zip(range(len(lows)), lows, highs) if low != -1]
+    rangeSegments = [((i, low), (i, high)) for i, low, high in zip(range(len(lows)), lows, highs) if low != -1]
 
     # the ticks will be from ticksize to 0 in points at the origin and
     # we'll translate these to the i, close location
@@ -627,11 +660,9 @@ def plot_day_summary2_ohlc(ax, opens, highs, lows, closes, ticksize=4,
     # we'll translate these to the i, close location
     closeSegments = [((0, 0), (ticksize, 0))]
 
-    offsetsOpen = [(i, open) for i, open in
-                   zip(range(len(opens)), opens) if open != -1]
+    offsetsOpen = [(i, open) for i, open in zip(range(len(opens)), opens) if open != -1]
 
-    offsetsClose = [(i, close) for i, close in
-                    zip(range(len(closes)), closes) if close != -1]
+    offsetsClose = [(i, close) for i, close in zip(range(len(closes)), closes) if close != -1]
 
     scale = ax.figure.dpi * (1.0 / 72.0)
 
@@ -640,33 +671,35 @@ def plot_day_summary2_ohlc(ax, opens, highs, lows, closes, ticksize=4,
     colorup = mcolors.to_rgba(colorup)
     colordown = mcolors.to_rgba(colordown)
     colord = {True: colorup, False: colordown}
-    colors = [colord[open < close] for open, close in
-              zip(opens, closes) if open != -1 and close != -1]
+    colors = [colord[open < close] for open, close in zip(opens, closes) if open != -1 and close != -1]
 
-    useAA = 0,  # use tuple here
-    lw = 1,  # and here
-    rangeCollection = LineCollection(rangeSegments,
-                                     colors=colors,
-                                     linewidths=lw,
-                                     antialiaseds=useAA,
-                                     )
+    useAA = (0,)  # use tuple here
+    lw = (1,)  # and here
+    rangeCollection = LineCollection(
+        rangeSegments,
+        colors=colors,
+        linewidths=lw,
+        antialiaseds=useAA,
+    )
 
-    openCollection = LineCollection(openSegments,
-                                    colors=colors,
-                                    antialiaseds=useAA,
-                                    linewidths=lw,
-                                    offsets=offsetsOpen,
-                                    transOffset=ax.transData,
-                                    )
+    openCollection = LineCollection(
+        openSegments,
+        colors=colors,
+        antialiaseds=useAA,
+        linewidths=lw,
+        offsets=offsetsOpen,
+        transOffset=ax.transData,
+    )
     openCollection.set_transform(tickTransform)
 
-    closeCollection = LineCollection(closeSegments,
-                                     colors=colors,
-                                     antialiaseds=useAA,
-                                     linewidths=lw,
-                                     offsets=offsetsClose,
-                                     transOffset=ax.transData,
-                                     )
+    closeCollection = LineCollection(
+        closeSegments,
+        colors=colors,
+        antialiaseds=useAA,
+        linewidths=lw,
+        offsets=offsetsClose,
+        transOffset=ax.transData,
+    )
     closeCollection.set_transform(tickTransform)
 
     minpy, maxx = (0, len(rangeSegments))
@@ -683,9 +716,7 @@ def plot_day_summary2_ohlc(ax, opens, highs, lows, closes, ticksize=4,
     return rangeCollection, openCollection, closeCollection
 
 
-def candlestick2_ochl(ax, opens, closes, highs, lows, width=4,
-                      colorup='k', colordown='r',
-                      alpha=0.75):
+def candlestick2_ochl(ax, opens, closes, highs, lows, width=4, colorup="k", colordown="r", alpha=0.75):
     """Represent the open, close as a bar line and high low range as a
     vertical line.
 
@@ -719,14 +750,12 @@ def candlestick2_ochl(ax, opens, closes, highs, lows, width=4,
         (lineCollection, barCollection)
     """
 
-    return candlestick2_ohlc(ax, opens, highs, lows, closes, width=width,
-                             colorup=colorup, colordown=colordown,
-                             alpha=alpha)
+    return candlestick2_ohlc(
+        ax, opens, highs, lows, closes, width=width, colorup=colorup, colordown=colordown, alpha=alpha
+    )
 
 
-def candlestick2_ohlc(ax, opens, highs, lows, closes, width=4,
-                      colorup='k', colordown='r',
-                      alpha=0.75):
+def candlestick2_ohlc(ax, opens, highs, lows, closes, width=4, colorup="k", colordown="r", alpha=0.75):
     """Represent the open, close as a bar line and high low range as a
     vertical line.
 
@@ -763,39 +792,36 @@ def candlestick2_ohlc(ax, opens, highs, lows, closes, width=4,
 
     _check_input(opens, highs, lows, closes)
 
-    delta = width / 2.
-    barVerts = [((i - delta, open),
-                 (i - delta, close),
-                 (i + delta, close),
-                 (i + delta, open))
-                for i, open, close in zip(range(len(opens)), opens, closes)
-                if open != -1 and close != -1]
+    delta = width / 2.0
+    barVerts = [
+        ((i - delta, open), (i - delta, close), (i + delta, close), (i + delta, open))
+        for i, open, close in zip(range(len(opens)), opens, closes)
+        if open != -1 and close != -1
+    ]
 
-    rangeSegments = [((i, low), (i, high))
-                     for i, low, high in zip(range(len(lows)), lows, highs)
-                     if low != -1]
+    rangeSegments = [((i, low), (i, high)) for i, low, high in zip(range(len(lows)), lows, highs) if low != -1]
 
     colorup = mcolors.to_rgba(colorup, alpha)
     colordown = mcolors.to_rgba(colordown, alpha)
     colord = {True: colorup, False: colordown}
-    colors = [colord[open < close]
-              for open, close in zip(opens, closes)
-              if open != -1 and close != -1]
+    colors = [colord[open < close] for open, close in zip(opens, closes) if open != -1 and close != -1]
 
-    useAA = 0,  # use tuple here
-    lw = 0.5,  # and here
-    rangeCollection = LineCollection(rangeSegments,
-                                     colors=colors,
-                                     linewidths=lw,
-                                     antialiaseds=useAA,
-                                     )
+    useAA = (0,)  # use tuple here
+    lw = (0.5,)  # and here
+    rangeCollection = LineCollection(
+        rangeSegments,
+        colors=colors,
+        linewidths=lw,
+        antialiaseds=useAA,
+    )
 
-    barCollection = PolyCollection(barVerts,
-                                   facecolors=colors,
-                                   edgecolors=colors,
-                                   antialiaseds=useAA,
-                                   linewidths=lw,
-                                   )
+    barCollection = PolyCollection(
+        barVerts,
+        facecolors=colors,
+        edgecolors=colors,
+        antialiaseds=useAA,
+        linewidths=lw,
+    )
 
     minx, maxx = 0, len(rangeSegments)
     miny = min([low for low in lows if low != -1])
@@ -811,7 +837,7 @@ def candlestick2_ohlc(ax, opens, highs, lows, closes, width=4,
     return rangeCollection, barCollection
 
 
-def volume_overlay(ax, opens, closes, volumes, colorup='g', colordown='r', width=4, alpha=1.0):
+def volume_overlay(ax, opens, closes, volumes, colorup="g", colordown="r", width=4, alpha=1.0):
     """Add a volume overlay to the current axes.  The opens and closes
     are used to determine the color of the bar.  -1 is missing.  If a
     value is missing on one it must be missing on all
@@ -845,21 +871,18 @@ def volume_overlay(ax, opens, closes, volumes, colorup='g', colordown='r', width
     colorup = mcolors.to_rgba(colorup, alpha)
     colordown = mcolors.to_rgba(colordown, alpha)
     colord = {True: colorup, False: colordown}
-    colors = [colord[open < close]
-              for open, close in zip(opens, closes)
-              if open != -1 and close != -1]
+    colors = [colord[open < close] for open, close in zip(opens, closes) if open != -1 and close != -1]
 
-    delta = width / 2.
-    bars = [((i - delta, 0), (i - delta, v), (i + delta, v), (i + delta, 0))
-            for i, v in enumerate(volumes)
-            if v != -1]
+    delta = width / 2.0
+    bars = [((i - delta, 0), (i - delta, v), (i + delta, v), (i + delta, 0)) for i, v in enumerate(volumes) if v != -1]
 
-    barCollection = PolyCollection(bars,
-                                   facecolors=colors,
-                                   edgecolors=((0, 0, 0, 1),),
-                                   antialiaseds=(0,),
-                                   linewidths=(0.5,),
-                                   )
+    barCollection = PolyCollection(
+        bars,
+        facecolors=colors,
+        edgecolors=((0, 0, 0, 1),),
+        antialiaseds=(0,),
+        linewidths=(0.5,),
+    )
 
     ax.add_collection(barCollection)
     corners = (0, 0), (len(bars), max(volumes))
@@ -870,7 +893,7 @@ def volume_overlay(ax, opens, closes, volumes, colorup='g', colordown='r', width
     return barCollection
 
 
-def volume_overlay2(ax, closes, volumes, colorup='g', colordown='r', width=4, alpha=1.0):
+def volume_overlay2(ax, closes, volumes, colorup="g", colordown="r", width=4, alpha=1.0):
     """
     Add a volume overlay to the current axes.  The closes are used to
     determine the color of the bar.  -1 is missing.  If a value is
@@ -907,7 +930,7 @@ def volume_overlay2(ax, closes, volumes, colorup='g', colordown='r', width=4, al
     return volume_overlay(ax, closes[:-1], closes[1:], volumes[1:], colorup, colordown, width, alpha)
 
 
-def volume_overlay3(ax, quotes, colorup='g', colordown='r', width=4, alpha=1.0):
+def volume_overlay3(ax, quotes, colorup="g", colordown="r", width=4, alpha=1.0):
     """Add a volume overlay to the current axes.  quotes is a list of (d,
     open, high, low, close, volume) and close-open is used to
     determine the color of the bar
@@ -940,16 +963,15 @@ def volume_overlay3(ax, quotes, colorup='g', colordown='r', width=4, alpha=1.0):
     colord = {True: colorup, False: colordown}
 
     dates, opens, highs, lows, closes, volumes = list(zip(*quotes))
-    colors = [colord[close1 >= close0]
-              for close0, close1 in zip(closes[:-1], closes[1:])
-              if close0 != -1 and close1 != -1]
+    colors = [
+        colord[close1 >= close0] for close0, close1 in zip(closes[:-1], closes[1:]) if close0 != -1 and close1 != -1
+    ]
     colors.insert(0, colord[closes[0] >= opens[0]])
 
     right = width / 2.0
     left = -width / 2.0
 
-    bars = [((left, 0), (left, volume), (right, volume), (right, 0))
-            for d, open, high, low, close, volume in quotes]
+    bars = [((left, 0), (left, volume), (right, volume), (right, 0)) for d, open, high, low, close, volume in quotes]
 
     sx = ax.figure.dpi * (1.0 / 72.0)  # scale for points
     sy = ax.bbox.height / ax.viewLim.height
@@ -959,16 +981,17 @@ def volume_overlay3(ax, quotes, colorup='g', colordown='r', width=4, alpha=1.0):
     dates = [d for d, open, high, low, close, volume in quotes]
     offsetsBars = [(d, 0) for d in dates]
 
-    useAA = 0,  # use tuple here
-    lw = 0.5,  # and here
-    barCollection = PolyCollection(bars,
-                                   facecolors=colors,
-                                   edgecolors=((0, 0, 0, 1),),
-                                   antialiaseds=useAA,
-                                   linewidths=lw,
-                                   offsets=offsetsBars,
-                                   transOffset=ax.transData,
-                                   )
+    useAA = (0,)  # use tuple here
+    lw = (0.5,)  # and here
+    barCollection = PolyCollection(
+        bars,
+        facecolors=colors,
+        edgecolors=((0, 0, 0, 1),),
+        antialiaseds=useAA,
+        linewidths=lw,
+        offsets=offsetsBars,
+        transOffset=ax.transData,
+    )
     barCollection.set_transform(barTransform)
 
     minpy, maxx = (min(dates), max(dates))
@@ -985,7 +1008,7 @@ def volume_overlay3(ax, quotes, colorup='g', colordown='r', width=4, alpha=1.0):
     return barCollection
 
 
-def index_bar(ax, vals, facecolor='b', edgecolor='l', width=4, alpha=1.0):
+def index_bar(ax, vals, facecolor="b", edgecolor="l", width=4, alpha=1.0):
     """Add a bar collection graph with height vals (-1 is missing).
 
     Parameters
@@ -1016,8 +1039,7 @@ def index_bar(ax, vals, facecolor='b', edgecolor='l', width=4, alpha=1.0):
     right = width / 2.0
     left = -width / 2.0
 
-    bars = [((left, 0), (left, v), (right, v), (right, 0))
-            for v in vals if v != -1]
+    bars = [((left, 0), (left, v), (right, v), (right, 0)) for v in vals if v != -1]
 
     sx = ax.figure.dpi * (1.0 / 72.0)  # scale for points
     sy = ax.bbox.height / ax.viewLim.height
@@ -1026,14 +1048,15 @@ def index_bar(ax, vals, facecolor='b', edgecolor='l', width=4, alpha=1.0):
 
     offsetsBars = [(i, 0) for i, v in enumerate(vals) if v != -1]
 
-    barCollection = PolyCollection(bars,
-                                   facecolors=facecolors,
-                                   edgecolors=edgecolors,
-                                   antialiaseds=(0,),
-                                   linewidths=(0.5,),
-                                   offsets=offsetsBars,
-                                   transOffset=ax.transData,
-                                   )
+    barCollection = PolyCollection(
+        bars,
+        facecolors=facecolors,
+        edgecolors=edgecolors,
+        antialiaseds=(0,),
+        linewidths=(0.5,),
+        offsets=offsetsBars,
+        transOffset=ax.transData,
+    )
     barCollection.set_transform(barTransform)
 
     minpy, maxx = (0, len(offsetsBars))
@@ -1052,7 +1075,7 @@ def _to_mdate_index(x):
     return date2num(x.index.to_pydatetime()), x
 
 
-def ohlc_plot(ohlc: pd.DataFrame, width=0, colorup='#209040', colordown='#e02020', fmt=None, autofmt=False):
+def ohlc_plot(ohlc: pd.DataFrame, width=0, colorup="#209040", colordown="#e02020", fmt=None, autofmt=False):
     """
     Plot OHLC data frame
 
@@ -1064,7 +1087,7 @@ def ohlc_plot(ohlc: pd.DataFrame, width=0, colorup='#209040', colordown='#e02020
     :param fmt: format string for timescale
     :return: axis
     """
-    ohlc_f = ohlc.filter(['open', 'high', 'low', 'close'])
+    ohlc_f = ohlc.filter(["open", "high", "low", "close"])
     if ohlc_f.shape[1] != 4:
         raise ValueError("DataFrame ohlc must contain 'open', 'high', 'low', 'close' columns !")
 
@@ -1073,9 +1096,9 @@ def ohlc_plot(ohlc: pd.DataFrame, width=0, colorup='#209040', colordown='#e02020
     # customization of the axis
     f = plt.gcf()
     ax = plt.gca()
-    ax.xaxis.set_ticks_position('bottom')
-    ax.yaxis.set_ticks_position('left')
-    ax.tick_params(axis='both', direction='out', width=2, length=8, labelsize=8, pad=8)
+    ax.xaxis.set_ticks_position("bottom")
+    ax.yaxis.set_ticks_position("left")
+    ax.tick_params(axis="both", direction="out", width=2, length=8, labelsize=8, pad=8)
 
     tms, _ = _to_mdate_index(ohlc_f)
     t_data = np.vstack((np.array(tms), ohlc_f.values.T)).T
@@ -1090,10 +1113,10 @@ def ohlc_plot(ohlc: pd.DataFrame, width=0, colorup='#209040', colordown='#e02020
     is_eod = _freq >= datetime.timedelta(1)
     if is_eod:
         ax.xaxis.set_major_locator(mticker.MaxNLocator(15))
-        fmt = '%d-%b-%y' if fmt is None else fmt
+        fmt = "%d-%b-%y" if fmt is None else fmt
     else:
         ax.xaxis.set_major_locator(mticker.MaxNLocator(20))
-        fmt = '%H:%M' if fmt is None else fmt
+        fmt = "%H:%M" if fmt is None else fmt
 
     ticks_loc = ax.get_xticks().tolist()
     ax.xaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
@@ -1106,3 +1129,41 @@ def ohlc_plot(ohlc: pd.DataFrame, width=0, colorup='#209040', colordown='#e02020
     ax.set_axisbelow(True)
 
     return ax
+
+
+def plot_trends(trends: pd.DataFrame | Struct, uc="w--", dc="m--", lw=2, ms=6, fmt="%H:%M"):
+    """
+    Plot find_movements function output as trend lines on chart
+
+    >>> from qube.quantitative.ta.swings.swings_splitter import find_movements
+    >>>
+    >>> tx = pd.Series(np.random.randn(500).cumsum() + 100, index=pd.date_range('2000-01-01', periods=500))
+    >>> trends = find_movements(tx, np.inf, use_prev_movement_size_for_percentage=False,
+    >>>                    pcntg=0.02,
+    >>>                    t_window=np.inf, drop_weekends_crossings=False,
+    >>>                    drop_out_of_market=False, result_as_frame=True, silent=True)
+    >>> plot_trends(trends)
+
+    :param trends: find_movements output
+    :param uc: up trends line spec ('w--')
+    :param dc: down trends line spec ('c--')
+    :param lw: line weight (0.7)
+    :param ms: trends reversals marker size (5)
+    :param fmt: time format (default is '%H:%M')
+    """
+    if isinstance(trends, Struct) and hasattr(trends, "trends"):
+        trends = trends.trends
+
+    if isinstance(trends, pd.DataFrame):
+        if not trends.empty:
+            u, d = trends.UpTrends.dropna(), trends.DownTrends.dropna()
+            plt.plot([u.index, u.end], [u.start_price, u.end_price], uc, lw=lw, marker="o", markersize=ms)
+            plt.plot([d.index, d.end], [d.start_price, d.end_price], dc, lw=lw, marker="o", markersize=ms)
+
+            from matplotlib.dates import num2date
+            import datetime
+
+            ax = plt.gca()
+            ax.set_xticks(ax.get_xticks(), labels=[datetime.date.strftime(num2date(x), fmt) for x in ax.get_xticks()])
+    else:
+        raise ValueError("trends must be a DataFrame or Struct with 'trends' attribute")
