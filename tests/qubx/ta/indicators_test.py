@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from qubx.core.series import TimeSeries, lag, compare, OHLCV
-from qubx.ta.indicators import sma, ema, tema, dema, kama, highest, lowest, pewma, psar
+from qubx.ta.indicators import sma, ema, tema, dema, kama, highest, lowest, pewma, psar, atr
 from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsQuotes
 import qubx.pandaz.ta as pta
 import tests.qubx.ta.utils_for_testing as test
@@ -236,3 +236,22 @@ class TestIndicators:
         assert np.mean(abs(v10.pd() - e10.psar)) < 1e-3
         assert np.mean(abs(v10.up.pd() - e10.up)) < 1e-3
         assert np.mean(abs(v10.down.pd() - e10.down)) < 1e-3
+
+    def test_atr(self):
+        r = CsvStorageDataReader("tests/data/csv/")
+
+        ohlc = r.read("SOLUSDT", start="2024-04-01", stop="+5d", transform=AsOhlcvSeries("1Min", "ms"))
+        v = atr(ohlc, 14, "sma", percentage=False)
+        e = pta.atr(ohlc.pd(), 14, "sma", percentage=False)
+
+        assert (v.pd() - e).dropna().sum() < 1e-6
+
+        # - test streaming data
+        ohlc10 = OHLCV("test", "5Min")
+        v10 = atr(ohlc, 14, "sma", percentage=False)
+
+        for b in ohlc[::-1]:
+            ohlc10.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume)
+
+        e10 = pta.atr(ohlc10.pd(), 14, "sma", percentage=False)
+        assert (v10.pd() - e10).dropna().sum() < 1e-6

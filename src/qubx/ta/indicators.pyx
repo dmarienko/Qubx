@@ -543,3 +543,46 @@ def psar(series: OHLCV, iaf: float=0.02, maxaf: float=0.2):
         raise ValueError('Series must be OHLCV !')
 
     return Psar.wrap(series, iaf, maxaf)
+
+
+# List of smoothing functions
+_smoothers = {f.__name__: f for f in [pewma, ema, sma, kama, tema, dema]}
+
+
+def smooth(TimeSeries series, str smoother, *args, **kwargs) -> Indicator:
+    """
+    Handy utility function to smooth series
+    """
+    _sfn = _smoothers.get(smoother)
+    if _sfn is None:
+        raise ValueError(f"Smoother {smoother} not found!")
+    return _sfn(series, *args, **kwargs)
+
+
+cdef class Atr(IndicatorOHLC):
+    cdef short percentage
+    cdef TimeSeries tr
+    cdef Indicator ma
+
+    def __init__(self, str name, OHLCV series, int period, str smoother, short percentage):
+        self.percentage = percentage
+        self.tr = TimeSeries("tr", series.timeframe, series.max_series_length)
+        self.ma = smooth(self.tr, smoother, period)
+        super().__init__(name, series)
+
+    cpdef double calculate(self, long long time, Bar bar, short new_item_started):
+        if len(self.series) <= 1:
+            return np.nan
+
+        cdef double c1 = self.series[1].close
+        cdef double h_l = abs(bar.high - bar.low)
+        cdef double h_pc = abs(bar.high - c1)
+        cdef double l_pc = abs(bar.low - c1)
+        self.tr.update(time, max(h_l, h_pc, l_pc))
+        return (100 * self.ma[0] / c1) if self.percentage else self.ma[0]
+
+
+def atr(series: OHLCV, period: int = 14, smoother="sma", percentage: bool = False):
+    if not isinstance(series, OHLCV):
+        raise ValueError("Series must be OHLCV !")
+    return Atr.wrap(series, period, smoother, percentage)
