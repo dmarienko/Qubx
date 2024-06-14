@@ -326,8 +326,8 @@ def pewma(series:TimeSeries, alpha: float, beta: float, T:int=30):
 
 
 cdef class PewmaOutliersDetector(Indicator):
-    cdef public TimeSeries u
-    cdef public TimeSeries l
+    cdef public TimeSeries upper
+    cdef public TimeSeries lower
     cdef public TimeSeries outliers
     cdef double alpha, beta, threshold
     cdef int T
@@ -342,8 +342,8 @@ cdef class PewmaOutliersDetector(Indicator):
         self.threshold = threshold
 
         # - series
-        self.u = TimeSeries('uba', series.timeframe, series.max_series_length)
-        self.l = TimeSeries('lba', series.timeframe, series.max_series_length)
+        self.upper = TimeSeries('uba', series.timeframe, series.max_series_length)
+        self.lower = TimeSeries('lba', series.timeframe, series.max_series_length)
         self.outliers = TimeSeries('outliers', series.timeframe, series.max_series_length)
 
         # - local variables
@@ -400,8 +400,8 @@ cdef class PewmaOutliersDetector(Indicator):
         cdef double ub = mean + self._z_thr * std
         cdef double lb = mean - self._z_thr * std
 
-        self.u.update(time, ub)
-        self.l.update(time, lb)
+        self.upper.update(time, ub)
+        self.lower.update(time, lb)
         if new_item_started:
             self._mean = mean
             self._i += 1
@@ -436,8 +436,8 @@ cdef class Psar(IndicatorOHLC):
     cdef double lp
     cdef double hp
 
-    cdef public TimeSeries up
-    cdef public TimeSeries down
+    cdef public TimeSeries upper
+    cdef public TimeSeries lower
 
     cdef double iaf
     cdef double maxaf
@@ -445,8 +445,8 @@ cdef class Psar(IndicatorOHLC):
     def __init__(self, name, series, iaf, maxaf):
         self.iaf = iaf
         self.maxaf = maxaf
-        self.up = TimeSeries('up', series.timeframe, series.max_series_length)
-        self.down = TimeSeries('down', series.timeframe, series.max_series_length)
+        self.upper = TimeSeries('upper', series.timeframe, series.max_series_length)
+        self.lower = TimeSeries('lower', series.timeframe, series.max_series_length)
         super().__init__(name, series)
 
     cdef _store(self):
@@ -531,11 +531,11 @@ cdef class Psar(IndicatorOHLC):
                     self.psar = h2
 
         if self.bull:
-            self.down.update(time, self.psar)
-            self.up.update(time, np.nan)
+            self.lower.update(time, self.psar)
+            self.upper.update(time, np.nan)
         else:
-            self.up.update(time, self.psar)
-            self.down.update(time, np.nan)
+            self.upper.update(time, self.psar)
+            self.lower.update(time, np.nan)
 
         return self.psar
 
@@ -615,9 +615,9 @@ cdef class Swings(IndicatorOHLC):
         self.base.update_by_bar(time, bar.open, bar.high, bar.low, bar.close, bar.volume)
         cdef int _t = 0
 
-        if len(self.trend.up) > 0:
-            _u = self.trend.up[0]
-            _d = self.trend.down[0]
+        if len(self.trend.upper) > 0:
+            _u = self.trend.upper[0]
+            _d = self.trend.lower[0]
 
             if not np.isnan(_u):
                 if self._max_t > 0:
@@ -639,7 +639,6 @@ cdef class Swings(IndicatorOHLC):
                     self._max_t = time
 
                 self._min_l = +np.inf
-                self._max_t = time
                 self._min_t = 0
                 _t = +1
 

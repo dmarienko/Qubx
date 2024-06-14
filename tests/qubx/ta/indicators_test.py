@@ -222,8 +222,8 @@ class TestIndicators:
         e = pta.psar(ohlc.pd())
 
         assert np.mean(abs(v.pd() - e.psar)) < 1e-3
-        assert np.mean(abs(v.up.pd() - e.up)) < 1e-3
-        assert np.mean(abs(v.down.pd() - e.down)) < 1e-3
+        assert np.mean(abs(v.upper.pd() - e.up)) < 1e-3
+        assert np.mean(abs(v.lower.pd() - e.down)) < 1e-3
 
         # - test streaming data
         ohlc10 = OHLCV("test", "5Min")
@@ -234,8 +234,8 @@ class TestIndicators:
 
         e10 = pta.psar(ohlc10.pd())
         assert np.mean(abs(v10.pd() - e10.psar)) < 1e-3
-        assert np.mean(abs(v10.up.pd() - e10.up)) < 1e-3
-        assert np.mean(abs(v10.down.pd() - e10.down)) < 1e-3
+        assert np.mean(abs(v10.upper.pd() - e10.up)) < 1e-3
+        assert np.mean(abs(v10.lower.pd() - e10.down)) < 1e-3
 
     def test_atr(self):
         r = CsvStorageDataReader("tests/data/csv/")
