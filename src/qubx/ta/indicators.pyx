@@ -1,9 +1,11 @@
 import numpy as np
+import pandas as pd
 cimport numpy as np
 from scipy.special.cython_special import ndtri
 from collections import deque
 
 from qubx.core.series cimport TimeSeries, Indicator, IndicatorOHLC, RollingSum, nans, OHLCV, Bar
+from qubx.pandaz.utils import scols, srows
 
 
 cdef extern from "math.h":
@@ -586,3 +588,93 @@ def atr(series: OHLCV, period: int = 14, smoother="sma", percentage: bool = Fals
     if not isinstance(series, OHLCV):
         raise ValueError("Series must be OHLCV !")
     return Atr.wrap(series, period, smoother, percentage)
+
+
+cdef class Swings(IndicatorOHLC):
+    cdef double _min_l
+    cdef long long _min_t
+    cdef double _max_h
+    cdef long long _max_t
+    cdef OHLCV base
+    cdef Indicator trend
+    cdef public TimeSeries tops
+    cdef public TimeSeries bottoms
+
+    def __init__(self, str name, OHLCV series, trend_indicator, **indicator_args):
+        self.base = OHLCV("base", series.timeframe, series.max_series_length)
+        self.trend = trend_indicator(self.base, **indicator_args)
+        self.tops = TimeSeries("tops", series.timeframe, series.max_series_length)
+        self.bottoms = TimeSeries("bottoms", series.timeframe, series.max_series_length)
+        self._min_l = +np.inf
+        self._max_h = -np.inf
+        self._max_t = 0
+        self._min_t = 0
+        super().__init__(name, series)
+
+    cpdef double calculate(self, long long time, Bar bar, short new_item_started):
+        self.base.update_by_bar(time, bar.open, bar.high, bar.low, bar.close, bar.volume)
+        cdef int _t = 0
+
+        if len(self.trend.up) > 0:
+            _u = self.trend.up[0]
+            _d = self.trend.down[0]
+
+            if not np.isnan(_u):
+                if self._max_t > 0:
+                    self.tops.update(self._max_t, self._max_h)
+
+                if bar.low <= self._min_l:
+                    self._min_l = bar.low
+                    self._min_t = time
+
+                self._max_h = -np.inf
+                self._max_t = 0
+                _t = -1
+            elif not np.isnan(_d):
+                if self._min_t > 0:
+                    self.bottoms.update(self._min_t, self._min_l)
+
+                if bar.high >= self._max_h:
+                    self._max_h = bar.high
+                    self._max_t = time
+
+                self._min_l = +np.inf
+                self._max_t = time
+                self._min_t = 0
+                _t = +1
+
+        return _t
+
+    def get_current_trend_end(self):
+        if np.isfinite(self._min_l):
+            return pd.Timestamp(self._min_t, 'ns'), self._min_l
+        elif np.isfinite(self._max_h):
+            return pd.Timestamp(self._max_t, 'ns'), self._max_h
+        return (None, None)
+
+    def pd(self) -> pd.DataFrame:
+        _t, _d = self.get_current_trend_end()
+        tps, bts = self.tops.pd(), self.bottoms.pd()
+        if _t is not None:
+            if bts.index[-1] < tps.index[-1]:
+                bts = srows(bts, pd.Series({_t: _d}))
+            else:
+                tps = srows(tps, pd.Series({_t: _d}))
+
+        eid = pd.Series(tps.index, tps.index)
+        mx = scols(bts, tps, eid, names=["start_price", "end_price", "end"])
+        dt = scols(mx["start_price"], mx["end_price"].shift(-1), mx["end"].shift(-1))  # .dropna()
+
+        eid = pd.Series(bts.index, bts.index)
+        mx = scols(tps, bts, eid, names=["start_price", "end_price", "end"])
+        ut = scols(mx["start_price"], mx["end_price"].shift(-1), mx["end"].shift(-1))  # .dropna()
+        return scols(ut, dt, keys=["DownTrends", "UpTrends"])
+
+
+def swings(series: OHLCV, trend_indicator, **indicator_args):
+    """
+    Swing detector based on provided trend indicator.
+    """
+    if not isinstance(series, OHLCV):
+        raise ValueError("Series must be OHLCV !")
+    return Swings.wrap(series, trend_indicator, **indicator_args)
