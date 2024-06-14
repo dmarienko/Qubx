@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from qubx.core.series import TimeSeries, lag, compare, OHLCV
-from qubx.ta.indicators import sma, ema, tema, dema, kama, highest, lowest, pewma, psar, atr
+from qubx.ta.indicators import sma, ema, tema, dema, kama, highest, lowest, pewma, psar, atr, swings
 from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsQuotes
 import qubx.pandaz.ta as pta
 import tests.qubx.ta.utils_for_testing as test
@@ -255,3 +255,29 @@ class TestIndicators:
 
         e10 = pta.atr(ohlc10.pd(), 14, "sma", percentage=False)
         assert (v10.pd() - e10).dropna().sum() < 1e-6
+
+    def test_swings(self):
+        r = CsvStorageDataReader("tests/data/csv/")
+
+        ohlc = r.read("SOLUSDT", start="2024-04-01", stop="+12h", transform=AsOhlcvSeries("10Min", "ms"))
+        v = swings(ohlc, psar, iaf=0.1, maxaf=1)
+        e = pta.swings(ohlc.pd(), pta.psar, iaf=0.1, maxaf=1)
+
+        assert all(
+            e.trends["UpTrends"][["start_price", "end_price"]].dropna()
+            == v.pd()["UpTrends"][["start_price", "end_price"]].dropna()
+        )
+
+        # - test streaming data
+        ohlc10 = OHLCV("test", "30Min")
+        v10 = swings(ohlc10, psar, iaf=0.1, maxaf=1)
+
+        for b in ohlc[::-1]:
+            ohlc10.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume)
+
+        e10 = pta.swings(ohlc10.pd(), pta.psar, iaf=0.1, maxaf=1)
+
+        assert all(
+            e10.trends["UpTrends"][["start_price", "end_price"]].dropna()
+            == v10.pd()["UpTrends"][["start_price", "end_price"]].dropna()
+        )

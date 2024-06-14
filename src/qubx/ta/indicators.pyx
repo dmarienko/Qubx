@@ -664,6 +664,7 @@ cdef class Swings(IndicatorOHLC):
         eid = pd.Series(tps.index, tps.index)
         mx = scols(bts, tps, eid, names=["start_price", "end_price", "end"])
         dt = scols(mx["start_price"], mx["end_price"].shift(-1), mx["end"].shift(-1))  # .dropna()
+        dt = dt.assign(delta = dt["end_price"] - dt["start_price"])
 
         eid = pd.Series(bts.index, bts.index)
         mx = scols(tps, bts, eid, names=["start_price", "end_price", "end"])
