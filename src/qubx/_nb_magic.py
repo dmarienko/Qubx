@@ -1,7 +1,6 @@
 """"
 Here stuff we want to have in every Jupyter notebook after calling %qube magic
 """
-import importlib_metadata
 
 import qubx
 from qubx.utils import runtime_env
@@ -15,11 +14,19 @@ def np_fmt_short():
 
 def np_fmt_reset():
     # reset default np printing options
-    np.set_printoptions(edgeitems=3, infstr='inf', linewidth=75, nanstr='nan', precision=8,
-                        suppress=False, threshold=1000, formatter=None)
+    np.set_printoptions(
+        edgeitems=3,
+        infstr="inf",
+        linewidth=75,
+        nanstr="nan",
+        precision=8,
+        suppress=False,
+        threshold=1000,
+        formatter=None,
+    )
 
 
-if runtime_env() in ['notebook', 'shell']:
+if runtime_env() in ["notebook", "shell"]:
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     # -- all imports below will appear in notebook after calling %%alphalab magic ---
@@ -39,19 +46,18 @@ if runtime_env() in ['notebook', 'shell']:
     # - - - - Learn stuff - - - -
     # - - - - Charting stuff - - - -
     from matplotlib import pyplot as plt
-    from qubx.utils.charting.mpl_helpers import fig, subplot, sbp
+    from qubx.utils.charting.mpl_helpers import fig, subplot, sbp, plot_trends, ohlc_plot
 
     # - - - - Utils - - - -
     from qubx.pandaz.utils import scols, srows, ohlc_resample, continuous_periods, generate_equal_date_ranges
 
     # - setup short numpy output format
     np_fmt_short()
-    
+
     # - add project home to system path
     add_project_to_system_path()
 
     # show logo first time
-    if not hasattr(qubx.QubxMagics, '__already_initialized__'):
+    if not hasattr(qubx.QubxMagics, "__already_initialized__"):
         setattr(qubx.QubxMagics, "__already_initialized__", True)
         logo()
-
