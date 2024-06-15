@@ -142,6 +142,14 @@ cdef class TimeSeries:
     def __len__(self) -> int:
         return len(self.times)
 
+    def loc(self, str t):
+        _t = np.datetime64(t, 'ns').item()
+        ix = int(np.searchsorted(self.times.values, _t, side='right'))
+        ix = min(ix, len(self.values))
+        if ix == 0:
+            raise ValueError(f"Time {t} not found in {self.name} !")
+        return np.datetime64(self.times.values[ix - 1], 'ns'), self.values.values[ix - 1]
+
     def _on_attach_indicator(self, indicator: Indicator, indicator_input: TimeSeries):
         self.calculation_order.append((
             id(indicator_input), indicator, id(indicator)
