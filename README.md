@@ -8,7 +8,11 @@
 ⠀⠀⠱⣜⣀⣀⣈⣦⠃⠀⠀⠀
 
 ```                                          
-### How to run live trading (Only Binance spot tested)
+
+## Installation
+> pip install qubx
+
+## How to run live trading (Only Binance spot tested)
 1. cd experiments/
 2. Edit strategy config file (zero_test.yaml). Testing strategy is just doing flip / flop trading once per minute (trading_allowed should be set for trading)
 3. Modify accounts config file under ./configs/.env and provide your API binance credentials (see example in example-accounts.cfg):
