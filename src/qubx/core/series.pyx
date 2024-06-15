@@ -177,7 +177,7 @@ cdef class TimeSeries:
             # - disable first notification because first item may be incomplete
             self._is_new_item = False
 
-        elif time - self.times[0] >= self.timeframe:
+        elif (_dt := time - self.times[0]) >= self.timeframe:
             # - add new item
             self._add_new_item(item_start_time, value)
 
@@ -194,6 +194,8 @@ cdef class TimeSeries:
 
             return self._is_new_item
         else:
+            if _dt < 0:
+                raise ValueError(f"Attempt to update past data at {time_to_str(time)} !")
             self._update_last_item(item_start_time, value)
 
         # - update indicators by new data
@@ -754,7 +756,7 @@ cdef class OHLCV(TimeSeries):
             # Here we disable first notification because first item may be incomplete
             self._is_new_item = False
 
-        elif time - self.times[0] >= self.timeframe:
+        elif (_dt := time - self.times[0]) >= self.timeframe:
             b = Bar(bar_start_time, price, price, price, price, volume, bvolume)
 
             # - add new item
@@ -765,6 +767,9 @@ cdef class OHLCV(TimeSeries):
 
             return self._is_new_item
         else:
+            if _dt < 0:
+                raise ValueError(f"Attempt to update past data at {time_to_str(time)} !")
+
             self._update_last_item(bar_start_time, self[0].update(price, volume, bvolume))
 
         # - update indicators by new data
