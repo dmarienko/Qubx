@@ -21,5 +21,5 @@ base_currency = USDT
 4. Run in console (-j key if want to run under jupyter console)
 
 ```
-> python -P ..\src\qubx\utils\runner.py configs\zero_test.yaml -a configs\.env -j 
+> python ..\src\qubx\utils\runner.py configs\zero_test.yaml -a configs\.env -j 
 ```
