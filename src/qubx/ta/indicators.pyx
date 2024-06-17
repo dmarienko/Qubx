@@ -326,14 +326,13 @@ def pewma(series:TimeSeries, alpha: float, beta: float, T:int=30):
 
 
 cdef class PewmaOutliersDetector(Indicator):
-    cdef public TimeSeries upper
-    cdef public TimeSeries lower
-    cdef public TimeSeries outliers
+    cdef public TimeSeries upper, lower, outliers, std
     cdef double alpha, beta, threshold
     cdef int T
 
     cdef long _i
-    cdef double _z_thr, _mean, _variance,_std
+    cdef double mean, vstd, variance
+    cdef double _mean, _vstd, _variance, _z_thr
 
     def __init__(self, str name, TimeSeries series, double alpha, double beta, int T, double threshold):
         self.alpha = alpha 
@@ -344,44 +343,43 @@ cdef class PewmaOutliersDetector(Indicator):
         # - series
         self.upper = TimeSeries('uba', series.timeframe, series.max_series_length)
         self.lower = TimeSeries('lba', series.timeframe, series.max_series_length)
+        self.std = TimeSeries('std', series.timeframe, series.max_series_length)
         self.outliers = TimeSeries('outliers', series.timeframe, series.max_series_length)
 
         # - local variables
         self._i = 0
         self._z_thr = ndtri(1 - threshold / 2)
 
-        self._mean = 0.0
-        self._variance = 0.0
-        self._std = 0.0
         super().__init__(name, series)
 
+    def _store(self):
+        self.mean = self._mean
+        self.vstd = self._vstd
+        self.variance = self._variance
+
+    def _restore(self):
+        self._mean = self.mean
+        self._vstd = self.vstd
+        self._variance = self.variance
+
     cdef double _get_alpha(self, double p_t):
-        if self._i == 0:
-            return 0.0
-
-        if self._i < self.T:
-            return 1.0 - 1.0 / self._i
-
-        return self.alpha * (1.0 - self.beta * p_t)
+        if self._i + 1 >= self.T:
+            return self.alpha * (1.0 - self.beta * p_t)
+        return 1.0 - 1.0 / (self._i + 1.0)
 
     cdef double _get_mean(self, double x, double alpha_t):
-        return alpha_t * self._mean + (1.0 - alpha_t) * x
+        return alpha_t * self.mean + (1.0 - alpha_t) * x
 
     cdef double _get_variance(self, double x, double alpha_t):
-        return alpha_t * self._variance + (1.0 - alpha_t) * np.square(x)
+        return alpha_t * self.variance + (1.0 - alpha_t) * np.square(x)
 
     cdef double _get_std(self, double variance, double mean):
         return np.sqrt(max(variance - np.square(mean), 0.0))
 
     cdef double _get_p(self, double x):
-        cdef double z_t = 0.0
-        cdef double p_t
-
-        if self._i != 1:
-            z_t = ((x - self._mean) / self._std) if (self._std != 0 and not np.isnan(x)) else 0.0
-
+        cdef double z_t = ((x - self.mean) / self.vstd) if (self.vstd != 0 and not np.isnan(x)) else 0.0
         # if self.dist == 'normal':
-        p_t = norm_pdf(z_t)
+        # p_t = norm_pdf(z_t)
         # elif self.dist == 'cauchy':
         #     p_t = (1 / (np.pi * (1 + np.square(z_t))))
         # elif self.dist == 'student_t':
@@ -389,31 +387,45 @@ cdef class PewmaOutliersDetector(Indicator):
         #           (np.sqrt(self.count - 1) * np.sqrt(np.pi) * np.exp(np.math.lgamma(0.5 * (self.count - 1))))
         # else:
         #     raise ValueError('Invalid distribution type')
-        return p_t
+        return norm_pdf(z_t)
 
     cpdef double calculate(self, long long time, double x, short new_item_started):
+        # - first bar - just use it as initial value
+        if len(self.series) <= 1:
+            self._mean = x
+            self._variance = x ** 2
+            self._vstd = 0.0
+            self._store()
+            self.std.update(time, self.vstd)
+            self.upper.update(time, x)
+            self.lower.update(time, x)
+            return self._mean
+
+        # - new bar is started use n-1 values for calculate innovations
+        if new_item_started:
+            self._i += 1
+            self._restore()
+        else:
+            self._store()
+
         cdef double p_t = self._get_p(x)
         cdef double alpha_t = self._get_alpha(p_t)
-        cdef double mean = self._get_mean(x, alpha_t)
-        cdef double variance = self._get_variance(x, alpha_t)
-        cdef double std = self._get_std(variance, mean)
-        cdef double ub = mean + self._z_thr * std
-        cdef double lb = mean - self._z_thr * std
+        self.mean = self._get_mean(x, alpha_t)
+        self.variance = self._get_variance(x, alpha_t)
+        self.vstd = self._get_std(self.variance, self.mean)
+        cdef double ub = self.mean + self._z_thr * self.vstd
+        cdef double lb = self.mean - self._z_thr * self.vstd
 
         self.upper.update(time, ub)
         self.lower.update(time, lb)
-        if new_item_started:
-            self._mean = mean
-            self._i += 1
-            self._variance = variance
-            self._std = std
+        self.std.update(time, self.vstd)
 
         # - check if it's outlier
         if p_t < self.threshold:
             self.outliers.update(time, x)
         else:
             self.outliers.update(time, np.nan)
-        return mean
+        return self.mean
 
 
 def pewma_outliers_detector(series:TimeSeries, alpha: float, beta: float, T:int=30, threshold=0.05):

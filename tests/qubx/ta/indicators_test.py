@@ -2,7 +2,20 @@ import numpy as np
 import pandas as pd
 
 from qubx.core.series import TimeSeries, lag, compare, OHLCV
-from qubx.ta.indicators import sma, ema, tema, dema, kama, highest, lowest, pewma, psar, atr, swings
+from qubx.ta.indicators import (
+    sma,
+    ema,
+    tema,
+    dema,
+    kama,
+    highest,
+    lowest,
+    pewma,
+    psar,
+    atr,
+    swings,
+    pewma_outliers_detector,
+)
 from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsQuotes
 import qubx.pandaz.ta as pta
 import tests.qubx.ta.utils_for_testing as test
@@ -213,6 +226,39 @@ class TestIndicators:
         p1 = pewma(qs, 0.99, 0.01, 30)
         assert abs(np.mean(p1.pd() - p0.Mean)) < 1e-3
         assert abs(np.mean(p1.std.pd() - p0.Std)) < 1e-3
+
+        # - test streaming data
+        ohlc10 = OHLCV("test", "15Min")
+        v10 = pewma(ohlc10.close, 0.9, 0.2, 30)
+        for b in ohlc[::-1]:
+            ohlc10.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume)
+        e10 = pta.pwma(ohlc10.close.pd(), 0.9, 0.2, 30)
+        assert abs(np.mean(v10.pd() - e10.Mean)) < 1e-3
+        assert abs(np.mean(v10.std.pd() - e10.Std)) < 1e-3
+
+    def test_pewma_outliers_detector(self):
+        r = CsvStorageDataReader("tests/data/csv/")
+        ohlc = r.read("SOLUSDT", start="2024-04-01", stop="+15h", transform=AsOhlcvSeries("1Min", "ms"))
+
+        ohlc_p = ohlc.pd()
+        qs = ohlc.close
+        ps = ohlc_p["close"]
+
+        p0 = pta.pwma_outliers_detector(ps, 0.90, 0.2)
+        p1 = pewma_outliers_detector(qs, 0.90, 0.2)
+        assert np.mean(p0.m - p1.pd()) < 1e-9
+        assert np.mean(p0.u - p1.upper.pd()) < 1e-9
+        assert np.mean(p0.l - p1.lower.pd()) < 1e-9
+
+        # - test streaming data
+        ohlc10 = OHLCV("test", "15Min")
+        s0 = pewma_outliers_detector(ohlc10.close, 0.9, 0.2, 30)
+        for b in ohlc[::-1]:
+            ohlc10.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume)
+        s1 = pta.pwma_outliers_detector(ohlc10.close.pd(), 0.9, 0.2, 30)
+        assert abs(np.mean(s0.pd() - s1.m)) < 1e-9
+        assert abs(np.mean(s0.std.pd() - s1.s)) < 1e-9
+        assert abs(np.mean(s0.outliers.pd() - s1.outliers)) < 1e-9
 
     def test_psar(self):
         r = CsvStorageDataReader("tests/data/csv/")
