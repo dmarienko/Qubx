@@ -224,8 +224,8 @@ class TestIndicators:
 
         p0 = pta.pwma(ps, 0.99, 0.01, 30)
         p1 = pewma(qs, 0.99, 0.01, 30)
-        assert abs(np.mean(p1.pd() - p0.Mean)) < 1e-3
-        assert abs(np.mean(p1.std.pd() - p0.Std)) < 1e-3
+        assert abs(np.mean(p1.pd() - p0.Mean)) < 1e-9
+        assert abs(np.mean(p1.std.pd() - p0.Std)) < 1e-9
 
         # - test streaming data
         ohlc10 = OHLCV("test", "15Min")
@@ -233,8 +233,8 @@ class TestIndicators:
         for b in ohlc[::-1]:
             ohlc10.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume)
         e10 = pta.pwma(ohlc10.close.pd(), 0.9, 0.2, 30)
-        assert abs(np.mean(v10.pd() - e10.Mean)) < 1e-3
-        assert abs(np.mean(v10.std.pd() - e10.Std)) < 1e-3
+        assert abs(np.mean(v10.pd() - e10.Mean)) < 1e-9
+        assert abs(np.mean(v10.std.pd() - e10.Std)) < 1e-9
 
     def test_pewma_outliers_detector(self):
         r = CsvStorageDataReader("tests/data/csv/")

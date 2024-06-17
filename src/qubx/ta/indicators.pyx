@@ -274,7 +274,8 @@ cdef class Pewma(Indicator):
     cdef double alpha, beta
     cdef int T
 
-    cdef double _mean, _std, _var
+    cdef double _mean, _vstd, _var
+    cdef double mean, vstd, var
     cdef long _i
 
     def __init__(self, str name, TimeSeries series, double alpha, double beta, int T):
@@ -287,34 +288,51 @@ cdef class Pewma(Indicator):
         self.std = TimeSeries('std', series.timeframe, series.max_series_length)
         super().__init__(name, series)
 
+    def _store(self):
+        self.mean = self._mean
+        self.vstd = self._vstd
+        self.var = self._var
+
+    def _restore(self):
+        self._mean = self.mean
+        self._vstd = self.vstd
+        self._var = self.var
+
+    def _get_alpha(self, p_t):
+        if self._i - 1 > self.T:
+            return self.alpha * (1.0 - self.beta * p_t)
+        return 1.0 - 1.0 / self._i
+
     cpdef double calculate(self, long long time, double x, short new_item_started):
-        cdef double diff, p, a_t, incr, v
+        cdef double diff, p_t, a_t, incr
 
-        if self._i < 1:
+        if len(self.series) <= 1:
             self._mean = x
-            self._std = 0.0
+            self._vstd = 0.0
             self._var = 0.0
-            incr = 0.0
-            v = 0.0
-        else:
-            diff = x - self._mean
-            # prob of observing diff
-            p = norm_pdf(diff / self._std) if self._std != 0.0 else 0.0  
-
-            # weight to give to this point
-            a_t = self.alpha * (1 - self.beta * p) if self._i > self.T else (1.0 - 1.0 / self._i)  
-            incr = (1.0 - a_t) * diff
-            v = a_t * (self._var + diff * incr)
-            self.std.update(time, np.sqrt(v))
+            self._store()
+            self.std.update(time, self.vstd)
+            return self.mean
 
         if new_item_started:
-            self._mean += incr
             self._i += 1
-            self._var = v
-            self._std = np.sqrt(v)
-            self.std.update(time, self._std)
+            self._restore()
+        else:
+            self._store()
 
-        return self._mean
+        diff = x - self.mean
+        # prob of observing diff
+        p_t = norm_pdf(diff / self.vstd) if self.vstd != 0.0 else 0.0  
+
+        # weight to give to this point
+        a_t = self._get_alpha(p_t)  
+        incr = (1.0 - a_t) * diff
+        self.mean += incr
+        self.var = a_t * (self.var + diff * incr)
+        self.vstd = np.sqrt(self.var)
+        self.std.update(time, self.vstd)
+
+        return self.mean
 
 
 def pewma(series:TimeSeries, alpha: float, beta: float, T:int=30):
