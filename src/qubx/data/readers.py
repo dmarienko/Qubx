@@ -10,6 +10,7 @@ from functools import wraps
 
 from qubx import logger
 from qubx.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
+from qubx.data.utils import Liquidation
 from qubx.utils.time import infer_series_frequency, handle_start_stop
 from psycopg.types.datetime import TimestampLoader
 
@@ -414,6 +415,39 @@ class AsQuotes(DataTransformer):
                 self.buffer.append(Quote(t.as_unit("ns").asm8.item(), b, a, bv, av))
 
 
+class AsLiquidations(DataTransformer):
+    """
+    Tries to convert incoming data to list of Liquidation trade's
+    Data must have appropriate structure: timestamp, side, price, average_price, size, filled_size
+    """
+    
+    def start_transform(self, name: str, column_names: List[str], **kwargs):
+        self.buffer = list()
+        self._time_idx = _FIND_TIME_COL_IDX(column_names)
+        self._side_idx = _find_column_index_in_list(column_names, "side")
+        self._price_idx = _find_column_index_in_list(column_names, "price")
+        self._avg_price_idx = _find_column_index_in_list(column_names, "average_price")
+        self._size_idx = _find_column_index_in_list(
+            column_names, "size", "qty", "amount", "volume"
+        )
+        self._filled_size_idx = _find_column_index_in_list(
+            column_names, "filled_size", "filled_qty", "filled_amount", "filled_volume"
+        )
+
+    def process_data(self, rows_data: Iterable) -> Any:
+        if rows_data is not None:
+            for d in rows_data:
+                t = d[self._time_idx]
+                s = d[self._side_idx]
+                p = d[self._price_idx]
+                ap = d[self._avg_price_idx]
+                sz = d[self._size_idx]
+                fsz = d[self._filled_size_idx]
+                self.buffer.append(
+                    Liquidation(t, s, p, ap, sz, fsz)
+                )
+
+
 class AsTimestampedRecords(DataTransformer):
     """
     Convert incoming data to list or dictionaries with preprocessed timestamps ('timestamp_ns' and 'timestamp')
@@ -774,7 +808,7 @@ class QuestDBConnector(DataReader):
 
     def _connect(self):
         self._connection = pg.connect(self.connection_url, autocommit=True)
-        self._cursor = self._connection.cursor()
+        self._cursor = self._connection.cursor() 
         logger.debug(f"Connected to QuestDB at {self._host}:{self._port}")
 
     def read(
@@ -808,7 +842,7 @@ class QuestDBConnector(DataReader):
         start: str | None,
         stop: str | None,
         transform: DataTransformer,
-        chunksize: int,  # TODO: use self._cursor.fetchmany in this case !!!!
+        chunksize: int,  # Use self._cursor.fetchmany in this case
         timeframe: str | None,
         data_type: str,
         builder: QuestDBSqlBuilder,
@@ -816,16 +850,33 @@ class QuestDBConnector(DataReader):
         start, end = handle_start_stop(start, stop)
         _req = builder.prepare_data_sql(data_id, start, end, timeframe, data_type)
 
+        # TODO: fix having the same cursor for multiple queries
         self._cursor.execute(_req)  # type: ignore
-        records = self._cursor.fetchall()  # TODO: for chunksize > 0 use fetchmany etc
+
+        if chunksize > 0:
+            def _iter_chunks(transform: DataTransformer):
+
+                while True:
+                    records = self._cursor.fetchmany(chunksize)  # Fetch in chunks
+                    if not records:
+                        break
+                    
+                    names = [d.name for d in self._cursor.description]  # type: ignore
+                    transform.start_transform(data_id, names, start=start, stop=stop)
+                    transform.process_data(records)
+                    yield transform.collect()
+
+            return _iter_chunks(transform)
+        
+        records = self._cursor.fetchall()  # Fetch all records at once
         if not records:
             return None
 
         names = [d.name for d in self._cursor.description]  # type: ignore
         transform.start_transform(data_id, names, start=start, stop=stop)
-
         transform.process_data(records)
         return transform.collect()
+
 
     @_retry
     def _get_names(self, builder: QuestDBSqlBuilder) -> List[str]:
