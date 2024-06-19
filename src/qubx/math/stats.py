@@ -30,13 +30,30 @@ def compare_to_norm(xs, xranges=None):
     fit = stats.norm.pdf(sorted(xs), _m, _s)
 
     sbp(12, 1)
-    plt.plot(sorted(xs), fit, 'r--', lw=2, label='N(%.2f, %.2f)' % (_m, _s))
-    plt.legend(loc='upper right')
+    plt.plot(sorted(xs), fit, "r--", lw=2, label="N(%.2f, %.2f)" % (_m, _s))
+    plt.legend(loc="upper right")
 
-    sns.kdeplot(xs, color='g', label='Data', shade=True)
+    sns.kdeplot(xs, color="g", label="Data", fill=True)
     if xranges is not None and len(xranges) > 1:
         plt.xlim(xranges)
-    plt.legend(loc='upper right')
+    plt.legend(loc="upper right")
 
     sbp(12, 2)
     stats.probplot(xs, dist="norm", sparams=(_m, _s), plot=plt)
+
+
+def kde(array, cut_down=True, bw_method="scott"):
+    """
+    Kernel dense estimation
+    """
+    from scipy.stats import gaussian_kde
+
+    if cut_down:
+        bins, counts = np.unique(array, return_counts=True)
+        f_mean = counts.mean()
+        f_above_mean = bins[counts > f_mean]
+        if len(f_above_mean) > 0:
+            bounds = [f_above_mean.min(), f_above_mean.max()]
+            array = array[np.bitwise_and(bounds[0] < array, array < bounds[1])]
+
+    return gaussian_kde(array, bw_method=bw_method)

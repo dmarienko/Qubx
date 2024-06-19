@@ -50,5 +50,5 @@ cpdef recognize_timeframe(timeframe):
         tf = np.int64(timeframe.item().total_seconds() * NS) 
 
     else:
-        raise ValueError('Unknown timeframe type !')
+        raise ValueError(f'Unknown timeframe type: {timeframe} !')
     return tf

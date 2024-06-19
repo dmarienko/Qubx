@@ -1,8 +1,11 @@
 import numpy as np
+import pandas as pd
 cimport numpy as np
+from scipy.special.cython_special import ndtri
 from collections import deque
 
-from qubx.core.series cimport TimeSeries, Indicator, RollingSum, nans
+from qubx.core.series cimport TimeSeries, Indicator, IndicatorOHLC, RollingSum, nans, OHLCV, Bar
+from qubx.pandaz.utils import scols, srows
 
 
 cdef extern from "math.h":
@@ -256,3 +259,452 @@ cdef class Std(Indicator):
 def std(series:TimeSeries, period:int, mean=0):
     return Std.wrap(series, period)
 # - - - - TODO !!!!!!!
+
+
+cdef double norm_pdf(double x):
+    return np.exp(-x ** 2 / 2) / np.sqrt(2 * np.pi)
+
+
+cdef double lognorm_pdf(double x, double s):
+    return np.exp(-np.log(x) ** 2 / (2 * s ** 2)) / (x * s * np.sqrt(2 * np.pi))
+
+
+cdef class Pewma(Indicator):
+    cdef public TimeSeries std
+    cdef double alpha, beta
+    cdef int T
+
+    cdef double _mean, _vstd, _var
+    cdef double mean, vstd, var
+    cdef long _i
+
+    def __init__(self, str name, TimeSeries series, double alpha, double beta, int T):
+        self.alpha = alpha 
+        self.beta = beta
+        self.T = T
+
+        # - local variables
+        self._i = 0
+        self.std = TimeSeries('std', series.timeframe, series.max_series_length)
+        super().__init__(name, series)
+
+    def _store(self):
+        self.mean = self._mean
+        self.vstd = self._vstd
+        self.var = self._var
+
+    def _restore(self):
+        self._mean = self.mean
+        self._vstd = self.vstd
+        self._var = self.var
+
+    def _get_alpha(self, p_t):
+        if self._i - 1 > self.T:
+            return self.alpha * (1.0 - self.beta * p_t)
+        return 1.0 - 1.0 / self._i
+
+    cpdef double calculate(self, long long time, double x, short new_item_started):
+        cdef double diff, p_t, a_t, incr
+
+        if len(self.series) <= 1:
+            self._mean = x
+            self._vstd = 0.0
+            self._var = 0.0
+            self._store()
+            self.std.update(time, self.vstd)
+            return self.mean
+
+        if new_item_started:
+            self._i += 1
+            self._restore()
+        else:
+            self._store()
+
+        diff = x - self.mean
+        # prob of observing diff
+        p_t = norm_pdf(diff / self.vstd) if self.vstd != 0.0 else 0.0  
+
+        # weight to give to this point
+        a_t = self._get_alpha(p_t)  
+        incr = (1.0 - a_t) * diff
+        self.mean += incr
+        self.var = a_t * (self.var + diff * incr)
+        self.vstd = np.sqrt(self.var)
+        self.std.update(time, self.vstd)
+
+        return self.mean
+
+
+def pewma(series:TimeSeries, alpha: float, beta: float, T:int=30):
+    """
+    Implementation of probabilistic exponential weighted ma (https://sci-hub.shop/10.1109/SSP.2012.6319708)
+    See pandas version here: qubx.pandaz.ta::pwma 
+    """
+    return Pewma.wrap(series, alpha, beta, T)
+
+
+cdef class PewmaOutliersDetector(Indicator):
+    cdef public TimeSeries upper, lower, outliers, std
+    cdef double alpha, beta, threshold
+    cdef int T
+
+    cdef long _i
+    cdef double mean, vstd, variance
+    cdef double _mean, _vstd, _variance, _z_thr
+
+    def __init__(self, str name, TimeSeries series, double alpha, double beta, int T, double threshold):
+        self.alpha = alpha 
+        self.beta = beta
+        self.T = T
+        self.threshold = threshold
+
+        # - series
+        self.upper = TimeSeries('uba', series.timeframe, series.max_series_length)
+        self.lower = TimeSeries('lba', series.timeframe, series.max_series_length)
+        self.std = TimeSeries('std', series.timeframe, series.max_series_length)
+        self.outliers = TimeSeries('outliers', series.timeframe, series.max_series_length)
+
+        # - local variables
+        self._i = 0
+        self._z_thr = ndtri(1 - threshold / 2)
+
+        super().__init__(name, series)
+
+    def _store(self):
+        self.mean = self._mean
+        self.vstd = self._vstd
+        self.variance = self._variance
+
+    def _restore(self):
+        self._mean = self.mean
+        self._vstd = self.vstd
+        self._variance = self.variance
+
+    cdef double _get_alpha(self, double p_t):
+        if self._i + 1 >= self.T:
+            return self.alpha * (1.0 - self.beta * p_t)
+        return 1.0 - 1.0 / (self._i + 1.0)
+
+    cdef double _get_mean(self, double x, double alpha_t):
+        return alpha_t * self.mean + (1.0 - alpha_t) * x
+
+    cdef double _get_variance(self, double x, double alpha_t):
+        return alpha_t * self.variance + (1.0 - alpha_t) * np.square(x)
+
+    cdef double _get_std(self, double variance, double mean):
+        return np.sqrt(max(variance - np.square(mean), 0.0))
+
+    cdef double _get_p(self, double x):
+        cdef double z_t = ((x - self.mean) / self.vstd) if (self.vstd != 0 and not np.isnan(x)) else 0.0
+        # if self.dist == 'normal':
+        # p_t = norm_pdf(z_t)
+        # elif self.dist == 'cauchy':
+        #     p_t = (1 / (np.pi * (1 + np.square(z_t))))
+        # elif self.dist == 'student_t':
+        #     p_t = (1 + np.square(z_t)) ** (-0.5 * (self.count - 1)) / \
+        #           (np.sqrt(self.count - 1) * np.sqrt(np.pi) * np.exp(np.math.lgamma(0.5 * (self.count - 1))))
+        # else:
+        #     raise ValueError('Invalid distribution type')
+        return norm_pdf(z_t)
+
+    cpdef double calculate(self, long long time, double x, short new_item_started):
+        # - first bar - just use it as initial value
+        if len(self.series) <= 1:
+            self._mean = x
+            self._variance = x ** 2
+            self._vstd = 0.0
+            self._store()
+            self.std.update(time, self.vstd)
+            self.upper.update(time, x)
+            self.lower.update(time, x)
+            return self._mean
+
+        # - new bar is started use n-1 values for calculate innovations
+        if new_item_started:
+            self._i += 1
+            self._restore()
+        else:
+            self._store()
+
+        cdef double p_t = self._get_p(x)
+        cdef double alpha_t = self._get_alpha(p_t)
+        self.mean = self._get_mean(x, alpha_t)
+        self.variance = self._get_variance(x, alpha_t)
+        self.vstd = self._get_std(self.variance, self.mean)
+        cdef double ub = self.mean + self._z_thr * self.vstd
+        cdef double lb = self.mean - self._z_thr * self.vstd
+
+        self.upper.update(time, ub)
+        self.lower.update(time, lb)
+        self.std.update(time, self.vstd)
+
+        # - check if it's outlier
+        if p_t < self.threshold:
+            self.outliers.update(time, x)
+        else:
+            self.outliers.update(time, np.nan)
+        return self.mean
+
+
+def pewma_outliers_detector(series:TimeSeries, alpha: float, beta: float, T:int=30, threshold=0.05):
+    """
+    Outliers detector based on pwma
+    """
+    return PewmaOutliersDetector.wrap(series, alpha, beta, T, threshold)
+
+
+cdef class Psar(IndicatorOHLC):
+    cdef int _bull
+    cdef double _af
+    cdef double _psar
+    cdef double _lp
+    cdef double _hp
+
+    cdef int bull
+    cdef double af
+    cdef double psar
+    cdef double lp
+    cdef double hp
+
+    cdef public TimeSeries upper
+    cdef public TimeSeries lower
+
+    cdef double iaf
+    cdef double maxaf
+
+    def __init__(self, name, series, iaf, maxaf):
+        self.iaf = iaf
+        self.maxaf = maxaf
+        self.upper = TimeSeries('upper', series.timeframe, series.max_series_length)
+        self.lower = TimeSeries('lower', series.timeframe, series.max_series_length)
+        super().__init__(name, series)
+
+    cdef _store(self):
+        self.bull = self._bull
+        self.af = self._af
+        self.psar = self._psar
+        self.lp = self._lp
+        self.hp = self._hp
+
+    cdef _restore(self):
+        self._bull = self.bull
+        self._af = self.af
+        self._psar = self.psar
+        self._lp = self.lp
+        self._hp = self.hp
+
+    cpdef double calculate(self, long long time, Bar bar, short new_item_started):
+        cdef short reverse = 1
+
+        if len(self.series) <= 2:
+            self._bull = 1
+            self._af = self.iaf
+            self._psar = bar.close
+
+            if len(self.series) == 1:
+                self._lp = bar.low
+                self._hp = bar.high
+            self._store()
+            return self._psar
+
+        if not new_item_started:
+            self._store()
+        else:
+            self._restore()
+
+        bar1 = self.series[1]
+        bar2 = self.series[2]
+        cdef double h0 = bar.high
+        cdef double l0 = bar.low
+        cdef double h1 = bar1.high
+        cdef double l1 = bar1.low
+        cdef double h2 = bar2.high
+        cdef double l2 = bar2.low
+
+        if self.bull:
+            self.psar += self.af * (self.hp - self.psar)
+        else:
+            self.psar += self.af * (self.lp - self.psar)
+
+        reverse = 0
+        if self.bull:
+            if l0 < self.psar:
+                self.bull = 0
+                reverse = 1
+                self.psar = self.hp
+                self.lp = l0
+                self.af = self.iaf
+        else:
+            if h0 > self.psar:
+                self.bull = 1
+                reverse = 1
+                self.psar = self.lp
+                self.hp = h0
+                self.af = self.iaf
+
+        if not reverse:
+            if self.bull:
+                if h0 > self.hp:
+                    self.hp = h0
+                    self.af = min(self.af + self.iaf, self.maxaf)
+                if l1 < self.psar:
+                    self.psar = l1
+                if l2 < self.psar:
+                    self.psar = l2
+            else:
+                if l0 < self.lp:
+                    self.lp = l0
+                    self.af = min(self.af + self.iaf, self.maxaf)
+                if h1 > self.psar:
+                    self.psar = h1
+                if h2 > self.psar:
+                    self.psar = h2
+
+        if self.bull:
+            self.lower.update(time, self.psar)
+            self.upper.update(time, np.nan)
+        else:
+            self.upper.update(time, self.psar)
+            self.lower.update(time, np.nan)
+
+        return self.psar
+
+
+def psar(series: OHLCV, iaf: float=0.02, maxaf: float=0.2):
+    if not isinstance(series, OHLCV):
+        raise ValueError('Series must be OHLCV !')
+
+    return Psar.wrap(series, iaf, maxaf)
+
+
+# List of smoothing functions
+_smoothers = {f.__name__: f for f in [pewma, ema, sma, kama, tema, dema]}
+
+
+def smooth(TimeSeries series, str smoother, *args, **kwargs) -> Indicator:
+    """
+    Handy utility function to smooth series
+    """
+    _sfn = _smoothers.get(smoother)
+    if _sfn is None:
+        raise ValueError(f"Smoother {smoother} not found!")
+    return _sfn(series, *args, **kwargs)
+
+
+cdef class Atr(IndicatorOHLC):
+    cdef short percentage
+    cdef TimeSeries tr
+    cdef Indicator ma
+
+    def __init__(self, str name, OHLCV series, int period, str smoother, short percentage):
+        self.percentage = percentage
+        self.tr = TimeSeries("tr", series.timeframe, series.max_series_length)
+        self.ma = smooth(self.tr, smoother, period)
+        super().__init__(name, series)
+
+    cpdef double calculate(self, long long time, Bar bar, short new_item_started):
+        if len(self.series) <= 1:
+            return np.nan
+
+        cdef double c1 = self.series[1].close
+        cdef double h_l = abs(bar.high - bar.low)
+        cdef double h_pc = abs(bar.high - c1)
+        cdef double l_pc = abs(bar.low - c1)
+        self.tr.update(time, max(h_l, h_pc, l_pc))
+        return (100 * self.ma[0] / c1) if self.percentage else self.ma[0]
+
+
+def atr(series: OHLCV, period: int = 14, smoother="sma", percentage: bool = False):
+    if not isinstance(series, OHLCV):
+        raise ValueError("Series must be OHLCV !")
+    return Atr.wrap(series, period, smoother, percentage)
+
+
+cdef class Swings(IndicatorOHLC):
+    cdef double _min_l
+    cdef long long _min_t
+    cdef double _max_h
+    cdef long long _max_t
+    cdef OHLCV base
+    cdef Indicator trend
+    cdef public TimeSeries tops
+    cdef public TimeSeries bottoms
+
+    def __init__(self, str name, OHLCV series, trend_indicator, **indicator_args):
+        self.base = OHLCV("base", series.timeframe, series.max_series_length)
+        self.trend = trend_indicator(self.base, **indicator_args)
+        self.tops = TimeSeries("tops", series.timeframe, series.max_series_length)
+        self.bottoms = TimeSeries("bottoms", series.timeframe, series.max_series_length)
+        self._min_l = +np.inf
+        self._max_h = -np.inf
+        self._max_t = 0
+        self._min_t = 0
+        super().__init__(name, series)
+
+    cpdef double calculate(self, long long time, Bar bar, short new_item_started):
+        self.base.update_by_bar(time, bar.open, bar.high, bar.low, bar.close, bar.volume)
+        cdef int _t = 0
+
+        if len(self.trend.upper) > 0:
+            _u = self.trend.upper[0]
+            _d = self.trend.lower[0]
+
+            if not np.isnan(_u):
+                if self._max_t > 0:
+                    self.tops.update(self._max_t, self._max_h)
+
+                if bar.low <= self._min_l:
+                    self._min_l = bar.low
+                    self._min_t = time
+
+                self._max_h = -np.inf
+                self._max_t = 0
+                _t = -1
+            elif not np.isnan(_d):
+                if self._min_t > 0:
+                    self.bottoms.update(self._min_t, self._min_l)
+
+                if bar.high >= self._max_h:
+                    self._max_h = bar.high
+                    self._max_t = time
+
+                self._min_l = +np.inf
+                self._min_t = 0
+                _t = +1
+
+        return _t
+
+    def get_current_trend_end(self):
+        if np.isfinite(self._min_l):
+            return pd.Timestamp(self._min_t, 'ns'), self._min_l
+        elif np.isfinite(self._max_h):
+            return pd.Timestamp(self._max_t, 'ns'), self._max_h
+        return (None, None)
+
+    def pd(self) -> pd.DataFrame:
+        _t, _d = self.get_current_trend_end()
+        tps, bts = self.tops.pd(), self.bottoms.pd()
+        if _t is not None:
+            if bts.index[-1] < tps.index[-1]:
+                bts = srows(bts, pd.Series({_t: _d}))
+            else:
+                tps = srows(tps, pd.Series({_t: _d}))
+
+        eid = pd.Series(tps.index, tps.index)
+        mx = scols(bts, tps, eid, names=["start_price", "end_price", "end"])
+        dt = scols(mx["start_price"], mx["end_price"].shift(-1), mx["end"].shift(-1))  # .dropna()
+        dt = dt.assign(delta = dt["end_price"] - dt["start_price"])
+
+        eid = pd.Series(bts.index, bts.index)
+        mx = scols(tps, bts, eid, names=["start_price", "end_price", "end"])
+        ut = scols(mx["start_price"], mx["end_price"].shift(-1), mx["end"].shift(-1))  # .dropna()
+        return scols(ut, dt, keys=["DownTrends", "UpTrends"])
+
+
+def swings(series: OHLCV, trend_indicator, **indicator_args):
+    """
+    Swing detector based on provided trend indicator.
+    """
+    if not isinstance(series, OHLCV):
+        raise ValueError("Series must be OHLCV !")
+    return Swings.wrap(series, trend_indicator, **indicator_args)

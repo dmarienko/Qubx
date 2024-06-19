@@ -142,6 +142,14 @@ cdef class TimeSeries:
     def __len__(self) -> int:
         return len(self.times)
 
+    def loc(self, str t):
+        _t = np.datetime64(t, 'ns').item()
+        ix = int(np.searchsorted(self.times.values, _t, side='right'))
+        ix = min(ix, len(self.values))
+        if ix == 0:
+            raise ValueError(f"Time {t} not found in {self.name} !")
+        return np.datetime64(self.times.values[ix - 1], 'ns'), self.values.values[ix - 1]
+
     def _on_attach_indicator(self, indicator: Indicator, indicator_input: TimeSeries):
         self.calculation_order.append((
             id(indicator_input), indicator, id(indicator)
@@ -169,7 +177,7 @@ cdef class TimeSeries:
             # - disable first notification because first item may be incomplete
             self._is_new_item = False
 
-        elif time - self.times[0] >= self.timeframe:
+        elif (_dt := time - self.times[0]) >= self.timeframe:
             # - add new item
             self._add_new_item(item_start_time, value)
 
@@ -186,6 +194,8 @@ cdef class TimeSeries:
 
             return self._is_new_item
         else:
+            if _dt < 0:
+                raise ValueError(f"Attempt to update past data at {time_to_str(time)} !")
             self._update_last_item(item_start_time, value)
 
         # - update indicators by new data
@@ -300,6 +310,9 @@ def _wrap_indicator(series: TimeSeries, clz, *args, **kwargs):
 
 
 cdef class Indicator(TimeSeries):
+    """
+    Basic class for indicator that can be attached to TimeSeries
+    """
 
     def __init__(self, str name, TimeSeries series):
         if not name:
@@ -309,7 +322,7 @@ cdef class Indicator(TimeSeries):
         self.name = name
 
         # - we need to make a empty copy and fill it 
-        self.series = TimeSeries(series.name, series.timeframe, series.max_series_length)
+        self.series = self._instantiate_base_series(series.name, series.timeframe, series.max_series_length)
         self.parent = series 
         
         # - notify the parent series that indicator has been attached
@@ -317,6 +330,9 @@ cdef class Indicator(TimeSeries):
 
         # - recalculate indicator on data as if it would being streamed
         self._initial_data_recalculate(series)
+
+    def _instantiate_base_series(self, str name, long long timeframe, float max_series_length):
+        return TimeSeries(name, timeframe, max_series_length)
 
     def _on_attach_indicator(self, indicator: Indicator, indicator_input: TimeSeries):
         self.parent._on_attach_indicator(indicator, indicator_input)
@@ -343,6 +359,17 @@ cdef class Indicator(TimeSeries):
     @classmethod
     def wrap(clz, series:TimeSeries, *args, **kwargs):
         return _wrap_indicator(series, clz, *args, **kwargs)
+
+
+cdef class IndicatorOHLC(Indicator):
+    """
+    Extension of indicator class to be used for OHLCV series
+    """
+    def _instantiate_base_series(self, str name, long long timeframe, float max_series_length):
+        return OHLCV(name, timeframe, max_series_length)
+
+    def calculate(self, long long time, Bar value, short new_item_started) -> object:
+        raise ValueError("Indicator must implement calculate() method")
 
 
 cdef class Lag(Indicator):
@@ -729,7 +756,7 @@ cdef class OHLCV(TimeSeries):
             # Here we disable first notification because first item may be incomplete
             self._is_new_item = False
 
-        elif time - self.times[0] >= self.timeframe:
+        elif (_dt := time - self.times[0]) >= self.timeframe:
             b = Bar(bar_start_time, price, price, price, price, volume, bvolume)
 
             # - add new item
@@ -740,6 +767,9 @@ cdef class OHLCV(TimeSeries):
 
             return self._is_new_item
         else:
+            if _dt < 0:
+                raise ValueError(f"Attempt to update past data at {time_to_str(time)} !")
+
             self._update_last_item(bar_start_time, self[0].update(price, volume, bvolume))
 
         # - update indicators by new data
