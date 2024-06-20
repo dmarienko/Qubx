@@ -17,6 +17,8 @@ from Cython.Compiler.Version import version as cython_compiler_version
 from setuptools import Distribution
 from setuptools import Extension
 
+RED, BLUE, GREEN, YLW, RES = "\033[31m", "\033[36m", "\033[32m", "\033[33m", "\033[0m"
+
 
 BUILD_MODE = os.getenv("BUILD_MODE", "release")
 PROFILE_MODE = bool(os.getenv("PROFILE_MODE", ""))
@@ -95,13 +97,13 @@ def _build_extensions() -> list[Extension]:
             "WS2_32.Lib",
         ]
 
-    print("Creating C extension modules...")
+    print(f">> {GREEN} Creating C extension modules...{RES}")
     print(f"define_macros={define_macros}")
     print(f"extra_compile_args={extra_compile_args}")
 
     return [
         Extension(
-            name=str(pyx.relative_to(".")).replace(os.path.sep, ".")[:-4],
+            name=str(pyx.relative_to("src")).replace(os.path.sep, ".")[:-4],
             sources=[str(pyx)],
             include_dirs=[np.get_include()],  # , *RUST_INCLUDES],
             define_macros=define_macros,
@@ -138,7 +140,7 @@ def _build_distribution(extensions: list[Extension]) -> Distribution:
 def _copy_build_dir_to_project(cmd: build_ext) -> None:
     # Copy built extensions back to the project tree
     for output in cmd.get_outputs():
-        relative_extension = Path(output).relative_to(cmd.build_lib)
+        relative_extension = Path("src") / Path(output).relative_to(cmd.build_lib)
         if not Path(output).exists():
             continue
 
@@ -148,21 +150,19 @@ def _copy_build_dir_to_project(cmd: build_ext) -> None:
         mode |= (mode & 0o444) >> 2
         relative_extension.chmod(mode)
 
-    print("Copied all compiled dynamic library files into source")
+    print(f" >> {GREEN}Copied all compiled dynamic library files into source{RES}")
 
 
 def _strip_unneeded_symbols() -> None:
     try:
-        print("Stripping unneeded symbols from binaries...")
+        print(f" >> {YLW}Stripping unneeded symbols from binaries...{RES}")
         for so in itertools.chain(Path("src/qubx").rglob("*.so")):
             if platform.system() == "Linux":
                 strip_cmd = ["strip", "--strip-unneeded", so]
             elif platform.system() == "Darwin":
                 strip_cmd = ["strip", "-x", so]
             else:
-                raise RuntimeError(
-                    f"Cannot strip symbols for platform {platform.system()}"
-                )
+                raise RuntimeError(f"Cannot strip symbols for platform {platform.system()}")
             subprocess.run(
                 strip_cmd,  # type: ignore [arg-type] # noqa
                 check=True,
@@ -185,7 +185,7 @@ def build() -> None:
         distribution = _build_distribution(extensions)
 
         # Build and run the command
-        print("Compiling C extension modules...")
+        print(f">> {GREEN} Compiling C extension modules...{RES}")
         cmd: build_ext = build_ext(distribution)
         # if PARALLEL_BUILD:
         # cmd.parallel = os.cpu_count()
@@ -201,15 +201,12 @@ def build() -> None:
         _strip_unneeded_symbols()
 
 
-RED, BLUE, GREEN, YLW, RES = "\033[31m", "\033[36m", "\033[32m", "\033[33m", "\033[0m"
 if __name__ == "__main__":
     qubx_platform = toml.load("pyproject.toml")["tool"]["poetry"]["version"]
     print(BLUE)
     print("=====================================================================")
     print(f"Qubx Builder {qubx_platform}")
-    print(
-        "=====================================================================\033[0m"
-    )
+    print("=====================================================================\033[0m")
     print(f"System: {GREEN}{platform.system()} {platform.machine()}{RES}")
     # print(f"Clang:  {GREEN}{_get_clang_version()}{RES}")
     # print(f"Rust:   {GREEN}{_get_rustc_version()}{RES}")
@@ -225,12 +222,10 @@ if __name__ == "__main__":
     print(f"COPY_TO_SOURCE={COPY_TO_SOURCE}")
     # print(f"PYO3_ONLY={PYO3_ONLY}\n")
 
-    print("Starting build...")
+    print(f">> {GREEN}Starting build...{RES}")
     ts_start = datetime.datetime.now(datetime.timezone.utc)
     build()
-    print(
-        f"Build time: {YLW}{datetime.datetime.now(datetime.timezone.utc) - ts_start}{RES}"
-    )
+    print(f"Build time: {YLW}{datetime.datetime.now(datetime.timezone.utc) - ts_start}{RES}")
     print(GREEN + "Build completed" + RES)
 
 # # See if Cython is installed
