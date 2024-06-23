@@ -627,14 +627,21 @@ cdef class Swings(IndicatorOHLC):
     cdef long long _max_t
     cdef OHLCV base
     cdef Indicator trend
-    cdef public TimeSeries tops
-    cdef public TimeSeries bottoms
+    # tops contain upper pivot point prices
+    # tops_detection_lag contain time lag when top was actually spotted
+    cdef public TimeSeries tops, tops_detection_lag
+    cdef public TimeSeries bottoms, bottoms_detection_lag
 
     def __init__(self, str name, OHLCV series, trend_indicator, **indicator_args):
         self.base = OHLCV("base", series.timeframe, series.max_series_length)
         self.trend = trend_indicator(self.base, **indicator_args)
+
         self.tops = TimeSeries("tops", series.timeframe, series.max_series_length)
+        self.tops_detection_lag = TimeSeries("tops_lag", series.timeframe, series.max_series_length)
+
         self.bottoms = TimeSeries("bottoms", series.timeframe, series.max_series_length)
+        self.bottoms_detection_lag = TimeSeries("bottoms_lag", series.timeframe, series.max_series_length)
+
         self._min_l = +np.inf
         self._max_h = -np.inf
         self._max_t = 0
@@ -652,6 +659,7 @@ cdef class Swings(IndicatorOHLC):
             if not np.isnan(_u):
                 if self._max_t > 0:
                     self.tops.update(self._max_t, self._max_h)
+                    self.tops_detection_lag.update(self._max_t, time - self._max_t)
 
                 if bar.low <= self._min_l:
                     self._min_l = bar.low
@@ -663,6 +671,7 @@ cdef class Swings(IndicatorOHLC):
             elif not np.isnan(_d):
                 if self._min_t > 0:
                     self.bottoms.update(self._min_t, self._min_l)
+                    self.bottoms_detection_lag.update(self._min_t, time - self._min_t)
 
                 if bar.high >= self._max_h:
                     self._max_h = bar.high
@@ -684,20 +693,34 @@ cdef class Swings(IndicatorOHLC):
     def pd(self) -> pd.DataFrame:
         _t, _d = self.get_current_trend_end()
         tps, bts = self.tops.pd(), self.bottoms.pd()
+        tpl, btl = self.tops_detection_lag.pd(), self.bottoms_detection_lag.pd()
         if _t is not None:
             if bts.index[-1] < tps.index[-1]:
                 bts = srows(bts, pd.Series({_t: _d}))
+                btl = srows(btl, pd.Series({_t: 0}))  # last lag is 0
             else:
                 tps = srows(tps, pd.Series({_t: _d}))
+                tpl = srows(tpl, pd.Series({_t: 0})) # last lag is 0
+
+        # - convert tpl / btl to timedeltas
+        tpl, btl = tpl.apply(lambda x: pd.Timedelta(x, unit='ns')), btl.apply(lambda x: pd.Timedelta(x, unit='ns'))
 
         eid = pd.Series(tps.index, tps.index)
         mx = scols(bts, tps, eid, names=["start_price", "end_price", "end"])
         dt = scols(mx["start_price"], mx["end_price"].shift(-1), mx["end"].shift(-1))  # .dropna()
-        dt = dt.assign(delta = dt["end_price"] - dt["start_price"])
+        dt = dt.assign(
+            delta = dt["end_price"] - dt["start_price"], 
+            spotted = pd.Series(bts.index + btl, bts.index)
+        )
 
         eid = pd.Series(bts.index, bts.index)
         mx = scols(tps, bts, eid, names=["start_price", "end_price", "end"])
         ut = scols(mx["start_price"], mx["end_price"].shift(-1), mx["end"].shift(-1))  # .dropna()
+        ut = ut.assign(
+            delta = ut["end_price"] - ut["start_price"], 
+            spotted = pd.Series(tps.index + tpl, tps.index)
+        )
+
         return scols(ut, dt, keys=["DownTrends", "UpTrends"])
 
 
