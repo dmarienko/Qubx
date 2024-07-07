@@ -90,7 +90,9 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
                 logger.info(f"Subscribed on {sbscr} updates for {len(to_process)} symbols: \n\t\t{to_process}")
 
             case "trades":
-                tframe = self._get_exch_timeframe(timeframe or "1min")
+                if timeframe is None:
+                    raise ValueError("timeframe must not be None for trade data subscription")
+                tframe = self._get_exch_timeframe(timeframe)
                 for s in to_process:
                     asyncio.run_coroutine_threadsafe(
                         self._listen_to_trades(self.get_communication_channel(), s, tframe, nback), self._loop
