@@ -653,7 +653,7 @@ cdef class Trade:
         self.trade_id = trade_id
 
     def __repr__(self):
-        return "[%s]\t%.5f (%.1f) <%s> %s" % ( 
+        return "[%s]\t%.5f (%.1f) %s %s" % ( 
             time_to_str(self.time, 'ns'), self.price, self.size, 
             'take' if self.taker == 1 else 'make' if self.taker == 0 else '???',
             str(self.trade_id) if self.trade_id > 0 else ''
