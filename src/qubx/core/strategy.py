@@ -525,7 +525,10 @@ class StrategyContext:
         return None
 
     def _processing_trade(self, symbol: str, trade: Trade) -> TriggerEvent | None:
+        self._cache.update_by_trade(symbol, trade)
+
         if self._trig_on_trade:
+            # TODO: apply throttling or filtering here
             return TriggerEvent(self.time(), "trade", self._symb_to_instr.get(symbol), trade)
         return None
 
