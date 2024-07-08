@@ -378,3 +378,15 @@ class CtrlChannel:
 
     def start(self):
         self.control.set()
+
+
+class ITimeProvider:
+    """
+    Generic interface for providing current time
+    """
+
+    def time(self) -> dt_64:
+        """
+        Returns current time
+        """
+        raise NotImplementedError("Subclasses must implement this method")

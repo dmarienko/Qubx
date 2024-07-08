@@ -17,7 +17,7 @@ from qubx.core.account import AccountProcessor
 from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, process_schedule_spec
 from qubx.core.loggers import LogsWriter, StrategyLogging
 from qubx.core.lookups import InstrumentsLookup
-from qubx.core.basics import Deal, Instrument, Order, Position, Signal, dt_64, td_64, CtrlChannel
+from qubx.core.basics import Deal, Instrument, Order, Position, Signal, dt_64, td_64, CtrlChannel, ITimeProvider
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
 from qubx.utils.misc import Stopwatch
 from qubx.utils.time import convert_seconds_to_str
@@ -46,14 +46,8 @@ class IDataProvider:
         raise NotImplementedError("get_quote")
 
 
-class IExchangeServiceProvider:
+class IExchangeServiceProvider(ITimeProvider):
     acc: AccountProcessor
-
-    def time(self) -> dt_64:
-        """
-        Returns current time
-        """
-        raise NotImplementedError("time is not implemented")
 
     def get_account(self) -> AccountProcessor:
         return self.acc
