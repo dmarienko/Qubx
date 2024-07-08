@@ -41,10 +41,15 @@ class TradeTestStrat(IStrategy):
         logger.info(f"{str(closes)}")
 
     def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
-        if event.type == "trade":
-            trade: Trade = event.data
-            assert event.instrument is not None
-            logger.info(f"{event.time} {event.instrument.symbol} -> {trade}")
+        match event.type:
+            case "trade":
+                trade: Trade = event.data
+                assert event.instrument is not None
+                logger.info(f"{event.time} {event.instrument.symbol} -> Triggered on trade {trade}")
+            case "time":
+                logger.info(f"{event.time} -> Triggered on time event")
+            case _:
+                logger.info(f"{event.time} -> Triggered on unknown event {event}")
 
         return None
 

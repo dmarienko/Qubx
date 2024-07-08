@@ -10,14 +10,16 @@ config:
   account: binance-mde
 
   subscription: # market data subscription
-    - type: ohlc
-      timeframe: "1Min"
-      nback: 600
+    type: trade
+    timeframe: "1Min"
+    nback: 100
 
   # - how to trigger strategy
   # trigger:                  '* * * * * 55' # 55 sec at every minute
   # trigger:                  'bar: -5s'        # 5 sec before subsciption bar end
-  trigger: "1Min -5s" # 5 sec before subsciption bar end
+  trigger:
+    - "* * * * * */10"
+    - "trade:"
 
   # - when to fit strategy
   # fit:                      'cron: * * * * * 45'   # every minute at 45 sec
@@ -30,20 +32,7 @@ config:
   # fit:                      '4month -5h'     # 5h before the end of every 4 months
 
   universe: # it can
-    binance:
-      [
-        "ACAUSDT",
-        "BTCUSDT",
-        "ETHUSDT",
-        "BNBUSDT",
-        "PEPEUSDT",
-        "SHIBUSDT",
-        "XVGUSDT",
-        "BOMEUSDT",
-        "CKBUSDT",
-        "GALAUSDT",
-        "LINKUSDT",
-      ]
+    binance: ["GALAUSDT", "LINKUSDT"]
   #   binance.f:              ['BTCUSDT', 'ETHUSDT']
 
   # universe:                 ['ACAUSDT', 'BTCUSDT', 'BNBUSDT', 'PEPEUSDT', 'SHIBUSDT', 'XVGUSDT', 'BOMEUSDT', 'CKBUSDT', 'GALAUSDT', 'LINKUSDT']
