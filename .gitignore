@@ -1,6 +1,7 @@
 experiments/logs/
 tests/**/logs/
 logs/
+experiments/configs/.env*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
