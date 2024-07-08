@@ -10,9 +10,9 @@ config:
   account: binance-mde
 
   subscription: # market data subscription
-    - type: ohlc
-      timeframe: "1Min"
-      nback: 600
+    type: ohlc
+    timeframe: "1Min"
+    nback: 600
 
   # - how to trigger strategy
   # trigger:                  '* * * * * 55' # 55 sec at every minute
