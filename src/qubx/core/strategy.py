@@ -82,6 +82,19 @@ class IExchangeServiceProvider(ITimeProvider):
     def get_base_currency(self) -> str:
         raise NotImplementedError("get_basic_currency is not implemented")
 
+    def process_execution_report(self, symbol: str, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
+        raise NotImplementedError("process_execution_report is not implemented")
+
+    def update_position_price(self, symbol: str, price: float):
+        raise NotImplementedError("update_position_price is not implemented")
+
+    def _get_ohlcv_data_sync(self, symbol: str, timeframe: str, since: int, limit: int) -> List:
+        """
+        Service method - temporary here to have ability load historical data in syncronous way
+        TODO: need to be redisigned !
+        """
+        return []
+
 
 class PositionsTracker:
     ctx: "StrategyContext"

@@ -1,15 +1,15 @@
 {
 	"files": [
 		{
-			"path": "src/qubx/backtester/ome.py",
+			"path": "src/qubx/impl/ccxt_connector.py",
 			"bookmarks": [
 				{
 					"line": -1,
 					"column": 0
 				},
 				{
-					"line": 224,
-					"column": 8
+					"line": 276,
+					"column": 78
 				},
 				{
 					"line": -1,

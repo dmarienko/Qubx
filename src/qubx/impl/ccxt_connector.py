@@ -28,8 +28,9 @@ cxp.binanceqv = BinanceQV  # type: ignore
 cxp.exchanges.append("binanceqv")
 
 
-class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
+class CCXTDataConnector(IDataProvider):
     _exchange: Exchange
+    _service_provider: IExchangeServiceProvider
     _subsriptions: Dict[str, List[str]]
 
     _ch_market_data: CtrlChannel
@@ -40,13 +41,10 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
     def __init__(
         self,
         exchange_id: str,
-        account_id: str,
-        base_currency: str | None = None,
-        commissions: str | None = None,
+        service_provider: IExchangeServiceProvider,
         **exchange_auth,
     ):
-        super().__init__(exchange_id, account_id, base_currency, commissions, **exchange_auth)
-
+        self._service_provider = service_provider
         exchange_id = exchange_id.lower()
         exch = DATA_PROVIDERS_ALIASES.get(exchange_id, exchange_id)
         if exch not in cxp.exchanges:
@@ -62,7 +60,7 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
         self._last_quotes = defaultdict(lambda: None)
         self._subsriptions: Dict[str, List[str]] = defaultdict(list)
 
-        logger.info(f"{self.get_name().upper()} initialized - current time {self.time()}")
+        logger.info(f"{exchange_id} initialized - current time {self._service_provider.time()}")
 
     def subscribe(
         self, subscription_type: str, symbols: List[str], timeframe: Optional[str] = None, nback: int = 0
@@ -128,7 +126,7 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
         return to_subscribe
 
     def _time_msec_nbars_back(self, timeframe: str, nbarsback: int) -> int:
-        return (self.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
+        return (self._service_provider.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
 
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
         assert nbarsback >= 1
@@ -137,7 +135,10 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
         # - get this from sync
         # - TODO: check if nbarsback > max_limit (1000) we need to do more requests
         # - TODO: how to get quoted volumes ?
-        res = self.sync.fetch_ohlcv(symbol, self._get_exch_timeframe(timeframe), since=since, limit=1000)
+        # - TODO: we need to find the way how to get ohlc in sync way without calling _service_provider !!!
+        res = self._service_provider._get_ohlcv_data_sync(
+            symbol, self._get_exch_timeframe(timeframe), since=since, limit=1000
+        )
         _arr = []
         for oh in res:  # type: ignore
             _arr.append(
@@ -154,7 +155,7 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
                 _msg = f"\nexecs_{symbol} = [\n"
                 for report in exec:
                     _msg += "\t" + str(report) + ",\n"
-                    order, deals = self._process_execution_report(symbol, report)
+                    order, deals = self._service_provider.process_execution_report(symbol, report)
                     # - send update to client
                     channel.queue.put((symbol, "order", order))
                     if deals:
@@ -162,17 +163,17 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
                 logger.debug(_msg + "]\n")
 
             except NetworkError as e:
-                logger.error(f"(CCXTConnector) NetworkError in _listen_to_execution_reports : {e}")
+                logger.error(f"(CCXTDataConnector) NetworkError in _listen_to_execution_reports : {e}")
                 await asyncio.sleep(1)
                 continue
 
             except ExchangeClosedByUser:
                 # - we closed connection so just stop it
-                logger.info(f"(CCXTConnector) {symbol} execution reports listening has been stopped")
+                logger.info(f"(CCXTDataConnector) {symbol} execution reports listening has been stopped")
                 break
 
             except Exception as err:
-                logger.error(f"(CCXTConnector) exception in _listen_to_execution_reports : {err}")
+                logger.error(f"(CCXTDataConnector) exception in _listen_to_execution_reports : {err}")
                 logger.exception(err)
 
     async def _listen_to_ohlcv(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
@@ -195,24 +196,24 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
                 ohlcv = await self._exchange.watch_ohlcv(symbol, timeframe)  # type: ignore
 
                 # - update positions by actual close price
-                self.update_position_price(symbol, ohlcv[-1][4])
+                self._service_provider.update_position_price(symbol, ohlcv[-1][4])
 
                 for oh in ohlcv:
                     channel.queue.put((symbol, "bar", Bar(oh[0] * 1000000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
 
             except NetworkError as e:
-                logger.error(f"(CCXTConnector) NetworkError in _listen_to_ohlcv : {e}")
+                logger.error(f"(CCXTDataConnector) NetworkError in _listen_to_ohlcv : {e}")
                 await asyncio.sleep(1)
                 continue
 
             except ExchangeClosedByUser:
                 # - we closed connection so just stop it
-                logger.info(f"(CCXTConnector) {symbol} OHLCV listening has been stopped")
+                logger.info(f"(CCXTDataConnector) {symbol} OHLCV listening has been stopped")
                 break
 
             except Exception as e:
                 # logger.error(str(e))
-                logger.error(f"(CCXTConnector) exception in _listen_to_ohlcv : {e}")
+                logger.error(f"(CCXTDataConnector) exception in _listen_to_ohlcv : {e}")
                 logger.exception(e)
                 await self._exchange.close()  # type: ignore
                 raise e
@@ -242,23 +243,23 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
 
                 # - update positions by actual close price
                 last_trade = ccxt_convert_trade(trades[-1])
-                self.update_position_price(symbol, last_trade.price)
+                self._service_provider.update_position_price(symbol, last_trade.price)
 
                 for trade in trades:
                     channel.queue.put((symbol, "trade", ccxt_convert_trade(trade)))
 
             except NetworkError as e:
-                logger.error(f"(CCXTConnector) NetworkError in _listen_to_trades : {e}")
+                logger.error(f"(CCXTDataConnector) NetworkError in _listen_to_trades : {e}")
                 await asyncio.sleep(1)
                 continue
 
             except ExchangeClosedByUser:
                 # - we closed connection so just stop it
-                logger.info(f"(CCXTConnector) {symbol} Trades listening has been stopped")
+                logger.info(f"(CCXTDataConnector) {symbol} Trades listening has been stopped")
                 break
 
             except Exception as e:
-                logger.error(f"(CCXTConnector) exception in _listen_to_trades : {e}")
+                logger.error(f"(CCXTDataConnector) exception in _listen_to_trades : {e}")
                 logger.exception(e)
                 await self._exchange.close()  # type: ignore
                 raise e
@@ -266,14 +267,14 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
     def get_quote(self, symbol: str) -> Optional[Quote]:
         return self._last_quotes[symbol]
 
-    def _get_exch_timeframe(self, timeframe: str):
+    def _get_exch_timeframe(self, timeframe: str) -> str:
         if timeframe is not None:
             _t = re.match(r"(\d+)(\w+)", timeframe)
             timeframe = f"{_t[1]}{_t[2][0].lower()}" if _t and len(_t.groups()) > 1 else timeframe
 
         tframe = self._exchange.find_timeframe(timeframe)
         if tframe is None:
-            raise ValueError(f"timeframe {timeframe} is not supported by {self.get_name()}")
+            raise ValueError(f"timeframe {timeframe} is not supported by {self._exchange.name}")
 
         return tframe
 
