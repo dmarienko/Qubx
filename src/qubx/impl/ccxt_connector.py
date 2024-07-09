@@ -5,7 +5,6 @@ import asyncio
 from asyncio.tasks import Task
 from asyncio.events import AbstractEventLoop
 from collections import defaultdict
-import stackprinter
 
 import ccxt.pro as cxp
 from ccxt.base.exchange import Exchange
@@ -174,7 +173,7 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
 
             except Exception as err:
                 logger.error(f"(CCXTConnector) exception in _listen_to_execution_reports : {err}")
-                logger.error(stackprinter.format(err))
+                logger.exception(err)
 
     async def _listen_to_ohlcv(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
         # - check if we need to load initial 'snapshot'
@@ -214,7 +213,7 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
             except Exception as e:
                 # logger.error(str(e))
                 logger.error(f"(CCXTConnector) exception in _listen_to_ohlcv : {e}")
-                logger.error(stackprinter.format(e))
+                logger.exception(e)
                 await self._exchange.close()  # type: ignore
                 raise e
 
@@ -260,7 +259,7 @@ class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
 
             except Exception as e:
                 logger.error(f"(CCXTConnector) exception in _listen_to_trades : {e}")
-                logger.error(stackprinter.format(e))
+                logger.exception(e)
                 await self._exchange.close()  # type: ignore
                 raise e
 
