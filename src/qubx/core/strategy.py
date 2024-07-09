@@ -538,7 +538,7 @@ class StrategyContext:
         #  - let's say we can skip quotes if bid & ask is not changed
         #  - or we can collect let's say N quotes before sending to strategy
         if self._trig_on_quote:
-            return TriggerEvent(self.time(), "quote", symbol, quote)
+            return TriggerEvent(self.time(), "quote", self._symb_to_instr.get(symbol), quote)
         return None
 
     @_SW.watch("StrategyContext")
