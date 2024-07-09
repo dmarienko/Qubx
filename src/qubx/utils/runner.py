@@ -3,7 +3,8 @@ from os.path import exists, expanduser
 import yaml, configparser, socket
 
 from qubx import lookup, logger, formatter
-from qubx.impl.ccxt_connector import CCXTDataConnector, CCXTSyncTradingConnector
+from qubx.impl.ccxt_connector import CCXTDataConnector
+from qubx.impl.ccxt_trading import CCXTSyncTradingConnector
 from qubx.core.strategy import StrategyContext
 from qubx.utils.misc import add_project_to_system_path, Struct, logo, version
 from qubx.core.loggers import LogsWriter

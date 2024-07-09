@@ -33,7 +33,7 @@ class TriggerEvent:
 
 class IDataProvider:
 
-    def subscribe(self, subscription_type: str, symbols: List[str], **kwargs) -> bool:
+    def subscribe(self, subscription_type: str, instruments: List[Instrument], **kwargs) -> bool:
         raise NotImplementedError("subscribe")
 
     def get_communication_channel(self) -> CtrlChannel:
@@ -86,7 +86,7 @@ class IExchangeServiceProvider(ITimeProvider):
         raise NotImplementedError("process_execution_report is not implemented")
 
     def update_position_price(self, symbol: str, price: float):
-        raise NotImplementedError("update_position_price is not implemented")
+        self.acc.update_position_price(self.time(), symbol, price)
 
     def _get_ohlcv_data_sync(self, symbol: str, timeframe: str, since: int, limit: int) -> List:
         """
@@ -610,7 +610,7 @@ class StrategyContext:
             f"(StrategyContext) Subscribing to {self._market_data_subcription_type} updates using {self._market_data_subcription_params} for \n\t{_symbols} "
         )
         self.data_provider.subscribe(
-            self._market_data_subcription_type, _symbols, **self._market_data_subcription_params
+            self._market_data_subcription_type, self.instruments, **self._market_data_subcription_params
         )
 
         # - initialize strategy loggers

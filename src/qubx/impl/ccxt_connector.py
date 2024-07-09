@@ -11,6 +11,7 @@ from ccxt.base.exchange import Exchange
 from ccxt import NetworkError, ExchangeClosedByUser
 
 import re
+import numpy as np
 import pandas as pd
 
 from qubx import logger
@@ -18,8 +19,7 @@ from qubx.core.basics import Instrument, Position, dt_64, Deal
 from qubx.core.strategy import IDataProvider, CtrlChannel, IExchangeServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.impl.ccxt_utils import DATA_PROVIDERS_ALIASES, ccxt_convert_trade
-
-from .ccxt_trading import CCXTSyncTradingConnector
+from qubx.utils.ntp import get_now
 
 # - register custom wrappers
 from .ccxt_customizations import BinanceQV
@@ -37,6 +37,7 @@ class CCXTDataConnector(IDataProvider):
     _last_quotes: Dict[str, Optional[Quote]]
     _loop: AbstractEventLoop
     _thread_event_loop: Thread
+    _instrument_min_ticks: Dict[str, float]
 
     def __init__(
         self,
@@ -58,17 +59,22 @@ class CCXTDataConnector(IDataProvider):
         self._exchange = getattr(cxp, exch)(exchange_auth | {"asyncio_loop": self._loop})
         self._ch_market_data = CtrlChannel(exch + ".marketdata", sentinel=(None, None, None))
         self._last_quotes = defaultdict(lambda: None)
-        self._subsriptions: Dict[str, List[str]] = defaultdict(list)
+        self._subsriptions = defaultdict(list)
+        self._instrument_min_ticks = {}
 
         logger.info(f"{exchange_id} initialized - current time {self._service_provider.time()}")
 
     def subscribe(
-        self, subscription_type: str, symbols: List[str], timeframe: Optional[str] = None, nback: int = 0
+        self, subscription_type: str, instruments: List[Instrument], timeframe: Optional[str] = None, nback: int = 0
     ) -> bool:
-        to_process = self._check_existing_subscription(subscription_type.lower(), symbols)
+        to_process = self._check_existing_subscription(subscription_type.lower(), instruments)
         if not to_process:
-            logger.info(f"Symbols {symbols} already subscribed on {subscription_type} data")
+            logger.info(f"Symbols {to_process} already subscribed on {subscription_type} data")
             return False
+
+        # - just store minimal ticks info
+        for i in instruments:
+            self._instrument_min_ticks[i.symbol] = i.min_tick
 
         # - subscribe to market data updates
         match sbscr := subscription_type.lower():
@@ -117,12 +123,12 @@ class CCXTDataConnector(IDataProvider):
     def get_communication_channel(self) -> CtrlChannel:
         return self._ch_market_data
 
-    def _check_existing_subscription(self, subscription_type, symbols: List[str]) -> List[str]:
+    def _check_existing_subscription(self, subscription_type, instruments: List[Instrument]) -> List[str]:
         subscribed = self._subsriptions[subscription_type]
         to_subscribe = []
-        for s in symbols:
-            if s not in subscribed:
-                to_subscribe.append(s)
+        for s in instruments:
+            if s.symbol not in subscribed:
+                to_subscribe.append(s.symbol)
         return to_subscribe
 
     def _time_msec_nbars_back(self, timeframe: str, nbarsback: int) -> int:
@@ -196,10 +202,15 @@ class CCXTDataConnector(IDataProvider):
                 ohlcv = await self._exchange.watch_ohlcv(symbol, timeframe)  # type: ignore
 
                 # - update positions by actual close price
-                self._service_provider.update_position_price(symbol, ohlcv[-1][4])
+                last_close = ohlcv[-1][4]
+                tick = self._instrument_min_ticks[symbol]
+
+                # print(Quote(self.time(), last_close - tick / 2, last_close + tick / 2, 0, 0))
+
+                self._service_provider.update_position_price(symbol, last_close)
 
                 for oh in ohlcv:
-                    channel.queue.put((symbol, "bar", Bar(oh[0] * 1000000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
+                    channel.queue.put((symbol, "bar", Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
 
             except NetworkError as e:
                 logger.error(f"(CCXTDataConnector) NetworkError in _listen_to_ohlcv : {e}")
@@ -283,3 +294,9 @@ class CCXTDataConnector(IDataProvider):
             self._loop.run_until_complete(self._exchange.close())  # type: ignore
         except Exception as e:
             logger.error(e)
+
+    def time(self) -> dt_64:
+        """
+        Returns current time as dt64
+        """
+        return np.datetime64(get_now(), "ns")

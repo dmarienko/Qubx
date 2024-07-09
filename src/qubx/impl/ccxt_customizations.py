@@ -78,6 +78,7 @@ class BinanceQV(cxp.binance):
             # - additional fields
             self.safe_float(kline, "q"),  # - quote asset volume
             self.safe_float(kline, "Q"),  # - taker buy quote asset volume
+            # self.safe_integer(message, "E")
         ]
         isSpot = (client.url.find("/stream") > -1) or (client.url.find("/testnet.binance") > -1)
         marketType = "spot" if (isSpot) else "contract"
