@@ -186,7 +186,7 @@ class StrategyContext:
         md_subscription: Dict[str, Any] = dict(type="ohlc", timeframe="1Min", nback=60),
         # - - - - - - - - - - - - - - - - - - - - -
         # - when need to trigger and fit strategy - - - - - - -
-        trigger_spec: str = "bar: -1Sec",  # 1 sec before subscription bar is closed
+        trigger_spec: str | list[str] = "bar: -1Sec",  # 1 sec before subscription bar is closed
         fit_spec: str | None = None,
         # - - - - - - - - - - - - - - - - - - - - -
         # - how to write logs - - - - - - - - - -
@@ -282,76 +282,83 @@ class StrategyContext:
                     f"{self._market_data_subcription_type} is not a valid value for market data subcription type !!!"
                 )
 
-    def __check_how_to_trigger_and_fit_strategy(self, trigger_schedule: str | None, fit_schedue: str | None):
+    def __check_how_to_trigger_and_fit_strategy(
+        self, trigger_schedule: str | list[str] | None, fit_schedue: str | None
+    ):
         _td2ns = lambda x: x.as_unit("ns").asm8.item()
 
         self._trig_interval_in_bar_nsec = 0
 
         if not trigger_schedule:
             raise ValueError("trigger parameter can't be empty !")
-        t_rules = process_schedule_spec(trigger_schedule)
+        if not isinstance(trigger_schedule, list):
+            trigger_schedule = [trigger_schedule]
+
+        t_rules = [process_schedule_spec(tr) for tr in trigger_schedule]
+
         f_rules = process_schedule_spec(fit_schedue)
 
-        if t_rules is None:
+        if not t_rules:
             raise ValueError(f"Couldn't recognize 'trigger' parameter specification: {trigger_schedule} !")
 
         # - we can use it as reference if bar timeframe is not secified
         _default_data_timeframe = pd.Timedelta(self._cache.default_timeframe)
 
         # - check trigger spec - - - - -
-        match t_rules["type"]:
-            # it triggers on_event method when new bar is formed.
-            # in this case it won't arm scheduler but just ruled by actual market data updates
-            # - TODO: so probably need to drop this in favor to cron tasks
-            # it's also possible to specify delay
-            # "bar: -1s"      - it uses default timeframe and wake up 1 sec before every bar's close
-            # "bar.5m: -5sec" - 5 sec before 5min bar's close
-            # "bar.5m: 1sec"  - 1 sec after 5min bar closed (in next bar)
-            case "bar":
-                _r_tf = t_rules.get("timeframe")
-                _bar_timeframe = _default_data_timeframe if not _r_tf else pd.Timedelta(_r_tf)
-                _inside_bar_delay: pd.Timedelta = t_rules.get("delay", pd.Timedelta(0))
+        for t_rule in t_rules:
+            match t_rule["type"]:
+                # it triggers on_event method when new bar is formed.
+                # in this case it won't arm scheduler but just ruled by actual market data updates
+                # - TODO: so probably need to drop this in favor to cron tasks
+                # it's also possible to specify delay
+                # "bar: -1s"      - it uses default timeframe and wake up 1 sec before every bar's close
+                # "bar.5m: -5sec" - 5 sec before 5min bar's close
+                # "bar.5m: 1sec"  - 1 sec after 5min bar closed (in next bar)
+                case "bar":
+                    _r_tf = t_rule.get("timeframe")
+                    _bar_timeframe = _default_data_timeframe if not _r_tf else pd.Timedelta(_r_tf)
+                    _inside_bar_delay: pd.Timedelta = t_rule.get("delay", pd.Timedelta(0))
 
-                if abs(pd.Timedelta(_inside_bar_delay)) > pd.Timedelta(_bar_timeframe):
-                    raise ValueError(
-                        f"Delay must be less or equal to bar's timeframe for bar trigger: you used {_inside_bar_delay} delay for {_bar_timeframe}"
+                    if abs(pd.Timedelta(_inside_bar_delay)) > pd.Timedelta(_bar_timeframe):
+                        raise ValueError(
+                            f"Delay must be less or equal to bar's timeframe for bar trigger: you used {_inside_bar_delay} delay for {_bar_timeframe}"
+                        )
+
+                    # for positive delay - trigger strategy when this interval passed after new bar's open
+                    if _inside_bar_delay >= pd.Timedelta(0):
+                        self._trig_interval_in_bar_nsec = _td2ns(_inside_bar_delay)
+
+                    # for negative delay - trigger strategy when time is closer to bar's closing time more than this interval
+                    else:
+                        self._trig_interval_in_bar_nsec = _td2ns(_bar_timeframe + _inside_bar_delay)
+
+                    self._trig_bar_freq_nsec = _td2ns(_bar_timeframe)
+                    self._trig_on_bar = True
+
+                    logger.debug(
+                        f"Triggering strategy on every {convert_seconds_to_str(self._trig_bar_freq_nsec/1e9)} bar after {convert_seconds_to_str(self._trig_interval_in_bar_nsec/1e9)}"
                     )
 
-                # for positive delay - trigger strategy when this interval passed after new bar's open
-                if _inside_bar_delay >= pd.Timedelta(0):
-                    self._trig_interval_in_bar_nsec = _td2ns(_inside_bar_delay)
+                case "cron":
+                    if "schedule" not in t_rule:
+                        raise ValueError(f"cron trigger type is specified but cron schedule not found !")
 
-                # for negative delay - trigger strategy when time is closer to bar's closing time more than this interval
-                else:
-                    self._trig_interval_in_bar_nsec = _td2ns(_bar_timeframe + _inside_bar_delay)
+                    self._scheduler.schedule_event(t_rule["schedule"], "time_event")
 
-                self._trig_bar_freq_nsec = _td2ns(_bar_timeframe)
-                self._trig_on_bar = True
+                case "quote":
+                    self._trig_on_quote = True
+                    raise ValueError(f"quote trigger NOT IMPLEMENTED YET")
 
-                logger.debug(
-                    f"Triggering strategy on every {convert_seconds_to_str(self._trig_bar_freq_nsec/1e9)} bar after {convert_seconds_to_str(self._trig_interval_in_bar_nsec/1e9)}"
-                )
+                case "trade":
+                    self._trig_on_trade = True
+                    logger.debug("Triggering strategy on every trade event")
 
-            case "cron":
-                if "schedule" not in t_rules:
-                    raise ValueError(f"cron trigger type is specified but cron schedule not found !")
+                case "orderbook" | "ob":
+                    self._trig_on_book = True
+                    raise ValueError(f"orderbook trigger NOT IMPLEMENTED YET")
 
-                self._scheduler.schedule_event(t_rules["schedule"], "time_event")
-
-            case "quote":
-                self._trig_on_quote = True
-                raise ValueError(f"quote trigger NOT IMPLEMENTED YET")
-
-            case "trade":
-                self._trig_on_trade = True
-                logger.debug("Triggering strategy on every trade event")
-
-            case "orderbook" | "ob":
-                self._trig_on_book = True
-                raise ValueError(f"orderbook trigger NOT IMPLEMENTED YET")
-
-            case _:
-                raise ValueError(f"Wrong trigger type {t_rules['type']}")
+                case _:
+                    raise ValueError(f"Wrong trigger type {t_rule['type']}")
 
         # - check fit spec - - - - -
         _last_fit_data_can_be_used = pd.Timestamp(self.time())
