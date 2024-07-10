@@ -5,6 +5,7 @@ from qubx import lookup, logger
 from qubx.core.series import Quote
 from qubx.core.account import AccountProcessor
 from qubx.core.basics import Instrument, Deal, Order, Position, TransactionCostsCalculator, dt_64
+from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
 from qubx.core.strategy import IDataProvider, CtrlChannel, IExchangeServiceProvider
 from qubx.backtester.ome import OrdersManagementEngine, OmeReport
 
@@ -14,8 +15,8 @@ class SimulatedExchangeService(IExchangeServiceProvider):
     _name: str
     _ome: Dict[str, OrdersManagementEngine]
     _fees_calculator: TransactionCostsCalculator | None
-    _channel: CtrlChannel
     _order_to_symbol: Dict[str, str]
+    _half_tick_size: Dict[str, float]
 
     def __init__(self, name: str, capital: float, commissions: str, base_currency: str) -> None:
         self._current_time = np.datetime64(0, "ns")
@@ -23,8 +24,7 @@ class SimulatedExchangeService(IExchangeServiceProvider):
         self._ome = {}
         self.acc = AccountProcessor("Simulated0", base_currency, None, capital, 0)
         self._fees_calculator = lookup.fees.find(name.lower(), commissions)
-
-        self._channel = CtrlChannel(name + ".simulator", sentinel=(None, None, None))
+        self._half_tick_size = {}
 
         self._order_to_symbol = {}
         if self._fees_calculator is None:
@@ -57,9 +57,9 @@ class SimulatedExchangeService(IExchangeServiceProvider):
             self.acc.add_active_orders({order.id: order})
 
         # - send reports to channel
-        self._channel.queue.put((instrument.symbol, "order", report.order))
+        self.get_communication_channel().queue.put((instrument.symbol, "order", report.order))
         if report.exec is not None:
-            self._channel.queue.put((instrument.symbol, "deals", [report.exec]))
+            self.get_communication_channel().queue.put((instrument.symbol, "deals", [report.exec]))
 
         return report.order
 
@@ -96,6 +96,7 @@ class SimulatedExchangeService(IExchangeServiceProvider):
 
             # - initiolize empty position
             position = Position(instrument, self._fees_calculator)  # type: ignore
+            self._half_tick_size[instrument.symbol] = instrument.tick_size / 2  # type: ignore
             self.acc.attach_positions(position)
 
         return self.acc._positions[symbol]
@@ -116,10 +117,35 @@ class SimulatedExchangeService(IExchangeServiceProvider):
         self.acc.process_order(order)
         return order, deals
 
-    def update_position_price(self, symbol: str, price: float):
-        super().update_position_price(symbol, price)
+    def _emulate_quote_from_data(self, symbol: str, timestamp: dt_64, data: float | Trade | Bar) -> Quote:
+        _ts2 = self._half_tick_size[symbol]
+        if isinstance(data, Trade):
+            if data.taker:  # type: ignore
+                return Quote(timestamp, data.price - _ts2 * 2, data.price, 0, 0)  # type: ignore
+            else:
+                return Quote(timestamp, data.price, data.price + _ts2 * 2, 0, 0)  # type: ignore
+        elif isinstance(data, Bar):
+            return Quote(timestamp, data.close - _ts2, data.close + _ts2, 0, 0)  # type: ignore
+        elif isinstance(data, float):
+            return Quote(timestamp, data - _ts2, data + _ts2, 0, 0)
+        else:
+            raise ValueError(f"Unknown update type: {type(data)}")
 
-    def _update(self, symbol: str, data: Quote) -> None:
+    def update_position_price(self, symbol: str, timestamp: dt_64, update: float | Trade | Quote | Bar):
+        # - first we need to update OME with new quote.
+        # - if update is not a quote we need 'emulate' it.
+        # - actually if SimulatedExchangeService is used in backtesting mode it will recieve only quotes
+        # - case when we need that - SimulatedExchangeService is used for paper trading and data provider configured to listen to OHLC or TAS.
+        # - probably we need to subscribe to quotes in real data provider in any case and then this emulation won't be needed.
+        quote = update if isinstance(update, Quote) else self._emulate_quote_from_data(symbol, timestamp, update)
+
+        # - process new quote
+        self._process_new_quote(symbol, quote)
+
+        # - update positions data
+        super().update_position_price(symbol, timestamp, update)
+
+    def _process_new_quote(self, symbol: str, data: Quote) -> None:
         ome = self._ome.get(symbol)
         if ome is None:
             logger.warning("ExchangeService:update :: No OME configured for '{symbol}' yet !")

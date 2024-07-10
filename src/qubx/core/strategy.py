@@ -31,13 +31,20 @@ class TriggerEvent:
     data: Optional[Any]
 
 
-class IDataProvider:
+class IComminucationManager:
+    _ch_market_data: CtrlChannel
+
+    def get_communication_channel(self) -> CtrlChannel:
+        return self._ch_market_data
+
+    def set_communication_channel(self, channel: CtrlChannel):
+        self._ch_market_data = channel
+
+
+class IDataProvider(IComminucationManager):
 
     def subscribe(self, subscription_type: str, instruments: List[Instrument], **kwargs) -> bool:
         raise NotImplementedError("subscribe")
-
-    def get_communication_channel(self) -> CtrlChannel:
-        raise NotImplementedError("get_communication_channel")
 
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
         raise NotImplementedError("get_historical_ohlcs")
@@ -46,7 +53,7 @@ class IDataProvider:
         raise NotImplementedError("get_quote")
 
 
-class IExchangeServiceProvider(ITimeProvider):
+class IExchangeServiceProvider(ITimeProvider, IComminucationManager):
     acc: AccountProcessor
 
     def get_account(self) -> AccountProcessor:
@@ -85,8 +92,21 @@ class IExchangeServiceProvider(ITimeProvider):
     def process_execution_report(self, symbol: str, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
         raise NotImplementedError("process_execution_report is not implemented")
 
-    def update_position_price(self, symbol: str, price: float):
-        self.acc.update_position_price(self.time(), symbol, price)
+    @staticmethod
+    def _extract_price(update: float | Quote | Trade | Bar) -> float:
+        if isinstance(update, float):
+            return update
+        elif isinstance(update, Quote):
+            return 0.5 * (update.bid + update.ask)  # type: ignore
+        elif isinstance(update, Trade):
+            return update.price  # type: ignore
+        elif isinstance(update, Bar):
+            return update.close  # type: ignore
+        else:
+            raise ValueError(f"Unknown update type: {type(update)}")
+
+    def update_position_price(self, symbol: str, timestamp: dt_64, update: float | Quote | Trade | Bar):
+        self.acc.update_position_price(timestamp, symbol, IExchangeServiceProvider._extract_price(update))
 
     def _get_ohlcv_data_sync(self, symbol: str, timeframe: str, since: int, limit: int) -> List:
         """
@@ -161,6 +181,9 @@ class StrategyContext:
     _cache: CachedMarketDataHolder  # market data cache
     _scheduler: BasicScheduler
 
+    # - communication channel
+    _data_bus: CtrlChannel
+
     # - configuration
     _market_data_subcription_type: str = "unknown"
     _market_data_subcription_params: dict = dict()
@@ -219,11 +242,15 @@ class StrategyContext:
         self.__init_fit_was_called = False
         self.__pool = None
 
+        self._data_bus = CtrlChannel("databus", sentinel=(None, None, None))
+        self.exchange_service.set_communication_channel(self._data_bus)
+        self.data_provider.set_communication_channel(self._data_bus)
+
         # - for fast access to instrument by it's symbol
         self._symb_to_instr = {i.symbol: i for i in instruments}
 
         # - create scheduler
-        self._scheduler = BasicScheduler(self.data_provider.get_communication_channel(), lambda: self.time().item())
+        self._scheduler = BasicScheduler(self._data_bus, lambda: self.time().item())
 
         # - instantiate logging functional
         self._logging = StrategyLogging(logs_writer, positions_log_freq, portfolio_log_freq, num_exec_records_to_write)
@@ -600,9 +627,7 @@ class StrategyContext:
 
         # - create incoming market data processing
         # self._thread_data_loop = AsyncioThreadRunner(self.data_provider.get_communication_channel())
-        self._thread_data_loop = Thread(
-            target=self._process_incoming_data, args=(self.data_provider.get_communication_channel(),), daemon=True
-        )
+        self._thread_data_loop = Thread(target=self._process_incoming_data, args=(self._data_bus,), daemon=True)
         # self._thread_data_loop.add(self._process_incoming_market_data)
 
         # - subscribe to market data
@@ -635,7 +660,7 @@ class StrategyContext:
 
     def stop(self):
         if self._thread_data_loop:
-            self.data_provider.get_communication_channel().stop()
+            self._data_bus.stop()
             self._thread_data_loop.join()
             try:
                 self.strategy.on_stop(self)

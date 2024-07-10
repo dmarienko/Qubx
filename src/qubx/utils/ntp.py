@@ -1,15 +1,17 @@
 import threading
+import time
 import traceback
 from datetime import datetime, timedelta
 from time import sleep
 
 import ntplib
+import numpy as np
 
 from qubx import logger
 
-NTP_SERVERS_LIST = ["europe.pool.ntp.org", "pool.ntp.org", "time.windows.com", "time.google.com"]
+NTP_SERVERS_LIST = ["time.windows.com", "pool.ntp.org", "europe.pool.ntp.org", "time.google.com"]
 
-__CORRECT_EVERY_SECONDS = 60 * 5
+__CORRECT_INTERVAL = timedelta(seconds=30)
 __SLEEP_CORRECT_THREAD = 10
 
 _offset = None  # never use it explicitly but for tests! Always use get_offset()
@@ -32,20 +34,19 @@ def __correct_offset_runnable():
     logger.info("NTP offset controller thread is started")
     last_corrected_dt = None
     while True:
-        if last_corrected_dt is None or datetime.now() - last_corrected_dt > timedelta(
-            seconds=__CORRECT_EVERY_SECONDS
-        ):  # correct every 5 mins
+        # do correction every specified interval
+        if last_corrected_dt is None or datetime.now() - last_corrected_dt > __CORRECT_INTERVAL:
             __correct_offset()
             last_corrected_dt = datetime.now()
-        sleep(__SLEEP_CORRECT_THREAD)  # sleep 10 seconds
+        sleep(__SLEEP_CORRECT_THREAD)
 
 
 _controlling_thread = threading.Thread(target=__correct_offset_runnable, daemon=True)
 _controlling_thread.start()
 
 
-def get_now(tz: datetime.tzinfo = None):
-    return datetime.now(tz) + timedelta(seconds=get_offset())
+def time_now() -> np.datetime64:
+    return np.datetime64(int((time.time() + get_offset()) * 1_000_000_000), "ns")
 
 
 def get_offset():

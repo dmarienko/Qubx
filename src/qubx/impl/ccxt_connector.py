@@ -19,7 +19,7 @@ from qubx.core.basics import Instrument, Position, dt_64, Deal
 from qubx.core.strategy import IDataProvider, CtrlChannel, IExchangeServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.impl.ccxt_utils import DATA_PROVIDERS_ALIASES, ccxt_convert_trade
-from qubx.utils.ntp import get_now
+from qubx.utils.ntp import time_now
 
 # - register custom wrappers
 from .ccxt_customizations import BinanceQV
@@ -33,11 +33,9 @@ class CCXTDataConnector(IDataProvider):
     _service_provider: IExchangeServiceProvider
     _subsriptions: Dict[str, List[str]]
 
-    _ch_market_data: CtrlChannel
     _last_quotes: Dict[str, Optional[Quote]]
     _loop: AbstractEventLoop
     _thread_event_loop: Thread
-    _instrument_min_ticks: Dict[str, float]
 
     def __init__(
         self,
@@ -57,10 +55,8 @@ class CCXTDataConnector(IDataProvider):
 
         # - create exchange's instance
         self._exchange = getattr(cxp, exch)(exchange_auth | {"asyncio_loop": self._loop})
-        self._ch_market_data = CtrlChannel(exch + ".marketdata", sentinel=(None, None, None))
         self._last_quotes = defaultdict(lambda: None)
         self._subsriptions = defaultdict(list)
-        self._instrument_min_ticks = {}
 
         logger.info(f"{exchange_id} initialized - current time {self._service_provider.time()}")
 
@@ -71,10 +67,6 @@ class CCXTDataConnector(IDataProvider):
         if not to_process:
             logger.info(f"Symbols {to_process} already subscribed on {subscription_type} data")
             return False
-
-        # - just store minimal ticks info
-        for i in instruments:
-            self._instrument_min_ticks[i.symbol] = i.min_tick
 
         # - subscribe to market data updates
         match sbscr := subscription_type.lower():
@@ -120,9 +112,6 @@ class CCXTDataConnector(IDataProvider):
 
         return True
 
-    def get_communication_channel(self) -> CtrlChannel:
-        return self._ch_market_data
-
     def _check_existing_subscription(self, subscription_type, instruments: List[Instrument]) -> List[str]:
         subscribed = self._subsriptions[subscription_type]
         to_subscribe = []
@@ -138,7 +127,7 @@ class CCXTDataConnector(IDataProvider):
         assert nbarsback >= 1
         since = self._time_msec_nbars_back(timeframe, nbarsback)
 
-        # - get this from sync
+        # - get this from syncronous service
         # - TODO: check if nbarsback > max_limit (1000) we need to do more requests
         # - TODO: how to get quoted volumes ?
         # - TODO: we need to find the way how to get ohlc in sync way without calling _service_provider !!!
@@ -203,11 +192,11 @@ class CCXTDataConnector(IDataProvider):
 
                 # - update positions by actual close price
                 last_close = ohlcv[-1][4]
-                tick = self._instrument_min_ticks[symbol]
 
-                # print(Quote(self.time(), last_close - tick / 2, last_close + tick / 2, 0, 0))
-
-                self._service_provider.update_position_price(symbol, last_close)
+                # - there is no single method to get OHLC update's event time for every broker
+                # - for instance it's possible to do for Binance but for example Bitmex doesn't provide such info
+                # - so we will use ntp adjusted time here
+                self._service_provider.update_position_price(symbol, self.time(), last_close)
 
                 for oh in ohlcv:
                     channel.queue.put((symbol, "bar", Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
@@ -254,7 +243,7 @@ class CCXTDataConnector(IDataProvider):
 
                 # - update positions by actual close price
                 last_trade = ccxt_convert_trade(trades[-1])
-                self._service_provider.update_position_price(symbol, last_trade.price)
+                self._service_provider.update_position_price(symbol, last_trade.time, last_trade)
 
                 for trade in trades:
                     channel.queue.put((symbol, "trade", ccxt_convert_trade(trade)))
@@ -299,4 +288,4 @@ class CCXTDataConnector(IDataProvider):
         """
         Returns current time as dt64
         """
-        return np.datetime64(get_now(), "ns")
+        return time_now()

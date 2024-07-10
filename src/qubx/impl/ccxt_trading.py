@@ -24,7 +24,7 @@ from qubx.impl.ccxt_utils import (
     ccxt_extract_deals_from_exec,
     ccxt_restore_position_from_deals,
 )
-from qubx.utils.ntp import get_now
+from qubx.utils.ntp import time_now
 
 
 ORDERS_HISTORY_LOOKBACK_DAYS = 30
@@ -220,7 +220,7 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
         Returns current time as dt64
         """
         # return np.datetime64(self.sync.microseconds() * 1000, "ns")
-        return np.datetime64(get_now(), "ns")
+        return time_now()
 
     def get_name(self) -> str:
         return self.sync.name  # type: ignore
