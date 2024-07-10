@@ -96,7 +96,7 @@ class SimulatedExchangeService(IExchangeServiceProvider):
 
             # - initiolize empty position
             position = Position(instrument, self._fees_calculator)  # type: ignore
-            self._half_tick_size[instrument.symbol] = instrument.tick_size / 2  # type: ignore
+            self._half_tick_size[instrument.symbol] = instrument.min_tick / 2  # type: ignore
             self.acc.attach_positions(position)
 
         return self.acc._positions[symbol]
@@ -132,6 +132,10 @@ class SimulatedExchangeService(IExchangeServiceProvider):
             raise ValueError(f"Unknown update type: {type(data)}")
 
     def update_position_price(self, symbol: str, timestamp: dt_64, update: float | Trade | Quote | Bar):
+        # logger.info(f"{symbol} -> {timestamp} -> {update}")
+        # - set current time from update
+        self._current_time = timestamp
+
         # - first we need to update OME with new quote.
         # - if update is not a quote we need 'emulate' it.
         # - actually if SimulatedExchangeService is used in backtesting mode it will recieve only quotes
@@ -150,7 +154,6 @@ class SimulatedExchangeService(IExchangeServiceProvider):
         if ome is None:
             logger.warning("ExchangeService:update :: No OME configured for '{symbol}' yet !")
             return
-        self._current_time = data.time
         for r in ome.update_bbo(data):
             if r.exec is not None:
                 self._order_to_symbol.pop(r.order.id)
