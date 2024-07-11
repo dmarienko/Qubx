@@ -57,11 +57,14 @@ class SimulatedExchangeService(IExchangeServiceProvider):
             self.acc.add_active_orders({order.id: order})
 
         # - send reports to channel
-        self.get_communication_channel().queue.put((instrument.symbol, "order", report.order))
-        if report.exec is not None:
-            self.get_communication_channel().queue.put((instrument.symbol, "deals", [report.exec]))
+        self.send_execution_report(instrument.symbol, report)
 
         return report.order
+
+    def send_execution_report(self, symbol: str, report: OmeReport):
+        self.get_communication_channel().queue.put((symbol, "order", report.order))
+        if report.exec is not None:
+            self.get_communication_channel().queue.put((symbol, "deals", [report.exec]))
 
     def cancel_order(self, order_id: str) -> Order | None:
         symb = self._order_to_symbol.get(order_id)
@@ -74,9 +77,13 @@ class SimulatedExchangeService(IExchangeServiceProvider):
 
         # - cancel order in OME and remove from the map to free memory
         self._order_to_symbol.pop(order_id)
-        order_update = ome.cancel_order(order_id).order
-        self.acc.process_order(order_update)
-        return order_update
+        order_update = ome.cancel_order(order_id)
+        self.acc.process_order(order_update.order)
+
+        # - notify channel about order cancellation
+        self.send_execution_report(symb, order_update)
+
+        return order_update.order
 
     def get_orders(self, symbol: str | None = None) -> List[Order]:
         if symbol is not None:
@@ -158,6 +165,9 @@ class SimulatedExchangeService(IExchangeServiceProvider):
             if r.exec is not None:
                 self._order_to_symbol.pop(r.order.id)
                 self.process_execution_report(symbol, {"order": r.order, "deals": [r.exec]})
+
+                # - notify channel about order cancellation
+                self.send_execution_report(symbol, r)
 
     def _get_ohlcv_data_sync(self, symbol: str, timeframe: str, since: int, limit: int) -> List:
         return []
