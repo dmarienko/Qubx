@@ -1,5 +1,7 @@
+from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
+import pandas as pd
 
 from qubx import lookup, logger
 from qubx.core.series import Quote
@@ -8,6 +10,8 @@ from qubx.core.basics import Instrument, Deal, Order, Position, TransactionCosts
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
 from qubx.core.strategy import IDataProvider, CtrlChannel, IExchangeServiceProvider
 from qubx.backtester.ome import OrdersManagementEngine, OmeReport
+
+from qubx.data.readers import DataReader, DataTransformer, RestoreTicksFromOHLC, AsQuotes
 
 
 class SimulatedExchangeService(IExchangeServiceProvider):
@@ -178,5 +182,110 @@ class SimulatedExchangeService(IExchangeServiceProvider):
                 self.send_execution_report(symbol, r)
 
 
+def new__init__(self, *args, **kwargs):
+    raise ValueError("Cannot invoke init directly !")
+
+
+class DataLoader:
+    def __init__(
+        self,
+        transformer: DataTransformer,
+        reader: DataReader,
+        instrument: Instrument,
+        timeframe: str | None,
+        preload_bars: int = 0,
+    ) -> None:
+        self._symbol = f"{instrument.exchange}:{instrument.symbol}"
+        self._reader = reader
+        self._transformer = transformer
+        self._init_bars_required = preload_bars
+        self._timeframe = timeframe
+        self._first_load = True
+
+    def load(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> List[Quote]:
+        if self._first_load:
+            if self._init_bars_required > 0 and self._timeframe:
+                start = pd.Timestamp(start) - self._init_bars_required * pd.Timedelta(self._timeframe)
+            self._first_load = False
+
+        args = dict(
+            data_id=self._symbol,
+            start=start,
+            stop=end,
+            transform=self._transformer,
+        )
+
+        if self._timeframe:
+            args["timeframe"] = self._timeframe
+
+        return self._reader.read(**args)  # type: ignore
+
+
 class SimulatedDataProvider(IDataProvider):
-    pass
+    _service_provider: IExchangeServiceProvider
+    _last_quotes: Dict[str, Optional[Quote]]
+    _current_time: dt_64
+    _hist_data_type: str
+    _pumps: Dict[str, DataLoader]
+
+    def __init__(
+        self,
+        exchange_id: str,
+        service_provider: IExchangeServiceProvider,
+        reader: DataReader,
+        hist_data_type: str = "ohlc",
+    ):
+        self._service_provider = service_provider
+        self._reader = reader
+        self._hist_data_type = hist_data_type
+        exchange_id = exchange_id.lower()
+
+        # - create exchange's instance
+        self._last_quotes = defaultdict(lambda: None)
+        self._current_time = np.datetime64(0, "ns")
+        self._pumps = {}
+
+        logger.info(f"SimulatedData.{exchange_id} initialized")
+
+    def subscribe(
+        self,
+        subscription_type: str,
+        instruments: List[Instrument],
+        timeframe: str | None = None,
+        nback: int = 0,
+        **kwargs,
+    ) -> bool:
+        available_symbols = self._reader.get_names(data_type="candles")
+        units = kwargs.get("timestamp_units", "ns")
+
+        for instr in instruments:
+            _params: Dict[str, Any] = dict(
+                reader=self._reader,
+                instrument=instr,
+                preload_bars=nback,
+                timeframe=timeframe,
+            )
+
+            if "ohlc" in subscription_type:
+                _params["transformer"] = RestoreTicksFromOHLC(
+                    trades="trades" in subscription_type, spread=instr.min_tick, timestamp_units=units
+                )
+            elif "quote" in subscription_type:
+                _params["transformer"] = AsQuotes()
+
+            self._pumps[instr.symbol] = DataLoader(**_params)
+
+        return True
+
+    def run(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
+        for s, ld in self._pumps.items():
+            d = ld.load(start, end)
+
+    def get_quote(self, symbol: str) -> Optional[Quote]:
+        return self._last_quotes[symbol]
+
+    def close(self):
+        pass
+
+    def time(self) -> dt_64:
+        return self._current_time
