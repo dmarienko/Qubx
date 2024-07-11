@@ -11,6 +11,14 @@ from qubx.backtester.ome import OrdersManagementEngine, OmeReport
 
 
 class SimulatedExchangeService(IExchangeServiceProvider):
+    """
+    First implementation of a simulated broker.
+    TODO:
+        1. Add margin control
+        2. Need to solve problem with _get_ohlcv_data_sync (actually this method must be removed from here)
+        3. Add support for stop orders (not urgent)
+    """
+
     _current_time: dt_64
     _name: str
     _ome: Dict[str, OrdersManagementEngine]
@@ -169,5 +177,6 @@ class SimulatedExchangeService(IExchangeServiceProvider):
                 # - notify channel about order cancellation
                 self.send_execution_report(symbol, r)
 
-    def _get_ohlcv_data_sync(self, symbol: str, timeframe: str, since: int, limit: int) -> List:
-        return []
+
+class SimulatedDataProvider(IDataProvider):
+    pass

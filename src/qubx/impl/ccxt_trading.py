@@ -237,6 +237,3 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
 
     def get_base_currency(self) -> str:
         return self.acc.base_currency
-
-    def _get_ohlcv_data_sync(self, symbol: str, timeframe: str, since: int, limit: int) -> List:
-        return self.sync.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)

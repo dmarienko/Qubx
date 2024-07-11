@@ -1,6 +1,5 @@
 import threading
 import time
-import traceback
 from datetime import datetime, timedelta
 from time import sleep
 
@@ -25,9 +24,9 @@ def __correct_offset():
             response = ntp_client.request(ntp_url)
             _offset = response.offset
             return
-        except:
-            logger.warning("%s NTP server request exception %s:" % (ntp_url, traceback.format_exc()))
-    logger.error("Unable to get ntp offset from neither of NTP servers list %s", NTP_SERVERS_LIST)
+        except Exception as e:
+            logger.warning(f"{ntp_url} NTP server request exception: {e}")
+    logger.error(f"Unable to get ntp offset from neither of NTP servers list {NTP_SERVERS_LIST}")
 
 
 def __correct_offset_runnable():

@@ -108,13 +108,6 @@ class IExchangeServiceProvider(ITimeProvider, IComminucationManager):
     def update_position_price(self, symbol: str, timestamp: dt_64, update: float | Quote | Trade | Bar):
         self.acc.update_position_price(timestamp, symbol, IExchangeServiceProvider._extract_price(update))
 
-    def _get_ohlcv_data_sync(self, symbol: str, timeframe: str, since: int, limit: int) -> List:
-        """
-        Service method - temporary here to have ability load historical data in syncronous way
-        TODO: need to be redisigned !
-        """
-        return []
-
 
 class PositionsTracker:
     ctx: "StrategyContext"

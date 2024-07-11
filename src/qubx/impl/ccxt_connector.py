@@ -1,4 +1,5 @@
 from threading import Thread
+import threading
 from typing import Any, Dict, List, Optional
 
 import asyncio
@@ -127,13 +128,15 @@ class CCXTDataConnector(IDataProvider):
         assert nbarsback >= 1
         since = self._time_msec_nbars_back(timeframe, nbarsback)
 
-        # - get this from syncronous service
+        # - retrieve OHLC data
         # - TODO: check if nbarsback > max_limit (1000) we need to do more requests
         # - TODO: how to get quoted volumes ?
-        # - TODO: we need to find the way how to get ohlc in sync way without calling _service_provider !!!
-        res = self._service_provider._get_ohlcv_data_sync(
-            symbol, self._get_exch_timeframe(timeframe), since=since, limit=1000
-        )
+        async def _get():
+            return await self._exchange.fetch_ohlcv(symbol, self._get_exch_timeframe(timeframe), since=since, limit=nbarsback + 1)  # type: ignore
+
+        fut = asyncio.run_coroutine_threadsafe(_get(), self._loop)
+        res = fut.result(60)
+
         _arr = []
         for oh in res:  # type: ignore
             _arr.append(
