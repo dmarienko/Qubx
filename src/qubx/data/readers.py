@@ -15,6 +15,7 @@ from psycopg.types.datetime import TimestampLoader
 
 _DT = lambda x: pd.Timedelta(x).to_numpy().item()
 D1, H1 = _DT("1D"), _DT("1h")
+MS1 = 1_000_000
 
 DEFAULT_DAILY_SESSION = (_DT("00:00:00.100"), _DT("23:59:59.900"))
 STOCK_DAILY_SESSION = (_DT("9:30:00.100"), _DT("15:59:59.900"))
@@ -501,10 +502,10 @@ class RestoreTicksFromOHLC(DataTransformer):
             # - timestamps when we emit simulated quotes
             dt = self._freq.astype("timedelta64[ns]").item()
             if dt < D1:
-                self._t_start = dt // 10
+                self._t_start = MS1  # dt // 10
                 self._t_mid1 = dt // 2 - dt // 10
                 self._t_mid2 = dt // 2 + dt // 10
-                self._t_end = dt - dt // 10
+                self._t_end = dt - MS1  # dt - dt // 10
             else:
                 self._t_start = self._d_session_start
                 self._t_mid1 = dt // 2 - H1

@@ -53,7 +53,7 @@
 					"column": 0
 				},
 				{
-					"line": 279,
+					"line": 292,
 					"column": 39
 				},
 				{
@@ -63,6 +63,141 @@
 				{
 					"line": -1,
 					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				}
+			]
+		},
+		{
+			"path": "src/qubx/core/strategy.py",
+			"bookmarks": [
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": 555,
+					"column": 35
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				}
+			]
+		},
+		{
+			"path": "src/qubx/core/basics.py",
+			"bookmarks": [
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": 368,
+					"column": 23
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				}
+			]
+		},
+		{
+			"path": "src/qubx/data/readers.py",
+			"bookmarks": [
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": 502,
+					"column": 13
 				},
 				{
 					"line": -1,

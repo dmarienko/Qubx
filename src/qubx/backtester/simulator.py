@@ -12,6 +12,7 @@ from qubx.core.strategy import IDataProvider, CtrlChannel, IExchangeServiceProvi
 from qubx.backtester.ome import OrdersManagementEngine, OmeReport
 
 from qubx.data.readers import DataReader, DataTransformer, RestoreTicksFromOHLC, AsQuotes
+from qubx.pandaz.utils import scols
 
 
 class SimulatedExchangeService(IExchangeServiceProvider):
@@ -30,8 +31,19 @@ class SimulatedExchangeService(IExchangeServiceProvider):
     _order_to_symbol: Dict[str, str]
     _half_tick_size: Dict[str, float]
 
-    def __init__(self, name: str, capital: float, commissions: str, base_currency: str) -> None:
-        self._current_time = np.datetime64(0, "ns")
+    def __init__(
+        self,
+        name: str,
+        capital: float,
+        commissions: str,
+        base_currency: str,
+        simulation_initial_time: dt_64 | str = np.datetime64(0, "ns"),
+    ) -> None:
+        self._current_time = (
+            np.datetime64(simulation_initial_time, "ns")
+            if isinstance(simulation_initial_time, str)
+            else simulation_initial_time
+        )
         self._name = name
         self._ome = {}
         self.acc = AccountProcessor("Simulated0", base_currency, None, capital, 0)
@@ -182,10 +194,6 @@ class SimulatedExchangeService(IExchangeServiceProvider):
                 self.send_execution_report(symbol, r)
 
 
-def new__init__(self, *args, **kwargs):
-    raise ValueError("Cannot invoke init directly !")
-
-
 class DataLoader:
     def __init__(
         self,
@@ -226,7 +234,7 @@ class SimulatedDataProvider(IDataProvider):
     _last_quotes: Dict[str, Optional[Quote]]
     _current_time: dt_64
     _hist_data_type: str
-    _pumps: Dict[str, DataLoader]
+    _loader: Dict[str, DataLoader]
 
     def __init__(
         self,
@@ -243,9 +251,13 @@ class SimulatedDataProvider(IDataProvider):
         # - create exchange's instance
         self._last_quotes = defaultdict(lambda: None)
         self._current_time = np.datetime64(0, "ns")
-        self._pumps = {}
+        self._loader = {}
 
         logger.info(f"SimulatedData.{exchange_id} initialized")
+
+    @property
+    def is_simulated(self) -> bool:
+        return True
 
     def subscribe(
         self,
@@ -255,7 +267,6 @@ class SimulatedDataProvider(IDataProvider):
         nback: int = 0,
         **kwargs,
     ) -> bool:
-        available_symbols = self._reader.get_names(data_type="candles")
         units = kwargs.get("timestamp_units", "ns")
 
         for instr in instruments:
@@ -266,6 +277,7 @@ class SimulatedDataProvider(IDataProvider):
                 timeframe=timeframe,
             )
 
+            # - for ohlc data we need to restore ticks from OHLC bars
             if "ohlc" in subscription_type:
                 _params["transformer"] = RestoreTicksFromOHLC(
                     trades="trades" in subscription_type, spread=instr.min_tick, timestamp_units=units
@@ -273,13 +285,26 @@ class SimulatedDataProvider(IDataProvider):
             elif "quote" in subscription_type:
                 _params["transformer"] = AsQuotes()
 
-            self._pumps[instr.symbol] = DataLoader(**_params)
+            # - create loader for this instrument
+            self._loader[instr.symbol] = DataLoader(**_params)
 
         return True
 
-    def run(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
-        for s, ld in self._pumps.items():
-            d = ld.load(start, end)
+    def run(self, start: str | pd.Timestamp, end: str | pd.Timestamp):
+        ds = []
+        for s, ld in self._loader.items():
+            data = ld.load(start, end)
+            ds.append(pd.Series({q.time: q for q in data}, name=s) if data else pd.Series(name=s))
+
+        merged = scols(*ds)
+        for t, u in zip(merged.index, merged.values):
+            for i, s in enumerate(merged.columns):
+                q = u[i]
+                if q:
+                    self.get_communication_channel().queue.put((s, "quote", q))
+                    self._current_time = max(np.datetime64(t, "ns"), self._current_time)
+                    self._service_provider.update_position_price(s, self._current_time, q)
+        return merged
 
     def get_quote(self, symbol: str) -> Optional[Quote]:
         return self._last_quotes[symbol]

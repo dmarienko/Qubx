@@ -52,6 +52,10 @@ class IDataProvider(IComminucationManager):
     def get_quote(self, symbol: str) -> Quote | None:
         raise NotImplementedError("get_quote")
 
+    @property
+    def is_simulated(self) -> bool:
+        return False
+
 
 class IExchangeServiceProvider(ITimeProvider, IComminucationManager):
     acc: AccountProcessor
@@ -235,7 +239,9 @@ class StrategyContext:
         self.__init_fit_was_called = False
         self.__pool = None
 
-        self._data_bus = CtrlChannel("databus", sentinel=(None, None, None))
+        self._data_bus = CtrlChannel(
+            "databus", sentinel=(None, None, None), bus_size=1 if data_provider.is_simulated else 0
+        )
         self.exchange_service.set_communication_channel(self._data_bus)
         self.data_provider.set_communication_channel(self._data_bus)
 
@@ -425,7 +431,8 @@ class StrategyContext:
             _SW.start("StrategyContext._process_incoming_data")
 
             # - waiting for incoming market data
-            symbol, d_type, data = channel.queue.get()
+            symbol, d_type, data = channel.receive()
+            # logger.debug(f" <red>({self.time()})</red> DATA : <yellow>{(symbol, d_type, data) }</yellow>")
 
             # - process data if handler is registered
             handler = self.__handlers.get(d_type)
@@ -540,12 +547,7 @@ class StrategyContext:
             self._processing_hist_bar(symbol, b)
         return None
 
-    @_SW.watch("StrategyContext")
-    def _processing_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
-        # - processing current bar's update
-        self._cache.update_by_bar(symbol, bar)
-
-        # - check if it's time to trigger the on_event if it's configured
+    def _check_if_need_trigger_on_bar(self, symbol: str, bar: Bar | None):
         if self._trig_on_bar:
             t = self.exchange_service.time().item()
             _time_to_trigger = t % self._trig_bar_freq_nsec >= self._trig_interval_in_bar_nsec
@@ -558,6 +560,14 @@ class StrategyContext:
                 self._current_bar_trigger_processed = False
         return None
 
+    @_SW.watch("StrategyContext")
+    def _processing_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
+        # - processing current bar's update
+        self._cache.update_by_bar(symbol, bar)
+
+        # - check if it's time to trigger the on_event if it's configured
+        return self._check_if_need_trigger_on_bar(symbol, bar)
+
     def _processing_trade(self, symbol: str, trade: Trade) -> TriggerEvent | None:
         self._cache.update_by_trade(symbol, trade)
 
@@ -567,12 +577,15 @@ class StrategyContext:
         return None
 
     def _processing_quote(self, symbol: str, quote: Quote) -> TriggerEvent | None:
+        self._cache.update_by_quote(symbol, quote)
         # - TODO: here we can apply throttlings or filters
         #  - let's say we can skip quotes if bid & ask is not changed
         #  - or we can collect let's say N quotes before sending to strategy
         if self._trig_on_quote:
             return TriggerEvent(self.time(), "quote", self._symb_to_instr.get(symbol), quote)
-        return None
+
+        return self._check_if_need_trigger_on_bar(symbol, None)
+        # return None
 
     @_SW.watch("StrategyContext")
     def _processing_order(self, symbol: str, order: Order) -> TriggerEvent | None:
@@ -758,11 +771,14 @@ class StrategyContext:
 
     def _run_in_thread_pool(self, func: Callable, args=()):
         """
-        For backtester we need to override this method and just call function
+        For the simulation we don't need to call function in thread
         """
-        if self.__pool is None:
-            self.__pool = ThreadPool(2)
-        self.__pool.apply_async(func, args)
+        if self.data_provider.is_simulated:
+            func(*args)
+        else:
+            if self.__pool is None:
+                self.__pool = ThreadPool(2)
+            self.__pool.apply_async(func, args)
 
 
 if __name__ == "__main__":

@@ -155,9 +155,9 @@ class CCXTDataConnector(IDataProvider):
                     _msg += "\t" + str(report) + ",\n"
                     order, deals = self._service_provider.process_execution_report(symbol, report)
                     # - send update to client
-                    channel.queue.put((symbol, "order", order))
+                    channel.send((symbol, "order", order))
                     if deals:
-                        channel.queue.put((symbol, "deals", deals))
+                        channel.send((symbol, "deals", deals))
                 logger.debug(_msg + "]\n")
 
             except NetworkError as e:
@@ -180,7 +180,7 @@ class CCXTDataConnector(IDataProvider):
             start = self._time_msec_nbars_back(timeframe, nbarsback)
             ohlcv = await self._exchange.fetch_ohlcv(symbol, timeframe, since=start, limit=nbarsback + 1)  # type: ignore
             # - just send data as the list
-            channel.queue.put(
+            channel.send(
                 (
                     symbol,
                     "hist_bars",
@@ -202,7 +202,7 @@ class CCXTDataConnector(IDataProvider):
                 self._service_provider.update_position_price(symbol, self.time(), last_close)
 
                 for oh in ohlcv:
-                    channel.queue.put((symbol, "bar", Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
+                    channel.send((symbol, "bar", Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
 
             except NetworkError as e:
                 logger.error(f"(CCXTDataConnector) NetworkError in _listen_to_ohlcv : {e}")
@@ -231,7 +231,7 @@ class CCXTDataConnector(IDataProvider):
             start = self._time_msec_nbars_back(timeframe, nbarsback)
             ohlcv = await self._exchange.fetch_ohlcv(symbol, timeframe, since=start, limit=nbarsback + 1)  # type: ignore
             # - just send data as the list
-            channel.queue.put(
+            channel.send(
                 (
                     symbol,
                     "hist_bars",
@@ -249,7 +249,7 @@ class CCXTDataConnector(IDataProvider):
                 self._service_provider.update_position_price(symbol, last_trade.time, last_trade)
 
                 for trade in trades:
-                    channel.queue.put((symbol, "trade", ccxt_convert_trade(trade)))
+                    channel.send((symbol, "trade", ccxt_convert_trade(trade)))
 
             except NetworkError as e:
                 logger.error(f"(CCXTDataConnector) NetworkError in _listen_to_trades : {e}")

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 import math
@@ -363,10 +363,10 @@ class CtrlChannel:
     name: str
     lock: Lock
 
-    def __init__(self, name: str, sentinel=(None, None, None)):
+    def __init__(self, name: str, sentinel=(None, None, None), bus_size=0):
         self.name = name
         self.control = Event()
-        self.queue = Queue()
+        self.queue = Queue(bus_size)
         self.lock = Lock()
         self.sent = sentinel
         self.start()
@@ -378,6 +378,13 @@ class CtrlChannel:
 
     def start(self):
         self.control.set()
+
+    def send(self, data):
+        if self.control.is_set():
+            self.queue.put(data)
+
+    def receive(self) -> Any:
+        return self.queue.get()
 
 
 class ITimeProvider:
