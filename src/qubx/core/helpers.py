@@ -296,7 +296,7 @@ class BasicScheduler:
         if next_time:
             self._scdlr.enterabs(next_time, 1, self._trigger, (event, prev_time, next_time))
             logger.debug(
-                f"Next ({event}) event scheduled at <red>{_SEC2TS(next_time)}</red> now is <red>{_SEC2TS(self.time_sec())}</red>"
+                f"Now is <red>{_SEC2TS(self.time_sec())}</red> next ({event}) at <cyan>{_SEC2TS(next_time)}</cyan>"
             )
             return True
         logger.debug(f"({event}) task is not scheduled")

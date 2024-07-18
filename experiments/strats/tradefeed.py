@@ -68,5 +68,5 @@ class TradeTestStrat(IStrategy):
         if wealth.symbols_to_close:
             _mesg = f"({wealth.released_amount:.2f} will be released from closing <red>{wealth.symbols_to_close}</red>)"
         logger.info(
-            f"Positions to process for {wealth.capital:.2f} {self.ctx.exchange_service.get_base_currency()} {_mesg}:\n<blue>{_str_pos}</blue>"
+            f"Positions to process for {wealth.capital:.2f} {self.ctx.trading_service.get_base_currency()} {_mesg}:\n<blue>{_str_pos}</blue>"
         )

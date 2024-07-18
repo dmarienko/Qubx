@@ -17,7 +17,8 @@ import pandas as pd
 
 from qubx import logger
 from qubx.core.basics import Instrument, Position, dt_64, Deal
-from qubx.core.strategy import IDataProvider, CtrlChannel, IExchangeServiceProvider
+from qubx.core.helpers import BasicScheduler
+from qubx.core.strategy import IBrokerServiceProvider, CtrlChannel, ITradingServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.impl.ccxt_utils import DATA_PROVIDERS_ALIASES, ccxt_convert_trade
 from qubx.utils.ntp import time_now
@@ -29,10 +30,10 @@ cxp.binanceqv = BinanceQV  # type: ignore
 cxp.exchanges.append("binanceqv")
 
 
-class CCXTDataConnector(IDataProvider):
+class CCXTExchangesConnector(IBrokerServiceProvider):
     _exchange: Exchange
-    _service_provider: IExchangeServiceProvider
     _subsriptions: Dict[str, List[str]]
+    _scheduler: BasicScheduler | None = None
 
     _last_quotes: Dict[str, Optional[Quote]]
     _loop: AbstractEventLoop
@@ -41,11 +42,22 @@ class CCXTDataConnector(IDataProvider):
     def __init__(
         self,
         exchange_id: str,
-        service_provider: IExchangeServiceProvider,
+        trading_service: ITradingServiceProvider,
         **exchange_auth,
     ):
-        self._service_provider = service_provider
+        super().__init__(exchange_id, trading_service)
+        self.trading_service = trading_service
         exchange_id = exchange_id.lower()
+
+        # - setup communication bus
+        self.set_communication_channel(
+            bus := CtrlChannel(
+                "databus", sentinel=(None, None, None), bus_size=1 if trading_service.is_simulated_trading else 0
+            )
+        )
+        self.trading_service.set_communication_channel(bus)
+
+        # - init CCXT stuff
         exch = DATA_PROVIDERS_ALIASES.get(exchange_id, exchange_id)
         if exch not in cxp.exchanges:
             raise ValueError(f"Exchange {exchange_id} -> {exch} is not supported by CCXT.pro !")
@@ -59,7 +71,13 @@ class CCXTDataConnector(IDataProvider):
         self._last_quotes = defaultdict(lambda: None)
         self._subsriptions = defaultdict(list)
 
-        logger.info(f"{exchange_id} initialized - current time {self._service_provider.time()}")
+        logger.info(f"{exchange_id} initialized - current time {self.trading_service.time()}")
+
+    def get_scheduler(self) -> BasicScheduler:
+        # - standard scheduler
+        if self._scheduler is None:
+            self._scheduler = BasicScheduler(self.get_communication_channel(), lambda: self.time().item())
+        return self._scheduler
 
     def subscribe(
         self, subscription_type: str, instruments: List[Instrument], timeframe: Optional[str] = None, nback: int = 0
@@ -122,7 +140,7 @@ class CCXTDataConnector(IDataProvider):
         return to_subscribe
 
     def _time_msec_nbars_back(self, timeframe: str, nbarsback: int) -> int:
-        return (self._service_provider.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
+        return (self.trading_service.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
 
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
         assert nbarsback >= 1
@@ -153,7 +171,7 @@ class CCXTDataConnector(IDataProvider):
                 _msg = f"\nexecs_{symbol} = [\n"
                 for report in exec:
                     _msg += "\t" + str(report) + ",\n"
-                    order, deals = self._service_provider.process_execution_report(symbol, report)
+                    order, deals = self.trading_service.process_execution_report(symbol, report)
                     # - send update to client
                     channel.send((symbol, "order", order))
                     if deals:
@@ -199,7 +217,7 @@ class CCXTDataConnector(IDataProvider):
                 # - there is no single method to get OHLC update's event time for every broker
                 # - for instance it's possible to do for Binance but for example Bitmex doesn't provide such info
                 # - so we will use ntp adjusted time here
-                self._service_provider.update_position_price(symbol, self.time(), last_close)
+                self.trading_service.update_position_price(symbol, self.time(), last_close)
 
                 for oh in ohlcv:
                     channel.send((symbol, "bar", Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
@@ -246,7 +264,7 @@ class CCXTDataConnector(IDataProvider):
 
                 # - update positions by actual close price
                 last_trade = ccxt_convert_trade(trades[-1])
-                self._service_provider.update_position_price(symbol, last_trade.time, last_trade)
+                self.trading_service.update_position_price(symbol, last_trade.time, last_trade)
 
                 for trade in trades:
                     channel.send((symbol, "trade", ccxt_convert_trade(trade)))
@@ -283,7 +301,8 @@ class CCXTDataConnector(IDataProvider):
 
     def close(self):
         try:
-            self._loop.run_until_complete(self._exchange.close())  # type: ignore
+            # self._loop.run_until_complete(self._exchange.close())  # type: ignore
+            asyncio.run_coroutine_threadsafe(self._exchange.close(), self._loop)
         except Exception as e:
             logger.error(e)
 

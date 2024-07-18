@@ -32,32 +32,16 @@ class TriggerEvent:
 
 
 class IComminucationManager:
-    _ch_market_data: CtrlChannel
+    databus: CtrlChannel
 
     def get_communication_channel(self) -> CtrlChannel:
-        return self._ch_market_data
+        return self.databus
 
     def set_communication_channel(self, channel: CtrlChannel):
-        self._ch_market_data = channel
+        self.databus = channel
 
 
-class IDataProvider(IComminucationManager):
-
-    def subscribe(self, subscription_type: str, instruments: List[Instrument], **kwargs) -> bool:
-        raise NotImplementedError("subscribe")
-
-    def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
-        raise NotImplementedError("get_historical_ohlcs")
-
-    def get_quote(self, symbol: str) -> Quote | None:
-        raise NotImplementedError("get_quote")
-
-    @property
-    def is_simulated(self) -> bool:
-        return False
-
-
-class IExchangeServiceProvider(ITimeProvider, IComminucationManager):
+class ITradingServiceProvider(ITimeProvider, IComminucationManager):
     acc: AccountProcessor
 
     def get_account(self) -> AccountProcessor:
@@ -110,7 +94,37 @@ class IExchangeServiceProvider(ITimeProvider, IComminucationManager):
             raise ValueError(f"Unknown update type: {type(update)}")
 
     def update_position_price(self, symbol: str, timestamp: dt_64, update: float | Quote | Trade | Bar):
-        self.acc.update_position_price(timestamp, symbol, IExchangeServiceProvider._extract_price(update))
+        self.acc.update_position_price(timestamp, symbol, ITradingServiceProvider._extract_price(update))
+
+    @property
+    def is_simulated_trading(self) -> bool:
+        return False
+
+
+class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
+    trading_service: ITradingServiceProvider
+
+    def __init__(self, exchange_id: str, trading_service: ITradingServiceProvider) -> None:
+        self._exchange_id = exchange_id
+        self.trading_service = trading_service
+
+    def subscribe(self, subscription_type: str, instruments: List[Instrument], **kwargs) -> bool:
+        raise NotImplementedError("subscribe")
+
+    def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
+        raise NotImplementedError("get_historical_ohlcs")
+
+    def get_quote(self, symbol: str) -> Quote | None:
+        raise NotImplementedError("get_quote")
+
+    def get_trading_service(self) -> ITradingServiceProvider:
+        return self.trading_service
+
+    def close(self):
+        pass
+
+    def get_scheduler(self) -> BasicScheduler:
+        raise NotImplementedError("schedule_event")
 
 
 class PositionsTracker:
@@ -166,8 +180,8 @@ class StrategyContext:
     MAX_NUMBER_OF_STRATEGY_FAILURES = 10
 
     strategy: IStrategy  # strategy instance
-    exchange_service: IExchangeServiceProvider  # service for exchange API: orders managemewnt
-    data_provider: IDataProvider  # market data provider
+    trading_service: ITradingServiceProvider  # service for exchange API: orders managemewnt
+    broker_provider: IBrokerServiceProvider  # market data provider
     instruments: List[Instrument]  # list of instruments this strategy trades
     positions: Dict[str, Position]  # positions of the strategy (instrument -> position)
 
@@ -177,9 +191,6 @@ class StrategyContext:
     # - cached marked data anb scheduler
     _cache: CachedMarketDataHolder  # market data cache
     _scheduler: BasicScheduler
-
-    # - communication channel
-    _data_bus: CtrlChannel
 
     # - configuration
     _market_data_subcription_type: str = "unknown"
@@ -211,8 +222,7 @@ class StrategyContext:
         config: Dict[str, Any] | None,
         # - - - - - - - - - - - - - - - - - - - - -
         # - data provider and exchange service
-        data_provider: IDataProvider,
-        exchange_service: IExchangeServiceProvider,
+        broker_connector: IBrokerServiceProvider,
         instruments: List[Instrument],
         # - - - - - - - - - - - - - - - - - - - - -
         # - data subscription - - - - - - - - - - -
@@ -230,8 +240,8 @@ class StrategyContext:
     ) -> None:
 
         # - initialization
-        self.exchange_service = exchange_service
-        self.data_provider = data_provider
+        self.broker_provider = broker_connector
+        self.trading_service = broker_connector.get_trading_service()
         self.config = config
         self.instruments = instruments
         self.positions = {}
@@ -239,17 +249,11 @@ class StrategyContext:
         self.__init_fit_was_called = False
         self.__pool = None
 
-        self._data_bus = CtrlChannel(
-            "databus", sentinel=(None, None, None), bus_size=1 if data_provider.is_simulated else 0
-        )
-        self.exchange_service.set_communication_channel(self._data_bus)
-        self.data_provider.set_communication_channel(self._data_bus)
-
         # - for fast access to instrument by it's symbol
         self._symb_to_instr = {i.symbol: i for i in instruments}
 
-        # - create scheduler
-        self._scheduler = BasicScheduler(self._data_bus, lambda: self.time().item())
+        # - get scheduling service from broker
+        self._scheduler = self.broker_provider.get_scheduler()
 
         # - instantiate logging functional
         self._logging = StrategyLogging(logs_writer, positions_log_freq, portfolio_log_freq, num_exec_records_to_write)
@@ -432,7 +436,7 @@ class StrategyContext:
 
             # - waiting for incoming market data
             symbol, d_type, data = channel.receive()
-            # logger.debug(f" <red>({self.time()})</red> DATA : <yellow>{(symbol, d_type, data) }</yellow>")
+            # logger.debug(f" <cyan>({self.time()})</cyan> DATA : <yellow>{(symbol, d_type, data) }</yellow>")
 
             # - process data if handler is registered
             handler = self.__handlers.get(d_type)
@@ -549,7 +553,7 @@ class StrategyContext:
 
     def _check_if_need_trigger_on_bar(self, symbol: str, bar: Bar | None):
         if self._trig_on_bar:
-            t = self.exchange_service.time().item()
+            t = self.trading_service.time().item()
             _time_to_trigger = t % self._trig_bar_freq_nsec >= self._trig_interval_in_bar_nsec
             if _time_to_trigger:
                 # we want to trigger only first one - not every
@@ -609,13 +613,14 @@ class StrategyContext:
     def _create_and_update_positions(self):
         for instrument in self.instruments:
             symb = instrument.symbol
-            self.positions[symb] = self.exchange_service.get_position(instrument)
+            self.positions[symb] = self.trading_service.get_position(instrument)
+
             # - check if we need any aux instrument for calculating pnl ?
-            aux = lookup.find_aux_instrument_for(instrument, self.exchange_service.get_base_currency())
+            aux = lookup.find_aux_instrument_for(instrument, self.trading_service.get_base_currency())
             if aux is not None:
                 instrument._aux_instrument = aux
                 self.instruments.append(aux)
-                self.positions[aux.symbol] = self.exchange_service.get_position(aux)
+                self.positions[aux.symbol] = self.trading_service.get_position(aux)
 
     def start(self, blocking: bool = False):
         if self._is_initilized:
@@ -632,20 +637,20 @@ class StrategyContext:
             _symbols.append(instr.symbol)
 
         # - create incoming market data processing
-        # self._thread_data_loop = AsyncioThreadRunner(self.data_provider.get_communication_channel())
-        self._thread_data_loop = Thread(target=self._process_incoming_data, args=(self._data_bus,), daemon=True)
-        # self._thread_data_loop.add(self._process_incoming_market_data)
+        self._thread_data_loop = Thread(
+            target=self._process_incoming_data, args=(self.broker_provider.get_communication_channel(),), daemon=True
+        )
 
         # - subscribe to market data
         logger.info(
             f"(StrategyContext) Subscribing to {self._market_data_subcription_type} updates using {self._market_data_subcription_params} for \n\t{_symbols} "
         )
-        self.data_provider.subscribe(
+        self.broker_provider.subscribe(
             self._market_data_subcription_type, self.instruments, **self._market_data_subcription_params
         )
 
         # - initialize strategy loggers
-        self._logging.initialize(self.time(), self.positions, self.exchange_service.get_account().get_balances())
+        self._logging.initialize(self.time(), self.positions, self.trading_service.get_account().get_balances())
 
         # - initialize strategy (should we do that after any first market data received ?)
         if not self._is_initilized:
@@ -666,7 +671,7 @@ class StrategyContext:
 
     def stop(self):
         if self._thread_data_loop:
-            self._data_bus.stop()
+            self.broker_provider.get_communication_channel().stop()
             self._thread_data_loop.join()
             try:
                 self.strategy.on_stop(self)
@@ -697,7 +702,7 @@ class StrategyContext:
             logger.info("(StrategyContext) set strategy parameters:" + _log_info)
 
     def time(self) -> dt_64:
-        return self.exchange_service.time()
+        return self.trading_service.time()
 
     def _generate_order_client_id(self, symbol: str) -> str:
         self.__order_id += 1
@@ -723,7 +728,7 @@ class StrategyContext:
         type = "limit" if price is not None else "market"
         logger.info(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} ...")
         client_id = self._generate_order_client_id(instrument.symbol)
-        order = self.exchange_service.send_order(
+        order = self.trading_service.send_order(
             instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id
         )
 
@@ -736,17 +741,17 @@ class StrategyContext:
         )
         if instrument is None:
             raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
-        for o in self.exchange_service.get_orders(instrument.symbol):
-            self.exchange_service.cancel_order(o.id)
+        for o in self.trading_service.get_orders(instrument.symbol):
+            self.trading_service.cancel_order(o.id)
 
     def quote(self, symbol: str) -> Quote | None:
-        return self.data_provider.get_quote(symbol)
+        return self.broker_provider.get_quote(symbol)
 
     def get_capital(self) -> float:
-        return self.exchange_service.get_capital()
+        return self.trading_service.get_capital()
 
     def get_reserved(self, instrument: Instrument) -> float:
-        return self.exchange_service.get_account().get_reserved(instrument)
+        return self.trading_service.get_account().get_reserved(instrument)
 
     @_SW.watch("StrategyContext")
     def get_historical_ohlcs(self, instrument: Instrument | str, timeframe: str, length: int) -> OHLCV | None:
@@ -765,7 +770,7 @@ class StrategyContext:
             return rc
 
         # - send request for historical data
-        bars = self.data_provider.get_historical_ohlcs(instr.symbol, timeframe, length)
+        bars = self.broker_provider.get_historical_ohlcs(instr.symbol, timeframe, length)
         r = self._cache.update_by_bars(instr.symbol, timeframe, bars)
         return r
 
@@ -773,7 +778,7 @@ class StrategyContext:
         """
         For the simulation we don't need to call function in thread
         """
-        if self.data_provider.is_simulated:
+        if self.trading_service.is_simulated_trading:
             func(*args)
         else:
             if self.__pool is None:
@@ -781,30 +786,30 @@ class StrategyContext:
             self.__pool.apply_async(func, args)
 
 
-if __name__ == "__main__":
-    from qubx.utils.runner import create_strategy_context
-    import time, sys
+# if __name__ == "__main__":
+#     from qubx.utils.runner import create_strategy_context
+#     import time, sys
 
-    filename, accounts, paths = (
-        "../experiments/configs/zero_test_scheduler.yaml",
-        "../experiments/configs/.env",
-        ["../"],
-    )
+#     filename, accounts, paths = (
+#         "../experiments/configs/zero_test_scheduler.yaml",
+#         "../experiments/configs/.env",
+#         ["../"],
+#     )
 
-    # - create context
-    ctx = create_strategy_context(filename, accounts, paths)
-    if ctx is None:
-        sys.exit(0)
+#     # - create context
+#     ctx = create_strategy_context(filename, accounts, paths)
+#     if ctx is None:
+#         sys.exit(0)
 
-    # - run main loop
-    try:
-        ctx.start()
+#     # - run main loop
+#     try:
+#         ctx.start()
 
-        # - just wake up every 60 sec and check if it's OK
-        while True:
-            time.sleep(60)
+#         # - just wake up every 60 sec and check if it's OK
+#         while True:
+#             time.sleep(60)
 
-    except KeyboardInterrupt:
-        ctx.stop()
-        time.sleep(1)
-        sys.exit(0)
+#     except KeyboardInterrupt:
+#         ctx.stop()
+#         time.sleep(1)
+#         sys.exit(0)

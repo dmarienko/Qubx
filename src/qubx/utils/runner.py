@@ -3,8 +3,8 @@ from os.path import exists, expanduser
 import yaml, configparser, socket
 
 from qubx import lookup, logger, formatter
-from qubx.impl.ccxt_connector import CCXTDataConnector
-from qubx.impl.ccxt_trading import CCXTSyncTradingConnector
+from qubx.impl.ccxt_connector import CCXTExchangesConnector
+from qubx.impl.ccxt_trading import CCXTTradingConnector
 from qubx.core.strategy import StrategyContext
 from qubx.utils.misc import add_project_to_system_path, Struct, logo, version
 from qubx.core.loggers import LogsWriter
@@ -117,8 +117,8 @@ def create_strategy_context(config_file: str, accounts_cfg_file: str, search_pat
     match conn:
         case "ccxt":
             # - TODO: we need some factory here
-            broker = CCXTSyncTradingConnector(cfg.exchange.lower(), **acc_config)
-            data_provider = CCXTDataConnector(cfg.exchange.lower(), broker, **acc_config)
+            broker = CCXTTradingConnector(cfg.exchange.lower(), **acc_config)
+            data_provider = CCXTExchangesConnector(cfg.exchange.lower(), broker, **acc_config)
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
 

@@ -4,18 +4,19 @@ import numpy as np
 import pandas as pd
 
 from qubx import lookup, logger
+from qubx.core.helpers import BasicScheduler
 from qubx.core.series import Quote
 from qubx.core.account import AccountProcessor
 from qubx.core.basics import Instrument, Deal, Order, Position, TransactionCostsCalculator, dt_64
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
-from qubx.core.strategy import IDataProvider, CtrlChannel, IExchangeServiceProvider
+from qubx.core.strategy import IBrokerServiceProvider, CtrlChannel, ITradingServiceProvider
 from qubx.backtester.ome import OrdersManagementEngine, OmeReport
 
 from qubx.data.readers import DataReader, DataTransformer, RestoreTicksFromOHLC, AsQuotes
 from qubx.pandaz.utils import scols
 
 
-class SimulatedExchangeService(IExchangeServiceProvider):
+class SimulatedTrading(ITradingServiceProvider):
     """
     First implementation of a simulated broker.
     TODO:
@@ -193,6 +194,9 @@ class SimulatedExchangeService(IExchangeServiceProvider):
                 # - notify channel about order cancellation
                 self.send_execution_report(symbol, r)
 
+    def is_simulated_trading(self) -> bool:
+        return True
+
 
 class DataLoader:
     def __init__(
@@ -229,9 +233,18 @@ class DataLoader:
         return self._reader.read(**args)  # type: ignore
 
 
-class SimulatedDataProvider(IDataProvider):
-    _service_provider: IExchangeServiceProvider
+class _SimulatedScheduler(BasicScheduler):
+    def run(self):
+        self._is_started = True
+        _has_tasks = False
+        _time = self.time_sec()
+        for k in self._crons.keys():
+            _has_tasks |= self._arm_schedule(k, _time)
+
+
+class SimulatedExchange(IBrokerServiceProvider):
     _last_quotes: Dict[str, Optional[Quote]]
+    _scheduler: BasicScheduler
     _current_time: dt_64
     _hist_data_type: str
     _loader: Dict[str, DataLoader]
@@ -239,11 +252,11 @@ class SimulatedDataProvider(IDataProvider):
     def __init__(
         self,
         exchange_id: str,
-        service_provider: IExchangeServiceProvider,
+        trading_service: ITradingServiceProvider,
         reader: DataReader,
         hist_data_type: str = "ohlc",
     ):
-        self._service_provider = service_provider
+        super().__init__(exchange_id, trading_service)
         self._reader = reader
         self._hist_data_type = hist_data_type
         exchange_id = exchange_id.lower()
@@ -253,11 +266,14 @@ class SimulatedDataProvider(IDataProvider):
         self._current_time = np.datetime64(0, "ns")
         self._loader = {}
 
-        logger.info(f"SimulatedData.{exchange_id} initialized")
+        # - setup communication bus
+        self.set_communication_channel(bus := CtrlChannel("databus", sentinel=(None, None, None), bus_size=1))
+        self.trading_service.set_communication_channel(bus)
 
-    @property
-    def is_simulated(self) -> bool:
-        return True
+        # - simulated scheduler
+        self._scheduler = _SimulatedScheduler(bus, lambda: self.trading_service.time().item())
+
+        logger.info(f"SimulatedData.{exchange_id} initialized")
 
     def subscribe(
         self,
@@ -302,8 +318,12 @@ class SimulatedDataProvider(IDataProvider):
                 q = u[i]
                 if q:
                     self.get_communication_channel().queue.put((s, "quote", q))
+                    self._last_quotes[s] = q
                     self._current_time = max(np.datetime64(t, "ns"), self._current_time)
-                    self._service_provider.update_position_price(s, self._current_time, q)
+                    self.trading_service.update_position_price(s, self._current_time, q)
+            if self._scheduler.check_and_run_tasks():
+                # - push nothing - it will force to process last event
+                self.get_communication_channel().queue.put((None, "time", None))
         return merged
 
     def get_quote(self, symbol: str) -> Optional[Quote]:
@@ -314,3 +334,6 @@ class SimulatedDataProvider(IDataProvider):
 
     def time(self) -> dt_64:
         return self._current_time
+
+    def get_scheduler(self) -> BasicScheduler:
+        return self._scheduler
