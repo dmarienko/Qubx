@@ -122,3 +122,28 @@ class BinanceQV(cxp.binance):
         tradesArray.append(trade)
         self.trades[symbol] = tradesArray
         client.resolve(tradesArray, messageHash)
+
+
+class BinanceQVUSDM(cxp.binanceusdm, BinanceQV):
+    """
+    The order of inheritance is important here, because we want
+    binanceusdm to take precedence over binanceqv. And this is how MRO is defined
+    in Python.
+
+    Describe method needs to be overriden, because of the way super is called in binanceusdm.
+    """
+
+    def describe(self):
+        """
+        Overriding watchTrades to use aggTrade instead of trade.
+        """
+        return self.deep_extend(
+            super().describe(),
+            {
+                "options": {
+                    "watchTrades": {
+                        "name": "aggTrade",
+                    }
+                }
+            },
+        )
