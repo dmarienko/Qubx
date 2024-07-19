@@ -8,7 +8,7 @@ from qubx.core.series import TimeSeries, Bar, Trade, Quote
 
 EXCHANGE_ALIASES = {"binance.um": "binanceusdm", "binance.cm": "binancecoinm", "kraken.f": "krakenfutures"}
 
-DATA_PROVIDERS_ALIASES = EXCHANGE_ALIASES | {"binance": "binanceqv"}
+DATA_PROVIDERS_ALIASES = EXCHANGE_ALIASES | {"binance": "binanceqv", "binance.um": "binanceqv_usdm"}
 
 
 def ccxt_convert_order_info(symbol: str, raw: Dict[str, Any]) -> Order:
@@ -35,7 +35,7 @@ def ccxt_convert_order_info(symbol: str, raw: Dict[str, Any]) -> Order:
         status=status.upper(),
         time_in_force=raw["timeInForce"],
         client_id=raw["clientOrderId"],
-        cost=float(raw["cost"]),
+        cost=float(raw["cost"] or 0),  # cost can be None
     )
 
 

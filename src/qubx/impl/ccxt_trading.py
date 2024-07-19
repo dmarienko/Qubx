@@ -57,8 +57,10 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
         if exch not in ccxt.exchanges:
             raise ValueError(f"Exchange {exchange_id} -> {exch} is not supported by CCXT!")
 
+        self.exchange_id = exchange_id
+
         # - sync exchange
-        self.sync: Exchange = getattr(ccxt, exchange_id.lower())(exchange_auth)
+        self.sync: Exchange = getattr(ccxt, exch.lower())(exchange_auth)
         self.acc = AccountProcessor(account_id, base_currency, reserves)
 
         logger.info(f"{exch.upper()} loading ...")
@@ -94,7 +96,7 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
 
         if self._fees_calculator is None:
             if default_commissions:
-                self._fees_calculator = lookup.fees.find(self.get_name().lower(), default_commissions)
+                self._fees_calculator = lookup.fees.find(self.exchange_id.lower(), default_commissions)
             else:
                 raise ValueError("Can't get commissions level from account, but default commissions is not defined !")
 

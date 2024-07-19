@@ -23,10 +23,12 @@ from qubx.impl.ccxt_utils import DATA_PROVIDERS_ALIASES, ccxt_convert_trade
 from .ccxt_trading import CCXTSyncTradingConnector
 
 # - register custom wrappers
-from .ccxt_customizations import BinanceQV
+from .ccxt_customizations import BinanceQV, BinanceQVUSDM
 
 cxp.binanceqv = BinanceQV  # type: ignore
+cxp.binanceqv_usdm = BinanceQVUSDM  # type: ignore
 cxp.exchanges.append("binanceqv")
+cxp.exchanges.append("binanceqv_usdm")
 
 
 class CCXTConnector(IDataProvider, CCXTSyncTradingConnector):
