@@ -3,6 +3,8 @@ from multiprocessing.pool import ThreadPool
 import numpy as np
 import csv, os
 
+import pandas as pd
+
 from qubx import logger
 from qubx.core.basics import Deal, Position
 
@@ -32,6 +34,29 @@ class LogsWriter:
 
     def flush_data(self):
         pass
+
+
+class InMemoryLogsWriter(LogsWriter):
+    _portfolio: List
+    _execs: List
+
+    def __init__(self, account_id: str, strategy_id: str, run_id: str) -> None:
+        super().__init__(account_id, strategy_id, run_id)
+        self._portfolio = []
+        self._execs = []
+
+    def write_data(self, log_type: str, data: List[Dict[str, Any]]):
+        if len(data) > 0:
+            if log_type == "portfolio":
+                self._portfolio.extend(data)
+            elif log_type == "executions":
+                self._execs.extend(data)
+
+    def get_portfolio(self) -> pd.DataFrame:
+        return pd.DataFrame.from_records(self._portfolio, index="timestamp")
+
+    def get_executions(self) -> pd.DataFrame:
+        return pd.DataFrame.from_records(self._execs, index="timestamp")
 
 
 class CsvFileLogsWriter(LogsWriter):

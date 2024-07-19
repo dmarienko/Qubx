@@ -50,11 +50,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         exchange_id = exchange_id.lower()
 
         # - setup communication bus
-        self.set_communication_channel(
-            bus := CtrlChannel(
-                "databus", sentinel=(None, None, None), bus_size=1 if trading_service.is_simulated_trading else 0
-            )
-        )
+        self.set_communication_channel(bus := CtrlChannel("databus", sentinel=(None, None, None)))
         self.trading_service.set_communication_channel(bus)
 
         # - init CCXT stuff

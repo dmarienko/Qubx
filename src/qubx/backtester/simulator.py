@@ -2,14 +2,23 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
 
 from qubx import lookup, logger
 from qubx.core.helpers import BasicScheduler
 from qubx.core.series import Quote
 from qubx.core.account import AccountProcessor
-from qubx.core.basics import Instrument, Deal, Order, Position, TransactionCostsCalculator, dt_64
+from qubx.core.basics import (
+    Instrument,
+    Deal,
+    Order,
+    SimulatedCtrlChannel,
+    Position,
+    TransactionCostsCalculator,
+    dt_64,
+)
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
-from qubx.core.strategy import IBrokerServiceProvider, CtrlChannel, ITradingServiceProvider
+from qubx.core.strategy import IBrokerServiceProvider, ITradingServiceProvider
 from qubx.backtester.ome import OrdersManagementEngine, OmeReport
 
 from qubx.data.readers import DataReader, DataTransformer, RestoreTicksFromOHLC, AsQuotes
@@ -87,9 +96,9 @@ class SimulatedTrading(ITradingServiceProvider):
         return report.order
 
     def send_execution_report(self, symbol: str, report: OmeReport):
-        self.get_communication_channel().queue.put((symbol, "order", report.order))
+        self.get_communication_channel().send((symbol, "order", report.order))
         if report.exec is not None:
-            self.get_communication_channel().queue.put((symbol, "deals", [report.exec]))
+            self.get_communication_channel().send((symbol, "deals", [report.exec]))
 
     def cancel_order(self, order_id: str) -> Order | None:
         symb = self._order_to_symbol.get(order_id)
@@ -194,9 +203,6 @@ class SimulatedTrading(ITradingServiceProvider):
                 # - notify channel about order cancellation
                 self.send_execution_report(symbol, r)
 
-    def is_simulated_trading(self) -> bool:
-        return True
-
 
 class DataLoader:
     def __init__(
@@ -267,7 +273,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         self._loader = {}
 
         # - setup communication bus
-        self.set_communication_channel(bus := CtrlChannel("databus", sentinel=(None, None, None), bus_size=1))
+        self.set_communication_channel(bus := SimulatedCtrlChannel("databus", sentinel=(None, None, None)))
         self.trading_service.set_communication_channel(bus)
 
         # - simulated scheduler
@@ -313,17 +319,20 @@ class SimulatedExchange(IBrokerServiceProvider):
             ds.append(pd.Series({q.time: q for q in data}, name=s) if data else pd.Series(name=s))
 
         merged = scols(*ds)
-        for t, u in zip(merged.index, merged.values):
+        cc = self.get_communication_channel()
+        for t, u in tqdm(zip(merged.index, merged.values), total=len(merged)):
             for i, s in enumerate(merged.columns):
                 q = u[i]
                 if q:
-                    self.get_communication_channel().queue.put((s, "quote", q))
                     self._last_quotes[s] = q
                     self._current_time = max(np.datetime64(t, "ns"), self._current_time)
                     self.trading_service.update_position_price(s, self._current_time, q)
+                    cc.send((s, "quote", q))
+
             if self._scheduler.check_and_run_tasks():
                 # - push nothing - it will force to process last event
-                self.get_communication_channel().queue.put((None, "time", None))
+                cc.send((None, "time", None))
+
         return merged
 
     def get_quote(self, symbol: str) -> Optional[Quote]:
@@ -337,3 +346,6 @@ class SimulatedExchange(IBrokerServiceProvider):
 
     def get_scheduler(self) -> BasicScheduler:
         return self._scheduler
+
+    def is_simulated_trading(self) -> bool:
+        return True

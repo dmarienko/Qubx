@@ -96,10 +96,6 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
     def update_position_price(self, symbol: str, timestamp: dt_64, update: float | Quote | Trade | Bar):
         self.acc.update_position_price(timestamp, symbol, ITradingServiceProvider._extract_price(update))
 
-    @property
-    def is_simulated_trading(self) -> bool:
-        return False
-
 
 class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
     trading_service: ITradingServiceProvider
@@ -125,6 +121,10 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
 
     def get_scheduler(self) -> BasicScheduler:
         raise NotImplementedError("schedule_event")
+
+    @property
+    def is_simulated_trading(self) -> bool:
+        return False
 
 
 class PositionsTracker:
@@ -209,6 +209,7 @@ class StrategyContext:
     _symb_to_instr: Dict[str, Instrument]
     __strategy_id: str
     __order_id: int
+    __fails_counter = 0
     __handlers: Dict[str, Callable[["StrategyContext", str, Any], TriggerEvent | None]]
     __fit_is_running: bool = False  # during fitting working it stops calling on_event method
     __init_fit_was_called: bool = False  # true if initial fit was already run
@@ -248,6 +249,7 @@ class StrategyContext:
         self.__fit_is_running = False
         self.__init_fit_was_called = False
         self.__pool = None
+        self.__fails_counter = 0
 
         # - for fast access to instrument by it's symbol
         self._symb_to_instr = {i.symbol: i for i in instruments}
@@ -426,8 +428,60 @@ class StrategyContext:
         self.__init_fit_was_called = False
         self.__init_fit_args = (None, _last_fit_data_can_be_used)
 
-    def _process_incoming_data(self, channel: CtrlChannel):
-        _fails_counter = 0
+    def process_data(self, symbol: str, d_type: str, data: Any) -> bool:
+        # logger.debug(f" <cyan>({self.time()})</cyan> DATA : <yellow>{(symbol, d_type, data) }</yellow>")
+
+        # - process data if handler is registered
+        handler = self.__handlers.get(d_type)
+        _SW.start("StrategyContext.handler")
+        _strategy_trigger_on_event = handler(self, symbol, data) if handler else None
+        _SW.stop("StrategyContext.handler")
+
+        # - check if it still didn't call on_fit() for first time
+        if not self.__init_fit_was_called:
+            self._processing_fit_event(None, self.__init_fit_args)
+
+        if _strategy_trigger_on_event:
+
+            # - if fit was not called - skip on_event call
+            if not self.__init_fit_was_called:
+                logger.warning(
+                    f"[{self.time()}] {self.strategy.__class__.__name__}::on_event() is SKIPPED for now because on_fit() was not called yet !"
+                )
+                return False
+
+            # - if strategy still fitting - skip on_event call
+            if self.__fit_is_running:
+                logger.warning(
+                    f"[{self.time()}] {self.strategy.__class__.__name__}::on_event() is SKIPPED for now because is being still fitting !"
+                )
+                return False
+
+            try:
+                _SW.start("strategy.on_event")
+                self.strategy.on_event(self, _strategy_trigger_on_event)
+                self._fails_counter = 0
+            except Exception as strat_error:
+                # - probably we need some cooldown interval after exception to prevent flooding
+                logger.error(
+                    f"[{self.time()}]: Strategy {self.strategy.__class__.__name__} raised an exception: {strat_error}"
+                )
+                logger.opt(colors=False).error(traceback.format_exc())
+
+                #  - we stop execution after let's say maximal number of errors in a row
+                self.__fails_counter += 1
+                if self.__fails_counter >= StrategyContext.MAX_NUMBER_OF_STRATEGY_FAILURES:
+                    logger.error("STRATEGY FAILURES IN THE ROW EXCEEDED MAX ALLOWED NUMBER - STOPPING ...")
+                    return True
+            finally:
+                _SW.stop("strategy.on_event")
+
+        # - notify poition and portfolio loggers
+        self._logging.notify(self.time())
+
+        return False
+
+    def _process_incoming_data_loop(self, channel: CtrlChannel):
         logger.info("(StrategyContext) Start processing market data")
 
         while channel.control.is_set():
@@ -436,62 +490,14 @@ class StrategyContext:
 
             # - waiting for incoming market data
             symbol, d_type, data = channel.receive()
-            # logger.debug(f" <cyan>({self.time()})</cyan> DATA : <yellow>{(symbol, d_type, data) }</yellow>")
+            _SW.start("StrategyContext._process_incoming_data")
+            if self.process_data(symbol, d_type, data):
+                _SW.stop("StrategyContext._process_incoming_data")
+                channel.stop()
+                break
 
-            # - process data if handler is registered
-            handler = self.__handlers.get(d_type)
-            _SW.start("StrategyContext.handler")
-            _strategy_trigger_on_event = handler(self, symbol, data) if handler else None
-            _SW.stop("StrategyContext.handler")
-
-            # - check if it still didn't call on_fit() for first time
-            if not self.__init_fit_was_called:
-                self._processing_fit_event(None, self.__init_fit_args)
-
-            if _strategy_trigger_on_event:
-
-                # - if fit was not called - skip on_event call
-                if not self.__init_fit_was_called:
-                    _SW.stop("StrategyContext._process_incoming_data")
-                    logger.warning(
-                        f"[{self.time()}] {self.strategy.__class__.__name__}::on_event() is SKIPPED for now because on_fit() was not called yet !"
-                    )
-                    continue
-
-                # - if strategy still fitting - skip on_event call
-                if self.__fit_is_running:
-                    _SW.stop("StrategyContext._process_incoming_data")
-                    logger.warning(
-                        f"[{self.time()}] {self.strategy.__class__.__name__}::on_event() is SKIPPED for now because is being still fitting !"
-                    )
-                    continue
-
-                try:
-                    _SW.start("strategy.on_event")
-                    self.strategy.on_event(self, _strategy_trigger_on_event)
-                    _fails_counter = 0
-                except Exception as strat_error:
-                    # - probably we need some cooldown interval after exception to prevent flooding
-                    logger.error(
-                        f"[{self.time()}]: Strategy {self.strategy.__class__.__name__} raised an exception: {strat_error}"
-                    )
-                    logger.opt(colors=False).error(traceback.format_exc())
-
-                    #  - we stop execution after let's say maximal number of errors in a row
-                    if (_fails_counter := _fails_counter + 1) >= StrategyContext.MAX_NUMBER_OF_STRATEGY_FAILURES:
-                        logger.error("STRATEGY FAILURES IN THE ROW EXCEEDED MAX ALLOWED NUMBER - STOPPING ...")
-                        channel.stop()
-                        break
-                finally:
-                    _SW.stop("strategy.on_event")
-
-            # - stop loop latency measurement
             _SW.stop("StrategyContext._process_incoming_data")
 
-            # - notify poition and portfolio loggers
-            self._logging.notify(self.time())
-
-        _SW.stop("StrategyContext._process_incoming_data")
         logger.info("(StrategyContext) Market data processing stopped")
 
     def _invoke_on_fit(self, current_fit_time: str | pd.Timestamp, prev_fit_time: str | pd.Timestamp | None):
@@ -637,9 +643,8 @@ class StrategyContext:
             _symbols.append(instr.symbol)
 
         # - create incoming market data processing
-        self._thread_data_loop = Thread(
-            target=self._process_incoming_data, args=(self.broker_provider.get_communication_channel(),), daemon=True
-        )
+        databus = self.broker_provider.get_communication_channel()
+        databus.register(self)
 
         # - subscribe to market data
         logger.info(
@@ -664,10 +669,13 @@ class StrategyContext:
                 logger.error(traceback.format_exc())
                 return
 
-        self._thread_data_loop.start()
-        logger.info("(StrategyContext) strategy is started")
-        if blocking:
-            self._thread_data_loop.join()
+        # - for live we run loop
+        if not self.broker_provider.is_simulated_trading:
+            self._thread_data_loop = Thread(target=self._process_incoming_data_loop, args=(databus,), daemon=True)
+            self._thread_data_loop.start()
+            logger.info("(StrategyContext) strategy is started in thread")
+            if blocking:
+                self._thread_data_loop.join()
 
     def stop(self):
         if self._thread_data_loop:
@@ -778,7 +786,7 @@ class StrategyContext:
         """
         For the simulation we don't need to call function in thread
         """
-        if self.trading_service.is_simulated_trading:
+        if self.broker_provider.is_simulated_trading:
             func(*args)
         else:
             if self.__pool is None:
