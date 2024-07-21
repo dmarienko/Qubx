@@ -136,15 +136,15 @@
 			]
 		},
 		{
-			"path": "src/qubx/core/strategy.py",
+			"path": "src/qubx/backtester/simulator.py",
 			"bookmarks": [
 				{
 					"line": -1,
 					"column": 0
 				},
 				{
-					"line": 646,
-					"column": 25
+					"line": 364,
+					"column": 0
 				},
 				{
 					"line": -1,
