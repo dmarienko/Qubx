@@ -136,7 +136,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         return to_subscribe
 
     def _time_msec_nbars_back(self, timeframe: str, nbarsback: int) -> int:
-        return (self.trading_service.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
+        return (self.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
 
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
         assert nbarsback >= 1
