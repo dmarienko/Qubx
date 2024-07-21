@@ -1,5 +1,5 @@
 import re, os
-from typing import Callable, List, Union, Optional, Iterable, Any
+from typing import Callable, Dict, List, Union, Optional, Iterable, Any
 from os.path import exists, join
 import numpy as np
 import pandas as pd
@@ -220,6 +220,66 @@ class CsvStorageDataReader(DataReader):
                         name = f"{f}:{ n }"
                     _n.append(name)
         return _n
+
+
+class InMemoryDataFrameReader(DataReader):
+    """
+    Data reader for pandas DataFrames
+    """
+
+    def __init__(self, data: Dict[str, pd.DataFrame]) -> None:
+        if not isinstance(data, dict):
+            raise ValueError("data must be a dictionary of pandas DataFrames")
+        self._data = data
+
+    def get_names(self, **kwargs) -> List[str]:
+        return list(self._data.keys())
+
+    def read(
+        self,
+        data_id: str,
+        start: str | None = None,
+        stop: str | None = None,
+        transform: DataTransformer = DataTransformer(),
+        chunksize=0,
+        **kwargs,
+    ) -> Iterable | List:
+        """
+        Read and transform data for a given data_id within a specified time range.
+
+        Parameters:
+        -----------
+        data_id : str
+            The identifier for the data to be read.
+        start : str | None, optional
+            The start time for the data range (inclusive). If None, start from the earliest available data.
+        stop : str | None, optional
+            The stop time for the data range (inclusive). If None, include data up to the latest available.
+        transform : DataTransformer, optional
+            An instance of DataTransformer to process the retrieved data. Defaults to DataTransformer().
+        chunksize : int, optional
+            The size of data chunks to process at a time. If 0, process all data at once. Defaults to 0.
+        **kwargs : dict
+            Additional keyword arguments for future extensions.
+
+        Returns:
+        --------
+        Iterable | List
+            The processed and transformed data, either as an iterable (if chunksize > 0) or as a list.
+
+        Raises:
+        -------
+        ValueError
+            If no data is found for the given data_id.
+        """
+        start, stop = handle_start_stop(start, stop)
+        d = self._data.get(data_id)
+        if d is None:
+            raise ValueError(f"No data found for {data_id}")
+        d2 = d.loc[start:stop].copy().reset_index()
+        transform.start_transform(data_id, list(d2.columns), start=start, stop=stop)
+        transform.process_data(d2.values)
+        return transform.collect()
 
 
 class AsPandasFrame(DataTransformer):
