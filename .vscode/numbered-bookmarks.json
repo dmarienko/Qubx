@@ -134,6 +134,51 @@
 					"column": 0
 				}
 			]
+		},
+		{
+			"path": "src/qubx/backtester/simulator.py",
+			"bookmarks": [
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": 89,
+					"column": 0
+				},
+				{
+					"line": 694,
+					"column": 20
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				},
+				{
+					"line": -1,
+					"column": 0
+				}
+			]
 		}
 	]
 }

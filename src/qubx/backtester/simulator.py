@@ -8,6 +8,7 @@ from tqdm.auto import tqdm
 
 from qubx import lookup, logger
 from qubx.core.helpers import BasicScheduler
+from qubx.core.loggers import InMemoryLogsWriter
 from qubx.core.series import Quote
 from qubx.core.account import AccountProcessor
 from qubx.core.basics import (
@@ -20,7 +21,13 @@ from qubx.core.basics import (
     dt_64,
 )
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
-from qubx.core.strategy import IStrategy, IBrokerServiceProvider, ITradingServiceProvider, PositionsTracker
+from qubx.core.strategy import (
+    IStrategy,
+    IBrokerServiceProvider,
+    ITradingServiceProvider,
+    PositionsTracker,
+    StrategyContext,
+)
 from qubx.backtester.ome import OrdersManagementEngine, OmeReport
 
 from qubx.data.readers import (
@@ -40,6 +47,8 @@ class _Types(Enum):
     TRACKER = "tracker"
     SIGNAL = "signal"
     STRATEGY = "strategy"
+    SIGNAL_AND_TRACKER = "signal_and_tracker"
+    STRATEGY_AND_TRACKER = "strategy_and_tracker"
 
 
 def _type(obj: Any) -> _Types:
@@ -84,6 +93,11 @@ class SimulationSetup:
     generator: StrategyOrSignals
     tracker: PositionsTracker | None
     instruments: List[Instrument]
+    exchange: str
+    capital: float
+    leverage: float
+    base_currency: str
+    commissions: str
 
 
 class SimulatedTrading(ITradingServiceProvider):
@@ -274,7 +288,8 @@ class DataLoader:
         timeframe: str | None,
         preload_bars: int = 0,
     ) -> None:
-        self._symbol = f"{instrument.exchange}:{instrument.symbol}"
+        self._instrument = instrument
+        self._spec = f"{instrument.exchange}:{instrument.symbol}"
         self._reader = reader
         self._transformer = transformer
         self._init_bars_required = preload_bars
@@ -288,7 +303,7 @@ class DataLoader:
             self._first_load = False
 
         args = dict(
-            data_id=self._symbol,
+            data_id=self._spec,
             start=start,
             stop=end,
             transform=self._transformer,
@@ -303,7 +318,7 @@ class DataLoader:
         start = pd.Timestamp(start_time)
         end = start - nbarsback * pd.Timedelta(timeframe)
         records = self._reader.read(
-            data_id=self._symbol, start=start, stop=end, transform=AsTimestampedRecords()  # type: ignore
+            data_id=self._spec, start=start, stop=end, transform=AsTimestampedRecords()  # type: ignore
         )
         return [
             Bar(np.datetime64(r["timestamp_ns"], "ns").item(), r["open"], r["high"], r["low"], r["close"], r["volume"])
@@ -326,6 +341,7 @@ class SimulatedExchange(IBrokerServiceProvider):
     _current_time: dt_64
     _hist_data_type: str
     _loader: Dict[str, DataLoader]
+    _pregenerated_signals: Dict[str, pd.Series]
 
     def __init__(
         self,
@@ -350,6 +366,9 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         # - simulated scheduler
         self._scheduler = _SimulatedScheduler(bus, lambda: self.trading_service.time().item())
+
+        # - pregenerated signals storage
+        self._pregenerated_signals = dict()
 
         logger.info(f"SimulatedData.{exchange_id} initialized")
 
@@ -392,7 +411,7 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         merged = scols(*ds)
         cc = self.get_communication_channel()
-        for t, u in tqdm(zip(merged.index, merged.values), total=len(merged)):
+        for t, u in tqdm(zip(merged.index, merged.values), total=len(merged), leave=False):
             for i, s in enumerate(merged.columns):
                 q = u[i]
                 if q:
@@ -425,16 +444,32 @@ class SimulatedExchange(IBrokerServiceProvider):
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
         return self._loader[symbol].get_historical_ohlc(timeframe, self.time(), nbarsback)
 
+    def set_generated_signals(self, signals: pd.Series | pd.DataFrame):
+        logger.debug(f"Using pre-generated signals:\n {str(signals.count()).strip('ndtype: int64')}")
+        if isinstance(signals, pd.Series):
+            self._pregenerated_signals[signals.name] = signals
 
-def _recognize_setup(
+        elif isinstance(signals, pd.DataFrame):
+            for col in signals.columns:
+                self._pregenerated_signals[col] = signals[col]
+        else:
+            raise ValueError("Invalid signals or strategy configuration")
+
+
+def _recognize_simulation_setups(
     name: str,
-    setup: (
+    configs: (
         StrategyOrSignals
         | Dict[str, StrategyOrSignals | List[StrategyOrSignals | PositionsTracker]]
         | List[StrategyOrSignals | PositionsTracker]
         | Tuple[StrategyOrSignals | PositionsTracker]
     ),
     instruments: List[Instrument],
+    exchange: str,
+    capital: float,
+    leverage: float,
+    basic_currency: str,
+    commissions: str,
 ):
     name_in_list = lambda n: any([n == i.symbol for i in instruments])
 
@@ -449,40 +484,110 @@ def _recognize_setup(
                     raise ValueError(f"Can't find instrument for signal's name: '{col}'")
         return s
 
-    r = list()
-    if isinstance(setup, dict):
-        for n, v in setup.items():
-            r.extend(_recognize_setup(name + "/" + n, v, instruments))
+    def _pick_instruments(s: pd.Series | pd.DataFrame) -> List[Instrument]:
+        if isinstance(s, pd.Series):
+            _instrs = [i for i in instruments if s.name == i.symbol]
 
-    elif isinstance(setup, (list, tuple)):
-        if len(setup) == 2 and _is_signal_or_strategy(setup[0]) and _is_tracker(setup[1]):
-            _s = _check_signals_structure(setup[0])
-            r.append(SimulationSetup(_type(setup[0]), name, _s, setup[1], instruments))
+        elif isinstance(s, pd.DataFrame):
+            _instrs = [i for i in instruments if i.symbol in list(s.columns)]
+
         else:
-            for j, s in enumerate(setup):
-                r.extend(_recognize_setup(name + "/" + str(j), s, instruments))
+            raise ValueError("Invalid signals or strategy configuration")
 
-    elif _is_strategy(setup):
-        r.append(SimulationSetup(_type(setup), name, setup, None, instruments))
+        return _instrs
 
-    elif _is_signal(setup):
+    r = list()
+    if isinstance(configs, dict):
+        for n, v in configs.items():
+            r.extend(
+                _recognize_simulation_setups(
+                    name + "/" + n, v, instruments, exchange, capital, leverage, basic_currency, commissions
+                )
+            )
+
+    elif isinstance(configs, (list, tuple)):
+        if len(configs) == 2 and _is_signal_or_strategy(configs[0]) and _is_tracker(configs[1]):
+            c0, c1 = configs[0], configs[1]
+            _s = _check_signals_structure(c0)
+
+            if _is_signal(c0):
+                _t = _Types.SIGNAL_AND_TRACKER
+
+            if _is_strategy(c0):
+                _t = _Types.STRATEGY_AND_TRACKER
+
+            # - extract actual symbols that have signals
+            r.append(
+                SimulationSetup(
+                    _t,
+                    name,
+                    _s,
+                    c1,
+                    _pick_instruments(_s),
+                    exchange,
+                    capital,
+                    leverage,
+                    basic_currency,
+                    commissions,
+                )
+            )
+        else:
+            for j, s in enumerate(configs):
+                r.extend(
+                    _recognize_simulation_setups(
+                        name + "/" + str(j), s, instruments, exchange, capital, leverage, basic_currency, commissions
+                    )
+                )
+
+    elif _is_strategy(configs):
+        r.append(
+            SimulationSetup(
+                _Types.STRATEGY,
+                name,
+                configs,
+                None,
+                instruments,
+                exchange,
+                capital,
+                leverage,
+                basic_currency,
+                commissions,
+            )
+        )
+
+    elif _is_signal(configs):
         # - check structure of signals
-        r.append(SimulationSetup(_type(setup), name, _check_signals_structure(setup), None, instruments))
+        c1 = _check_signals_structure(configs)
+        r.append(
+            SimulationSetup(
+                _Types.SIGNAL,
+                name,
+                c1,
+                None,
+                _pick_instruments(c1),
+                exchange,
+                capital,
+                leverage,
+                basic_currency,
+                commissions,
+            )
+        )
 
     return r
 
 
 def simulate(
-    exchange: str,
-    setup: StrategyOrSignals | Dict | List[StrategyOrSignals | PositionsTracker],
+    config: StrategyOrSignals | Dict | List[StrategyOrSignals | PositionsTracker],
     data: Dict[str, pd.DataFrame] | DataReader,
     capital: float,
     instruments: List[str] | Dict[str, List[str]] | None,
     commissions: str,
     start: str | pd.Timestamp,
     stop: str | pd.Timestamp | None = None,
+    exchange: str | None = None,  # in case if exchange is not specified in symbols list
     base_currency: str = "USDT",
     leverage: float = 1.0,  # TODO: we need to add support for leverage
+    n_jobs: int = -1,  # TODO: if need to run simulation in parallel
 ):
     # - recognize provided data
     if isinstance(data, dict):
@@ -508,11 +613,11 @@ def simulate(
                         "Can't extract exchange name from symbol's spec ({_e}) and exact exchange name is not provided - skip this symbol !"
                     )
 
-                if (ix := lookup.find_symbol(_e, i)) is not None:
+                if (ix := lookup.find_symbol(_e, _s)) is not None:
                     _exchanges.append(_e.lower())
                     _instrs.append(ix)
                 else:
-                    logger.warning("Can't find instrument for specified symbol ({i}) - ignoring !")
+                    logger.warning(f"Can't find instrument for specified symbol ({i}) - ignoring !")
 
             case Instrument():
                 _exchanges.append(i.exchange)
@@ -521,17 +626,95 @@ def simulate(
             case _:
                 raise ValueError(f"Unsupported instrument type: {i}")
 
+    if not _exchanges:
+        logger.error(
+            f"No exchange iformation provided - you can specify it by exchange parameter or use <yellow>EXCHANGE:SYMBOL</yellow> format for symbols"
+        )
+        # - TODO: probably we need to raise exceptions here ?
+        return None
+
     # - check exchanges
     if len(set(_exchanges)) > 1:
         logger.error(f"Multiple exchanges found: {', '.join(_exchanges)} - this mode is not supported yet in Qubx !")
-        return
+        # - TODO: probably we need to raise exceptions here ?
+        return None
+
     exchange = list(set(_exchanges))[0]
 
     # - recognize setup: it can be either a strategy or set of signals
-    setups = _recognize_setup("simulation", setup, _instrs)
+    setups = _recognize_simulation_setups("", config, _instrs, exchange, capital, leverage, base_currency, commissions)
+    if not setups:
+        logger.error(
+            f"Can't recognize setup - it should be a strategy, a set of signals or list of signals/strategies + tracker !"
+        )
+        # - TODO: probably we need to raise exceptions here ?
+        return None
 
-    logger.debug(f"Initiating simulated trading for {exchange} ...")
-    broker = SimulatedTrading(exchange, capital, commissions, base_currency, np.datetime64(start, "ns"))
-    exchange = SimulatedExchange(exchange, broker, data)
+    # - check stop time : here we try to backtest till now (may be we need to get max available time from data reader ?)
+    if stop is None:
+        stop = pd.Timestamp.now(tz="UTC").astimezone(None)
 
-    return setups
+    # - run simulations
+    return _run_setups(setups, start, stop, data_reader, n_jobs=n_jobs)
+
+
+def _run_setups(
+    setups: List[SimulationSetup],
+    start: str | pd.Timestamp,
+    stop: str | pd.Timestamp,
+    data_reader: DataReader,
+    n_jobs: int = -1,
+) -> Dict[str, Any]:
+    reports = {}
+
+    class EmptyStrategy(IStrategy):
+        pass
+
+    # - TODO: we need to run this in multiprocessing environment if n_jobs > 1
+    for s in tqdm(setups, total=len(setups)):
+        logger.debug(
+            f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {s.exchange} for {s.capital} x {s.leverage} in {s.base_currency}..."
+        )
+        broker = SimulatedTrading(s.exchange, s.capital, s.commissions, s.base_currency, np.datetime64(start, "ns"))
+        exchange = SimulatedExchange(s.exchange, broker, data_reader)
+
+        # - it will store simulation results into memory
+        logs_writer = InMemoryLogsWriter("test", s.name, "0")
+        strat: IStrategy | None = None
+
+        match s.setup_type:
+            case _Types.STRATEGY:
+                strat = s.generator
+
+            case _Types.STRATEGY_AND_TRACKER:
+                strat = s.generator
+                strat.tracker = lambda ctx: s.tracker
+
+            case _Types.SIGNAL:
+                strat = EmptyStrategy()
+                exchange.set_generated_signals(s.generator)
+
+            case _Types.SIGNAL_AND_TRACKER:
+                strat = EmptyStrategy()
+                strat.tracker = lambda ctx: s.tracker
+                exchange.set_generated_signals(s.generator)
+
+            case _:
+                raise ValueError(f"Unsupported setup type: {s.setup_type} !")
+
+        ctx = StrategyContext(
+            # TestStrategy(timeframe='1h', fast_period=4, slow_period=12), None, #dict(timeframe='1h', fast_period=3, slow_period=24),
+            strat,
+            None,  # TODO: need to think how we could pass altered parameters here (from variating etc)
+            exchange,
+            instruments=s.instruments,
+            md_subscription=dict(type="ohlc", timeframe="5Min", nback=10),
+            trigger_spec="1h -2Sec",
+            logs_writer=logs_writer,
+        )
+        ctx.start()
+
+        _r = exchange.run(start, stop)
+        reports[s.name] = logs_writer
+
+    return reports
