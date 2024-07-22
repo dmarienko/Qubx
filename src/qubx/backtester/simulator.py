@@ -1,7 +1,9 @@
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, TypeAlias
 import numpy as np
 import pandas as pd
+from enum import Enum
 from tqdm.auto import tqdm
 
 from qubx import lookup, logger
@@ -18,11 +20,70 @@ from qubx.core.basics import (
     dt_64,
 )
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
-from qubx.core.strategy import IBrokerServiceProvider, ITradingServiceProvider
+from qubx.core.strategy import IStrategy, IBrokerServiceProvider, ITradingServiceProvider, PositionsTracker
 from qubx.backtester.ome import OrdersManagementEngine, OmeReport
 
-from qubx.data.readers import DataReader, DataTransformer, RestoreTicksFromOHLC, AsQuotes, AsTimestampedRecords
+from qubx.data.readers import (
+    DataReader,
+    DataTransformer,
+    RestoreTicksFromOHLC,
+    AsQuotes,
+    AsTimestampedRecords,
+    InMemoryDataFrameReader,
+)
 from qubx.pandaz.utils import scols
+
+
+class _Types(Enum):
+    UKNOWN = "unknown"
+    LIST = "list"
+    TRACKER = "tracker"
+    SIGNAL = "signal"
+    STRATEGY = "strategy"
+
+
+def _type(obj: Any) -> _Types:
+    if obj is None:
+        t = _Types.UKNOWN
+    elif isinstance(obj, (list, tuple)):
+        t = _Types.LIST
+    elif isinstance(obj, PositionsTracker):
+        t = _Types.TRACKER
+    elif isinstance(obj, (pd.DataFrame, pd.Series)):
+        t = _Types.SIGNAL
+    elif isinstance(obj, IStrategy):
+        t = _Types.STRATEGY
+    else:
+        t = _Types.UKNOWN
+    return t
+
+
+def _is_strategy(obj):
+    return _type(obj) == _Types.STRATEGY
+
+
+def _is_tracker(obj):
+    return _type(obj) == _Types.TRACKER
+
+
+def _is_signal(obj):
+    return _type(obj) == _Types.SIGNAL
+
+
+def _is_signal_or_strategy(obj):
+    return _is_signal(obj) or _is_strategy(obj)
+
+
+StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
+
+
+@dataclass
+class SimulationSetup:
+    setup_type: _Types
+    name: str
+    generator: StrategyOrSignals
+    tracker: PositionsTracker | None
+    instruments: List[Instrument]
 
 
 class SimulatedTrading(ITradingServiceProvider):
@@ -363,3 +424,114 @@ class SimulatedExchange(IBrokerServiceProvider):
 
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
         return self._loader[symbol].get_historical_ohlc(timeframe, self.time(), nbarsback)
+
+
+def _recognize_setup(
+    name: str,
+    setup: (
+        StrategyOrSignals
+        | Dict[str, StrategyOrSignals | List[StrategyOrSignals | PositionsTracker]]
+        | List[StrategyOrSignals | PositionsTracker]
+        | Tuple[StrategyOrSignals | PositionsTracker]
+    ),
+    instruments: List[Instrument],
+):
+    name_in_list = lambda n: any([n == i.symbol for i in instruments])
+
+    def _check_signals_structure(s: pd.Series | pd.DataFrame) -> pd.Series | pd.DataFrame:
+        if isinstance(s, pd.Series):
+            if not name_in_list(s.name):
+                raise ValueError(f"Can't find instrument for signal's name: '{s.name}'")
+
+        if isinstance(s, pd.DataFrame):
+            for col in s.columns:
+                if not name_in_list(col):
+                    raise ValueError(f"Can't find instrument for signal's name: '{col}'")
+        return s
+
+    r = list()
+    if isinstance(setup, dict):
+        for n, v in setup.items():
+            r.extend(_recognize_setup(name + "/" + n, v, instruments))
+
+    elif isinstance(setup, (list, tuple)):
+        if len(setup) == 2 and _is_signal_or_strategy(setup[0]) and _is_tracker(setup[1]):
+            _s = _check_signals_structure(setup[0])
+            r.append(SimulationSetup(_type(setup[0]), name, _s, setup[1], instruments))
+        else:
+            for j, s in enumerate(setup):
+                r.extend(_recognize_setup(name + "/" + str(j), s, instruments))
+
+    elif _is_strategy(setup):
+        r.append(SimulationSetup(_type(setup), name, setup, None, instruments))
+
+    elif _is_signal(setup):
+        # - check structure of signals
+        r.append(SimulationSetup(_type(setup), name, _check_signals_structure(setup), None, instruments))
+
+    return r
+
+
+def simulate(
+    exchange: str,
+    setup: StrategyOrSignals | Dict | List[StrategyOrSignals | PositionsTracker],
+    data: Dict[str, pd.DataFrame] | DataReader,
+    capital: float,
+    instruments: List[str] | Dict[str, List[str]] | None,
+    commissions: str,
+    start: str | pd.Timestamp,
+    stop: str | pd.Timestamp | None = None,
+    base_currency: str = "USDT",
+    leverage: float = 1.0,  # TODO: we need to add support for leverage
+):
+    # - recognize provided data
+    if isinstance(data, dict):
+        data_reader = InMemoryDataFrameReader(data)
+    elif isinstance(data, DataReader):
+        data_reader = data
+    else:
+        raise ValueError(f"Unsupported data type: {type(data).__name__}")
+
+    # - process instruments
+    _instrs: List[Instrument] = []
+    _exchanges = [] if exchange is None else [exchange.lower()]
+    for i in instruments:
+        match i:
+            case str():
+                _e, _s = i.split(":") if ":" in i else (exchange, i)
+
+                if exchange is not None and _e.lower() != exchange.lower():
+                    logger.warning("Exchange from symbol's spec ({_e}) is different from requested: {exchange} !")
+
+                if _e is None:
+                    logger.warning(
+                        "Can't extract exchange name from symbol's spec ({_e}) and exact exchange name is not provided - skip this symbol !"
+                    )
+
+                if (ix := lookup.find_symbol(_e, i)) is not None:
+                    _exchanges.append(_e.lower())
+                    _instrs.append(ix)
+                else:
+                    logger.warning("Can't find instrument for specified symbol ({i}) - ignoring !")
+
+            case Instrument():
+                _exchanges.append(i.exchange)
+                _instrs.append(i)
+
+            case _:
+                raise ValueError(f"Unsupported instrument type: {i}")
+
+    # - check exchanges
+    if len(set(_exchanges)) > 1:
+        logger.error(f"Multiple exchanges found: {', '.join(_exchanges)} - this mode is not supported yet in Qubx !")
+        return
+    exchange = list(set(_exchanges))[0]
+
+    # - recognize setup: it can be either a strategy or set of signals
+    setups = _recognize_setup("simulation", setup, _instrs)
+
+    logger.debug(f"Initiating simulated trading for {exchange} ...")
+    broker = SimulatedTrading(exchange, capital, commissions, base_currency, np.datetime64(start, "ns"))
+    exchange = SimulatedExchange(exchange, broker, data)
+
+    return setups

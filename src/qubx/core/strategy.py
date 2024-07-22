@@ -134,8 +134,23 @@ class PositionsTracker:
         self.ctx = ctx
 
 
+def populate_parameters_to_strategy(strategy: "IStrategy", **kwargs):
+    _log_info = ""
+    for k, v in kwargs.items():
+        if k.startswith("_"):
+            raise ValueError("Internal variable can't be set from external parameter !")
+        if hasattr(strategy, k):
+            strategy.__dict__[k] = v
+            _log_info += f"\n\tset <green>{k}</green> <- <red>{v}</red>"
+    if _log_info:
+        logger.info("set strategy parameters:" + _log_info)
+
+
 class IStrategy:
     ctx: "StrategyContext"
+
+    def __init__(self, **kwargs) -> None:
+        populate_parameters_to_strategy(self, **kwargs)
 
     def on_start(self, ctx: "StrategyContext"):
         """
@@ -292,7 +307,7 @@ class StrategyContext:
         # TODO: - trackers - - - - - - - - - - - - -
 
         # - set strategy custom parameters
-        self.populate_parameters_to_strategy(self.strategy, **config if config else {})
+        populate_parameters_to_strategy(self.strategy, **config if config else {})
         self._is_initilized = False
         self.__strategy_id = self.strategy.__class__.__name__ + "_"
         self.__order_id = self.time().item() // 100_000_000
@@ -697,17 +712,6 @@ class StrategyContext:
     def get_latencies_report(self):
         for l in _SW.latencies.keys():
             logger.info(f"\t<w>{l}</w> took <r>{_SW.latency_sec(l):.7f}</r> secs")
-
-    def populate_parameters_to_strategy(self, strategy: IStrategy, **kwargs):
-        _log_info = ""
-        for k, v in kwargs.items():
-            if k.startswith("_"):
-                raise ValueError("Internal variable can't be set from external parameter !")
-            if hasattr(strategy, k):
-                strategy.__dict__[k] = v
-                _log_info += f"\n\tset <green>{k}</green> <- <red>{v}</red>"
-        if _log_info:
-            logger.info("(StrategyContext) set strategy parameters:" + _log_info)
 
     def time(self) -> dt_64:
         return self.trading_service.time()
