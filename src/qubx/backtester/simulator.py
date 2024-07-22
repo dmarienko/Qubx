@@ -581,6 +581,8 @@ def simulate(
     data: Dict[str, pd.DataFrame] | DataReader,
     capital: float,
     instruments: List[str] | Dict[str, List[str]] | None,
+    subscription: Dict[str, Any],
+    trigger: str,
     commissions: str,
     start: str | pd.Timestamp,
     stop: str | pd.Timestamp | None = None,
@@ -655,7 +657,7 @@ def simulate(
         stop = pd.Timestamp.now(tz="UTC").astimezone(None)
 
     # - run simulations
-    return _run_setups(setups, start, stop, data_reader, n_jobs=n_jobs)
+    return _run_setups(setups, start, stop, data_reader, subscription, trigger, n_jobs=n_jobs)
 
 
 def _run_setups(
@@ -663,6 +665,8 @@ def _run_setups(
     start: str | pd.Timestamp,
     stop: str | pd.Timestamp,
     data_reader: DataReader,
+    subscription: Dict[str, Any],
+    trigger: str,
     n_jobs: int = -1,
 ) -> Dict[str, Any]:
     reports = {}
@@ -708,8 +712,8 @@ def _run_setups(
             None,  # TODO: need to think how we could pass altered parameters here (from variating etc)
             exchange,
             instruments=s.instruments,
-            md_subscription=dict(type="ohlc", timeframe="5Min", nback=10),
-            trigger_spec="1h -2Sec",
+            md_subscription=subscription,
+            trigger_spec=trigger,
             logs_writer=logs_writer,
         )
         ctx.start()

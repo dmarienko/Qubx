@@ -143,7 +143,7 @@ def populate_parameters_to_strategy(strategy: "IStrategy", **kwargs):
             strategy.__dict__[k] = v
             _log_info += f"\n\tset <green>{k}</green> <- <red>{v}</red>"
     if _log_info:
-        logger.info("set strategy parameters:" + _log_info)
+        logger.info(f"<yellow>{strategy.__class__.__name__}</yellow> new parameters:" + _log_info)
 
 
 class IStrategy:
