@@ -11,11 +11,16 @@ cdef class Indexed:
     cdef unsigned short _is_empty
 
 
+cdef class Locator:
+    cdef TimeSeries _series
+
+
 cdef class TimeSeries:
     cdef public long long timeframe
     cdef public Indexed times
     cdef public Indexed values
     cdef public float max_series_length
+    cdef public Locator loc
     cdef unsigned short _is_new_item
     cdef public str name
     cdef dict indicators        # it's used for indicators caching

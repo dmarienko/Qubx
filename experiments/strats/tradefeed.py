@@ -9,6 +9,7 @@ from qubx.core.basics import Instrument, Position, Signal
 from qubx.pandaz import srows, scols, ohlc_resample, retain_columns_and_join
 from qubx.trackers import Capital, PortfolioRebalancerTracker
 from qubx.utils.misc import quotify, dequotify
+from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
 
 
 def priceframe(ctx: StrategyContext, field: str, timeframe: str) -> pd.DataFrame:
@@ -23,7 +24,7 @@ def priceframe(ctx: StrategyContext, field: str, timeframe: str) -> pd.DataFrame
     return scols(*data)
 
 
-class FlipFlopStrat(IStrategy):
+class TradeTestStrat(IStrategy):
     capital_invested: float = 100.0
     trading_allowed: bool = False
     _tracker: PortfolioRebalancerTracker
@@ -40,38 +41,15 @@ class FlipFlopStrat(IStrategy):
         logger.info(f"{str(closes)}")
 
     def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
-        logger.info(f"{event.time} -> {event}")
-        ohlcs = self.ohlcs("15Min")
-
-        symbols_to_close, symbols_to_open = [], []
-        for s, p in ctx.positions.items():
-            if p.quantity != 0:
-                symbols_to_close.append(s)
-            else:
-                symbols_to_open.append(s)
-
-        if not symbols_to_close:  # first run just open half from all universe
-            symbols_to_open = symbols_to_open[: len(symbols_to_open) // 2]
-
-        cap = self._tracker.estimate_capital_to_trade(symbols_to_close)
-        capital_per_symbol = np.clip(round(cap.capital / len(symbols_to_open)), 5, np.inf)
-
-        logger.info(
-            f"\n>>> to close: {symbols_to_close}\n>>> to open: {symbols_to_open} | {capital_per_symbol} per symbol"
-        )
-
-        c_time = ctx.time()
-        to_open = pd.DataFrame({s: {c_time: capital_per_symbol / ohlcs[s].close.iloc[-1]} for s in symbols_to_open})
-        to_close = pd.DataFrame({s: {c_time: 0} for s in symbols_to_close})
-        signals = scols(to_close, to_open)
-
-        self.reporting(signals, cap)
-
-        # - process signals
-        if self.trading_allowed:
-            self._tracker.process_signals(signals)
-        else:
-            logger.warning("Trading is disabled - no postions will be changed")
+        match event.type:
+            case "trade":
+                trade: Trade = event.data
+                assert event.instrument is not None
+                logger.info(f"{event.time} {event.instrument.symbol} -> Triggered on trade {trade}")
+            case "time":
+                logger.info(f"{event.time} -> Triggered on time event")
+            case _:
+                logger.info(f"{event.time} -> Triggered on unknown event {event}")
 
         return None
 

@@ -120,6 +120,54 @@ cdef class Indexed:
 global _plot_func
 
 
+cdef class Locator:
+    """
+    Locator service class for TimeSeries
+    """
+
+    def __init__(self, TimeSeries series):
+        self._series = series 
+
+    def __getitem__(self, idx):
+        cdef int _nlen = len(self._series)
+
+        if isinstance(idx, slice):
+            start = 0 if idx.start is None else idx.start
+            if isinstance(start, str):
+                start = max(self._get_time_index(start), 0)
+
+            if idx.stop is None:
+                stop = (_nlen - 1) 
+            else: 
+                if isinstance(idx.stop, str):
+                    stop = self._get_time_index(idx.stop)
+                else:
+                    stop = idx.stop - 1
+            
+            new_ts = self._series._clone_empty(self._series.name, self._series.timeframe, self._series.max_series_length)
+            for i in range(start, min(stop + 1, _nlen)):
+                new_ts._add_new_item(self._series.times.values[i], self._series.values.values[i])
+            return new_ts
+
+        elif isinstance(idx, str):
+            # - handle single timestamp string
+            return self.find(idx)
+
+        return self._series.values[idx]
+
+    def _get_time_index(self, str t) -> int:
+        cdef long long _t = np.datetime64(t, 'ns').item()
+        cdef int idx = int(np.searchsorted(self._series.times.values, _t, side='right'))
+        idx = min(idx, len(self._series.values))
+        if idx == 0:
+            raise ValueError(f"Time {t} not found in {self._series.name}!")
+        return idx - 1
+
+    def find(self, str t):
+        ix = self._get_time_index(t)
+        return np.datetime64(self._series.times.values[ix], 'ns'), self._series.values.values[ix]
+
+
 cdef class TimeSeries:
 
     def __init__(
@@ -133,6 +181,8 @@ cdef class TimeSeries:
         self.values = Indexed(max_series_length)
         self.indicators = dict()
         self.calculation_order = []
+        # - locator service
+        self.loc = Locator(self)
 
         # - processing every update
         self._process_every_update = process_every_update
@@ -142,13 +192,17 @@ cdef class TimeSeries:
     def __len__(self) -> int:
         return len(self.times)
 
-    def loc(self, str t):
-        _t = np.datetime64(t, 'ns').item()
-        ix = int(np.searchsorted(self.times.values, _t, side='right'))
-        ix = min(ix, len(self.values))
-        if ix == 0:
-            raise ValueError(f"Time {t} not found in {self.name} !")
-        return np.datetime64(self.times.values[ix - 1], 'ns'), self.values.values[ix - 1]
+    def _clone_empty(self, str name, long long timeframe, float max_series_length):
+        """
+        Make empty TimeSeries instance (no data and indicators)
+        """
+        return TimeSeries(name, timeframe, max_series_length)
+
+    def clone(self):
+        """
+        Clone TimeSeries instance with data without indcators attached
+        """
+        return self.loc[:]
 
     def _on_attach_indicator(self, indicator: Indicator, indicator_input: TimeSeries):
         self.calculation_order.append((
@@ -322,7 +376,7 @@ cdef class Indicator(TimeSeries):
         self.name = name
 
         # - we need to make a empty copy and fill it 
-        self.series = self._instantiate_base_series(series.name, series.timeframe, series.max_series_length)
+        self.series = self._clone_empty(series.name, series.timeframe, series.max_series_length)
         self.parent = series 
         
         # - notify the parent series that indicator has been attached
@@ -330,9 +384,6 @@ cdef class Indicator(TimeSeries):
 
         # - recalculate indicator on data as if it would being streamed
         self._initial_data_recalculate(series)
-
-    def _instantiate_base_series(self, str name, long long timeframe, float max_series_length):
-        return TimeSeries(name, timeframe, max_series_length)
 
     def _on_attach_indicator(self, indicator: Indicator, indicator_input: TimeSeries):
         self.parent._on_attach_indicator(indicator, indicator_input)
@@ -365,7 +416,7 @@ cdef class IndicatorOHLC(Indicator):
     """
     Extension of indicator class to be used for OHLCV series
     """
-    def _instantiate_base_series(self, str name, long long timeframe, float max_series_length):
+    def _clone_empty(self, str name, long long timeframe, float max_series_length):
         return OHLCV(name, timeframe, max_series_length)
 
     def calculate(self, long long time, Bar value, short new_item_started) -> object:
@@ -602,7 +653,7 @@ cdef class Trade:
         self.trade_id = trade_id
 
     def __repr__(self):
-        return "[%s]\t%.5f (%.1f) <%s> %s" % ( 
+        return "[%s]\t%.5f (%.1f) %s %s" % ( 
             time_to_str(self.time, 'ns'), self.price, self.size, 
             'take' if self.taker == 1 else 'make' if self.taker == 0 else '???',
             str(self.trade_id) if self.trade_id > 0 else ''
@@ -723,6 +774,9 @@ cdef class OHLCV(TimeSeries):
                 self._update_indicators(t, b, True)
 
         return self
+
+    def _clone_empty(self, str name, long long timeframe, float max_series_length):
+        return OHLCV(name, timeframe, max_series_length)
 
     def _add_new_item(self, long long time, Bar value):
         self.times.add(time)
