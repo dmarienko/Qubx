@@ -1,51 +1,6 @@
 {
 	"files": [
 		{
-			"path": "src/qubx/impl/ccxt_connector.py",
-			"bookmarks": [
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": 262,
-					"column": 39
-				},
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": -1,
-					"column": 0
-				}
-			]
-		},
-		{
 			"path": "src/qubx/data/readers.py",
 			"bookmarks": [
 				{
@@ -143,16 +98,16 @@
 					"column": 0
 				},
 				{
-					"line": 89,
+					"line": 420,
 					"column": 0
-				},
-				{
-					"line": 698,
-					"column": 20
 				},
 				{
 					"line": -1,
 					"column": 0
+				},
+				{
+					"line": 710,
+					"column": 18
 				},
 				{
 					"line": -1,

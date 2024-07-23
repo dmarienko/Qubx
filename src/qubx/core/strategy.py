@@ -620,6 +620,12 @@ class StrategyContext:
         # - check if we want to trigger any strat's logic on order
         return None
 
+    def _processing_event(self, symbol: str, event_data: Dict) -> TriggerEvent | None:
+        """
+        Processing external events
+        """
+        return TriggerEvent(self.time(), "event", self._symb_to_instr.get(symbol), event_data)
+
     @_SW.watch("StrategyContext")
     def _processing_deals(self, symbol: str, deals: List[Deal]) -> TriggerEvent | None:
         # - log deals in storage

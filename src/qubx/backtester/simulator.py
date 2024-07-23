@@ -15,6 +15,7 @@ from qubx.core.basics import (
     Instrument,
     Deal,
     Order,
+    Signal,
     SimulatedCtrlChannel,
     Position,
     TransactionCostsCalculator,
@@ -27,6 +28,7 @@ from qubx.core.strategy import (
     ITradingServiceProvider,
     PositionsTracker,
     StrategyContext,
+    TriggerEvent,
 )
 from qubx.backtester.ome import OrdersManagementEngine, OmeReport
 
@@ -410,9 +412,42 @@ class SimulatedExchange(IBrokerServiceProvider):
             ds.append(pd.Series({q.time: q for q in data}, name=s) if data else pd.Series(name=s))
 
         merged = scols(*ds)
+        if self._pregenerated_signals:
+            self._run_generated_signals(merged)
+        else:
+            self._run_as_strategy(merged)
+        return merged
+
+    def _run_generated_signals(self, data: pd.DataFrame) -> None:
         cc = self.get_communication_channel()
-        for t, u in tqdm(zip(merged.index, merged.values), total=len(merged), leave=False):
-            for i, s in enumerate(merged.columns):
+        s0, e0 = pd.Timestamp(data.index[0]), pd.Timestamp(data.index[-1])
+
+        to_process = {}
+        for s, v in self._pregenerated_signals.items():
+            sel = v[s0:e0]
+            to_process[s] = list(zip(sel.index, sel.values))
+
+        # - send initial quotes - this will invoke calling of on_fit method
+        # for s in data.columns:
+        # cc.send((s, "quote", data[s].values[0]))
+
+        for t, u in tqdm(zip(data.index, data.values), total=len(data), leave=False):
+            for i, s in enumerate(data.columns):
+                q = u[i]
+                if q:
+                    self._current_time = max(np.datetime64(t, "ns"), self._current_time)
+                    self.trading_service.update_position_price(s, self._current_time, q)
+                    # - we need to send quotes for invoking portfolio logginf etc
+                    cc.send((s, "quote", q))
+                    sigs = to_process[s]
+                    if sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
+                        cc.send((s, "event", {"order": sigs[0][1]}))
+                        sigs.pop(0)
+
+    def _run_as_strategy(self, data: pd.DataFrame) -> None:
+        cc = self.get_communication_channel()
+        for t, u in tqdm(zip(data.index, data.values), total=len(data), leave=False):
+            for i, s in enumerate(data.columns):
                 q = u[i]
                 if q:
                     self._last_quotes[s] = q
@@ -423,8 +458,6 @@ class SimulatedExchange(IBrokerServiceProvider):
             if self._scheduler.check_and_run_tasks():
                 # - push nothing - it will force to process last event
                 cc.send((None, "time", None))
-
-        return merged
 
     def get_quote(self, symbol: str) -> Optional[Quote]:
         return self._last_quotes[symbol]
@@ -446,6 +479,9 @@ class SimulatedExchange(IBrokerServiceProvider):
 
     def set_generated_signals(self, signals: pd.Series | pd.DataFrame):
         logger.debug(f"Using pre-generated signals:\n {str(signals.count()).strip('ndtype: int64')}")
+        # - sanity check
+        signals.index = pd.DatetimeIndex(signals.index)
+
         if isinstance(signals, pd.Series):
             self._pregenerated_signals[signals.name] = signals
 
@@ -594,12 +630,17 @@ def simulate(
     # - recognize provided data
     if isinstance(data, dict):
         data_reader = InMemoryDataFrameReader(data)
+        if not instruments:
+            instruments = list(data_reader.get_names())
     elif isinstance(data, DataReader):
         data_reader = data
+        if not instruments:
+            raise ValueError("Symbol list must be provided for generic data reader !")
     else:
         raise ValueError(f"Unsupported data type: {type(data).__name__}")
 
-    # - process instruments
+    # - process instruments:
+    #    check if instruments are from the same exchange (mmulti-exchanges is not supported yet)
     _instrs: List[Instrument] = []
     _exchanges = [] if exchange is None else [exchange.lower()]
     for i in instruments:
@@ -660,6 +701,21 @@ def simulate(
     return _run_setups(setups, start, stop, data_reader, subscription, trigger, n_jobs=n_jobs)
 
 
+class _GeneratedSignalsStrategy(IStrategy):
+
+    def on_fit(
+        self, ctx: StrategyContext, fit_time: str | pd.Timestamp, previous_fit_time: str | pd.Timestamp | None = None
+    ):
+        return None
+
+    def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
+        if event.data and event.type == "event":
+            signal = event.data.get("order")
+            if signal:
+                ctx.trade(event.instrument, signal)
+        return None
+
+
 def _run_setups(
     setups: List[SimulationSetup],
     start: str | pd.Timestamp,
@@ -670,9 +726,6 @@ def _run_setups(
     n_jobs: int = -1,
 ) -> Dict[str, Any]:
     reports = {}
-
-    class EmptyStrategy(IStrategy):
-        pass
 
     # - TODO: we need to run this in multiprocessing environment if n_jobs > 1
     for s in tqdm(setups, total=len(setups)):
@@ -695,13 +748,17 @@ def _run_setups(
                 strat.tracker = lambda ctx: s.tracker
 
             case _Types.SIGNAL:
-                strat = EmptyStrategy()
+                strat = _GeneratedSignalsStrategy()
                 exchange.set_generated_signals(s.generator)
+                # - we don't need any unexpected triggerings
+                trigger = "bar: 0s"
 
             case _Types.SIGNAL_AND_TRACKER:
-                strat = EmptyStrategy()
+                strat = _GeneratedSignalsStrategy()
                 strat.tracker = lambda ctx: s.tracker
                 exchange.set_generated_signals(s.generator)
+                # - we don't need any unexpected triggerings
+                trigger = "bar: 0s"
 
             case _:
                 raise ValueError(f"Unsupported setup type: {s.setup_type} !")
