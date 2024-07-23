@@ -1,14 +1,11 @@
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
-import math
 from dataclasses import dataclass, field
 
-import asyncio
 
-# from multiprocessing import Queue, Process, Event, Lock
-from threading import Thread, Event, Lock
+from threading import Thread, Event, Lock, Condition
 from queue import Queue
 
 from qubx.core.series import Quote, Trade, time_as_nsec
@@ -359,22 +356,62 @@ class CtrlChannel:
     """
 
     control: Event
-    queue: Queue  # we need something like disruptor here (Queue is temporary)
+    _queue: Queue  # we need something like disruptor here (Queue is temporary)
     name: str
     lock: Lock
 
     def __init__(self, name: str, sentinel=(None, None, None)):
         self.name = name
         self.control = Event()
-        self.queue = Queue()
         self.lock = Lock()
-        self.sent = sentinel
+        self._sent = sentinel
+        self._queue = Queue()
         self.start()
+
+    def register(self, callback):
+        pass
 
     def stop(self):
         if self.control.is_set():
             self.control.clear()
-            self.queue.put(self.sent)  # send sentinel
+            self._queue.put(self._sent)  # send sentinel
 
     def start(self):
         self.control.set()
+
+    def send(self, data):
+        if self.control.is_set():
+            self._queue.put(data)
+
+    def receive(self) -> Any:
+        return self._queue.get()
+
+
+class SimulatedCtrlChannel(CtrlChannel):
+    """
+    Simulated communication channel. Here we don't use queue but it invokes callback directly
+    """
+
+    _callback: Callable[[Tuple], bool]
+
+    def register(self, callback):
+        self._callback = callback
+
+    def send(self, data):
+        # - when data is sent, invoke callback
+        return self._callback.process_data(*data)
+
+    def receive(self) -> Any:
+        raise ValueError("This method should not be called in a simulated environment.")
+
+
+class ITimeProvider:
+    """
+    Generic interface for providing current time
+    """
+
+    def time(self) -> dt_64:
+        """
+        Returns current time
+        """
+        raise NotImplementedError("Subclasses must implement this method")

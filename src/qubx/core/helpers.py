@@ -295,7 +295,9 @@ class BasicScheduler:
         next_time = iter.get_next(start_time=start_time)
         if next_time:
             self._scdlr.enterabs(next_time, 1, self._trigger, (event, prev_time, next_time))
-            logger.debug(f"Next ({event}) event scheduled at <red>{_SEC2TS(next_time)}</red>")
+            logger.debug(
+                f"Now is <red>{_SEC2TS(self.time_sec())}</red> next ({event}) at <cyan>{_SEC2TS(next_time)}</cyan>"
+            )
             return True
         logger.debug(f"({event}) task is not scheduled")
         return False
@@ -304,8 +306,7 @@ class BasicScheduler:
         now = self.time_sec()
 
         # - send notification to channel
-        if self._chan.control.is_set():
-            self._chan.queue.put((None, event, (prev_time_sec, trig_time)))
+        self._chan.send((None, event, (prev_time_sec, trig_time)))
 
         # - try to arm this event again
         self._arm_schedule(event, now)

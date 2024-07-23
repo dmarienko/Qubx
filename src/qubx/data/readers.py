@@ -1,5 +1,5 @@
 import re, os
-from typing import Callable, List, Union, Optional, Iterable, Any
+from typing import Callable, Dict, List, Union, Optional, Iterable, Any
 from os.path import exists, join
 import numpy as np
 import pandas as pd
@@ -15,6 +15,7 @@ from psycopg.types.datetime import TimestampLoader
 
 _DT = lambda x: pd.Timedelta(x).to_numpy().item()
 D1, H1 = _DT("1D"), _DT("1h")
+MS1 = 1_000_000
 
 DEFAULT_DAILY_SESSION = (_DT("00:00:00.100"), _DT("23:59:59.900"))
 STOCK_DAILY_SESSION = (_DT("9:30:00.100"), _DT("15:59:59.900"))
@@ -83,7 +84,7 @@ class DataTransformer:
 
 class DataReader:
 
-    def get_names(self) -> List[str]:
+    def get_names(self, **kwargs) -> List[str]:
         raise NotImplemented()
 
     def read(
@@ -120,7 +121,7 @@ class CsvStorageDataReader(DataReader):
         return ix
 
     def __check_file_name(self, name: str) -> str | None:
-        _f = join(self.path, name)
+        _f = join(self.path, name.replace(":", os.sep))
         for sfx in [".csv", ".csv.gz", ""]:
             if exists(p := (_f + sfx)):
                 return p
@@ -134,6 +135,7 @@ class CsvStorageDataReader(DataReader):
         transform: DataTransformer = DataTransformer(),
         chunksize=0,
         timestamp_formatters=None,
+        timeframe=None,
     ) -> Iterable | Any:
 
         f_path = self.__check_file_name(data_id)
@@ -166,9 +168,7 @@ class CsvStorageDataReader(DataReader):
                 _time_data = _time_cast_function(_time_data)
 
             # - preprocessing start and stop
-            t_0, t_1 = handle_start_stop(
-                start, stop, convert=lambda x: _recognize_t(x, None, _time_unit)
-            )
+            t_0, t_1 = handle_start_stop(start, stop, convert=lambda x: _recognize_t(x, None, _time_unit))
 
             # - check requested range
             if t_0:
@@ -194,14 +194,8 @@ class CsvStorageDataReader(DataReader):
 
             def _iter_chunks():
                 for n in range(0, length // chunksize + 1):
-                    transform.start_transform(
-                        data_id, fieldnames, start=start, stop=stop
-                    )
-                    raw_data = (
-                        selected_table[n * chunksize : min((n + 1) * chunksize, length)]
-                        .to_pandas()
-                        .to_numpy()
-                    )
+                    transform.start_transform(data_id, fieldnames, start=start, stop=stop)
+                    raw_data = selected_table[n * chunksize : min((n + 1) * chunksize, length)].to_pandas().to_numpy()
                     transform.process_data(raw_data)
                     yield transform.collect()
 
@@ -212,12 +206,80 @@ class CsvStorageDataReader(DataReader):
         transform.process_data(raw_data)
         return transform.collect()
 
-    def get_names(self) -> List[str]:
+    def get_names(self, **kwargs) -> List[str]:
         _n = []
-        for s in os.listdir(self.path):
-            if m := re.match(r"(.*)\.csv(.gz)?$", s):
-                _n.append(m.group(1))
+        for root, _, files in os.walk(self.path):
+            path = root.split(os.sep)
+            for file in files:
+                if m := re.match(r"(.*)\.csv(.gz)?$", file):
+                    f = path[-1]
+                    n = file.split(".")[0]
+                    if f == self.path:
+                        name = n
+                    else:
+                        name = f"{f}:{ n }"
+                    _n.append(name)
         return _n
+
+
+class InMemoryDataFrameReader(DataReader):
+    """
+    Data reader for pandas DataFrames
+    """
+
+    def __init__(self, data: Dict[str, pd.DataFrame]) -> None:
+        if not isinstance(data, dict):
+            raise ValueError("data must be a dictionary of pandas DataFrames")
+        self._data = data
+
+    def get_names(self, **kwargs) -> List[str]:
+        return list(self._data.keys())
+
+    def read(
+        self,
+        data_id: str,
+        start: str | None = None,
+        stop: str | None = None,
+        transform: DataTransformer = DataTransformer(),
+        chunksize=0,
+        **kwargs,
+    ) -> Iterable | List:
+        """
+        Read and transform data for a given data_id within a specified time range.
+
+        Parameters:
+        -----------
+        data_id : str
+            The identifier for the data to be read.
+        start : str | None, optional
+            The start time for the data range (inclusive). If None, start from the earliest available data.
+        stop : str | None, optional
+            The stop time for the data range (inclusive). If None, include data up to the latest available.
+        transform : DataTransformer, optional
+            An instance of DataTransformer to process the retrieved data. Defaults to DataTransformer().
+        chunksize : int, optional
+            The size of data chunks to process at a time. If 0, process all data at once. Defaults to 0.
+        **kwargs : dict
+            Additional keyword arguments for future extensions.
+
+        Returns:
+        --------
+        Iterable | List
+            The processed and transformed data, either as an iterable (if chunksize > 0) or as a list.
+
+        Raises:
+        -------
+        ValueError
+            If no data is found for the given data_id.
+        """
+        start, stop = handle_start_stop(start, stop)
+        d = self._data.get(data_id)
+        if d is None:
+            raise ValueError(f"No data found for {data_id}")
+        d2 = d.loc[start:stop].copy().reset_index()
+        transform.start_transform(data_id, list(d2.columns), start=start, stop=stop)
+        transform.process_data(d2.values)
+        return transform.collect()
 
 
 class AsPandasFrame(DataTransformer):
@@ -237,11 +299,7 @@ class AsPandasFrame(DataTransformer):
         self._frame
         p = pd.DataFrame.from_records(rows_data, columns=self._column_names)
         p.set_index(self._column_names[self._time_idx], drop=True, inplace=True)
-        p.index = (
-            pd.to_datetime(p.index, unit=self.timestamp_units)
-            if self.timestamp_units
-            else p.index
-        )
+        p.index = pd.to_datetime(p.index, unit=self.timestamp_units) if self.timestamp_units else p.index
         p.index.rename("timestamp", inplace=True)
         p.sort_index(inplace=True)
         self._frame = pd.concat((self._frame, p), axis=0, sort=True)
@@ -282,9 +340,7 @@ class AsOhlcvSeries(DataTransformer):
             self._low_idx = _find_column_index_in_list(column_names, "low")
 
             try:
-                self._volume_idx = _find_column_index_in_list(
-                    column_names, "quote_volume", "volume", "vol"
-                )
+                self._volume_idx = _find_column_index_in_list(column_names, "quote_volume", "volume", "vol")
             except:
                 pass
 
@@ -326,9 +382,7 @@ class AsOhlcvSeries(DataTransformer):
 
                     self._data_type = "trades"
                 except:
-                    raise ValueError(
-                        f"Can't recognize data for update from header: {column_names}"
-                    )
+                    raise ValueError(f"Can't recognize data for update from header: {column_names}")
 
         self._column_names = column_names
         self._name = name
@@ -359,9 +413,7 @@ class AsOhlcvSeries(DataTransformer):
             a = d[self._taker_idx] if self._taker_idx else 0
             s = d[self._size_idx]
             b = s if a else 0
-            self._series.update(
-                _time(d[self._time_idx], self.timestamp_units), d[self._price_idx], s, b
-            )
+            self._series.update(_time(d[self._time_idx], self.timestamp_units), d[self._price_idx], s, b)
 
     def process_data(self, rows_data: List[List]) -> Any:
         if self._series is None:
@@ -396,12 +448,8 @@ class AsQuotes(DataTransformer):
         self._time_idx = _FIND_TIME_COL_IDX(column_names)
         self._bid_idx = _find_column_index_in_list(column_names, "bid")
         self._ask_idx = _find_column_index_in_list(column_names, "ask")
-        self._bidvol_idx = _find_column_index_in_list(
-            column_names, "bidvol", "bid_vol", "bidsize", "bid_size"
-        )
-        self._askvol_idx = _find_column_index_in_list(
-            column_names, "askvol", "ask_vol", "asksize", "ask_size"
-        )
+        self._bidvol_idx = _find_column_index_in_list(column_names, "bidvol", "bid_vol", "bidsize", "bid_size")
+        self._askvol_idx = _find_column_index_in_list(column_names, "askvol", "ask_vol", "asksize", "ask_size")
 
     def process_data(self, rows_data: Iterable) -> Any:
         if rows_data is not None:
@@ -470,6 +518,7 @@ class RestoreTicksFromOHLC(DataTransformer):
         default_bid_size=1e9,  # default bid/ask is big
         default_ask_size=1e9,  # default bid/ask is big
         daily_session_start_end=DEFAULT_DAILY_SESSION,
+        timestamp_units="ns",
         spread=0.0,
     ):
         super().__init__()
@@ -479,6 +528,7 @@ class RestoreTicksFromOHLC(DataTransformer):
         self._s2 = spread / 2.0
         self._d_session_start = daily_session_start_end[0]
         self._d_session_end = daily_session_start_end[1]
+        self._timestamp_units = timestamp_units
 
     def start_transform(self, name: str, column_names: List[str], **kwargs):
         self.buffer = []
@@ -496,9 +546,7 @@ class RestoreTicksFromOHLC(DataTransformer):
             pass
 
         if self._volume_idx is None and self._trades:
-            logger.warning(
-                "Input OHLC data doesn't contain volume information so trades can't be emulated !"
-            )
+            logger.warning("Input OHLC data doesn't contain volume information so trades can't be emulated !")
             self._trades = False
 
     def process_data(self, rows_data: List[List]) -> Any:
@@ -514,10 +562,10 @@ class RestoreTicksFromOHLC(DataTransformer):
             # - timestamps when we emit simulated quotes
             dt = self._freq.astype("timedelta64[ns]").item()
             if dt < D1:
-                self._t_start = dt // 10
+                self._t_start = MS1  # dt // 10
                 self._t_mid1 = dt // 2 - dt // 10
                 self._t_mid2 = dt // 2 + dt // 10
-                self._t_end = dt - dt // 10
+                self._t_end = dt - MS1  # dt - dt // 10
             else:
                 self._t_start = self._d_session_start
                 self._t_mid1 = dt // 2 - H1
@@ -526,7 +574,8 @@ class RestoreTicksFromOHLC(DataTransformer):
 
         # - input data
         for data in rows_data:
-            ti = pd.Timestamp(data[self._time_idx]).as_unit("ns").asm8.item()
+            # ti = pd.Timestamp(data[self._time_idx]).as_unit("ns").asm8.item()
+            ti = _time(data[self._time_idx], self._timestamp_units)
             o = data[self._open_idx]
             h = data[self._high_idx]
             l = data[self._low_idx]
@@ -534,17 +583,11 @@ class RestoreTicksFromOHLC(DataTransformer):
             rv = data[self._volume_idx] if self._volume_idx else 0
 
             # - opening quote
-            self.buffer.append(
-                Quote(
-                    ti + self._t_start, o - s2, o + s2, self._bid_size, self._ask_size
-                )
-            )
+            self.buffer.append(Quote(ti + self._t_start, o - s2, o + s2, self._bid_size, self._ask_size))
 
             if c >= o:
                 if self._trades:
-                    self.buffer.append(
-                        Trade(ti + self._t_start, o - s2, rv * (o - l))
-                    )  # sell 1
+                    self.buffer.append(Trade(ti + self._t_start, o - s2, rv * (o - l)))  # sell 1
                 self.buffer.append(
                     Quote(
                         ti + self._t_mid1,
@@ -556,9 +599,7 @@ class RestoreTicksFromOHLC(DataTransformer):
                 )
 
                 if self._trades:
-                    self.buffer.append(
-                        Trade(ti + self._t_mid1, l + s2, rv * (c - o))
-                    )  # buy 1
+                    self.buffer.append(Trade(ti + self._t_mid1, l + s2, rv * (c - o)))  # buy 1
                 self.buffer.append(
                     Quote(
                         ti + self._t_mid2,
@@ -570,14 +611,10 @@ class RestoreTicksFromOHLC(DataTransformer):
                 )
 
                 if self._trades:
-                    self.buffer.append(
-                        Trade(ti + self._t_mid2, h - s2, rv * (h - c))
-                    )  # sell 2
+                    self.buffer.append(Trade(ti + self._t_mid2, h - s2, rv * (h - c)))  # sell 2
             else:
                 if self._trades:
-                    self.buffer.append(
-                        Trade(ti + self._t_start, o + s2, rv * (h - o))
-                    )  # buy 1
+                    self.buffer.append(Trade(ti + self._t_start, o + s2, rv * (h - o)))  # buy 1
                 self.buffer.append(
                     Quote(
                         ti + self._t_mid1,
@@ -589,9 +626,7 @@ class RestoreTicksFromOHLC(DataTransformer):
                 )
 
                 if self._trades:
-                    self.buffer.append(
-                        Trade(ti + self._t_mid1, h - s2, rv * (o - c))
-                    )  # sell 1
+                    self.buffer.append(Trade(ti + self._t_mid1, h - s2, rv * (o - c)))  # sell 1
                 self.buffer.append(
                     Quote(
                         ti + self._t_mid2,
@@ -603,14 +638,10 @@ class RestoreTicksFromOHLC(DataTransformer):
                 )
 
                 if self._trades:
-                    self.buffer.append(
-                        Trade(ti + self._t_mid2, l + s2, rv * (c - l))
-                    )  # buy 2
+                    self.buffer.append(Trade(ti + self._t_mid2, l + s2, rv * (c - l)))  # buy 2
 
             # - closing quote
-            self.buffer.append(
-                Quote(ti + self._t_end, c - s2, c + s2, self._bid_size, self._ask_size)
-            )
+            self.buffer.append(Quote(ti + self._t_end, c - s2, c + s2, self._bid_size, self._ask_size))
 
 
 def _retry(fn):
@@ -709,9 +740,7 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
 
         # - check resample format
         resample = (
-            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(
-                resample
-            )
+            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(resample)
             if resample
             else "1m"  # if resample is empty let's use 1 minute timeframe
         )
@@ -864,9 +893,7 @@ class QuestDBSqlOrderBookBuilder(QuestDBSqlCandlesBuilder):
         start_dt, end_dt = pd.Timestamp(start), pd.Timestamp(end)
         delta = end_dt - start_dt
         if delta > self.MAX_TIME_DELTA:
-            raise ValueError(
-                f"Time range is too big for orderbook data: {delta}, max allowed: {self.MAX_TIME_DELTA}"
-            )
+            raise ValueError(f"Time range is too big for orderbook data: {delta}, max allowed: {self.MAX_TIME_DELTA}")
 
         raw_start_dt = start_dt.floor(self.SNAPSHOT_DELTA) - self.MIN_DELTA
 
@@ -898,11 +925,7 @@ class TradeSql(QuestDBSqlCandlesBuilder):
             where = f"where {w0} and {w1}" if (w0 and w1) else f"where {(w0 or w1)}"
 
         resample = (
-            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(
-                resample
-            )
-            if resample
-            else resample
+            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(resample) if resample else resample
         )
         if resample:
             sql = f"""
@@ -1002,6 +1025,4 @@ class MultiQdbConnector(QuestDBConnector):
         )
 
     def get_names(self, data_type: str) -> List[str]:
-        return self._get_names(
-            self._TYPE_TO_BUILDER[self._TYPE_MAPPINGS.get(data_type, data_type)]
-        )
+        return self._get_names(self._TYPE_TO_BUILDER[self._TYPE_MAPPINGS.get(data_type, data_type)])

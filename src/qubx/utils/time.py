@@ -5,10 +5,10 @@ import re
 
 import pandas as pd
 
-UNIX_T0 = np.datetime64('1970-01-01T00:00:00')
+UNIX_T0 = np.datetime64("1970-01-01T00:00:00")
 
 
-time_to_str = lambda t, u='us': np.datetime_as_string(t if isinstance(t, np.datetime64) else np.datetime64(t, u), unit=u) # type: ignore
+time_to_str = lambda t, u="us": np.datetime_as_string(t if isinstance(t, np.datetime64) else np.datetime64(t, u), unit=u)  # type: ignore
 
 
 def convert_tf_str_td64(c_tf: str) -> np.timedelta64:
@@ -17,7 +17,7 @@ def convert_tf_str_td64(c_tf: str) -> np.timedelta64:
 
     '15Min' -> timedelta64(15, 'm') etc
     """
-    _t = re.findall('(\d+)([A-Za-z]+)', c_tf)
+    _t = re.findall("(\d+)([A-Za-z]+)", c_tf)
     _dt = 0
     for g in _t:
         unit = g[1].lower()
@@ -26,18 +26,18 @@ def convert_tf_str_td64(c_tf: str) -> np.timedelta64:
         u2 = unit[:2]
         unit = u1
 
-        if u1 in ['d', 'w']:
+        if u1 in ["d", "w"]:
             unit = u1.upper()
 
-        if u1 in ['y']:
+        if u1 in ["y"]:
             n = 356 * n
-            unit = 'D'
+            unit = "D"
 
-        if u2 in ['ms', 'ns', 'us', 'ps']:
+        if u2 in ["ms", "ns", "us", "ps"]:
             unit = u2
 
         _dt += np.timedelta64(n, unit)
-    
+
     return _dt
 
 
@@ -45,31 +45,31 @@ def convert_seconds_to_str(seconds: int, convert_months=False) -> str:
     """
     Convert seconds to string representation: 310 -> '5Min10S' etc
     """
-    r = ''
+    r = ""
 
     if convert_months:
-        months, seconds = divmod(seconds, 4*7*86400)
+        months, seconds = divmod(seconds, 4 * 7 * 86400)
         if months > 0:
-            r += '%dmonth' % months
+            r += "%dmonth" % months
 
-    weeks, seconds = divmod(seconds, 7*86400)
+    weeks, seconds = divmod(seconds, 7 * 86400)
     if weeks > 0:
-        r += '%dw' % weeks
+        r += "%dw" % weeks
 
     days, seconds = divmod(seconds, 86400)
     if days > 0:
-        r += '%dd' % days
+        r += "%dd" % days
 
     hours, seconds = divmod(seconds, 3600)
     if hours > 0:
-        r += '%dh' % hours
+        r += "%dh" % hours
 
     minutes, seconds = divmod(seconds, 60)
     if minutes > 0:
-        r += '%dMin' % minutes
+        r += "%dMin" % minutes
 
     if seconds > 0:
-        r += '%dS' % seconds
+        r += "%dS" % seconds
     return r
 
 
@@ -78,7 +78,7 @@ def floor_t64(time: Union[np.datetime64, datetime], dt: Union[np.timedelta64, in
     Floor timestamp by dt
     """
     if isinstance(dt, int):
-        dt = np.timedelta64(dt, 's')
+        dt = np.timedelta64(dt, "s")
 
     if isinstance(dt, str):
         dt = convert_tf_str_td64(dt)
@@ -108,14 +108,25 @@ def infer_series_frequency(series: Union[List, pd.DataFrame, pd.Series, pd.Datet
     if times_index.shape[0] < 2:
         raise ValueError("Series must have at least 2 points to determ frequency")
 
-    values = np.array(sorted([(x if isinstance(x, np.timedelta64) else int(1e9 * x.total_seconds())) for x in np.abs(np.diff(times_index))]))
+    values = np.array(
+        sorted(
+            [
+                (
+                    x
+                    if isinstance(x, (np.timedelta64, int))
+                    else int(x) if isinstance(x, float) else int(1e9 * x.total_seconds())
+                )
+                for x in np.abs(np.diff(times_index))
+            ]
+        )
+    )
     diff = np.concatenate(([1], np.diff(values)))
     idx = np.concatenate((np.where(diff)[0], [len(values)]))
     freqs = dict(zip(values[idx[:-1]], np.diff(idx)))
     return np.timedelta64(max(freqs, key=freqs.get))
 
 
-def handle_start_stop(s: Optional[str], e: Optional[str], convert=str) -> Tuple[str|None, str|None]:
+def handle_start_stop(s: Optional[str], e: Optional[str], convert=str) -> Tuple[str | None, str | None]:
     """
     Process start/stop times
 
@@ -125,31 +136,38 @@ def handle_start_stop(s: Optional[str], e: Optional[str], convert=str) -> Tuple[
         handle_start_stop('1w', '2020-01-01')         # 2020-01-01 - 1week, '2020-01-01'
         handle_start_stop('2020-01-01', '-1w')        # 2020-01-01 - 1week, 2020-01-01,
         handle_start_stop(None, '2020-01-01')         # None, '2020-01-01'
-        handle_start_stop('2020-01-01', None)         # '2020-01-01', None 
-        handle_start_stop(None, None)                 # None, None 
+        handle_start_stop('2020-01-01', None)         # '2020-01-01', None
+        handle_start_stop(None, None)                 # None, None
 
     """
+
     def _h_time_like(x):
-        try: 
+        try:
             return pd.Timestamp(x), False
         except:
-            try: return pd.Timedelta(x), True
-            except: pass
+            try:
+                return pd.Timedelta(x), True
+            except:
+                pass
         return None, None
 
     t0, d0 = _h_time_like(s) if s else (None, False)
     t1, d1 = _h_time_like(e) if e else (None, False)
     converts = lambda xs: [convert(xs[0]) if xs[0] else None, convert(xs[1]) if xs[1] else None]
 
-    if not t1 and not t0: return None, None
-    
-    if d0 and d1: raise ValueError("Start and stop can't both be deltas !")
+    if not t1 and not t0:
+        return None, None
+
+    if d0 and d1:
+        raise ValueError("Start and stop can't both be deltas !")
 
     if d0:
-        if not t1: raise ValueError("First argument is delta but stop time is not defined !")
+        if not t1:
+            raise ValueError("First argument is delta but stop time is not defined !")
         return converts(sorted([t1 - abs(t0), t1]))
     if d1:
-        if not t0: raise ValueError("Second argument is delta but start time is not defined !")
+        if not t0:
+            raise ValueError("Second argument is delta but start time is not defined !")
         return converts(sorted([t0, t0 + t1]))
 
     if t0 and t1:
