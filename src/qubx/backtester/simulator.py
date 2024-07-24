@@ -18,6 +18,7 @@ from qubx.core.basics import (
     Signal,
     SimulatedCtrlChannel,
     Position,
+    TradingSessionResult,
     TransactionCostsCalculator,
     dt_64,
 )
@@ -41,6 +42,8 @@ from qubx.data.readers import (
     InMemoryDataFrameReader,
 )
 from qubx.pandaz.utils import scols
+
+StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
 
 
 class _Types(Enum):
@@ -83,9 +86,6 @@ def _is_signal(obj):
 
 def _is_signal_or_strategy(obj):
     return _is_signal(obj) or _is_strategy(obj)
-
-
-StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
 
 
 @dataclass
@@ -626,7 +626,7 @@ def simulate(
     base_currency: str = "USDT",
     leverage: float = 1.0,  # TODO: we need to add support for leverage
     n_jobs: int = -1,  # TODO: if need to run simulation in parallel
-):
+) -> TradingSessionResult | List[TradingSessionResult]:
     # - recognize provided data
     if isinstance(data, dict):
         data_reader = InMemoryDataFrameReader(data)
@@ -724,8 +724,8 @@ def _run_setups(
     subscription: Dict[str, Any],
     trigger: str,
     n_jobs: int = -1,
-) -> Dict[str, Any]:
-    reports = {}
+) -> List[TradingSessionResult]:
+    reports = []
 
     # - TODO: we need to run this in multiprocessing environment if n_jobs > 1
     for s in tqdm(setups, total=len(setups)):
@@ -764,7 +764,6 @@ def _run_setups(
                 raise ValueError(f"Unsupported setup type: {s.setup_type} !")
 
         ctx = StrategyContext(
-            # TestStrategy(timeframe='1h', fast_period=4, slow_period=12), None, #dict(timeframe='1h', fast_period=3, slow_period=24),
             strat,
             None,  # TODO: need to think how we could pass altered parameters here (from variating etc)
             exchange,
@@ -776,6 +775,22 @@ def _run_setups(
         ctx.start()
 
         _r = exchange.run(start, stop)
-        reports[s.name] = logs_writer
+        reports.append(
+            TradingSessionResult(
+                s.name,
+                start,
+                stop,
+                s.exchange,
+                s.instruments,
+                s.capital,
+                s.leverage,
+                s.base_currency,
+                s.commissions,
+                logs_writer.get_portfolio(as_plain_dataframe=True),
+                logs_writer.get_executions(),
+                logs_writer.get_signals(),
+                True,
+            )
+        )
 
     return reports

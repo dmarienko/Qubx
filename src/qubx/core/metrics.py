@@ -12,6 +12,12 @@ from scipy import stats
 from scipy.stats import norm
 from statsmodels.regression.linear_model import OLS
 
+import plotly.graph_objects as go
+
+from qubx.core.basics import TradingSessionResult
+from qubx.utils.charting.lookinglass import LookingGlass
+from qubx.utils.time import infer_series_frequency
+
 
 YEARLY = 1
 MONTHLY = 12
@@ -181,7 +187,7 @@ def calmar_ratio(returns, periods=DAILY):
     return temp
 
 
-def sharpe_ratio(returns, risk_free=0.0, periods=DAILY):
+def sharpe_ratio(returns, risk_free=0.0, periods=DAILY) -> float:
     """
     Calculates the Sharpe ratio.
 
@@ -203,7 +209,7 @@ def sharpe_ratio(returns, risk_free=0.0, periods=DAILY):
     return np.mean(returns_risk_adj) / np.std(returns_risk_adj, ddof=1) * np.sqrt(periods)
 
 
-def rolling_sharpe_ratio(returns, risk_free=0.0, periods=DAILY):
+def rolling_sharpe_ratio(returns, risk_free=0.0, periods=DAILY) -> pd.Series:
     """
     Rolling Sharpe ratio.
     :param returns: pd.Series periodic returns of the strategy, noncumulative
@@ -214,10 +220,10 @@ def rolling_sharpe_ratio(returns, risk_free=0.0, periods=DAILY):
     returns_risk_adj = returns - risk_free
     returns_risk_adj = returns_risk_adj[~np.isnan(returns_risk_adj)]
     rolling = returns_risk_adj.rolling(window=periods)
-    return np.sqrt(periods) * (rolling.mean() / rolling.std())
+    return pd.Series(np.sqrt(periods) * (rolling.mean() / rolling.std()), name="RollingSharpe")
 
 
-def sortino_ratio(returns: pd.Series, required_return=0, periods=DAILY, _downside_risk=None):
+def sortino_ratio(returns: pd.Series, required_return=0, periods=DAILY, _downside_risk=None) -> float:
     """
     Calculates the Sortino ratio of a strategy.
 
@@ -238,7 +244,7 @@ def sortino_ratio(returns: pd.Series, required_return=0, periods=DAILY, _downsid
     return periods * mu / dsr
 
 
-def information_ratio(returns, factor_returns):
+def information_ratio(returns, factor_returns) -> float:
     """
     Calculates the Information ratio of a strategy (see https://en.wikipedia.org/wiki/information_ratio)
     :param returns: pd.Series or np.ndarray periodic returns of the strategy, noncumulative
@@ -613,3 +619,197 @@ def pick_symbols(df: pd.DataFrame, *args, quoted="USDT"):
     # - pick up from PnL log report
     s = "|".join([f"{a}{quoted}" if not a.endswith(quoted) else a for a in args])
     return df.filter(filter(lambda si: re.match(f"^{s}_.*", si), df.columns))
+
+
+def portfolio_metrics(
+    portfolio_log: pd.DataFrame,
+    executions_log: pd.DataFrame,
+    init_cash: float,
+    start: str | pd.Timestamp | None = None,
+    end: str | pd.Timestamp | None = None,
+    risk_free: float = 0.0,
+    rolling_sharpe_window=12,
+    account_transactions=True,
+    performance_statistics_period=DAILY_365,
+    **kwargs,
+) -> dict:
+    if len(portfolio_log) == 0:
+        raise ValueError("Can't calculate statistcis on empty portfolio")
+
+    sheet = dict()
+
+    pft_total = calculate_total_pnl(portfolio_log, split_cumulative=False)
+    pft_total["Total_PnL"] = pft_total["Total_PnL"].cumsum()
+    pft_total["Total_Commissions"] = pft_total["Total_Commissions"].cumsum()
+
+    # if it's asked to account transactions into equ
+    if account_transactions:
+        pft_total["Total_PnL"] -= pft_total["Total_Commissions"]
+
+    # calculate returns
+    returns = portfolio_returns(pft_total, init_cash=init_cash, method="pct")
+    returns_on_init_bp = portfolio_returns(pft_total, init_cash=init_cash, method="fixed")
+
+    if start:
+        returns = returns[start:]
+        returns_on_init_bp = returns_on_init_bp[start:]
+
+    if end:
+        returns = returns[:end]
+        returns_on_init_bp = returns_on_init_bp[:end]
+
+    # aggregate them to daily (if we have intraday portfolio)
+    if infer_series_frequency(returns) < pd.Timedelta("1D").to_timedelta64():
+        returns_daily = aggregate_returns(returns, "daily")
+        returns_on_init_bp = aggregate_returns(returns_on_init_bp, "daily")
+
+    # todo: add transaction_cost calculations
+    equity = init_cash + pft_total["Total_PnL"]
+    mdd, ddstart, ddpeak, ddrecover, dd_data = absmaxdd(equity)
+    sheet["equity"] = equity
+    sheet["gain"] = sheet["equity"].iloc[-1] - sheet["equity"].iloc[0]
+    sheet["cagr"] = cagr(returns_daily, performance_statistics_period)
+    sheet["sharpe"] = sharpe_ratio(returns_daily, risk_free, performance_statistics_period)
+    sheet["qr"] = qr(equity)
+    sheet["drawdown_usd"] = dd_data
+    sheet["drawdown_pct"] = 100 * dd_data / init_cash
+    # 25-May-2019: MDE fixed Max DD pct calculations
+    sheet["max_dd_pct"] = 100 * mdd / equity.iloc[ddstart]  # max_drawdown_pct(returns)
+    # sheet["max_dd_pct_on_init"] = 100 * mdd / init_cash
+    sheet["mdd_usd"] = mdd
+    sheet["mdd_start"] = equity.index[ddstart]
+    sheet["mdd_peak"] = equity.index[ddpeak]
+    sheet["mdd_recover"] = equity.index[ddrecover]
+    sheet["returns"] = returns
+    sheet["returns_daily"] = returns_daily
+    sheet["compound_returns"] = (returns + 1).cumprod(axis=0) - 1
+    sheet["rolling_sharpe"] = rolling_sharpe_ratio(returns_daily, risk_free, periods=rolling_sharpe_window)
+    sheet["sortino"] = sortino_ratio(
+        returns_daily, risk_free, performance_statistics_period, _downside_risk=kwargs.pop("downside_risk", None)
+    )
+    sheet["calmar"] = calmar_ratio(returns_daily, performance_statistics_period)
+    # sheet["ann_vol"] = annual_volatility(returns_daily)
+    sheet["tail_ratio"] = tail_ratio(returns_daily)
+    sheet["stability"] = stability_of_returns(returns_daily)
+    sheet["monthly_returns"] = aggregate_returns(returns_daily, convert_to="mon")
+    r_m = np.mean(returns_daily)
+    r_s = np.std(returns_daily)
+    sheet["var"] = var_cov_var(init_cash, r_m, r_s)
+    sheet["avg_return"] = 100 * r_m
+
+    # portfolio market values
+    mkt_value = pft_total.filter(regex=".*_Value")
+    sheet["long_value"] = mkt_value[mkt_value > 0].sum(axis=1).fillna(0)
+    sheet["short_value"] = mkt_value[mkt_value < 0].sum(axis=1).fillna(0)
+
+    # total commissions
+    sheet["fees"] = pft_total["Total_Commissions"].iloc[-1]
+
+    # executions metrics
+    sheet["execs"] = len(executions_log)
+
+    return sheet
+
+
+def tearsheet(
+    session: TradingSessionResult | List[TradingSessionResult],
+    compound: bool = True,
+    account_transactions=True,
+    performance_statistics_period=365,
+):
+    if isinstance(session, list):
+        if len(session) == 1:
+            return _tearsheet_single(session[0], compound, account_transactions, performance_statistics_period)
+        else:
+            # multiple sessions - just show table
+            _rs = []
+            _eq = []
+            for s in session:
+                report, mtrx = _pfl_metrics_prepare(s, account_transactions, performance_statistics_period)
+                _rs.append(report)
+                if compound:
+                    _eq.append(pd.Series(100 * mtrx["compound_returns"], name=s.trading_id))
+                else:
+                    _eq.append(pd.Series(mtrx["equity"], name=s.trading_id))
+
+            pd.concat(_eq, axis=1).plot()
+            return pd.concat(_rs, axis=1).T
+
+    else:
+        return _tearsheet_single(session, compound, account_transactions, performance_statistics_period)
+
+
+def _pfl_metrics_prepare(session: TradingSessionResult, account_transactions: bool, performance_statistics_period: int):
+    mtrx = portfolio_metrics(
+        session.portfolio_log,
+        session.executions_log,
+        session.capital,
+        performance_statistics_period=performance_statistics_period,
+        account_transactions=account_transactions,
+    )
+    rpt = {}
+    for k, v in mtrx.items():
+        if isinstance(v, (float, int, str)):
+            n = (k[0].upper() + k[1:]).replace("_", " ")
+            rpt[n] = v
+    return pd.Series(rpt, name=session.trading_id), mtrx
+
+
+def _tearsheet_single(
+    session: TradingSessionResult,
+    compound: bool = True,
+    account_transactions=True,
+    performance_statistics_period=365,
+):
+    report, mtrx = _pfl_metrics_prepare(session, account_transactions, performance_statistics_period)
+    tbl = go.Table(
+        columnwidth=[130, 130, 130, 130, 200],
+        header=dict(
+            values=report.index,
+            line_color="darkslategray",
+            fill_color="#303030",
+            font=dict(color="white", size=11),
+        ),
+        cells=dict(
+            values=round(report, 3).values.tolist(),
+            line_color="darkslategray",
+            fill_color="#101010",
+            align=["center", "left"],
+            font=dict(size=10),
+        ),
+    )
+
+    _eqty = (
+        ["area", "green", 100 * mtrx["compound_returns"]]
+        if compound
+        else ["area", "green", mtrx["equity"] - mtrx["equity"].iloc[0]]
+    )
+    _dd = (
+        [
+            "area",
+            -mtrx["drawdown_pct"],
+            "lim",
+            [-mtrx["max_dd_pct"], 0],
+        ]
+        if compound
+        else [
+            "area",
+            -mtrx["drawdown_usd"],
+            "lim",
+            [-mtrx["mdd_usd"], 0],
+        ]
+    )
+    chart = (
+        LookingGlass(
+            _eqty,
+            {
+                "Drawdown": _dd,
+            },
+            study_plot_height=75,
+        )
+        .look(title=("Simulation: " if session.is_simulation else "") + session.trading_id)
+        .hover(h=500)
+    )
+    table = go.FigureWidget(tbl).update_layout(margin=dict(r=5, l=5, t=0, b=1), height=80)
+    chart.show()
+    table.show()

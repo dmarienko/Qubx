@@ -54,10 +54,10 @@ class InMemoryLogsWriter(LogsWriter):
             elif log_type == "executions":
                 self._execs.extend(data)
 
-    def get_portfolio(self, qube_compatible=True) -> pd.DataFrame:
+    def get_portfolio(self, as_plain_dataframe=True) -> pd.DataFrame:
         pfl = pd.DataFrame.from_records(self._portfolio, index="timestamp")
         pfl.index = pd.DatetimeIndex(pfl.index)
-        if qube_compatible:
+        if as_plain_dataframe:
             # - convert to Qube presentation (TODO: temporary)
             pis = []
             for s in set(pfl["instrument_id"]):
@@ -78,9 +78,15 @@ class InMemoryLogsWriter(LogsWriter):
         return pfl
 
     def get_executions(self) -> pd.DataFrame:
-        p = pd.DataFrame.from_records(self._execs, index="timestamp")
-        p.index = pd.DatetimeIndex(p.index)
+        p = pd.DataFrame()
+        if self._execs:
+            p = pd.DataFrame.from_records(self._execs, index="timestamp")
+            p.index = pd.DatetimeIndex(p.index)
         return p
+
+    def get_signals(self) -> pd.DataFrame:
+        # - TODO: implement this !
+        return pd.DataFrame()
 
 
 class CsvFileLogsWriter(LogsWriter):
