@@ -751,7 +751,7 @@ def _pfl_metrics_prepare(session: TradingSessionResult, account_transactions: bo
     for k, v in mtrx.items():
         if isinstance(v, (float, int, str)):
             n = (k[0].upper() + k[1:]).replace("_", " ")
-            rpt[n] = v
+            rpt[n] = v if np.isfinite(v) else 0
     return pd.Series(rpt, name=session.trading_id), mtrx
 
 

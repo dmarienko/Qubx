@@ -130,8 +130,9 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
 class PositionsTracker:
     ctx: "StrategyContext"
 
-    def __init__(self, ctx: "StrategyContext") -> None:
+    def set_context(self, ctx: "StrategyContext") -> "PositionsTracker":
         self.ctx = ctx
+        return self
 
 
 def populate_parameters_to_strategy(strategy: "IStrategy", **kwargs):
