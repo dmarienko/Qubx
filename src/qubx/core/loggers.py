@@ -8,36 +8,13 @@ import pandas as pd
 from qubx import logger
 from qubx.core.basics import Deal, Position
 
+from qubx.core.metrics import split_cumulative_pnl
 from qubx.core.series import time_as_nsec
 from qubx.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
 from qubx.pandaz.utils import scols
 from qubx.utils.misc import makedirs, Stopwatch
 
 _SW = Stopwatch()
-
-
-def _split_cumulative_pnl(pfl_log: pd.DataFrame) -> pd.DataFrame:
-    """
-    Position.pnl tracks cumulative PnL (realized+unrealized) but if we want to operate with PnL for every bar
-    we need to find diff from these cumulative series
-
-    :param pfl_log: position manager log (portfolio log)
-    :return: frame with splitted PL
-    """
-    # take in account commissions (now we cumsum it)
-    pl = pfl_log.filter(regex=r".*_PnL|.*_Commissions")
-    if pl.shape[1] == 0:
-        raise ValueError("PnL columns not found. Input frame must contain at least 1 column with '_PnL' suffix")
-
-    pl_diff = pl.diff()
-
-    # at first row we use first value of PnL
-    pl_diff.loc[pl.index[0]] = pl.iloc[0]
-
-    # substitute new diff PL
-    pfl_splitted = pfl_log.copy()
-    pfl_splitted.loc[:, pfl_log.columns.isin(pl_diff.columns)] = pl_diff
-    return pfl_splitted
 
 
 class LogsWriter:
@@ -77,10 +54,10 @@ class InMemoryLogsWriter(LogsWriter):
             elif log_type == "executions":
                 self._execs.extend(data)
 
-    def get_portfolio(self, qube_compatible=True) -> pd.DataFrame:
+    def get_portfolio(self, as_plain_dataframe=True) -> pd.DataFrame:
         pfl = pd.DataFrame.from_records(self._portfolio, index="timestamp")
         pfl.index = pd.DatetimeIndex(pfl.index)
-        if qube_compatible:
+        if as_plain_dataframe:
             # - convert to Qube presentation (TODO: temporary)
             pis = []
             for s in set(pfl["instrument_id"]):
@@ -97,13 +74,19 @@ class InMemoryLogsWriter(LogsWriter):
                     axis=1,
                 )
                 pis.append(pi.rename(lambda x: s + "_" + x, axis=1))
-            return _split_cumulative_pnl(scols(*pis))
+            return split_cumulative_pnl(scols(*pis))
         return pfl
 
     def get_executions(self) -> pd.DataFrame:
-        p = pd.DataFrame.from_records(self._execs, index="timestamp")
-        p.index = pd.DatetimeIndex(p.index)
+        p = pd.DataFrame()
+        if self._execs:
+            p = pd.DataFrame.from_records(self._execs, index="timestamp")
+            p.index = pd.DatetimeIndex(p.index)
         return p
+
+    def get_signals(self) -> pd.DataFrame:
+        # - TODO: implement this !
+        return pd.DataFrame()
 
 
 class CsvFileLogsWriter(LogsWriter):

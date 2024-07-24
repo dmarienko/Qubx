@@ -18,6 +18,7 @@ from qubx.core.basics import (
     Signal,
     SimulatedCtrlChannel,
     Position,
+    TradingSessionResult,
     TransactionCostsCalculator,
     dt_64,
 )
@@ -41,6 +42,8 @@ from qubx.data.readers import (
     InMemoryDataFrameReader,
 )
 from qubx.pandaz.utils import scols
+
+StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
 
 
 class _Types(Enum):
@@ -83,9 +86,6 @@ def _is_signal(obj):
 
 def _is_signal_or_strategy(obj):
     return _is_signal(obj) or _is_strategy(obj)
-
-
-StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
 
 
 @dataclass
@@ -626,7 +626,7 @@ def simulate(
     base_currency: str = "USDT",
     leverage: float = 1.0,  # TODO: we need to add support for leverage
     n_jobs: int = -1,  # TODO: if need to run simulation in parallel
-):
+) -> TradingSessionResult | List[TradingSessionResult]:
     # - recognize provided data
     if isinstance(data, dict):
         data_reader = InMemoryDataFrameReader(data)
@@ -724,11 +724,12 @@ def _run_setups(
     subscription: Dict[str, Any],
     trigger: str,
     n_jobs: int = -1,
-) -> Dict[str, Any]:
-    reports = {}
+) -> List[TradingSessionResult]:
+    reports = []
 
     # - TODO: we need to run this in multiprocessing environment if n_jobs > 1
     for s in tqdm(setups, total=len(setups)):
+        _trigger = trigger
         logger.debug(
             f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {s.exchange} for {s.capital} x {s.leverage} in {s.base_currency}..."
         )
@@ -751,31 +752,46 @@ def _run_setups(
                 strat = _GeneratedSignalsStrategy()
                 exchange.set_generated_signals(s.generator)
                 # - we don't need any unexpected triggerings
-                trigger = "bar: 0s"
+                _trigger = "bar: 0s"
 
             case _Types.SIGNAL_AND_TRACKER:
                 strat = _GeneratedSignalsStrategy()
                 strat.tracker = lambda ctx: s.tracker
                 exchange.set_generated_signals(s.generator)
                 # - we don't need any unexpected triggerings
-                trigger = "bar: 0s"
+                _trigger = "bar: 0s"
 
             case _:
                 raise ValueError(f"Unsupported setup type: {s.setup_type} !")
 
         ctx = StrategyContext(
-            # TestStrategy(timeframe='1h', fast_period=4, slow_period=12), None, #dict(timeframe='1h', fast_period=3, slow_period=24),
             strat,
             None,  # TODO: need to think how we could pass altered parameters here (from variating etc)
             exchange,
             instruments=s.instruments,
             md_subscription=subscription,
-            trigger_spec=trigger,
+            trigger_spec=_trigger,
             logs_writer=logs_writer,
         )
         ctx.start()
 
         _r = exchange.run(start, stop)
-        reports[s.name] = logs_writer
+        reports.append(
+            TradingSessionResult(
+                s.name,
+                start,
+                stop,
+                s.exchange,
+                s.instruments,
+                s.capital,
+                s.leverage,
+                s.base_currency,
+                s.commissions,
+                logs_writer.get_portfolio(as_plain_dataframe=True),
+                logs_writer.get_executions(),
+                logs_writer.get_signals(),
+                True,
+            )
+        )
 
     return reports

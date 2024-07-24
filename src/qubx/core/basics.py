@@ -415,3 +415,49 @@ class ITimeProvider:
         Returns current time
         """
         raise NotImplementedError("Subclasses must implement this method")
+
+
+class TradingSessionResult:
+    trading_id: str
+    start: str | pd.Timestamp
+    stop: str | pd.Timestamp
+    exchange: str
+    instruments: List[Instrument]
+    capital: float
+    leverage: float
+    base_currency: str
+    commissions: str
+    portfolio_log: pd.DataFrame
+    executions_log: pd.DataFrame
+    signals_log: pd.DataFrame
+    is_simulation: bool
+
+    def __init__(
+        self,
+        trading_id: str,
+        start: str | pd.Timestamp,
+        stop: str | pd.Timestamp,
+        exchange: str,
+        instruments: List[Instrument],
+        capital: float,
+        leverage: float,
+        base_currency: str,
+        commissions: str,
+        portfolio_log: pd.DataFrame,
+        executions_log: pd.DataFrame,
+        signals_log: pd.DataFrame,
+        is_simulation=True,
+    ):
+        self.trading_id = trading_id
+        self.start = start
+        self.stop = stop
+        self.exchange = exchange
+        self.instruments = instruments
+        self.capital = capital
+        self.leverage = leverage
+        self.base_currency = base_currency
+        self.commissions = commissions
+        self.portfolio_log = portfolio_log
+        self.executions_log = executions_log
+        self.signals_log = signals_log
+        self.is_simulation = is_simulation
