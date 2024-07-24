@@ -129,7 +129,7 @@ class TestScheduler:
                 n = 0
                 try:
                     while True:
-                        print(self.chan.queue.get(block=False))
+                        print(self.chan._queue.get(block=False))
                         n += 1
                 except Empty as e:
                     pass
