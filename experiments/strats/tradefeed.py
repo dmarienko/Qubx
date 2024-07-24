@@ -4,7 +4,7 @@ import numpy as np
 from tabulate import tabulate
 
 from qubx import logger
-from qubx.core.strategy import IStrategy, TriggerEvent, StrategyContext
+from qubx.core.strategy import IStrategy, PositionsTracker, TriggerEvent, StrategyContext
 from qubx.core.basics import Instrument, Position, Signal
 from qubx.pandaz import srows, scols, ohlc_resample, retain_columns_and_join
 from qubx.trackers import Capital, PortfolioRebalancerTracker
@@ -59,8 +59,8 @@ class TradeTestStrat(IStrategy):
     def on_stop(self, ctx: StrategyContext):
         logger.info(f"> test is stopped")
 
-    def tracker(self, ctx: StrategyContext) -> PortfolioRebalancerTracker:
-        return PortfolioRebalancerTracker(ctx, self.capital_invested, 0)
+    def tracker(self, ctx: StrategyContext) -> PositionsTracker:
+        return PortfolioRebalancerTracker(self.capital_invested, 0).set_context(ctx)
 
     def reporting(self, signals: pd.DataFrame, wealth: Capital):
         _str_pos = tabulate(signals.tail(1), dequotify(list(signals.columns.values)), tablefmt="rounded_grid")  # type: ignore

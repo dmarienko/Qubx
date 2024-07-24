@@ -571,7 +571,15 @@ def _recognize_simulation_setups(
             for j, s in enumerate(configs):
                 r.extend(
                     _recognize_simulation_setups(
-                        name + "/" + str(j), s, instruments, exchange, capital, leverage, basic_currency, commissions
+                        # name + "/" + str(j), s, instruments, exchange, capital, leverage, basic_currency, commissions
+                        name,
+                        s,
+                        instruments,
+                        exchange,
+                        capital,
+                        leverage,
+                        basic_currency,
+                        commissions,
                     )
                 )
 
@@ -711,8 +719,10 @@ class _GeneratedSignalsStrategy(IStrategy):
     def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
         if event.data and event.type == "event":
             signal = event.data.get("order")
-            if signal:
-                ctx.trade(event.instrument, signal)
+            if signal is not None and event.instrument:
+                # TODO: actually this should be done in position tracker not here !
+                n = signal - ctx.positions[event.instrument.symbol].quantity
+                ctx.trade(event.instrument, n)
         return None
 
 
@@ -730,6 +740,7 @@ def _run_setups(
     # - TODO: we need to run this in multiprocessing environment if n_jobs > 1
     for s in tqdm(setups, total=len(setups)):
         _trigger = trigger
+        _stop = stop
         logger.debug(
             f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {s.exchange} for {s.capital} x {s.leverage} in {s.base_currency}..."
         )
@@ -746,20 +757,22 @@ def _run_setups(
 
             case _Types.STRATEGY_AND_TRACKER:
                 strat = s.generator
-                strat.tracker = lambda ctx: s.tracker
+                strat.tracker = lambda ctx: s.tracker.set_context(ctx)
 
             case _Types.SIGNAL:
                 strat = _GeneratedSignalsStrategy()
                 exchange.set_generated_signals(s.generator)
                 # - we don't need any unexpected triggerings
                 _trigger = "bar: 0s"
+                _stop = s.generator.index[-1]
 
             case _Types.SIGNAL_AND_TRACKER:
                 strat = _GeneratedSignalsStrategy()
-                strat.tracker = lambda ctx: s.tracker
+                strat.tracker = lambda ctx: s.tracker.set_context(ctx)
                 exchange.set_generated_signals(s.generator)
                 # - we don't need any unexpected triggerings
                 _trigger = "bar: 0s"
+                _stop = s.generator.index[-1]
 
             case _:
                 raise ValueError(f"Unsupported setup type: {s.setup_type} !")
@@ -775,7 +788,7 @@ def _run_setups(
         )
         ctx.start()
 
-        _r = exchange.run(start, stop)
+        _r = exchange.run(start, _stop)
         reports.append(
             TradingSessionResult(
                 s.name,
