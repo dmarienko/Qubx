@@ -6,10 +6,13 @@ from qubx.pandaz.utils import *
 from qubx.core.series import Quote
 from qubx.core.utils import recognize_time
 from qubx.core.strategy import IStrategy, StrategyContext, TriggerEvent
-from qubx.data.readers import CsvStorageDataReader, AsTimestampedRecords, AsQuotes, RestoreTicksFromOHLC
+from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsTimestampedRecords, AsQuotes, RestoreTicksFromOHLC
 from qubx.core.basics import Deal, Instrument, Order, ITimeProvider
 
 from qubx.backtester.ome import OrdersManagementEngine
+
+from qubx.ta.indicators import sma, ema
+from qubx.backtester.simulator import simulate
 
 
 class _TimeService(ITimeProvider):
@@ -134,3 +137,58 @@ class TestBacktesterStuff:
         assert l2.order.status == "CLOSED"
         assert execs[0].price == 39500.0
         assert execs[1].price == 52000.0
+
+    def test_simulator(self):
+
+        class CrossOver(IStrategy):
+            timeframe: str = "1Min"
+            fast_period = 5
+            slow_period = 12
+
+            def on_event(self, ctx: StrategyContext, event: TriggerEvent):
+                for i in ctx.instruments:
+                    ohlc = ctx.ohlc(i, self.timeframe)
+                    fast = ema(ohlc.close, self.fast_period)
+                    slow = ema(ohlc.close, self.slow_period)
+                    pos = ctx.positions[i.symbol].quantity
+                    if pos <= 0:
+                        if (fast[0] > slow[0]) and (fast[1] < slow[1]):
+                            ctx.trade(i, abs(pos) + i.min_size * 10)
+                    if pos >= 0:
+                        if (fast[0] < slow[0]) and (fast[1] > slow[1]):
+                            ctx.trade(i, -pos - i.min_size * 10)
+                return None
+
+            def ohlcs(self, timeframe: str) -> Dict[str, pd.DataFrame]:
+                return {s.symbol: self.ctx.ohlc(s, timeframe).pd() for s in self.ctx.instruments}
+
+        r = CsvStorageDataReader("tests/data/csv")
+        ohlc = r.read("BINANCE.UM:BTCUSDT", "2024-01-01", "2024-01-02", AsOhlcvSeries("5Min"))
+        fast = ema(ohlc.close, 5)
+        slow = ema(ohlc.close, 15)
+        sigs = (((fast > slow) + (fast.shift(1) < slow.shift(1))) == 2) - (
+            ((fast < slow) + (fast.shift(1) > slow.shift(1))) == 2
+        )
+        sigs = sigs.pd()
+        sigs = sigs[sigs != 0]
+        s2 = shift_series(sigs, "4Min59Sec").rename("BTCUSDT") / 100
+        rep1 = simulate(
+            {
+                # - generated signals as series
+                "test0": CrossOver(timeframe="5Min", fast_period=5, slow_period=15),
+                "test1": s2,
+            },
+            r,
+            10000,
+            ["BINANCE.UM:BTCUSDT"],
+            dict(type="ohlc", timeframe="5Min", nback=0),
+            "5Min -1Sec",
+            "vip0_usdt",
+            "2024-01-01",
+            "2024-01-02",
+        )
+
+        assert all(
+            rep1[0].executions_log[["filled_qty", "price", "side"]]
+            == rep1[1].executions_log[["filled_qty", "price", "side"]]
+        )
