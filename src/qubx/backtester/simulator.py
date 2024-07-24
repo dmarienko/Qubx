@@ -729,6 +729,7 @@ def _run_setups(
 
     # - TODO: we need to run this in multiprocessing environment if n_jobs > 1
     for s in tqdm(setups, total=len(setups)):
+        _trigger = trigger
         logger.debug(
             f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {s.exchange} for {s.capital} x {s.leverage} in {s.base_currency}..."
         )
@@ -751,14 +752,14 @@ def _run_setups(
                 strat = _GeneratedSignalsStrategy()
                 exchange.set_generated_signals(s.generator)
                 # - we don't need any unexpected triggerings
-                trigger = "bar: 0s"
+                _trigger = "bar: 0s"
 
             case _Types.SIGNAL_AND_TRACKER:
                 strat = _GeneratedSignalsStrategy()
                 strat.tracker = lambda ctx: s.tracker
                 exchange.set_generated_signals(s.generator)
                 # - we don't need any unexpected triggerings
-                trigger = "bar: 0s"
+                _trigger = "bar: 0s"
 
             case _:
                 raise ValueError(f"Unsupported setup type: {s.setup_type} !")
@@ -769,7 +770,7 @@ def _run_setups(
             exchange,
             instruments=s.instruments,
             md_subscription=subscription,
-            trigger_spec=trigger,
+            trigger_spec=_trigger,
             logs_writer=logs_writer,
         )
         ctx.start()
