@@ -722,7 +722,8 @@ class _GeneratedSignalsStrategy(IStrategy):
             if signal is not None and event.instrument:
                 # TODO: actually this should be done in position tracker not here !
                 n = signal - ctx.positions[event.instrument.symbol].quantity
-                ctx.trade(event.instrument, n)
+                if n != 0:
+                    ctx.trade(event.instrument, n)
         return None
 
 

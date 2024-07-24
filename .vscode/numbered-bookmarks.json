@@ -91,15 +91,15 @@
 			]
 		},
 		{
-			"path": "src/qubx/backtester/simulator.py",
+			"path": "tests/qubx/core/backtester_test.py",
 			"bookmarks": [
 				{
 					"line": -1,
 					"column": 0
 				},
 				{
-					"line": 420,
-					"column": 0
+					"line": 173,
+					"column": 13
 				},
 				{
 					"line": -1,

@@ -21,10 +21,12 @@ def check_frame_columns(x, *args):
         raise ValueError(f"> Required {required} columns not found in dataframe !")
 
 
-def rolling_forward_test_split(x: pd.Series | pd.DataFrame, training_period: int, test_period: int, units: str | None = None ):
+def rolling_forward_test_split(
+    x: pd.Series | pd.DataFrame, training_period: int, test_period: int, units: str | None = None
+):
     """
     Split data into training and testing **rolling** periods.
-     
+
     Example:
 
     >>> for train_idx, test_idx in rolling_forward_test_split(np.array(range(15)), 5, 3):
@@ -41,19 +43,20 @@ def rolling_forward_test_split(x: pd.Series | pd.DataFrame, training_period: int
     >>> for train_idx, test_idx in rolling_forward_test_split(Y, 2, 1, units='W'):
     >>>     print('Train:', Y.loc[train_idx], '\\n Test:', Y.loc[test_idx])
 
-    :param x: data 
-    :param training_period: number observations for learning period 
-    :param test_period: number observations for learning period  
+    :param x: data
+    :param training_period: number observations for learning period
+    :param test_period: number observations for learning period
     :param units: period units if training_period and test_period is the period date: {'H', 'D', 'W', 'M', 'Q', 'Y'}
-    :return:  
+    :return:
     """
     # unit formats from pd.TimeDelta and formats for pd.resample
-    units_format = {'H': 'H', 'D': 'D', 'W': 'W', 'M': 'MS', 'Q': 'QS', 'Y': 'AS'}
+    units_format = {"H": "H", "D": "D", "W": "W", "M": "MS", "Q": "QS", "Y": "AS"}
 
     if units:
         if units.upper() not in units_format:
             raise ValueError(
-                'Wrong value for "units" parameter. Only %s values are valid' % ','.join(units_format.keys()))
+                'Wrong value for "units" parameter. Only %s values are valid' % ",".join(units_format.keys())
+            )
         else:
             if not isinstance(x, (pd.Series, pd.DataFrame)) or not isinstance(x.index, pd.DatetimeIndex):
                 raise ValueError('Data must be passed as pd.DataFrame or pd.Series when "units" specified')
@@ -68,14 +71,14 @@ def rolling_forward_test_split(x: pd.Series | pd.DataFrame, training_period: int
                 if len(resampled) - 1 < i + training_period or resampled[i + training_period] > x.index[-1]:
                     # no data for next training period
                     break
-                training_df = x[resampled[i]:resampled[i + training_period]]
+                training_df = x[resampled[i] : resampled[i + training_period]]
                 whole_period = i + training_period + test_period
                 if len(resampled) - 1 < whole_period or resampled[whole_period] > x.index[-1]:
                     # if there is not all data for test period or it's just last month,
                     # we don't need restrict the end date
-                    test_df = x[resampled[i + training_period]:]
+                    test_df = x[resampled[i + training_period] :]
                 else:
-                    test_df = x[resampled[i + training_period]:resampled[whole_period]]
+                    test_df = x[resampled[i + training_period] : resampled[whole_period]]
 
                 if training_df.empty or test_df.empty:
                     continue
@@ -90,7 +93,7 @@ def rolling_forward_test_split(x: pd.Series | pd.DataFrame, training_period: int
 def generate_equal_date_ranges(start: str | pd.Timestamp, end: str | pd.Timestamp, freq: int, units: str) -> Iterable:
     """
     Generator for date ranges:
-    
+
     for s,e in generate_equal_date_ranges('2019-01-01', '2022-05-17', 1, 'Y'):
         print(s, e)
     ------------------
@@ -99,19 +102,18 @@ def generate_equal_date_ranges(start: str | pd.Timestamp, end: str | pd.Timestam
     2021-01-01 2021-12-31
     2022-01-01 2022-05-17
     """
-    _as_f = lambda x: pd.Timestamp(x).strftime('%Y-%m-%d')
+    _as_f = lambda x: pd.Timestamp(x).strftime("%Y-%m-%d")
 
     # - for case when end - start < freq it won't got into the loop
     b = [start, start] if _as_f(start) > _as_f(end) else [start, end]
 
-    for a, b in rolling_forward_test_split(
-        pd.Series(0, pd.date_range(start, end)), freq, freq, units=units):
+    for a, b in rolling_forward_test_split(pd.Series(0, pd.date_range(start, end)), freq, freq, units=units):
         yield _as_f(a[0]), _as_f(a[-1])
-        
+
     yield _as_f(b[0]), _as_f(b[-1])
 
 
-def drop_duplicated_indexes(df: pd.DataFrame, keep: Literal['first', 'last', False]='first'):
+def drop_duplicated_indexes(df: pd.DataFrame, keep: Literal["first", "last", False] = "first"):
     """
     Drops duplicated indexes in dataframe/series
     Keeps either first or last occurence (parameter keep)
@@ -126,12 +128,12 @@ def process_duplicated_indexes(data: pd.DataFrame | pd.Series, ns=1) -> pd.DataF
     :param ns: shift constant in nanosec
     :return: return dataframe with all no duplicated rows (each duplicate has own unique index)
     """
-    values = data.index.duplicated(keep='first').astype(float)
+    values = data.index.duplicated(keep="first").astype(float)
     values[values == 0] = np.NaN
 
     missings = np.isnan(values)
     cumsum = np.cumsum(~missings)
-    diff = np.diff(np.concatenate(([0.], cumsum[missings])))
+    diff = np.diff(np.concatenate(([0.0], cumsum[missings])))
     values[missings] = -diff
 
     # set new index (1 ms)
@@ -139,20 +141,20 @@ def process_duplicated_indexes(data: pd.DataFrame | pd.Series, ns=1) -> pd.DataF
     return data
 
 
-def scols(*xs, keys=None, names=None, keep='all') -> pd.DataFrame:
+def scols(*xs, keys=None, names=None, keep="all") -> pd.DataFrame:
     """
     Concat dataframes/series from xs into single dataframe by axis 1
     :param keys: keys of new dataframe (see pd.concat's keys parameter)
     :param names: new column names or dict with replacements
     :return: combined dataframe
-    
+
     Example
     -------
     >>>  scols(
             pd.DataFrame([1,2,3,4,-4], list('abcud')),
-            pd.DataFrame([111,21,31,14], list('xyzu')), 
-            pd.DataFrame([11,21,31,124], list('ertu')), 
-            pd.DataFrame([11,21,31,14], list('WERT')), 
+            pd.DataFrame([111,21,31,14], list('xyzu')),
+            pd.DataFrame([11,21,31,124], list('ertu')),
+            pd.DataFrame([11,21,31,14], list('WERT')),
             names=['x', 'y', 'z', 'w'])
     """
     r = pd.concat((xs), axis=1, keys=keys)
@@ -162,32 +164,33 @@ def scols(*xs, keys=None, names=None, keep='all') -> pd.DataFrame:
                 r.columns = names
             else:
                 raise ValueError(
-                    f"if 'names' contains new column names it must have same length as resulting df ({len(r.columns)})")
+                    f"if 'names' contains new column names it must have same length as resulting df ({len(r.columns)})"
+                )
         elif isinstance(names, dict):
             r = r.rename(columns=names)
     return r
 
 
-def srows(*xs, keep='all', sort=True) -> Union[pd.DataFrame, pd.Series]:
+def srows(*xs, keep="all", sort=True) -> Union[pd.DataFrame, pd.Series]:
     """
     Concat dataframes/series from xs into single dataframe by axis 0
     :param sort: if true it sorts resulting dataframe by index (default)
-    :param keep: how to deal with duplicated indexes. 
+    :param keep: how to deal with duplicated indexes.
                  If set to 'all' it doesn't do anything (default). Otherwise keeps first or last occurences
     :return: combined dataframe
-    
+
     Example
     -------
     >>>  srows(
             pd.DataFrame([1,2,3,4,-4], list('abcud')),
-            pd.DataFrame([111,21,31,14], list('xyzu')), 
-            pd.DataFrame([11,21,31,124], list('ertu')), 
-            pd.DataFrame([11,21,31,14], list('WERT')), 
+            pd.DataFrame([111,21,31,14], list('xyzu')),
+            pd.DataFrame([11,21,31,124], list('ertu')),
+            pd.DataFrame([11,21,31,14], list('WERT')),
             sort=True, keep='last')
     """
     r = pd.concat((xs), axis=0)
     r = r.sort_index() if sort else r
-    if keep != 'all':
+    if keep != "all":
         r = drop_duplicated_indexes(r, keep=keep)
     return r
 
@@ -210,7 +213,7 @@ def retain_columns_and_join(data: Dict[str, pd.DataFrame], columns: str | List[s
     :return: data frame
     """
     if not isinstance(data, dict):
-        raise ValueError('Data must be passed as dictionary')
+        raise ValueError("Data must be passed as dictionary")
 
     return pd.concat([data[k][columns] for k in data.keys()], axis=1, keys=data.keys())
 
@@ -219,27 +222,27 @@ def continuous_periods(xs: pd.Series, cond: pd.Series) -> Struct:
     """
     Detect continues periods on series xs based on condition cond
     """
-    df = scols(xs, cond, keys=['_XS_', 'sig'])
-    df['block'] = (df.sig.shift(1) != df.sig).astype(int).cumsum()
+    df = scols(xs, cond, keys=["_XS_", "sig"])
+    df["block"] = (df.sig.shift(1) != df.sig).astype(int).cumsum()
     idx_col_name = xs.index.name
 
-    blk = df[df.sig].reset_index().groupby('block')[idx_col_name].apply(np.array)
+    blk = df[df.sig].reset_index().groupby("block")[idx_col_name].apply(np.array)
     starts = blk.apply(lambda x: x[0])
     ends = blk.apply(lambda x: x[-1])
-    se_info = scols(starts, ends, keys=['start', 'end'])
+    se_info = scols(starts, ends, keys=["start", "end"])
     return Struct(blocks=blk.reset_index(drop=True), periods=se_info)
 
 
 def roll(df: pd.DataFrame, w: int, **kwargs):
     """
     Rolling window on dataframe using multiple columns
-    
+
     >>> roll(pd.DataFrame(np.random.randn(10,3), index=list('ABCDEFGHIJ')), 3).apply(print)
-    
-    or alternatively 
-    
+
+    or alternatively
+
     >>> pd.DataFrame(np.random.randn(10,3), index=list('ABCDEFGHIJ')).pipe(roll, 3).apply(lambda x: print(x[2]))
-    
+
     :param df: pandas DataFrame
     :param w: window size (only integers)
     :return: rolling window
@@ -251,23 +254,20 @@ def roll(df: pd.DataFrame, w: int, **kwargs):
     d0, d1 = v.shape
     s0, s1 = v.strides
     a = stride(v, (d0 - (w - 1), w, d1), (s0, s0, s1))
-    rolled_df = pd.concat({
-        row: pd.DataFrame(values, columns=df.columns)
-        for row, values in zip(df.index, a)
-    })
+    rolled_df = pd.concat({row: pd.DataFrame(values, columns=df.columns) for row, values in zip(df.index, a)})
 
     return rolled_df.groupby(level=0, **kwargs)
 
 
-def dict_to_frame(x: dict, index_type=None, orient='index', columns=None, column_types=dict()) -> pd.DataFrame:
+def dict_to_frame(x: dict, index_type=None, orient="index", columns=None, column_types=dict()) -> pd.DataFrame:
     """
     Utility for convert dictionary to indexed DataFrame
     It's possible to pass columns names and type of index
     """
     y = pd.DataFrame().from_dict(x, orient=orient)
     if index_type:
-        if index_type in ['ns', 'nano']:
-            index_type = 'M8[ns]'
+        if index_type in ["ns", "nano"]:
+            index_type = "M8[ns]"
         y.index = y.index.astype(index_type)
 
     # rename if needed
@@ -276,7 +276,7 @@ def dict_to_frame(x: dict, index_type=None, orient='index', columns=None, column
         if len(columns) == len(y.columns):
             y.rename(columns=dict(zip(y.columns, columns)), inplace=True)
         else:
-            raise ValueError('dict_to_frame> columns argument must contain %d elements' % len(y.columns))
+            raise ValueError("dict_to_frame> columns argument must contain %d elements" % len(y.columns))
 
     # if additional conversion is required
     if column_types:
@@ -304,7 +304,7 @@ def select_column_and_join(data: Dict[str, pd.DataFrame], column: str) -> pd.Dat
     :return: pandas data frame
     """
     if not isinstance(data, dict):
-        raise ValueError('Data must be passed as dictionary of pandas dataframes')
+        raise ValueError("Data must be passed as dictionary of pandas dataframes")
 
     return pd.concat([data[k][column] for k in data.keys()], axis=1, keys=data.keys())
 
@@ -312,21 +312,23 @@ def select_column_and_join(data: Dict[str, pd.DataFrame], column: str) -> pd.Dat
 def merge_columns_by_op(x: pd.DataFrame, y: pd.DataFrame, op):
     """
     Merge 2 dataframes into one and performing operation on intersected columns
-    
+
     merge_columns_by_op(
-        pd.DataFrame({'A': [1,2,3], 'B': [100,200,300]}), 
-        pd.DataFrame({'B': [5,6,7], 'C': [10,20,30]}), 
-        lambda x,y: x + y 
+        pd.DataFrame({'A': [1,2,3], 'B': [100,200,300]}),
+        pd.DataFrame({'B': [5,6,7], 'C': [10,20,30]}),
+        lambda x,y: x + y
     )
-    
+
         B 	    A   C
     0 	105 	1 	10
     1 	206 	2 	20
     2 	307 	3 	30
-    
+
     """
-    if x is None or x.empty: return y
-    if y is None: return x
+    if x is None or x.empty:
+        return y
+    if y is None:
+        return x
     r = []
     uc = set(x.columns & y.columns)
     for c in uc:
@@ -342,17 +344,19 @@ def merge_columns_by_op(x: pd.DataFrame, y: pd.DataFrame, op):
 
 
 def bands_signals(
-        prices: pd.DataFrame, 
-        score: pd.DataFrame, 
-        entry, exit, stop: Optional[float]=np.inf,
-        entry_method='cross-out', # 'cross-in', 'revert-to-band'
-        position_sizes_fn=lambda time, score, prices, side: np.zeros(len(p))
-    ) -> pd.DataFrame:
+    prices: pd.DataFrame,
+    score: pd.DataFrame,
+    entry,
+    exit,
+    stop: Optional[float] = np.inf,
+    entry_method="cross-out",  # 'cross-in', 'revert-to-band'
+    position_sizes_fn=lambda time, score, prices, side: np.zeros(len(p)),
+) -> pd.DataFrame:
     """
     Generate trading signals using score and entry / exit thresholds
     """
     if not isinstance(prices, pd.DataFrame):
-        raise ValueError('Prices must be a pandas DataFrame')
+        raise ValueError("Prices must be a pandas DataFrame")
 
     _as_series = lambda xs, index, name: pd.Series(xs, index=index, name=name) if isscalar(xs) else xs
 
@@ -360,47 +364,46 @@ def bands_signals(
     ent_fn: Callable[[float, float, float, float], int] = lambda t, s2, s1, s0: 0
 
     match entry_method:
-        case 'cross-in':
-            ent_fn = lambda t, s2, s1, s0:\
-                +1 if (s2 < -t and s1 <= -t and s0 > -t) else\
-                -1 if (s2 > +t and s1 >= +t and s0 < +t) else\
-                 0
+        case "cross-in":
+            ent_fn = lambda t, s2, s1, s0: (
+                +1 if (s2 < -t and s1 <= -t and s0 > -t) else -1 if (s2 > +t and s1 >= +t and s0 < +t) else 0
+            )
 
-        case 'cross-out':
-            ent_fn = lambda t, s2, s1, s0:\
-                +1 if (s2 >= -t and s1 >= -t and s0 < -t) else\
-                -1 if (s2 <= +t and s1 <= +t and s0 > +t) else\
-                 0
+        case "cross-out":
+            ent_fn = lambda t, s2, s1, s0: (
+                +1 if (s2 >= -t and s1 >= -t and s0 < -t) else -1 if (s2 <= +t and s1 <= +t and s0 > +t) else 0
+            )
 
-        case 'revert-to-band':
-            ent_fn = lambda t, s2, s1, s0:\
-                +1 if (s1 <= -t and s0 < -t and s0 > s1) else\
-                -1 if (s1 >= +t and s0 > +t and s0 < s1) else\
-                 0
+        case "revert-to-band":
+            ent_fn = lambda t, s2, s1, s0: (
+                +1 if (s1 <= -t and s0 < -t and s0 > s1) else -1 if (s1 >= +t and s0 > +t and s0 < s1) else 0
+            )
 
         case _:
-            raise ValueError(f'Unknown entry_method: {entry_method}, supported methods are: cross-out, cross-in, revert-to-band')
-    
-    entry = abs(_as_series(entry, score.index, 'entry'))
-    exit = _as_series(exit, score.index, 'exit')
-    stop = abs(_as_series(stop, score.index, 'stop'))
+            raise ValueError(
+                f"Unknown entry_method: {entry_method}, supported methods are: cross-out, cross-in, revert-to-band"
+            )
 
-    mx = scols(prices, scols(score.rename('score'), entry, exit, stop), keys=['price', 'service']).dropna()
-    px:pd.DataFrame = mx['price']
-    sx:pd.DataFrame = mx['service']
-    P0 = np.zeros(px.shape[1]) # zero position
+    entry = abs(_as_series(entry, score.index, "entry"))
+    exit = _as_series(exit, score.index, "exit")
+    stop = abs(_as_series(stop, score.index, "stop"))
+
+    mx = scols(prices, scols(score.rename("score"), entry, exit, stop), keys=["price", "service"]).dropna()
+    px: pd.DataFrame = mx["price"]
+    sx: pd.DataFrame = mx["service"]
+    P0 = np.zeros(px.shape[1])  # zero position
 
     signals = {}
     pos = 0
     s1, s2 = np.nan, np.nan
 
     for t, pi, (s0, en, ex, stp) in zip(px.index, px.values, sx.values):
-        if pos == 0: # no positions yet
+        if pos == 0:  # no positions yet
             # - only if there are at least 2 past scores available
             if not np.isnan(s1) and not np.isnan(s2):
                 if (side := ent_fn(en, s2, s1, s0)) != 0:
                     signals[t] = position_sizes_fn(t, s0, pi, side)
-                    pos = side  # - sell or buy spread 
+                    pos = side  # - sell or buy spread
 
         elif pos == -1:
             # - check for stop or exit
@@ -416,11 +419,16 @@ def bands_signals(
 
         s1, s2 = s0, s1
 
-    return pd.DataFrame.from_dict(signals, orient='index', columns=px.columns)
+    return pd.DataFrame.from_dict(signals, orient="index", columns=px.columns)
 
 
-def ohlc_resample(df: pd.DataFrame | pd.Series | Dict[str, pd.DataFrame], new_freq: str = '1h', vmpt: bool = False, resample_tz=None,
-                  non_ohlc_columns_aggregator='sum') -> pd.DataFrame | dict:
+def ohlc_resample(
+    df: pd.DataFrame | pd.Series | Dict[str, pd.DataFrame],
+    new_freq: str = "1h",
+    vmpt: bool = False,
+    resample_tz=None,
+    non_ohlc_columns_aggregator="sum",
+) -> pd.DataFrame | dict:
     """
     Resample OHLCV/tick series to new timeframe.
 
@@ -447,36 +455,43 @@ def ohlc_resample(df: pd.DataFrame | pd.Series | Dict[str, pd.DataFrame], new_fr
     :param non_ohlc_columns_aggregator: how aggregate unknown columns
     :return: resampled ohlc / dict
     """
+
     def __mx_rsmpl(d, freq: str, is_vmpt: bool = False, resample_tz=None) -> pd.DataFrame:
         _cols = d.columns
         _source_tz = d.index.tz
 
         # if we have bid/ask frame
-        if 'ask' in _cols and 'bid' in _cols:
+        if "ask" in _cols and "bid" in _cols:
             # if sizes are presented we can calc vmpt if needed
-            if is_vmpt and 'askvol' in _cols and 'bidvol' in _cols:
+            if is_vmpt and "askvol" in _cols and "bidvol" in _cols:
                 mp = (d.ask * d.bidvol + d.bid * d.askvol) / (d.askvol + d.bidvol)
-                return mp.resample(freq).agg('ohlc')
+                return mp.resample(freq).agg("ohlc")
 
             # if there is only asks and bids and we don't need vmpt
-            result = _tz_convert(d[['ask', 'bid']].mean(axis=1), resample_tz, _source_tz)
-            result = result.resample(freq).agg('ohlc')
+            result = _tz_convert(d[["ask", "bid"]].mean(axis=1), resample_tz, _source_tz)
+            result = result.resample(freq).agg("ohlc")
             # Convert timezone to back if it changed
             return result if not resample_tz else result.tz_convert(_source_tz)
 
         # for OHLC case or just simple series
-        if all([i in _cols for i in ['open', 'high', 'low', 'close']]) or isinstance(d, pd.Series):
+        if all([i in _cols for i in ["open", "high", "low", "close"]]) or isinstance(d, pd.Series):
             ohlc_rules = {
-                'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last',
-                'ask_vol': 'sum', 'bid_vol': 'sum',
-                'volume': 'sum'
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+                "ask_vol": "sum",
+                "bid_vol": "sum",
+                "volume": "sum",
             }
             result = _tz_convert(d, resample_tz, _source_tz)
             # result = result.resample(freq).apply(dict(i for i in ohlc_rules.items() if i[0] in d.columns)).dropna()
             #  25-Oct-2022: we allow other columns to be included in transformation (just use last value)
-            result = result.resample(freq).apply({
-                c: ohlc_rules.get(c, non_ohlc_columns_aggregator) for c in d.columns
-            }).dropna()
+            result = (
+                result.resample(freq)
+                .apply({c: ohlc_rules.get(c, non_ohlc_columns_aggregator) for c in d.columns})
+                .dropna()
+            )
 
             # Convert timezone to back if it changed
             return result if not resample_tz else result.tz_convert(_source_tz)
@@ -486,7 +501,7 @@ def ohlc_resample(df: pd.DataFrame | pd.Series | Dict[str, pd.DataFrame], new_fr
     def _tz_convert(df, tz, source_tz):
         if tz:
             if not source_tz:
-                df = df.tz_localize('GMT')
+                df = df.tz_localize("GMT")
             return df.tz_convert(tz)
         else:
             return df
@@ -496,4 +511,23 @@ def ohlc_resample(df: pd.DataFrame | pd.Series | Dict[str, pd.DataFrame], new_fr
     elif isinstance(df, dict):
         return {k: __mx_rsmpl(v, new_freq, vmpt, resample_tz) for k, v in df.items()}
     else:
-        raise ValueError('Type [%s] is not supported in ohlc_resample' % str(type(df)))
+        raise ValueError("Type [%s] is not supported in ohlc_resample" % str(type(df)))
+
+
+def shift_series(
+    sigs: pd.Series | pd.DataFrame,
+    forward: str | None = None,
+    days=0,
+    hours=0,
+    minutes=0,
+    seconds=0,
+) -> Union[pd.Series, pd.DataFrame]:
+    """
+    Shift timeseries into future.
+
+    :return: shifted frame or series
+    """
+    n_sigs = sigs.copy()
+    f0 = pd.Timedelta(forward if forward is not None else 0)
+    n_sigs.index = n_sigs.index + f0 + pd.DateOffset(days=days, hours=hours, minutes=minutes, seconds=seconds)
+    return n_sigs
