@@ -15,6 +15,7 @@ from statsmodels.regression.linear_model import OLS
 import plotly.graph_objects as go
 
 from qubx.core.basics import TradingSessionResult
+from qubx.pandaz.utils import ohlc_resample
 from qubx.utils.charting.lookinglass import LookingGlass
 from qubx.utils.time import infer_series_frequency
 
@@ -820,3 +821,76 @@ def _tearsheet_single(
     table = go.FigureWidget(tbl).update_layout(margin=dict(r=5, l=5, t=0, b=1), height=80)
     chart.show()
     table.show()
+
+
+def chart_signals(
+    result: TradingSessionResult,
+    symbol: str,
+    ohlc: dict | pd.DataFrame,
+    timeframe: str | None = None,
+    start=None,
+    end=None,
+    indicators={},
+    info=False,
+    overlay=[],
+):
+    """
+    Show trading signals on chart
+    """
+    indicators = indicators | {}
+
+    executions = result.executions_log.rename(
+        columns={"instrument_id": "instrument", "filled_qty": "quantity", "price": "exec_price"}
+    )
+    portfolio = result.portfolio_log
+
+    if start is None:
+        start = executions.index[0]
+
+    if end is None:
+        end = executions.index[-1]
+
+    if portfolio is not None:
+        pnl = portfolio.filter(regex=f"{symbol}_PnL").cumsum()
+        pnl = pnl - pnl.loc[start:].iloc[0]
+        indicators["PnL"] = ["area", "green", pnl]
+
+    if isinstance(ohlc, dict):
+        bars = ohlc[symbol]
+        bars = ohlc_resample(bars, timeframe) if timeframe else bars
+    elif isinstance(ohlc, pd.DataFrame):
+        bars = ohlc
+        bars = ohlc_resample(bars, timeframe) if timeframe else bars
+
+    excs = executions[executions["instrument"] == symbol][["quantity", "exec_price", "commissions_quoted"]]
+    q_pos = excs["quantity"].cumsum()[start:end]
+    # excs['quantity'] = q_pos
+    excs = excs[start:end]
+
+    # is_stop = lambda s: any([x in s.lower() for x in ['stop', 'expired']])
+    # print(excs['quantity'])
+    colors = ["red" if t == 0 else "green" for t in q_pos]
+    # colors = ['red' if is_stop(t)  else 'green' for t in excs['comment']]
+
+    tbl = go.Table(
+        # columnorder = [1,2],
+        columnwidth=[200, 150, 150, 100, 100],
+        header=dict(
+            values=["time"] + list(excs.columns),
+            line_color="darkslategray",
+            fill_color="#303030",
+            font=dict(color="white", size=11),
+        ),
+        cells=dict(
+            values=[excs.index.strftime("%Y-%m-%d %H:%M:%S")] + list(excs.T.values),
+            line_color="darkslategray",
+            fill_color="#101010",
+            align=["center", "left"],
+            font=dict(color=[colors], size=10),
+        ),
+    )
+
+    chart = LookingGlass([bars, excs, *overlay], indicators).look(start, end, title=symbol).hover(show_info=info)
+    table = go.FigureWidget(tbl).update_layout(margin=dict(r=5, l=5, t=5, b=5), height=200)
+
+    return chart.show(), table.show()
