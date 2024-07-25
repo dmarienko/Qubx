@@ -721,18 +721,25 @@ def tearsheet(
         if len(session) == 1:
             return _tearsheet_single(session[0], compound, account_transactions, performance_statistics_period)
         else:
+            import matplotlib.pyplot as plt
+
             # multiple sessions - just show table
             _rs = []
-            _eq = []
+            # _eq = []
             for s in session:
                 report, mtrx = _pfl_metrics_prepare(s, account_transactions, performance_statistics_period)
                 _rs.append(report)
                 if compound:
-                    _eq.append(pd.Series(100 * mtrx["compound_returns"], name=s.trading_id))
+                    # _eq.append(pd.Series(100 * mtrx["compound_returns"], name=s.trading_id))
+                    plt.plot(100 * mtrx["compound_returns"], label=s.trading_id)
                 else:
-                    _eq.append(pd.Series(mtrx["equity"], name=s.trading_id))
+                    # _eq.append(pd.Series(mtrx["equity"], name=s.trading_id))
+                    plt.plot(mtrx["equity"], label=s.trading_id)
 
-            pd.concat(_eq, axis=1).plot()
+            if len(session) <= 15:
+                plt.legend(ncol=max(1, len(session) // 5))
+
+            plt.title("Comparison of Equity Curves")
             return pd.concat(_rs, axis=1).T
 
     else:
