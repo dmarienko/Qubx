@@ -3,6 +3,8 @@ tests/**/logs/
 logs/
 experiments/configs/.env*
 .vscode/numbered-bookmarks.json
+debug/
+experiments/debug/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
