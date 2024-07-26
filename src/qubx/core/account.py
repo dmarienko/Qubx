@@ -74,8 +74,9 @@ class AccountProcessor:
         positions_value_in_base = sum([p.market_value_funds for p in self._positions.values()])
         return self.base_currency_balance + positions_value_in_base - self.get_reserved_capital()
 
-    def get_leverage(self, symbol: str) -> float:
-        pos = self._positions.get(symbol)
+    def get_leverage(self, inst: str | Instrument) -> float:
+        inst = inst if isinstance(inst, str) else inst.symbol
+        pos = self._positions.get(inst)
         if pos is not None:
             return pos.market_value_funds / self.get_total_capital()
         return 0.0

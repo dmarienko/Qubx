@@ -649,33 +649,7 @@ def simulate(
 
     # - process instruments:
     #    check if instruments are from the same exchange (mmulti-exchanges is not supported yet)
-    _instrs: List[Instrument] = []
-    _exchanges = [] if exchange is None else [exchange.lower()]
-    for i in instruments:
-        match i:
-            case str():
-                _e, _s = i.split(":") if ":" in i else (exchange, i)
-
-                if exchange is not None and _e.lower() != exchange.lower():
-                    logger.warning("Exchange from symbol's spec ({_e}) is different from requested: {exchange} !")
-
-                if _e is None:
-                    logger.warning(
-                        "Can't extract exchange name from symbol's spec ({_e}) and exact exchange name is not provided - skip this symbol !"
-                    )
-
-                if (ix := lookup.find_symbol(_e, _s)) is not None:
-                    _exchanges.append(_e.lower())
-                    _instrs.append(ix)
-                else:
-                    logger.warning(f"Can't find instrument for specified symbol ({i}) - ignoring !")
-
-            case Instrument():
-                _exchanges.append(i.exchange)
-                _instrs.append(i)
-
-            case _:
-                raise ValueError(f"Unsupported instrument type: {i}")
+    _instrs, _exchanges = find_instruments_and_exchanges(instruments, exchange)
 
     if not _exchanges:
         logger.error(
@@ -707,6 +681,39 @@ def simulate(
 
     # - run simulations
     return _run_setups(setups, start, stop, data_reader, subscription, trigger, n_jobs=n_jobs)
+
+
+def find_instruments_and_exchanges(
+    instruments: List[str] | Dict[str, List[str]], exchange: str | None
+) -> Tuple[List[Instrument], List[str]]:
+    _instrs: List[Instrument] = []
+    _exchanges = [] if exchange is None else [exchange.lower()]
+    for i in instruments:
+        match i:
+            case str():
+                _e, _s = i.split(":") if ":" in i else (exchange, i)
+
+                if exchange is not None and _e.lower() != exchange.lower():
+                    logger.warning("Exchange from symbol's spec ({_e}) is different from requested: {exchange} !")
+
+                if _e is None:
+                    logger.warning(
+                        "Can't extract exchange name from symbol's spec ({_e}) and exact exchange name is not provided - skip this symbol !"
+                    )
+
+                if (ix := lookup.find_symbol(_e, _s)) is not None:
+                    _exchanges.append(_e.lower())
+                    _instrs.append(ix)
+                else:
+                    logger.warning(f"Can't find instrument for specified symbol ({i}) - ignoring !")
+
+            case Instrument():
+                _exchanges.append(i.exchange)
+                _instrs.append(i)
+
+            case _:
+                raise ValueError(f"Unsupported instrument type: {i}")
+    return _instrs, _exchanges
 
 
 class _GeneratedSignalsStrategy(IStrategy):

@@ -290,6 +290,7 @@ class StrategyContext:
         self._scheduler = self.broker_provider.get_scheduler()
 
         # - instantiate logging functional
+        self._logs_writer = logs_writer
         self._logging = StrategyLogging(logs_writer, positions_log_freq, portfolio_log_freq, num_exec_records_to_write)
 
         # - extract data and event handlers
