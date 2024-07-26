@@ -72,11 +72,27 @@ class TestAccountProcessorStuff:
         # 2. Execute a trade and check account
         leverage = 0.5
         s = "BTCUSDT"
-        ask = ctx.quote(s).ask
+        quote = ctx.quote(s)
         capital = ctx.acc.get_total_capital()
-        amount = capital * leverage / ask
+        amount_in_base = capital * leverage
+        amount = amount_in_base / quote.mid_price()
         ctx.trade("BTCUSDT", amount)
 
-        assert leverage == ctx.acc.get_net_leverage()
-        assert leverage == ctx.acc.get_gross_leverage()
-        assert initial_capital - amount == ctx.acc.get_free_capital()
+        # make the assertions work for floats
+        assert np.isclose(leverage, ctx.acc.get_net_leverage(), rtol=1e-3)
+        assert np.isclose(leverage, ctx.acc.get_gross_leverage(), rtol=1e-3)
+        assert np.isclose(initial_capital - amount_in_base, ctx.acc.get_free_capital(), rtol=1e-3)
+        assert np.isclose(initial_capital, ctx.acc.get_total_capital(), rtol=1e-3)
+
+        # 3. Exit trade and check account
+        ctx.trade("BTCUSDT", -amount)
+
+        # get tick size for BTCUSDT
+        tick_size = ctx.instruments[0].min_tick
+        trade_pnl = -tick_size / quote.ask * leverage
+        new_capital = initial_capital + trade_pnl
+
+        assert 0 == ctx.acc.get_net_leverage()
+        assert 0 == ctx.acc.get_gross_leverage()
+        assert np.isclose(new_capital, ctx.acc.get_free_capital(), rtol=1e-3)
+        assert ctx.acc.get_free_capital() == ctx.acc.get_total_capital()
