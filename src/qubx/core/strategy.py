@@ -44,14 +44,20 @@ class IComminucationManager:
 class ITradingServiceProvider(ITimeProvider, IComminucationManager):
     acc: AccountProcessor
 
+    def set_account(self, account: AccountProcessor):
+        self.acc = account
+
     def get_account(self) -> AccountProcessor:
         return self.acc
 
     def get_name(self) -> str:
         raise NotImplementedError("get_name is not implemented")
 
+    def get_account_id(self) -> str:
+        raise NotImplementedError("get_account_id is not implemented")
+
     def get_capital(self) -> float:
-        return self.acc.get_capital()
+        return self.acc.get_free_capital()
 
     def send_order(
         self,
@@ -241,6 +247,9 @@ class StrategyContext:
         # - data provider and exchange service
         broker_connector: IBrokerServiceProvider,
         instruments: List[Instrument],
+        base_currency: str = "USDT",
+        initial_capital: float = 0,
+        reserves: Dict[str, float] | None = None,
         # - - - - - - - - - - - - - - - - - - - - -
         # - data subscription - - - - - - - - - - -
         md_subscription: Dict[str, Any] = dict(type="ohlc", timeframe="1Min", nback=60),
@@ -255,10 +264,17 @@ class StrategyContext:
         portfolio_log_freq: str = "5Min",
         num_exec_records_to_write=1,  # in live let's write every execution
     ) -> None:
-
         # - initialization
         self.broker_provider = broker_connector
         self.trading_service = broker_connector.get_trading_service()
+        self.acc = AccountProcessor(
+            account_id=self.trading_service.get_account_id(),
+            base_currency=base_currency,
+            reserves=reserves,
+            initial_capital=initial_capital,
+        )
+        self.trading_service.set_account(self.acc)
+
         self.config = config
         self.instruments = instruments
         self.positions = {}
