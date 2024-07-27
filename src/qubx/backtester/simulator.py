@@ -121,9 +121,7 @@ class SimulatedTrading(ITradingServiceProvider):
     def __init__(
         self,
         name: str,
-        capital: float,
         commissions: str,
-        base_currency: str,
         simulation_initial_time: dt_64 | str = np.datetime64(0, "ns"),
     ) -> None:
         self._current_time = (
@@ -133,7 +131,6 @@ class SimulatedTrading(ITradingServiceProvider):
         )
         self._name = name
         self._ome = {}
-        self.acc = AccountProcessor("Simulated0", base_currency, None, capital, 0)
         self._fees_calculator = lookup.fees.find(name.lower(), commissions)
         self._half_tick_size = {}
 
@@ -227,6 +224,9 @@ class SimulatedTrading(ITradingServiceProvider):
 
     def get_name(self) -> str:
         return self._name
+
+    def get_account_id(self) -> str:
+        return "Simulated0"
 
     def process_execution_report(self, symbol: str, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
         order = report["order"]
@@ -649,33 +649,7 @@ def simulate(
 
     # - process instruments:
     #    check if instruments are from the same exchange (mmulti-exchanges is not supported yet)
-    _instrs: List[Instrument] = []
-    _exchanges = [] if exchange is None else [exchange.lower()]
-    for i in instruments:
-        match i:
-            case str():
-                _e, _s = i.split(":") if ":" in i else (exchange, i)
-
-                if exchange is not None and _e.lower() != exchange.lower():
-                    logger.warning("Exchange from symbol's spec ({_e}) is different from requested: {exchange} !")
-
-                if _e is None:
-                    logger.warning(
-                        "Can't extract exchange name from symbol's spec ({_e}) and exact exchange name is not provided - skip this symbol !"
-                    )
-
-                if (ix := lookup.find_symbol(_e, _s)) is not None:
-                    _exchanges.append(_e.lower())
-                    _instrs.append(ix)
-                else:
-                    logger.warning(f"Can't find instrument for specified symbol ({i}) - ignoring !")
-
-            case Instrument():
-                _exchanges.append(i.exchange)
-                _instrs.append(i)
-
-            case _:
-                raise ValueError(f"Unsupported instrument type: {i}")
+    _instrs, _exchanges = find_instruments_and_exchanges(instruments, exchange)
 
     if not _exchanges:
         logger.error(
@@ -707,6 +681,39 @@ def simulate(
 
     # - run simulations
     return _run_setups(setups, start, stop, data_reader, subscription, trigger, n_jobs=n_jobs)
+
+
+def find_instruments_and_exchanges(
+    instruments: List[str] | Dict[str, List[str]], exchange: str | None
+) -> Tuple[List[Instrument], List[str]]:
+    _instrs: List[Instrument] = []
+    _exchanges = [] if exchange is None else [exchange.lower()]
+    for i in instruments:
+        match i:
+            case str():
+                _e, _s = i.split(":") if ":" in i else (exchange, i)
+
+                if exchange is not None and _e.lower() != exchange.lower():
+                    logger.warning("Exchange from symbol's spec ({_e}) is different from requested: {exchange} !")
+
+                if _e is None:
+                    logger.warning(
+                        "Can't extract exchange name from symbol's spec ({_e}) and exact exchange name is not provided - skip this symbol !"
+                    )
+
+                if (ix := lookup.find_symbol(_e, _s)) is not None:
+                    _exchanges.append(_e.lower())
+                    _instrs.append(ix)
+                else:
+                    logger.warning(f"Can't find instrument for specified symbol ({i}) - ignoring !")
+
+            case Instrument():
+                _exchanges.append(i.exchange)
+                _instrs.append(i)
+
+            case _:
+                raise ValueError(f"Unsupported instrument type: {i}")
+    return _instrs, _exchanges
 
 
 class _GeneratedSignalsStrategy(IStrategy):
@@ -745,7 +752,7 @@ def _run_setups(
         logger.debug(
             f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {s.exchange} for {s.capital} x {s.leverage} in {s.base_currency}..."
         )
-        broker = SimulatedTrading(s.exchange, s.capital, s.commissions, s.base_currency, np.datetime64(start, "ns"))
+        broker = SimulatedTrading(s.exchange, s.commissions, np.datetime64(start, "ns"))
         exchange = SimulatedExchange(s.exchange, broker, data_reader)
 
         # - it will store simulation results into memory
@@ -779,9 +786,11 @@ def _run_setups(
                 raise ValueError(f"Unsupported setup type: {s.setup_type} !")
 
         ctx = StrategyContext(
-            strat,
-            None,  # TODO: need to think how we could pass altered parameters here (from variating etc)
-            exchange,
+            strategy=strat,  # type: ignore
+            config=None,  # TODO: need to think how we could pass altered parameters here (from variating etc)
+            broker_connector=exchange,
+            initial_capital=s.capital,
+            base_currency=s.base_currency,
             instruments=s.instruments,
             md_subscription=subscription,
             trigger_spec=_trigger,

@@ -19,8 +19,6 @@ class AccountProcessor:
     _active_orders: Dict[str | int, Order]  # active orders
     _processed_trades: Dict[str | int, List[str | int]]
     _positions: Dict[str, Position]
-    _total_capital_in_base: float = 0.0
-    _locked_capital_in_base: float = 0.0
     _locked_capital_by_order: Dict[str | int, float]
 
     def __init__(
@@ -28,28 +26,28 @@ class AccountProcessor:
         account_id: str,
         base_currency: str,
         reserves: Dict[str, float] | None,
-        total_capital: float = 0,
-        locked_capital: float = 0,
+        initial_capital: float = 0,
     ) -> None:
         self.account_id = account_id
-        self.base_currency = base_currency
+        self.base_currency = base_currency.lower()
         self.reserved = dict() if reserves is None else reserves
         self._processed_trades = defaultdict(list)
         self._active_orders = dict()
         self._positions = {}
         self._locked_capital_by_order = dict()
         self._balances = dict()
-        self.update_base_balance(total_capital, locked_capital)
+        self._balances[self.base_currency] = (initial_capital, 0)
 
-    def update_base_balance(self, total_capital: float, locked_capital: float):
-        """
-        Update base currency balance
-        """
-        self._total_capital_in_base = total_capital
-        self._locked_capital_in_base = locked_capital
-
-    def update_balance(self, symbol: str, total_capital: float, locked_capital: float):
-        self._balances[symbol] = (total_capital, locked_capital)
+    def update_balance(self, currency: str, total_capital: float, locked_capital: float):
+        if currency == self.base_currency:
+            current_balance = self._balances[currency][0]
+            if current_balance > 0 and current_balance < total_capital:
+                logger.info(
+                    f"Restricting {self.base_currency} capital from {total_capital} "
+                    f"down to {current_balance} due to initial capital constraint."
+                )
+                total_capital = current_balance
+        self._balances[currency] = (total_capital, locked_capital)
 
     def get_balances(self) -> Dict[str, Tuple[float, float]]:
         return dict(self._balances)
@@ -63,15 +61,52 @@ class AccountProcessor:
         p = self._positions[symbol]
         p.update_market_price(time, price, 1)
 
-    def get_capital(self) -> float:
-        # TODO: need to take in account leverage and funds currently locked
-        return self._total_capital_in_base - self._locked_capital_in_base
+    def get_free_capital(self) -> float:
+        """
+        Get free capital in base currency.
+        """
+        return self.base_currency_balance - self.base_currency_locked_balance
+
+    def get_total_capital(self) -> float:
+        """
+        Get margin capital in base currency. It includes capital locked in positions.
+        """
+        positions_value_in_base = sum([p.market_value_funds for p in self._positions.values()])
+        return self.base_currency_balance + positions_value_in_base - self.get_reserved_capital()
+
+    def get_leverage(self, inst: str | Instrument) -> float:
+        inst = inst if isinstance(inst, str) else inst.symbol
+        pos = self._positions.get(inst)
+        if pos is not None:
+            return pos.market_value_funds / self.get_total_capital()
+        return 0.0
+
+    def get_leverages(self) -> dict[str, float]:
+        return {s: self.get_leverage(s) for s in self._positions.keys()}
+
+    def get_net_leverage(self) -> float:
+        return sum(self.get_leverages().values())
+
+    def get_gross_leverage(self) -> float:
+        return sum(map(abs, self.get_leverages().values()))
 
     def get_reserved(self, instrument: Instrument) -> float:
         """
         Check how much were reserved for this instrument
         """
         return self.reserved.get(instrument.symbol, self.reserved.get(instrument.base, 0))
+
+    def get_reserved_capital(self) -> float:
+        """
+        Get total amount of capital reserved from trading.
+        """
+        if not self.reserved:
+            return 0.0
+        reserved_capital = 0.0
+        # TODO: fix this to work with reserved currency keys instead of symbols
+        for symbol, amount in self.reserved.items():
+            reserved_capital += amount * self._positions[symbol].last_update_price
+        return reserved_capital
 
     def process_deals(self, symbol: str, deals: List[Deal]):
         pos = self._positions.get(symbol)
@@ -100,7 +135,7 @@ class AccountProcessor:
                     deal_cost += d.amount * d.price / conversion_rate
                     traded_amnt += d.amount
                     logger.info(f"  ::  traded {d.amount} for {symbol} @ {d.price} -> {realized_pnl:.2f}")
-                    self._total_capital_in_base -= deal_cost
+                    self.base_currency_balance -= deal_cost
 
     def _lock_limit_order_value(self, order: Order) -> float:
         pos = self._positions.get(order.symbol)
@@ -117,7 +152,7 @@ class AccountProcessor:
             excess = abs(qty_opening) * order.price
 
             if excess > 0:
-                self._locked_capital_in_base += excess
+                self.base_currency_locked_balance += excess
                 self._locked_capital_by_order[order.id] = excess
 
         return excess
@@ -125,7 +160,7 @@ class AccountProcessor:
     def _unlock_limit_order_value(self, order: Order):
         if order.id in self._locked_capital_by_order:
             excess = self._locked_capital_by_order.pop(order.id)
-            self._locked_capital_in_base -= excess
+            self.base_currency_locked_balance -= excess
 
     def process_order(self, order: Order):
         _new = order.status == "NEW"
@@ -171,5 +206,22 @@ class AccountProcessor:
                 "Price": p.position_avg_price_funds,
                 "PnL": p.pnl,
                 "MktValue": p.market_value_funds,
+                "Leverage": self.get_leverage(p.instrument.symbol),
             }
         return rep
+
+    @property
+    def base_currency_balance(self) -> float:
+        return self._balances[self.base_currency][0]
+
+    @property
+    def base_currency_locked_balance(self) -> float:
+        return self._balances[self.base_currency][1]
+
+    @base_currency_balance.setter
+    def base_currency_balance(self, value: float):
+        self._balances[self.base_currency] = (value, self._balances[self.base_currency][1])
+
+    @base_currency_locked_balance.setter
+    def base_currency_locked_balance(self, value: float):
+        self._balances[self.base_currency] = (self._balances[self.base_currency][0], value)
