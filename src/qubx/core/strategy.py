@@ -756,8 +756,8 @@ class StrategyContext:
             raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
 
         # - adjust size
-        size_adj = _round_down_at_min_qty(abs(amount), instrument.min_size)
-        if size_adj == 0:
+        size_adj = _round_down_at_min_qty(abs(amount), instrument.min_size_step)
+        if size_adj < instrument.min_size:
             raise ValueError(f"Attempt to trade size {abs(amount)} less than minimal allowed {instrument.min_size} !")
 
         side = "buy" if amount > 0 else "sell"

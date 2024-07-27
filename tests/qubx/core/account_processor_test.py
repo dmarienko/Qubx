@@ -1,6 +1,6 @@
 from qubx.pandaz.utils import *
 
-from qubx.core.strategy import IStrategy, StrategyContext, TriggerEvent
+from qubx.core.strategy import IStrategy, StrategyContext, TriggerEvent, _round_down_at_min_qty
 from qubx.core.loggers import InMemoryLogsWriter
 from qubx.data.readers import CsvStorageDataReader, DataReader
 from qubx.backtester.simulator import simulate, SimulatedTrading, SimulatedExchange, find_instruments_and_exchanges
@@ -41,7 +41,6 @@ def run_debug_sim(
 
 
 class TestAccountProcessorStuff:
-
     def test_account_basics(self):
         initial_capital = 10_000
 
@@ -73,16 +72,21 @@ class TestAccountProcessorStuff:
         leverage = 0.5
         s = "BTCUSDT"
         quote = ctx.quote(s)
+        min_size_step = ctx.instruments[0].min_size_step
         capital = ctx.acc.get_total_capital()
         amount_in_base = capital * leverage
-        amount = amount_in_base / quote.mid_price()
+        amount = _round_down_at_min_qty(amount_in_base / quote.mid_price(), min_size_step)
+        leverage_adj = amount * quote.ask / capital
         ctx.trade("BTCUSDT", amount)
 
         # make the assertions work for floats
-        assert np.isclose(leverage, ctx.acc.get_net_leverage(), rtol=1e-3)
-        assert np.isclose(leverage, ctx.acc.get_gross_leverage(), rtol=1e-3)
-        assert np.isclose(initial_capital - amount_in_base, ctx.acc.get_free_capital(), rtol=1e-3)
-        assert np.isclose(initial_capital, ctx.acc.get_total_capital(), rtol=1e-3)
+        assert np.isclose(leverage_adj, ctx.acc.get_net_leverage())
+        assert np.isclose(leverage_adj, ctx.acc.get_gross_leverage())
+        assert np.isclose(
+            initial_capital - amount * quote.ask,
+            ctx.acc.get_free_capital(),
+        )
+        assert np.isclose(initial_capital, ctx.acc.get_total_capital())
 
         # 3. Exit trade and check account
         ctx.trade("BTCUSDT", -amount)
@@ -90,9 +94,9 @@ class TestAccountProcessorStuff:
         # get tick size for BTCUSDT
         tick_size = ctx.instruments[0].min_tick
         trade_pnl = -tick_size / quote.ask * leverage
-        new_capital = initial_capital + trade_pnl
+        new_capital = initial_capital * (1 + trade_pnl)
 
         assert 0 == ctx.acc.get_net_leverage()
         assert 0 == ctx.acc.get_gross_leverage()
-        assert np.isclose(new_capital, ctx.acc.get_free_capital(), rtol=1e-3)
+        assert np.isclose(new_capital, ctx.acc.get_free_capital())
         assert ctx.acc.get_free_capital() == ctx.acc.get_total_capital()
