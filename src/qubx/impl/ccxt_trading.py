@@ -7,7 +7,7 @@ import traceback
 import ccxt
 import ccxt.pro as cxp
 from ccxt.base.decimal_to_precision import ROUND_UP
-from ccxt.base.exchange import Exchange
+from ccxt.base.exchange import Exchange, ExchangeError
 
 import numpy as np
 import pandas as pd
@@ -162,7 +162,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
         price: float | None = None,
         client_id: str | None = None,
         time_in_force: str = "gtc",
-    ) -> Optional[Order]:
+    ) -> Order:
         params = {}
         symbol = instrument.symbol
 
@@ -174,10 +174,9 @@ class CCXTTradingConnector(ITradingServiceProvider):
         if client_id:
             params["newClientOrderId"] = client_id
 
+        r: Dict[str, Any] | None = None
         try:
-            r: Dict[str, Any] | None = self.sync.create_order(
-                symbol, order_type, order_side, amount, price, params=params  # type: ignore
-            )
+            r = self.sync.create_order(symbol, order_type, order_side, amount, price, params=params)  # type: ignore
         except ccxt.BadRequest as exc:
             logger.error(
                 f"(CCXTSyncTradingConnector::send_order) BAD REQUEST for {order_side} {amount} {order_type} for {symbol} : {exc}"
@@ -190,12 +189,13 @@ class CCXTTradingConnector(ITradingServiceProvider):
             logger.error(traceback.format_exc())
             raise err
 
-        if r is not None:
-            order = ccxt_convert_order_info(symbol, r)
-            logger.info(f"(CCXTSyncTradingConnector) New order {order}")
-            return order
+        if r is None:
+            logger.error(f"(CCXTSyncTradingConnector::send_order) No response from exchange")
+            raise ExchangeError("(CCXTSyncTradingConnector::send_order) No response from exchange")
 
-        return None
+        order = ccxt_convert_order_info(symbol, r)
+        logger.info(f"(CCXTSyncTradingConnector) New order {order}")
+        return order
 
     def cancel_order(self, order_id: str) -> Order | None:
         order = None

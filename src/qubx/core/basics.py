@@ -234,14 +234,14 @@ class Position:
 
     def change_position_by(
         self, timestamp: dt_64, amount: float, exec_price: float, aggressive=True, conversion_rate: float = 1
-    ) -> float:
+    ) -> tuple[float, float]:
         return self.update_position(
             timestamp, self.quantity + amount, exec_price, aggressive=aggressive, conversion_rate=conversion_rate
         )
 
     def update_position(
         self, timestamp: dt_64, position: float, exec_price: float, aggressive=True, conversion_rate: float = 1
-    ) -> float:
+    ) -> tuple[float, float]:
         # - realized PnL of this fill
         deal_pnl = 0
         quantity = self.quantity
@@ -289,12 +289,12 @@ class Position:
             comms = self.tcc.get_execution_fees(self.instrument, exec_price, pos_change, aggressive, conversion_rate)
             self.commissions += comms
 
-        return deal_pnl
+        return deal_pnl, comms
 
     def update_market_price_by_tick(self, tick: Quote | Trade, conversion_rate: float = 1) -> float:
         return self.update_market_price(tick.time, self._price(tick), conversion_rate)
 
-    def update_position_by_deal(self, deal: Deal, conversion_rate: float = 1) -> float:
+    def update_position_by_deal(self, deal: Deal, conversion_rate: float = 1) -> tuple[float, float]:
         time = deal.time.as_unit("ns").asm8 if isinstance(deal.time, pd.Timestamp) else deal.time
         return self.change_position_by(time, deal.amount, deal.price, deal.aggressive, conversion_rate)
         # - deal contains cumulative amount

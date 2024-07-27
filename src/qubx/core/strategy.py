@@ -68,7 +68,7 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
         price: float | None = None,
         client_id: str | None = None,
         time_in_force: str = "gtc",
-    ) -> Order | None:
+    ) -> Order:
         raise NotImplementedError("send_order is not implemented")
 
     def cancel_order(self, order_id: str) -> Order | None:

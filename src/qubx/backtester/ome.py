@@ -8,30 +8,10 @@ from sortedcontainers import SortedDict
 from qubx import logger
 from qubx.core.basics import Deal, Instrument, Order, Position, Signal, dt_64, ITimeProvider
 from qubx.core.series import Quote, Trade, time_as_nsec
-
-
-class BaseError(Exception):
-    pass
-
-
-class ExchangeError(BaseError):
-    pass
-
-
-class BadRequest(ExchangeError):
-    pass
-
-
-class InvalidOrder(ExchangeError):
-    pass
-
-
-class OrderNotFound(InvalidOrder):
-    pass
-
-
-class NotSupported(ExchangeError):
-    pass
+from qubx.core.exceptions import (
+    ExchangeError,
+    InvalidOrder,
+)
 
 
 @dataclass

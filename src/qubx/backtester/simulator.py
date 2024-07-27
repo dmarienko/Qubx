@@ -121,7 +121,7 @@ class SimulatedTrading(ITradingServiceProvider):
     def __init__(
         self,
         name: str,
-        commissions: str,
+        commissions: str | None = None,
         simulation_initial_time: dt_64 | str = np.datetime64(0, "ns"),
     ) -> None:
         self._current_time = (
@@ -149,7 +149,7 @@ class SimulatedTrading(ITradingServiceProvider):
         price: float | None = None,
         client_id: str | None = None,
         time_in_force: str = "gtc",
-    ) -> Order | None:
+    ) -> Order:
         ome = self._ome.get(instrument.symbol)
         if ome is None:
             raise ValueError(f"ExchangeService:send_order :: No OME configured for '{instrument.symbol}'!")
