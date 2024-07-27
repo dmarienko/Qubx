@@ -44,31 +44,29 @@ class CCXTTradingConnector(ITradingServiceProvider):
         self,
         exchange_id: str,
         account_id: str,
-        base_currency: str | None,
         commissions: str | None = None,
-        reserves: Dict[str, float] | None = None,
         **exchange_auth,
     ):
-        if base_currency is None:
-            raise ValueError("Base currency is not specified !")
-
         exchange_id = exchange_id.lower()
         exch = EXCHANGE_ALIASES.get(exchange_id, exchange_id)
-
         if exch not in ccxt.exchanges:
             raise ValueError(f"Exchange {exchange_id} -> {exch} is not supported by CCXT!")
 
         self.exchange_id = exchange_id
+        self.account_id = account_id
+        self.commissions = commissions
 
         # - sync exchange
         self.sync: Exchange = getattr(ccxt, exch.lower())(exchange_auth)
-        self.acc = AccountProcessor(account_id, base_currency, reserves)
 
         logger.info(f"{exch.upper()} loading ...")
         self.sync.load_markets()
-        self._sync_account_info(commissions)
-        self._positions = self.acc._positions
 
+    def set_account(self, acc: AccountProcessor):
+        super().set_account(acc)
+        # TODO: move sync account info call to base class, could be useful also for IB
+        self._sync_account_info(self.commissions)
+        self._positions = self.acc._positions
         # - show reserves info
         for s, v in self.acc.reserved.items():
             logger.info(f" > {v} of {s} is reserved from trading")
@@ -80,10 +78,6 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
         # - check what we have on balance: TODO test on futures account
         for k, vol in self._balance["total"].items():  # type: ignore
-            if k.lower() == self.acc.base_currency.lower():
-                _free = self._balance["free"][self.acc.base_currency]
-                self.acc.update_base_balance(vol, vol - _free)
-
             if vol != 0.0:  # - get all non zero balances
                 self.acc.update_balance(k, vol, vol - self._balance["free"].get(k, 0))
 
@@ -226,6 +220,9 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
     def get_name(self) -> str:
         return self.sync.name  # type: ignore
+
+    def get_account_id(self) -> str:
+        return self.account_id
 
     def process_execution_report(self, symbol: str, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
         order = ccxt_convert_order_info(symbol, report)
