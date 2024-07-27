@@ -6,7 +6,7 @@ import numpy as np
 from sortedcontainers import SortedDict
 
 from qubx import logger
-from qubx.core.basics import Deal, Instrument, Order, Position, Signal, dt_64, ITimeProvider
+from qubx.core.basics import Deal, Instrument, Order, Position, Signal, TransactionCostsCalculator, dt_64, ITimeProvider
 from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.core.exceptions import (
     ExchangeError,
@@ -31,9 +31,12 @@ class OrdersManagementEngine:
     __order_id: int
     __trade_id: int
 
-    def __init__(self, instrument: Instrument, time_provider: ITimeProvider, debug=True) -> None:
+    def __init__(
+        self, instrument: Instrument, time_provider: ITimeProvider, tcc: TransactionCostsCalculator, debug: bool = True
+    ) -> None:
         self.instrument = instrument
         self.time_service = time_provider
+        self.tcc = tcc
         self.asks = SortedDict()
         self.bids = SortedDict(neg)
         self.active_orders = dict()
@@ -154,12 +157,16 @@ class OrdersManagementEngine:
             timestamp,
             order,
             Deal(
-                self._generate_trade_id(),
-                order.id,
-                timestamp,
-                order.quantity if order.side == "BUY" else -order.quantity,
-                exec_price,
-                taker,
+                id=self._generate_trade_id(),
+                order_id=order.id,
+                time=timestamp,
+                amount=order.quantity if order.side == "BUY" else -order.quantity,
+                price=exec_price,
+                aggressive=taker,
+                fee_amount=self.tcc.get_execution_fees(
+                    instrument=self.instrument, exec_price=exec_price, amount=order.quantity, crossed_market=taker
+                ),
+                fee_currency=self.instrument.quote,
             ),
         )
 

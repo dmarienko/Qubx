@@ -77,7 +77,7 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
     def get_orders(self, symbol: str | None = None) -> List[Order]:
         raise NotImplementedError("get_orders is not implemented")
 
-    def get_position(self, instrument: Instrument) -> Position:
+    def get_position(self, instrument: Instrument | str) -> Position:
         raise NotImplementedError("get_position is not implemented")
 
     def get_base_currency(self) -> str:

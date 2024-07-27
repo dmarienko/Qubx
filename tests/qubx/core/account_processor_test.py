@@ -100,3 +100,43 @@ class TestAccountProcessorStuff:
         assert 0 == ctx.acc.get_gross_leverage()
         assert np.isclose(new_capital, ctx.acc.get_free_capital())
         assert ctx.acc.get_free_capital() == ctx.acc.get_total_capital()
+
+    def test_commissions(self):
+        initial_capital = 10_000
+
+        ctx = run_debug_sim(
+            strategy_id="test0",
+            strategy=IStrategy(),
+            data_reader=CsvStorageDataReader("tests/data/csv"),
+            exchange="BINANCE.UM",
+            instruments=["BTCUSDT"],
+            trigger="1H -1Sec",
+            subscription=dict(type="ohlc", timeframe="1h", nback=0),
+            commissions="vip0_usdt",
+            start="2024-01-01",
+            stop="2024-01-02",
+            initial_capital=initial_capital,
+            base_currency="USDT",
+        )
+
+        logs_writer = ctx._logs_writer
+        assert isinstance(logs_writer, InMemoryLogsWriter)
+
+        leverage = 0.5
+        s = "BTCUSDT"
+        quote = ctx.quote(s)
+        min_size_step = ctx.instruments[0].min_size_step
+        capital = ctx.acc.get_total_capital()
+        amount_in_base = capital * leverage
+        amount = _round_down_at_min_qty(amount_in_base / quote.mid_price(), min_size_step)
+        ctx.trade("BTCUSDT", amount)
+        ctx.trade("BTCUSDT", -amount)
+
+        tick_size = ctx.instruments[0].min_tick
+        trade_pnl = -tick_size / quote.ask * leverage
+        new_capital = initial_capital * (1 + trade_pnl)
+
+        # take commissions into account
+        # ctx.acc._positions[s].tcc.get_execution_fees()
+
+        print(logs_writer.get_executions())
