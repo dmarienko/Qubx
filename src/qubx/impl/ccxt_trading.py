@@ -7,7 +7,7 @@ import traceback
 import ccxt
 import ccxt.pro as cxp
 from ccxt.base.decimal_to_precision import ROUND_UP
-from ccxt.base.exchange import Exchange
+from ccxt.base.exchange import Exchange, ExchangeError
 
 import numpy as np
 import pandas as pd
@@ -37,7 +37,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
     sync: Exchange
 
-    _fees_calculator: Optional[TransactionCostsCalculator] = None  # type: ignore
+    _fees_calculator: TransactionCostsCalculator
     _positions: Dict[str, Position]
 
     def __init__(
@@ -143,11 +143,11 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
         return position
 
-    def get_position(self, instrument: Instrument) -> Position:
-        symbol = instrument.symbol
+    def get_position(self, instrument: Instrument | str) -> Position:
+        symbol = instrument.symbol if isinstance(instrument, Instrument) else instrument
 
         if symbol not in self._positions:
-            position = Position(instrument, self._fees_calculator)  # type: ignore
+            position = Position(instrument)  # type: ignore
             position = self._sync_position_and_orders(position)
             self.acc.attach_positions(position)
 
@@ -162,7 +162,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
         price: float | None = None,
         client_id: str | None = None,
         time_in_force: str = "gtc",
-    ) -> Optional[Order]:
+    ) -> Order:
         params = {}
         symbol = instrument.symbol
 
@@ -174,10 +174,9 @@ class CCXTTradingConnector(ITradingServiceProvider):
         if client_id:
             params["newClientOrderId"] = client_id
 
+        r: Dict[str, Any] | None = None
         try:
-            r: Dict[str, Any] | None = self.sync.create_order(
-                symbol, order_type, order_side, amount, price, params=params  # type: ignore
-            )
+            r = self.sync.create_order(symbol, order_type, order_side, amount, price, params=params)  # type: ignore
         except ccxt.BadRequest as exc:
             logger.error(
                 f"(CCXTSyncTradingConnector::send_order) BAD REQUEST for {order_side} {amount} {order_type} for {symbol} : {exc}"
@@ -190,12 +189,13 @@ class CCXTTradingConnector(ITradingServiceProvider):
             logger.error(traceback.format_exc())
             raise err
 
-        if r is not None:
-            order = ccxt_convert_order_info(symbol, r)
-            logger.info(f"(CCXTSyncTradingConnector) New order {order}")
-            return order
+        if r is None:
+            logger.error(f"(CCXTSyncTradingConnector::send_order) No response from exchange")
+            raise ExchangeError("(CCXTSyncTradingConnector::send_order) No response from exchange")
 
-        return None
+        order = ccxt_convert_order_info(symbol, r)
+        logger.info(f"(CCXTSyncTradingConnector) New order {order}")
+        return order
 
     def cancel_order(self, order_id: str) -> Order | None:
         order = None
@@ -227,6 +227,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
     def process_execution_report(self, symbol: str, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
         order = ccxt_convert_order_info(symbol, report)
         deals = ccxt_extract_deals_from_exec(report)
+        self._fill_missing_fee_info(self._get_instrument(symbol), deals)
         self.acc.process_deals(symbol, deals)
         self.acc.process_order(order)
         return order, deals
@@ -236,3 +237,15 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
     def get_base_currency(self) -> str:
         return self.acc.base_currency
+
+    def _get_instrument(self, symbol: str) -> Instrument:
+        return self.get_position(symbol).instrument
+
+    def _fill_missing_fee_info(self, instrument: Instrument, deals: List[Deal]) -> None:
+        for d in deals:
+            if d.fee_amount is None:
+                d.fee_amount = self._fees_calculator.get_execution_fees(
+                    instrument=instrument, exec_price=d.price, amount=d.amount, crossed_market=d.aggressive
+                )
+                # this is only true for linear contracts
+                d.fee_currency = instrument.quote

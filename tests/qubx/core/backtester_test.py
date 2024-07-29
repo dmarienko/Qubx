@@ -7,7 +7,7 @@ from qubx.core.series import Quote
 from qubx.core.utils import recognize_time
 from qubx.core.strategy import IStrategy, StrategyContext, TriggerEvent
 from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsTimestampedRecords, AsQuotes, RestoreTicksFromOHLC
-from qubx.core.basics import Deal, Instrument, Order, ITimeProvider
+from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider
 
 from qubx.backtester.ome import OrdersManagementEngine
 
@@ -32,7 +32,7 @@ class TestBacktesterStuff:
 
     def test_basic_ome(self):
         instr = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
-        ome = OrdersManagementEngine(instr, t := _TimeService())
+        ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
 
         q0 = Q("2020-01-01 10:00", 32000, 32001)
         ome.update_bbo(t.g(q0))
@@ -93,7 +93,7 @@ class TestBacktesterStuff:
 
     def test_ome_execution(self):
         instr = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
-        ome = OrdersManagementEngine(instr, t := _TimeService())
+        ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
 
         q0 = Q("2020-01-01 10:00", 32000, 32001)
         ome.update_bbo(t.g(q0))
@@ -122,7 +122,7 @@ class TestBacktesterStuff:
         r = CsvStorageDataReader("tests/data/csv")
         stream = r.read("BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=False, spread=instr.min_tick))
 
-        ome = OrdersManagementEngine(instr, t := _TimeService())
+        ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
         ome.update_bbo(t.g(stream[0]))
         l1 = ome.place_order("BUY", "LIMIT", 0.5, 39500.0, "Test1")
         l2 = ome.place_order("SELL", "LIMIT", 0.5, 52000.0, "Test2")

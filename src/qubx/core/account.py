@@ -65,6 +65,7 @@ class AccountProcessor:
         """
         Get free capital in base currency.
         """
+        # TODO: separate cash and margin accounts in the future
         return self.base_currency_balance - self.base_currency_locked_balance
 
     def get_total_capital(self) -> float:
@@ -131,11 +132,12 @@ class AccountProcessor:
             for d in deals:
                 if d.id not in self._processed_trades[d.order_id]:
                     self._processed_trades[d.order_id].append(d.id)
-                    realized_pnl += pos.update_position_by_deal(d, conversion_rate)
+                    r_pnl, fee_in_base = pos.update_position_by_deal(d, conversion_rate)
+                    realized_pnl += r_pnl
                     deal_cost += d.amount * d.price / conversion_rate
                     traded_amnt += d.amount
                     logger.info(f"  ::  traded {d.amount} for {symbol} @ {d.price} -> {realized_pnl:.2f}")
-                    self.base_currency_balance -= deal_cost
+                    self.base_currency_balance -= deal_cost + fee_in_base
 
     def _lock_limit_order_value(self, order: Order) -> float:
         pos = self._positions.get(order.symbol)
