@@ -1,6 +1,7 @@
 from qubx.pandaz.utils import *
 
-from qubx.core.strategy import IStrategy, StrategyContext, TriggerEvent, _round_down_at_min_qty
+from qubx.core.strategy import IStrategy, StrategyContext
+from qubx.core.context import StrategyContextImpl, _round_down_at_min_qty
 from qubx.core.loggers import InMemoryLogsWriter
 from qubx.data.readers import CsvStorageDataReader, DataReader
 from qubx.backtester.simulator import simulate, SimulatedTrading, SimulatedExchange, find_instruments_and_exchanges
@@ -24,7 +25,7 @@ def run_debug_sim(
     broker = SimulatedExchange(exchange, broker, data_reader)
     logs_writer = InMemoryLogsWriter("test", strategy_id, "0")
     _instr, _ = find_instruments_and_exchanges(instruments, exchange)
-    ctx = StrategyContext(
+    ctx = StrategyContextImpl(
         strategy=strategy,
         config=None,
         broker_connector=broker,

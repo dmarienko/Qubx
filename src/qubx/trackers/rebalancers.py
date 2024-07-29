@@ -27,13 +27,9 @@ class PortfolioRebalancerTracker(PositionsTracker):
         self.capital_invested = capital_invested
         self.tolerance = tolerance
 
-    def set_context(self, ctx: StrategyContext) -> PositionsTracker:
-        super().set_context(ctx)
-        if self.capital_invested == 0:
-            self.capital_invested = ctx.get_capital()
-        return self
-
-    def calculate_released_capital(self, symbols_to_close: List[str] | None = None) -> Tuple[float, List[str]]:
+    def calculate_released_capital(
+        self, ctx: StrategyContext, symbols_to_close: List[str] | None = None
+    ) -> Tuple[float, List[str]]:
         """
         Calculate capital that would be released if close positions for provided symbols_to_close list
         """
@@ -41,28 +37,28 @@ class PortfolioRebalancerTracker(PositionsTracker):
         closed_symbols = []
         if symbols_to_close is not None:
             for symbol in symbols_to_close:
-                p = self.ctx.positions.get(symbol)
+                p = ctx.positions.get(symbol)
                 if p is not None and p.quantity != 0:
                     released_capital_after_close += p.get_amount_released_funds_after_closing(
-                        to_remain=self.ctx.get_reserved(p.instrument)
+                        to_remain=ctx.get_reserved(p.instrument)
                     )
                     closed_symbols.append(symbol)
         return released_capital_after_close, closed_symbols
 
-    def estimate_capital_to_trade(self, symbols_to_close: List[str] | None = None) -> Capital:
+    def estimate_capital_to_trade(self, ctx: StrategyContext, symbols_to_close: List[str] | None = None) -> Capital:
         released_capital = 0.0
         closed_positions = None
 
         if symbols_to_close is not None:
-            released_capital, closed_positions = self.calculate_released_capital(symbols_to_close)
+            released_capital, closed_positions = self.calculate_released_capital(ctx, symbols_to_close)
 
-        cap_to_invest = self.ctx.get_capital() + released_capital
+        cap_to_invest = ctx.get_capital() + released_capital
         if self.capital_invested > 0:
             cap_to_invest = min(self.capital_invested, cap_to_invest)
 
         return Capital(cap_to_invest, released_capital, closed_positions)
 
-    def process_signals(self, signals: pd.DataFrame):
+    def process_signals(self, ctx: StrategyContext, signals: pd.DataFrame):
         """
         TODO: will be moved to StrategyContext in future - temporary here
 
@@ -74,14 +70,14 @@ class PortfolioRebalancerTracker(PositionsTracker):
 
         # close positions first - we need to release capital
         for s in to_close:
-            if pos := self.ctx.positions.get(s):
-                reserved = self.ctx.get_reserved(pos.instrument)
+            if pos := ctx.positions.get(s):
+                reserved = ctx.get_reserved(pos.instrument)
                 to_close = self._how_much_can_be_closed(pos.quantity, reserved)
                 logger.info(
                     f"(PortfolioRebalancerTracker) {s} - closing {to_close} from {pos.quantity} amount (reserved: {reserved})"
                 )
                 try:
-                    self.ctx.trade(s, -to_close)
+                    ctx.trade(s, -to_close)
                 except Exception as err:
                     logger.error(f"(PortfolioRebalancerTracker) {s} Error processing closing order: {str(err)}")
             else:
@@ -91,7 +87,7 @@ class PortfolioRebalancerTracker(PositionsTracker):
 
         # open or alter or open new positions
         for s, n in to_open.items():
-            if pos := self.ctx.positions.get(s):
+            if pos := ctx.positions.get(s):
                 trade_size = n - pos.quantity
                 trade_size_change_pct = abs(trade_size / pos.quantity) if pos.quantity != 0 else 1
                 if 100 * trade_size_change_pct > self.tolerance:
@@ -99,7 +95,7 @@ class PortfolioRebalancerTracker(PositionsTracker):
                         f"(PortfolioRebalancerTracker) {s} - change position {pos.quantity} -> {n} (tolerance: {self.tolerance}%)"
                     )
                     try:
-                        self.ctx.trade(s, trade_size)
+                        ctx.trade(s, trade_size)
                     except Exception as err:
                         logger.error(f"(PortfolioRebalancerTracker) {s} Error processing opening order: {str(err)}")
                 else:
@@ -112,17 +108,17 @@ class PortfolioRebalancerTracker(PositionsTracker):
                     f"(PortfolioRebalancerTracker) Position for {s} is required to be changed but can't be found in context !"
                 )
 
-    def close_all(self):
-        for s, pos in self.ctx.positions.items():
+    def close_all(self, ctx: StrategyContext) -> None:
+        for s, pos in ctx.positions.items():
             if pos.quantity != 0:
-                reserved = self.ctx.get_reserved(pos.instrument)
+                reserved = ctx.get_reserved(pos.instrument)
                 to_close = self._how_much_can_be_closed(pos.quantity, reserved)
                 if to_close != 0:
                     try:
                         logger.info(
                             f"(PortfolioRebalancerTracker) {s} - closing {to_close} from {pos.quantity} amount (reserved: {reserved})"
                         )
-                        self.ctx.trade(s, -pos.quantity)
+                        ctx.trade(s, -pos.quantity)
                     except Exception as err:
                         logger.error(f"(PortfolioRebalancerTracker) {s} Error processing closing order: {str(err)}")
 

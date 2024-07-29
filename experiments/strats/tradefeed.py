@@ -60,7 +60,7 @@ class TradeTestStrat(IStrategy):
         logger.info(f"> test is stopped")
 
     def tracker(self, ctx: StrategyContext) -> PositionsTracker:
-        return PortfolioRebalancerTracker(self.capital_invested, 0).set_context(ctx)
+        return PortfolioRebalancerTracker(self.capital_invested, 0)
 
     def reporting(self, signals: pd.DataFrame, wealth: Capital):
         _str_pos = tabulate(signals.tail(1), dequotify(list(signals.columns.values)), tablefmt="rounded_grid")  # type: ignore
