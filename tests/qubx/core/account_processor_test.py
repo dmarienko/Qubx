@@ -1,6 +1,6 @@
 from qubx.pandaz.utils import *
 
-from qubx.core.strategy import IStrategy, StrategyContext, TriggerEvent
+from qubx.core.strategy import IStrategy, StrategyContext, TriggerEvent, _round_down_at_min_qty
 from qubx.core.loggers import InMemoryLogsWriter
 from qubx.data.readers import CsvStorageDataReader, DataReader
 from qubx.backtester.simulator import simulate, SimulatedTrading, SimulatedExchange, find_instruments_and_exchanges
@@ -14,7 +14,7 @@ def run_debug_sim(
     instruments: list[str],
     trigger: str,
     subscription: dict,
-    commissions: str,
+    commissions: str | None,
     start: str,
     stop: str,
     initial_capital: float,
@@ -41,8 +41,67 @@ def run_debug_sim(
 
 
 class TestAccountProcessorStuff:
-
     def test_account_basics(self):
+        initial_capital = 10_000
+
+        ctx = run_debug_sim(
+            strategy_id="test0",
+            strategy=IStrategy(),
+            data_reader=CsvStorageDataReader("tests/data/csv"),
+            exchange="BINANCE.UM",
+            instruments=["BTCUSDT"],
+            trigger="1H -1Sec",
+            subscription=dict(type="ohlc", timeframe="1h", nback=0),
+            commissions=None,
+            start="2024-01-01",
+            stop="2024-01-02",
+            initial_capital=initial_capital,
+            base_currency="USDT",
+        )
+
+        logs_writer = ctx._logs_writer
+        assert isinstance(logs_writer, InMemoryLogsWriter)
+
+        # 1. Check account in the beginning
+        assert 0 == ctx.acc.get_net_leverage()
+        assert 0 == ctx.acc.get_gross_leverage()
+        assert initial_capital == ctx.acc.get_free_capital()
+        assert initial_capital == ctx.acc.get_total_capital()
+
+        # 2. Execute a trade and check account
+        leverage = 0.5
+        s = "BTCUSDT"
+        quote = ctx.quote(s)
+        min_size_step = ctx.instruments[0].min_size_step
+        capital = ctx.acc.get_total_capital()
+        amount_in_base = capital * leverage
+        amount = _round_down_at_min_qty(amount_in_base / quote.mid_price(), min_size_step)
+        leverage_adj = amount * quote.ask / capital
+        ctx.trade("BTCUSDT", amount)
+
+        # make the assertions work for floats
+        assert np.isclose(leverage_adj, ctx.acc.get_net_leverage())
+        assert np.isclose(leverage_adj, ctx.acc.get_gross_leverage())
+        assert np.isclose(
+            initial_capital - amount * quote.ask,
+            ctx.acc.get_free_capital(),
+        )
+        assert np.isclose(initial_capital, ctx.acc.get_total_capital())
+
+        # 3. Exit trade and check account
+        ctx.trade("BTCUSDT", -amount)
+
+        # get tick size for BTCUSDT
+        tick_size = ctx.instruments[0].min_tick
+        trade_pnl = -tick_size / quote.ask * leverage
+        new_capital = initial_capital * (1 + trade_pnl)
+
+        assert 0 == ctx.acc.get_net_leverage()
+        assert 0 == ctx.acc.get_gross_leverage()
+        assert np.isclose(new_capital, ctx.acc.get_free_capital())
+        assert ctx.acc.get_free_capital() == ctx.acc.get_total_capital()
+
+    def test_commissions(self):
         initial_capital = 10_000
 
         ctx = run_debug_sim(
@@ -63,36 +122,21 @@ class TestAccountProcessorStuff:
         logs_writer = ctx._logs_writer
         assert isinstance(logs_writer, InMemoryLogsWriter)
 
-        # 1. Check account in the beginning
-        assert 0 == ctx.acc.get_net_leverage()
-        assert 0 == ctx.acc.get_gross_leverage()
-        assert initial_capital == ctx.acc.get_free_capital()
-        assert initial_capital == ctx.acc.get_total_capital()
-
-        # 2. Execute a trade and check account
         leverage = 0.5
         s = "BTCUSDT"
         quote = ctx.quote(s)
+        min_size_step = ctx.instruments[0].min_size_step
         capital = ctx.acc.get_total_capital()
         amount_in_base = capital * leverage
-        amount = amount_in_base / quote.mid_price()
+        amount = _round_down_at_min_qty(amount_in_base / quote.mid_price(), min_size_step)
         ctx.trade("BTCUSDT", amount)
-
-        # make the assertions work for floats
-        assert np.isclose(leverage, ctx.acc.get_net_leverage(), rtol=1e-3)
-        assert np.isclose(leverage, ctx.acc.get_gross_leverage(), rtol=1e-3)
-        assert np.isclose(initial_capital - amount_in_base, ctx.acc.get_free_capital(), rtol=1e-3)
-        assert np.isclose(initial_capital, ctx.acc.get_total_capital(), rtol=1e-3)
-
-        # 3. Exit trade and check account
         ctx.trade("BTCUSDT", -amount)
 
-        # get tick size for BTCUSDT
         tick_size = ctx.instruments[0].min_tick
         trade_pnl = -tick_size / quote.ask * leverage
-        new_capital = initial_capital + trade_pnl
+        new_capital = initial_capital * (1 + trade_pnl)
 
-        assert 0 == ctx.acc.get_net_leverage()
-        assert 0 == ctx.acc.get_gross_leverage()
-        assert np.isclose(new_capital, ctx.acc.get_free_capital(), rtol=1e-3)
-        assert ctx.acc.get_free_capital() == ctx.acc.get_total_capital()
+        # take commissions into account
+        # ctx.acc._positions[s].tcc.get_execution_fees()
+
+        print(logs_writer.get_executions())

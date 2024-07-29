@@ -88,7 +88,7 @@ class TestStrats:
         ]
 
         instr1: Instrument = lookup.find_symbol("BINANCE", "SOLUSDT")  # type: ignore
-        pos1 = Position(instr1, lookup.find_fees("binance", "vip0_bnb"))  # type: ignore
+        pos1 = Position(instr1)  # type: ignore
         vol1 = 0.99924
 
         pos1 = ccxt_restore_position_from_deals(pos1, vol1, deals)
@@ -103,7 +103,7 @@ class TestStrats:
         ]
 
         instr2 = lookup.find_symbol("BINANCE", "BNBUSDT")  # type: ignore
-        pos2 = Position(instr2, lookup.find_fees("binance", "vip0_bnb"))  # type: ignore
+        pos2 = Position(instr2)  # type: ignore
         vol2 = 0.035973
 
         pos2 = ccxt_restore_position_from_deals(pos2, vol2, deals)
@@ -112,9 +112,9 @@ class TestStrats:
     def test_account_processor_from_ccxt_reports(self):
         acc = AccountProcessor("TestAcc1", "USDT", {}, 100)
         acc.attach_positions(
-            Position(lookup.find_symbol("BINANCE", "RAREUSDT"), lookup.find_fees("binance", "vip0_bnb")),  # type: ignore
-            Position(lookup.find_symbol("BINANCE", "SUPERUSDT"), lookup.find_fees("binance", "vip0_bnb")),  # type: ignore
-            Position(lookup.find_symbol("BINANCE", "ACAUSDT"), lookup.find_fees("binance", "vip0_bnb")),  # type: ignore
+            Position(lookup.find_symbol("BINANCE", "RAREUSDT")),  # type: ignore
+            Position(lookup.find_symbol("BINANCE", "SUPERUSDT")),  # type: ignore
+            Position(lookup.find_symbol("BINANCE", "ACAUSDT")),  # type: ignore
         )
 
         for exs in [

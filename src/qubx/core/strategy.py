@@ -68,7 +68,7 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
         price: float | None = None,
         client_id: str | None = None,
         time_in_force: str = "gtc",
-    ) -> Order | None:
+    ) -> Order:
         raise NotImplementedError("send_order is not implemented")
 
     def cancel_order(self, order_id: str) -> Order | None:
@@ -77,7 +77,7 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
     def get_orders(self, symbol: str | None = None) -> List[Order]:
         raise NotImplementedError("get_orders is not implemented")
 
-    def get_position(self, instrument: Instrument) -> Position:
+    def get_position(self, instrument: Instrument | str) -> Position:
         raise NotImplementedError("get_position is not implemented")
 
     def get_base_currency(self) -> str:
@@ -756,8 +756,8 @@ class StrategyContext:
             raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
 
         # - adjust size
-        size_adj = _round_down_at_min_qty(abs(amount), instrument.min_size)
-        if size_adj == 0:
+        size_adj = _round_down_at_min_qty(abs(amount), instrument.min_size_step)
+        if size_adj < instrument.min_size:
             raise ValueError(f"Attempt to trade size {abs(amount)} less than minimal allowed {instrument.min_size} !")
 
         side = "buy" if amount > 0 else "sell"

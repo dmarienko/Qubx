@@ -168,7 +168,6 @@ def round_down(x, n):
 class Position:
     instrument: Instrument  # instrument for this poisition
     quantity: float = 0.0  # quantity positive for long and negative for short
-    tcc: TransactionCostsCalculator  # transaction costs calculator
     pnl: float = 0.0  # total cumulative position PnL in portfolio basic funds currency
     r_pnl: float = 0.0  # total cumulative position PnL in portfolio basic funds currency
     market_value: float = 0.0  # position's market value in quote currency
@@ -187,11 +186,8 @@ class Position:
     _qty_multiplier: float = 1.0
     __pos_incr_qty: float = 0
 
-    def __init__(
-        self, instrument: Instrument, tcc: TransactionCostsCalculator, quantity=0.0, pos_average_price=0.0, r_pnl=0.0
-    ) -> None:
+    def __init__(self, instrument: Instrument, quantity=0.0, pos_average_price=0.0, r_pnl=0.0) -> None:
         self.instrument = instrument
-        self.tcc = tcc
 
         # - size/price formaters
         #                 time         [symbol]                                                        qty
@@ -233,15 +229,15 @@ class Position:
         raise ValueError(f"Unknown update type: {type(update)}")
 
     def change_position_by(
-        self, timestamp: dt_64, amount: float, exec_price: float, aggressive=True, conversion_rate: float = 1
-    ) -> float:
+        self, timestamp: dt_64, amount: float, exec_price: float, fee_amount: float = 0, conversion_rate: float = 1
+    ) -> tuple[float, float]:
         return self.update_position(
-            timestamp, self.quantity + amount, exec_price, aggressive=aggressive, conversion_rate=conversion_rate
+            timestamp, self.quantity + amount, exec_price, fee_amount, conversion_rate=conversion_rate
         )
 
     def update_position(
-        self, timestamp: dt_64, position: float, exec_price: float, aggressive=True, conversion_rate: float = 1
-    ) -> float:
+        self, timestamp: dt_64, position: float, exec_price: float, fee_amount: float = 0, conversion_rate: float = 1
+    ) -> tuple[float, float]:
         # - realized PnL of this fill
         deal_pnl = 0
         quantity = self.quantity
@@ -286,17 +282,23 @@ class Position:
             self.update_market_price(time_as_nsec(timestamp), exec_price, conversion_rate)
 
             # - calculate transaction costs
-            comms = self.tcc.get_execution_fees(self.instrument, exec_price, pos_change, aggressive, conversion_rate)
+            comms = fee_amount / conversion_rate
             self.commissions += comms
 
-        return deal_pnl
+        return deal_pnl, comms
 
     def update_market_price_by_tick(self, tick: Quote | Trade, conversion_rate: float = 1) -> float:
         return self.update_market_price(tick.time, self._price(tick), conversion_rate)
 
-    def update_position_by_deal(self, deal: Deal, conversion_rate: float = 1) -> float:
+    def update_position_by_deal(self, deal: Deal, conversion_rate: float = 1) -> tuple[float, float]:
         time = deal.time.as_unit("ns").asm8 if isinstance(deal.time, pd.Timestamp) else deal.time
-        return self.change_position_by(time, deal.amount, deal.price, deal.aggressive, conversion_rate)
+        return self.change_position_by(
+            timestamp=time,
+            amount=deal.amount,
+            exec_price=deal.price,
+            fee_amount=deal.fee_amount or 0,
+            conversion_rate=conversion_rate,
+        )
         # - deal contains cumulative amount
         # return self.update_position(time, deal.amount, deal.price, deal.aggressive, conversion_rate)
 
