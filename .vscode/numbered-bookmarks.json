@@ -91,19 +91,19 @@
 			]
 		},
 		{
-			"path": "tests/qubx/core/backtester_test.py",
+			"path": "src/qubx/core/strategy.py",
 			"bookmarks": [
 				{
 					"line": -1,
 					"column": 0
 				},
 				{
-					"line": 173,
-					"column": 13
+					"line": 322,
+					"column": 40
 				},
 				{
-					"line": -1,
-					"column": 0
+					"line": 494,
+					"column": 31
 				},
 				{
 					"line": -1,
