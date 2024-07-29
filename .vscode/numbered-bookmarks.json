@@ -46,51 +46,6 @@
 			]
 		},
 		{
-			"path": "src/qubx/core/strategy.py",
-			"bookmarks": [
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": 179,
-					"column": 11
-				},
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": -1,
-					"column": 0
-				},
-				{
-					"line": -1,
-					"column": 0
-				}
-			]
-		},
-		{
 			"path": "src/qubx/utils/runner.py",
 			"bookmarks": [
 				{

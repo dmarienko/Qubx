@@ -26,13 +26,15 @@ from qubx.core.basics import (
 from qubx.core.loggers import StrategyLogging
 from qubx.core.strategy import (
     IBrokerServiceProvider,
-    IPositionAdjuster,
+    IPositionGathering,
     IStrategy,
     ITradingServiceProvider,
+    PositionsTracker,
     StrategyContext,
 )
 from qubx.core.series import Trade, Quote, Bar, OHLCV
-from qubx.executors.simplest import DefaultPoaitionAdjuster
+from qubx.gathering.simplest import SimplePositionGatherer
+from qubx.trackers.sizers import FixedSizer
 from qubx.utils.misc import Stopwatch
 from qubx.utils.time import convert_seconds_to_str
 
@@ -63,7 +65,8 @@ class StrategyContextImpl(StrategyContext):
     instruments: List[Instrument]  # list of instruments this strategy trades
     positions: Dict[str, Position]  # positions of the strategy (instrument -> position)
     acc: AccountProcessor
-    positions_adjuster: IPositionAdjuster  # position adjuster (executor)
+    positions_tracker: PositionsTracker  # position tracker
+    positions_gathering: IPositionGathering  # position adjuster (executor)
 
     # - loggers
     _logging: StrategyLogging  # recording all activities for the strat: execs, positions, portfolio
@@ -123,7 +126,7 @@ class StrategyContextImpl(StrategyContext):
         num_exec_records_to_write=1,  # in live let's write every execution
         # - - - - - - - - - - - - - - - - - - - - -
         # - signals executor configuration - - - -
-        position_adjuster: IPositionAdjuster | None = None,
+        position_gathering: IPositionGathering | None = None,
     ) -> None:
         # - initialization
         self.broker_provider = broker_connector
@@ -155,7 +158,7 @@ class StrategyContextImpl(StrategyContext):
         self._logging = StrategyLogging(logs_writer, positions_log_freq, portfolio_log_freq, num_exec_records_to_write)
 
         # - position adjuster
-        self.positions_adjuster = position_adjuster if position_adjuster else DefaultPoaitionAdjuster()
+        self.positions_gathering = position_gathering if position_gathering else SimplePositionGatherer()
 
         # - extract data and event handlers
         self.__handlers = {
@@ -183,16 +186,18 @@ class StrategyContextImpl(StrategyContext):
             self.strategy = strategy()
         self.strategy.ctx = self
 
-        # TODO: - trackers - - - - - - - - - - - - -
-        # - here we need to instantiate trackers
-        # - need to think how to do it properly !!!
-        # TODO: - trackers - - - - - - - - - - - - -
-
         # - set strategy custom parameters
         set_parameters_to_object(self.strategy, **config if config else {})
         self._is_initilized = False
         self.__strategy_id = self.strategy.__class__.__name__ + "_"
         self.__order_id = self.time().item() // 100_000_000
+
+        # - here we need to get tracker
+        _track = self.strategy.tracker(self)
+
+        # - by default we use default position tracker with fixed 1:1 sizer
+        #   so any signal is coinsidered as raw position size
+        self.positions_tracker = _track if _track else PositionsTracker(FixedSizer(1.0))
 
     def __check_how_to_listen_to_market_data(self, md_config: dict):
         self._market_data_subcription_type = _dict_with_exception(md_config, "type").lower()
@@ -385,10 +390,13 @@ class StrategyContextImpl(StrategyContext):
 
     @_SW.watch("StrategyContext")
     def _execute_signals(self, signals: List[Signal]):
-        for signal in signals:
-            logger.debug(f"Processing signal: {signal}")
-            # self._position_manager.execute(signal)
-            # self._logging.log_signal(signal)
+        try:
+            self.positions_tracker.process_signals(self, self.positions_gathering, signals)
+        except Exception as ex:
+            logger.error(
+                f"[{self.time()}]: Strategy {self.strategy.__class__.__name__} failed to execute signals: {ex}"
+            )
+            logger.opt(colors=False).error(traceback.format_exc())
 
     def _process_incoming_data_loop(self, channel: CtrlChannel):
         logger.info("(StrategyContext) Start processing market data")
@@ -484,11 +492,17 @@ class StrategyContextImpl(StrategyContext):
         # - processing current bar's update
         self._cache.update_by_bar(symbol, bar)
 
+        # - update tracker
+        self.positions_tracker.update(self, self._symb_to_instr[symbol], bar)
+
         # - check if it's time to trigger the on_event if it's configured
         return self._check_if_need_trigger_on_bar(symbol, bar)
 
     def _processing_trade(self, symbol: str, trade: Trade) -> TriggerEvent | None:
         self._cache.update_by_trade(symbol, trade)
+
+        # - update tracker
+        self.positions_tracker.update(self, self._symb_to_instr[symbol], trade)
 
         if self._trig_on_trade:
             # TODO: apply throttling or filtering here
@@ -497,6 +511,10 @@ class StrategyContextImpl(StrategyContext):
 
     def _processing_quote(self, symbol: str, quote: Quote) -> TriggerEvent | None:
         self._cache.update_by_quote(symbol, quote)
+
+        # - update tracker
+        self.positions_tracker.update(self, self._symb_to_instr[symbol], quote)
+
         # - TODO: here we can apply throttlings or filters
         #  - let's say we can skip quotes if bid & ask is not changed
         #  - or we can collect let's say N quotes before sending to strategy
@@ -523,8 +541,11 @@ class StrategyContextImpl(StrategyContext):
     @_SW.watch("StrategyContext")
     def _processing_deals(self, symbol: str, deals: List[Deal]) -> TriggerEvent | None:
         # - log deals in storage
+        instr = self._symb_to_instr.get(symbol)
         self._logging.save_deals(symbol, deals)
         for d in deals:
+            # - notify position gather
+            self.positions_gathering.update_by_deal_data(instr, d)
             logger.debug(f"Executed {d.amount} @ {d.price} of {symbol} for order {d.order_id}")
         return None
 

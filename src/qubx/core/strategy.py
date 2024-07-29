@@ -160,14 +160,30 @@ class StrategyContext:
     def get_historical_ohlcs(self, instrument: Instrument | str, timeframe: str, length: int) -> OHLCV | None: ...
 
 
-class IPositionAdjuster:
+class IPositionGathering:
     """
-    Common interface for adjusting position
+    Common interface for position gathering
     """
 
-    def adjust_position_size(
+    def alter_position_size(
         self, ctx: StrategyContext, instrument: Instrument, new_size: float, at_price: float | None = None
     ) -> float: ...
+
+    def update_by_deal_data(self, instrument: Instrument, deal: Deal): ...
+
+
+class IPositionSizer:
+    """
+    Common interface for any positions size calculator
+    """
+
+    def get_position_size(self, ctx: StrategyContext, signal: Signal) -> float:
+        """
+        Position size calculator
+        :param ctx: strategy context object
+        :param signal: signal to process
+        """
+        raise NotImplementedError("get_position_size is not implemented")
 
 
 class PositionsTracker:
@@ -175,10 +191,23 @@ class PositionsTracker:
     Tracks position and processing signals. It can contains logic for risk management for example.
     """
 
-    def process_signals(self, ctx: StrategyContext, signals: List[Signal]): ...
+    _sizer: IPositionSizer
 
-    def update(self, ctx: StrategyContext, quote: Quote):  # TODO: ???
-        ...
+    def __init__(self, sizer: IPositionSizer) -> None:
+        self._sizer = sizer
+
+    def get_position_sizer(self, instrument: Instrument) -> IPositionSizer:
+        return self._sizer
+
+    def process_signals(self, ctx: StrategyContext, gathering: IPositionGathering, signals: List[Signal]):
+        """
+        By default it just treat signals as pure positions sizes
+        """
+        for s in signals:
+            new_position = self.get_position_sizer(s.instrument).get_position_size(ctx, s)
+            gathering.alter_position_size(ctx, s.instrument, new_position, s.price)
+
+    def update(self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar): ...
 
 
 class IStrategy:
