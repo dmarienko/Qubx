@@ -23,14 +23,16 @@ class FixedSizer(IPositionSizer):
 
 
 class FixedRiskSizer(IPositionSizer):
-    def __init__(self, max_cap_in_risk: float, max_allowed_position=np.inf):
+    def __init__(self, max_cap_in_risk: float, max_allowed_position=np.inf, reinvest_profit=True):
         """
         Create fixed risk sizer calculator instance.
         :param max_cap_in_risk: maximal risked capital (in percentage)
-        :param max_allowed_position: limitation for max position size
+        :param max_allowed_position: limitation for max position size in quoted currency (i.e. max 5000 in USDT)
+        :param reinvest_profit: if true use profit to reinvest
         """
-        self.max_cap_in_risk = max_cap_in_risk
-        self.max_allowed_position = max_allowed_position
+        self.max_cap_in_risk = max_cap_in_risk / 100
+        self.max_allowed_position_quoted = max_allowed_position
+        self.reinvest_profit = reinvest_profit
 
     def calculate_position_sizes(self, ctx: StrategyContext, signals: List[Signal]) -> List[Signal]:
         for signal in signals:
@@ -40,12 +42,16 @@ class FixedRiskSizer(IPositionSizer):
                     _q = ctx.quote(signal.instrument.symbol)
 
                     _direction = np.sign(signal.signal)
-                    _cap = ctx.get_capital() + max(_pos.total_pnl(), 0)
+                    _cap = ctx.get_capital() + (max(_pos.total_pnl(), 0) if self.reinvest_profit else 0)
                     _entry = _q.ask if _direction > 0 else _q.bid
 
-                    signal.processed_position_size = _direction * min(
-                        round((_cap * self.max_cap_in_risk / 100) / abs(signal.stop / _entry - 1)),
-                        self.max_allowed_position,
+                    signal.processed_position_size = (
+                        _direction
+                        * min(
+                            (_cap * self.max_cap_in_risk) / abs(signal.stop / _entry - 1),
+                            self.max_allowed_position_quoted,
+                        )
+                        / _entry
                     )
                 else:
                     logger.warning(" >>> FixedRiskSizer: stop is not specified - can't calculate position !")
