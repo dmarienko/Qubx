@@ -812,7 +812,6 @@ class QuestDBConnector(DataReader):
         port=8812,
     ) -> None:
         self._connection = None
-        self._cursor = None
         self._host = host
         self._port = port
         self.connection_url = f"user={user} password={password} host={host} port={port}"
@@ -823,15 +822,11 @@ class QuestDBConnector(DataReader):
         if self._connection:
             self._connection.close()
             self._connection = None
-        if self._cursor:
-            self._cursor.close()
-            self._cursor = None
         state = self.__dict__.copy()
         return state
 
     def _connect(self):
         self._connection = pg.connect(self.connection_url, autocommit=True)
-        self._cursor = self._connection.cursor()
         logger.debug(f"Connected to QuestDB at {self._host}:{self._port}")
 
     def read(
@@ -840,7 +835,7 @@ class QuestDBConnector(DataReader):
         start: str | None = None,
         stop: str | None = None,
         transform: DataTransformer = DataTransformer(),
-        chunksize=0,  # TODO: use self._cursor.fetchmany in this case !!!!
+        chunksize=0,
         timeframe: str | None = "1m",
         data_type="candles_1m",
     ) -> Any:
@@ -865,7 +860,7 @@ class QuestDBConnector(DataReader):
         start: str | None,
         stop: str | None,
         transform: DataTransformer,
-        chunksize: int,  # TODO: use self._cursor.fetchmany in this case !!!!
+        chunksize: int,
         timeframe: str | None,
         data_type: str,
         builder: QuestDBSqlBuilder,
@@ -873,30 +868,53 @@ class QuestDBConnector(DataReader):
         start, end = handle_start_stop(start, stop)
         _req = builder.prepare_data_sql(data_id, start, end, timeframe, data_type)
 
-        self._cursor.execute(_req)  # type: ignore
-        records = self._cursor.fetchall()  # TODO: for chunksize > 0 use fetchmany etc
-        if not records:
-            return None
+        _cursor = self._connection.cursor()  # type: ignore
+        _cursor.execute(_req)  # type: ignore
+        names = [d.name for d in _cursor.description]  # type: ignore
 
-        names = [d.name for d in self._cursor.description]  # type: ignore
-        transform.start_transform(data_id, names, start=start, stop=stop)
+        if chunksize > 0:
 
-        transform.process_data(records)
-        return transform.collect()
+            def _iter_chunks():
+                while True:
+                    records = _cursor.fetchmany(chunksize)
+                    if not records:
+                        _cursor.close()
+                        break
+                    transform.start_transform(data_id, names, start=start, stop=stop)
+                    transform.process_data(records)
+                    yield transform.collect()
+
+            return _iter_chunks()
+
+        try:
+            records = _cursor.fetchall()
+            if not records:
+                return None
+            transform.start_transform(data_id, names, start=start, stop=stop)
+            transform.process_data(records)
+            return transform.collect()
+        finally:
+            _cursor.close()
 
     @_retry
     def _get_names(self, builder: QuestDBSqlBuilder) -> List[str]:
-        self._cursor.execute(builder.prepare_names_sql())  # type: ignore
-        records = self._cursor.fetchall()
+        _cursor = None
+        try:
+            _cursor = self._connection.cursor()  # type: ignore
+            _cursor.execute(builder.prepare_names_sql())  # type: ignore
+            records = _cursor.fetchall()
+        finally:
+            if _cursor:
+                _cursor.close()
         return [r[0] for r in records]
 
     def __del__(self):
-        for c in (self._cursor, self._connection):
-            try:
+        try:
+            if self._connection is not None:
                 logger.debug("Closing connection")
-                c.close()
-            except:
-                pass
+                self._connection.close()
+        except:
+            pass
 
 
 class QuestDBSqlOrderBookBuilder(QuestDBSqlCandlesBuilder):
@@ -1012,7 +1030,6 @@ class MultiQdbConnector(QuestDBConnector):
         port=8812,
     ) -> None:
         self._connection = None
-        self._cursor = None
         self._host = host
         self._port = port
         self._user = user
@@ -1036,7 +1053,7 @@ class MultiQdbConnector(QuestDBConnector):
         start: str | None = None,
         stop: str | None = None,
         transform: DataTransformer = DataTransformer(),
-        chunksize: int = 0,  # TODO: use self._cursor.fetchmany in this case !!!!
+        chunksize: int = 0,
         timeframe: str | None = None,
         data_type: str = "candles",
     ) -> Any:

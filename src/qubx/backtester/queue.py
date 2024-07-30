@@ -70,17 +70,6 @@ class DataLoader:
 
         return self._reader.read(**args)  # type: ignore
 
-    def get_historical_ohlc(self, timeframe: str, start_time: str, nbarsback: int) -> List[Bar]:
-        start = pd.Timestamp(start_time)
-        end = start - nbarsback * pd.Timedelta(timeframe)
-        records = self._reader.read(
-            data_id=self._spec, start=start, stop=end, transform=AsTimestampedRecords()  # type: ignore
-        )
-        return [
-            Bar(np.datetime64(r["timestamp_ns"], "ns").item(), r["open"], r["high"], r["low"], r["close"], r["volume"])
-            for r in records
-        ]
-
     @property
     def instrument(self) -> Instrument:
         return self._instrument

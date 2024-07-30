@@ -321,7 +321,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         self._last_quotes = defaultdict(lambda: None)
         self._current_time = np.datetime64(0, "ns")
         self._loaders = defaultdict(dict)
-        self._symbol_to_instrument = {}
+        self._symbol_to_instrument: dict[str, Instrument] = {}
 
         # - setup communication bus
         self.set_communication_channel(bus := SimulatedCtrlChannel("databus", sentinel=(None, None, None)))
@@ -371,7 +371,7 @@ class SimulatedExchange(IBrokerServiceProvider):
                 data_type = "candles"
             elif "trade" in subscription_type:
                 _params["transformer"] = AsTrades()
-                data_type = "trades"
+                data_type = "agg_trade"
             else:
                 raise ValueError(f"Unknown subscription type: {subscription_type}")
 
@@ -405,7 +405,7 @@ class SimulatedExchange(IBrokerServiceProvider):
                 _run(symbol, event)
                 dt = pd.Timestamp(event.time)
                 # update only if date has changed
-                if prev_dt.date() != dt.date():
+                if dt - prev_dt > pd.Timedelta("1D"):
                     pbar.n = (dt - pd.Timestamp(start)).total_seconds()
                     pbar.refresh()
                     prev_dt = dt
@@ -472,8 +472,17 @@ class SimulatedExchange(IBrokerServiceProvider):
         return True
 
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
-        ldr = self._loaders[symbol]["candles"]
-        return ldr.get_historical_ohlc(timeframe, self.time(), nbarsback)
+        start = pd.Timestamp(self.time())
+        end = start - nbarsback * pd.Timedelta(timeframe)
+        instrument = self._symbol_to_instrument[symbol]
+        _spec = f"{instrument.exchange}:{instrument.symbol}"
+        records = self._reader.read(
+            data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()  # type: ignore
+        )
+        return [
+            Bar(np.datetime64(r["timestamp_ns"], "ns").item(), r["open"], r["high"], r["low"], r["close"], r["volume"])
+            for r in records
+        ]
 
     def set_generated_signals(self, signals: pd.Series | pd.DataFrame):
         logger.debug(f"Using pre-generated signals:\n {str(signals.count()).strip('ndtype: int64')}")

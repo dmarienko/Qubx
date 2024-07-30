@@ -16,9 +16,9 @@ import numpy as np
 import pandas as pd
 
 from qubx import logger
-from qubx.core.basics import Instrument, Position, dt_64, Deal
+from qubx.core.basics import Instrument, Position, dt_64, Deal, CtrlChannel
 from qubx.core.helpers import BasicScheduler
-from qubx.core.strategy import IBrokerServiceProvider, CtrlChannel, ITradingServiceProvider
+from qubx.core.strategy import IBrokerServiceProvider, ITradingServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.impl.ccxt_utils import DATA_PROVIDERS_ALIASES, ccxt_convert_trade
 from qubx.utils.ntp import time_now
