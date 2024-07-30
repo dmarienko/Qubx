@@ -88,3 +88,7 @@ class TestTrackersAndGatherers:
         sizer = FixedRiskSizer(10.0)
         s = sizer.get_position_size(ctx, i.signal(1, stop=900.0))
         assert s == round(10000 * 0.1 / ((1000.5 - 900.0) / 1000.5))
+
+    def test_rebalancer(self):
+        # TODO: new rebalancer version
+        pass
