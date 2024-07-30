@@ -14,8 +14,8 @@ import pandas as pd
 
 from qubx import logger, lookup
 from qubx.core.account import AccountProcessor
-from qubx.core.basics import Instrument, Position, Order, TransactionCostsCalculator, dt_64, Deal
-from qubx.core.strategy import IBrokerServiceProvider, CtrlChannel, ITradingServiceProvider
+from qubx.core.basics import Instrument, Position, Order, TransactionCostsCalculator, dt_64, Deal, CtrlChannel
+from qubx.core.strategy import IBrokerServiceProvider, ITradingServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.impl.ccxt_utils import (
     EXCHANGE_ALIASES,
