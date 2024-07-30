@@ -117,7 +117,8 @@ class TestTrackersAndGatherers:
         i = instrs[0]
         sizer = FixedRiskSizer(10.0)
         s = sizer.calculate_position_sizes(ctx, [i.signal(1, stop=900.0)])
-        assert s[0].processed_position_size == round(10000 * 0.1 / ((1000.5 - 900.0) / 1000.5))
+        _entry, _stop, _cap_in_risk = 1000.5, 900, 10000 * 10 / 100
+        assert s[0].processed_position_size == (_cap_in_risk / ((_entry - _stop) / _entry)) / _entry
 
     def test_rebalancer(self):
         ctx = DebugStratageyCtx(
