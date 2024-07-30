@@ -161,7 +161,7 @@ class SimulatedDataQueue:
             self._add_chunk_to_heap(loader_index)
         return self
 
-    def __next__(self):
+    def __next__(self) -> tuple[str, Any]:
         if not self._event_heap:
             raise StopIteration
 
@@ -179,7 +179,7 @@ class SimulatedDataQueue:
         chunk_size = self._index_to_chunk_size[loader_index]
         if chunk_index + 1 == chunk_size:
             self._add_chunk_to_heap(loader_index)
-        
+
         s = self._index_to_loader[loader_index].symbol
         return s, event
 

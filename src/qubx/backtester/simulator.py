@@ -302,7 +302,7 @@ class SimulatedExchange(IBrokerServiceProvider):
     _scheduler: BasicScheduler
     _current_time: dt_64
     _hist_data_type: str
-    _loaders: dict[str, list[DataLoader]]
+    _loaders: dict[str, dict[str, DataLoader]]
     _pregenerated_signals: Dict[str, pd.Series]
 
     def __init__(
@@ -320,7 +320,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         # - create exchange's instance
         self._last_quotes = defaultdict(lambda: None)
         self._current_time = np.datetime64(0, "ns")
-        self._loaders = defaultdict(list)
+        self._loaders = defaultdict(dict)
         self._symbol_to_instrument = {}
 
         # - setup communication bus
@@ -359,22 +359,27 @@ class SimulatedExchange(IBrokerServiceProvider):
                 timeframe=timeframe,
             )
 
+            data_type = None
             # - for ohlc data we need to restore ticks from OHLC bars
             if "ohlc" in subscription_type:
                 _params["transformer"] = RestoreTicksFromOHLC(
                     trades="trades" in subscription_type, spread=instr.min_tick, timestamp_units=units
                 )
-                _params["data_type"] = "candles"
+                data_type = "candles"
             elif "quote" in subscription_type:
                 _params["transformer"] = AsQuotes()
-                _params["data_type"] = "candles"
+                data_type = "candles"
             elif "trade" in subscription_type:
                 _params["transformer"] = AsTrades()
-                _params["data_type"] = "trades"
+                data_type = "trades"
+            else:
+                raise ValueError(f"Unknown subscription type: {subscription_type}")
+
+            _params["data_type"] = data_type
 
             # - add loader for this instrument
             ldr = DataLoader(**_params)
-            self._loaders[instr.symbol].append(ldr)
+            self._loaders[instr.symbol][data_type] = ldr
             self._data_queue += ldr
 
         return True
@@ -467,7 +472,8 @@ class SimulatedExchange(IBrokerServiceProvider):
         return True
 
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
-        return self._loaders[symbol].get_historical_ohlc(timeframe, self.time(), nbarsback)
+        ldr = self._loaders[symbol]["candles"]
+        return ldr.get_historical_ohlc(timeframe, self.time(), nbarsback)
 
     def set_generated_signals(self, signals: pd.Series | pd.DataFrame):
         logger.debug(f"Using pre-generated signals:\n {str(signals.count()).strip('ndtype: int64')}")
