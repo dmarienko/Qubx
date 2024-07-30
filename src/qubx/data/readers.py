@@ -459,7 +459,34 @@ class AsQuotes(DataTransformer):
                 a = d[self._ask_idx]
                 bv = d[self._bidvol_idx]
                 av = d[self._askvol_idx]
-                self.buffer.append(Quote(t.as_unit("ns").asm8.item(), b, a, bv, av))
+                self.buffer.append(Quote(_time(t, "ns"), b, a, bv, av))
+
+
+class AsTrades(DataTransformer):
+    """
+    Tries to convert incoming data to list of Trades
+    Data must have appropriate structure: price, size, market_maker (optional).
+    Market maker column specifies if buyer is a maker or taker.
+    """
+
+    def start_transform(self, name: str, column_names: List[str], **kwargs):
+        self.buffer: list[Trade] = list()
+        self._time_idx = _FIND_TIME_COL_IDX(column_names)
+        self._price_idx = _find_column_index_in_list(column_names, "price")
+        self._size_idx = _find_column_index_in_list(column_names, "size")
+        try:
+            self._side_idx = _find_column_index_in_list(column_names, "market_maker")
+        except:
+            self._side_idx = None
+
+    def process_data(self, rows_data: Iterable) -> Any:
+        if rows_data is not None:
+            for d in rows_data:
+                t = d[self._time_idx]
+                price = d[self._price_idx]
+                size = d[self._size_idx]
+                side = d[self._side_idx] if self._side_idx else -1
+                self.buffer.append(Trade(_time(t, "ns"), price, size, side))
 
 
 class AsTimestampedRecords(DataTransformer):

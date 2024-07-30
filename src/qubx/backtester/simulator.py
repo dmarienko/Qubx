@@ -34,6 +34,7 @@ from qubx.core.strategy import (
 from qubx.backtester.ome import OrdersManagementEngine, OmeReport
 
 from qubx.data.readers import (
+    AsTrades,
     DataReader,
     DataTransformer,
     RestoreTicksFromOHLC,
@@ -235,7 +236,7 @@ class SimulatedTrading(ITradingServiceProvider):
         self.acc.process_order(order)
         return order, deals
 
-    def _emulate_quote_from_data(self, symbol: str, timestamp: dt_64, data: float | Trade | Bar) -> Quote:
+    def emulate_quote_from_data(self, symbol: str, timestamp: dt_64, data: float | Trade | Bar) -> Quote | None:
         _ts2 = self._half_tick_size[symbol]
         if isinstance(data, Trade):
             if data.taker:  # type: ignore
@@ -247,7 +248,7 @@ class SimulatedTrading(ITradingServiceProvider):
         elif isinstance(data, float):
             return Quote(timestamp, data - _ts2, data + _ts2, 0, 0)
         else:
-            raise ValueError(f"Unknown update type: {type(data)}")
+            return None
 
     def update_position_price(self, symbol: str, timestamp: dt_64, update: float | Trade | Quote | Bar):
         # logger.info(f"{symbol} -> {timestamp} -> {update}")
@@ -259,7 +260,7 @@ class SimulatedTrading(ITradingServiceProvider):
         # - actually if SimulatedExchangeService is used in backtesting mode it will recieve only quotes
         # - case when we need that - SimulatedExchangeService is used for paper trading and data provider configured to listen to OHLC or TAS.
         # - probably we need to subscribe to quotes in real data provider in any case and then this emulation won't be needed.
-        quote = update if isinstance(update, Quote) else self._emulate_quote_from_data(symbol, timestamp, update)
+        quote = update if isinstance(update, Quote) else self.emulate_quote_from_data(symbol, timestamp, update)
 
         # - process new quote
         self._process_new_quote(symbol, quote)
@@ -289,6 +290,7 @@ class DataLoader:
         instrument: Instrument,
         timeframe: str | None,
         preload_bars: int = 0,
+        data_type: str = "candles",
     ) -> None:
         self._instrument = instrument
         self._spec = f"{instrument.exchange}:{instrument.symbol}"
@@ -296,6 +298,7 @@ class DataLoader:
         self._transformer = transformer
         self._init_bars_required = preload_bars
         self._timeframe = timeframe
+        self._data_type = data_type
         self._first_load = True
 
     def load(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> List[Quote]:
@@ -309,6 +312,7 @@ class DataLoader:
             start=start,
             stop=end,
             transform=self._transformer,
+            data_type=self._data_type,
         )
 
         if self._timeframe:
@@ -338,6 +342,7 @@ class _SimulatedScheduler(BasicScheduler):
 
 
 class SimulatedExchange(IBrokerServiceProvider):
+    trading_service: SimulatedTrading
     _last_quotes: Dict[str, Optional[Quote]]
     _scheduler: BasicScheduler
     _current_time: dt_64
@@ -348,7 +353,7 @@ class SimulatedExchange(IBrokerServiceProvider):
     def __init__(
         self,
         exchange_id: str,
-        trading_service: ITradingServiceProvider,
+        trading_service: SimulatedTrading,
         reader: DataReader,
         hist_data_type: str = "ohlc",
     ):
@@ -361,6 +366,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         self._last_quotes = defaultdict(lambda: None)
         self._current_time = np.datetime64(0, "ns")
         self._loader = {}
+        self._symbol_to_instrument = {}
 
         # - setup communication bus
         self.set_communication_channel(bus := SimulatedCtrlChannel("databus", sentinel=(None, None, None)))
@@ -385,6 +391,8 @@ class SimulatedExchange(IBrokerServiceProvider):
         units = kwargs.get("timestamp_units", "ns")
 
         for instr in instruments:
+            self._symbol_to_instrument[instr.symbol] = instr
+
             _params: Dict[str, Any] = dict(
                 reader=self._reader,
                 instrument=instr,
@@ -399,6 +407,9 @@ class SimulatedExchange(IBrokerServiceProvider):
                 )
             elif "quote" in subscription_type:
                 _params["transformer"] = AsQuotes()
+            elif "trade" in subscription_type:
+                _params["transformer"] = AsTrades()
+                _params["data_type"] = "trades"
 
             # - create loader for this instrument
             self._loader[instr.symbol] = DataLoader(**_params)
@@ -433,12 +444,13 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         for t, u in tqdm(zip(data.index, data.values), total=len(data), leave=False):
             for i, s in enumerate(data.columns):
-                q = u[i]
-                if q:
+                e = u[i]
+                if e:
                     self._current_time = max(np.datetime64(t, "ns"), self._current_time)
-                    self.trading_service.update_position_price(s, self._current_time, q)
-                    # - we need to send quotes for invoking portfolio logginf etc
-                    cc.send((s, "quote", q))
+                    self.trading_service.update_position_price(s, self._current_time, e)
+                    # - we need to send quotes for invoking portfolio logging etc
+                    # match event type
+                    cc.send((s, self._get_event_type(e), e))
                     sigs = to_process[s]
                     if sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
                         cc.send((s, "event", {"order": sigs[0][1]}))
@@ -448,16 +460,32 @@ class SimulatedExchange(IBrokerServiceProvider):
         cc = self.get_communication_channel()
         for t, u in tqdm(zip(data.index, data.values), total=len(data), leave=False):
             for i, s in enumerate(data.columns):
-                q = u[i]
-                if q:
-                    self._last_quotes[s] = q
+                e = u[i]
+                if e:
                     self._current_time = max(np.datetime64(t, "ns"), self._current_time)
-                    self.trading_service.update_position_price(s, self._current_time, q)
-                    cc.send((s, "quote", q))
+                    q = self.trading_service.emulate_quote_from_data(s, np.datetime64(t, "ns"), e)
+                    if q is not None:
+                        self._last_quotes[s] = q
+                        self.trading_service.update_position_price(s, self._current_time, q)
+
+                    cc.send((s, self._get_event_type(e), e))
+
+                    if q is not None:
+                        cc.send((s, "quote", q))
 
             if self._scheduler.check_and_run_tasks():
                 # - push nothing - it will force to process last event
                 cc.send((None, "time", None))
+
+    def _get_event_type(self, event: Quote | Trade | Bar) -> str:
+        if isinstance(event, Quote):
+            return "quote"
+        elif isinstance(event, Trade):
+            return "trade"
+        elif isinstance(event, Bar):
+            return "bar"
+        else:
+            raise ValueError(f"Unknown event type: {type(event)}")
 
     def get_quote(self, symbol: str) -> Optional[Quote]:
         return self._last_quotes[symbol]

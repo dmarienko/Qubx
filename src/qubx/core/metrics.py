@@ -830,6 +830,7 @@ def chart_signals(
     timeframe: str | None = None,
     start=None,
     end=None,
+    apply_commissions: bool = True,
     indicators={},
     info=False,
     overlay=[],
@@ -851,8 +852,10 @@ def chart_signals(
         end = executions.index[-1]
 
     if portfolio is not None:
-        pnl = portfolio.filter(regex=f"{symbol}_PnL").cumsum()
-        pnl = pnl - pnl.loc[start:].iloc[0]
+        pnl = portfolio.filter(regex=f"{symbol}_PnL").loc[start:].cumsum()
+        if apply_commissions:
+            comm = portfolio.filter(regex=f"{symbol}_Commissions").loc[start:].cumsum()
+            pnl -= comm.values
         indicators["PnL"] = ["area", "green", pnl]
 
     if isinstance(ohlc, dict):
@@ -862,7 +865,9 @@ def chart_signals(
         bars = ohlc
         bars = ohlc_resample(bars, timeframe) if timeframe else bars
 
-    excs = executions[executions["instrument"] == symbol][["quantity", "exec_price", "commissions_quoted"]]
+    excs = executions[executions["instrument"] == symbol][
+        ["quantity", "exec_price", "commissions", "commissions_quoted"]
+    ]
     q_pos = excs["quantity"].cumsum()[start:end]
     # excs['quantity'] = q_pos
     excs = excs[start:end]
