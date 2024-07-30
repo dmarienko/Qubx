@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 
 from qubx import logger
-from qubx.core.basics import Position
-from qubx.core.strategy import StrategyContext, PositionsTracker
+from qubx.core.basics import Position, Signal
+from qubx.core.strategy import IPositionGathering, StrategyContext, PositionsTracker
 
 
 @dataclass
@@ -58,15 +58,19 @@ class PortfolioRebalancerTracker(PositionsTracker):
 
         return Capital(cap_to_invest, released_capital, closed_positions)
 
-    def process_signals(self, ctx: StrategyContext, signals: pd.DataFrame):
+    # def process_signals(self, ctx: StrategyContext, signals: pd.DataFrame):
+    def process_signals(self, ctx: StrategyContext, gathering: IPositionGathering, signals: List[Signal]):
         """
-        TODO: will be moved to StrategyContext in future - temporary here
+        TODO: redo the logic according new arguments
 
-        signals: dataframe with desired position sizes
+        signals: list of signals
         """
-        last_signal = dict(signals.iloc[-1])
-        to_close = [symbol for symbol, new_size in last_signal.items() if new_size == 0]
-        to_open = {symbol: new_size for symbol, new_size in last_signal.items() if new_size != 0}
+        # last_signal = dict(signals.iloc[-1])
+        # to_close = [symbol for symbol, new_size in last_signal.items() if new_size == 0]
+        # to_open = {symbol: new_size for symbol, new_size in last_signal.items() if new_size != 0}
+
+        to_close = [s.instrument.symbol for s in signals if s.signal == 0]
+        to_open = {s.instrument.symbol: s.signal for s in signals if s.signal != 0}
 
         # close positions first - we need to release capital
         for s in to_close:

@@ -1,6 +1,7 @@
 from typing import Any, Optional, List
 
 from qubx import lookup, logger
+from qubx.core.account import AccountProcessor
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.pandaz.utils import *
 from qubx.core.utils import recognize_time
@@ -14,7 +15,7 @@ from qubx.backtester.ome import OrdersManagementEngine
 
 from qubx.ta.indicators import sma, ema
 from qubx.backtester.simulator import simulate
-from qubx.trackers.sizers import FixedSizer
+from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
 
 
 def Q(time: str, bid: float, ask: float) -> Quote:
@@ -22,16 +23,26 @@ def Q(time: str, bid: float, ask: float) -> Quote:
 
 
 class DebugStratageyCtx(StrategyContext):
-    def __init__(self, instrs) -> None:
+    def __init__(self, instrs, capital) -> None:
         self.positions = {i.symbol: i for i in instrs}
 
         self.instruments = instrs
         self.positions = {i.symbol: Position(i) for i in instrs}
-        # acc: AccountProcessor
+        self.capital = capital
+
+        self.acc = AccountProcessor("test", "USDT", reserves={})  # , initial_capital=10000.0)
+        self.acc.update_balance("USDT", capital, 0)
+        self.acc.attach_positions(*self.positions.values())
         self._n_orders = 0
         self._n_orders_buy = 0
         self._n_orders_sell = 0
         self._orders_size = 0
+
+    def quote(self, symbol: str) -> Quote | None:
+        return Q("2020-01-01", 1000.0, 1000.5)
+
+    def get_capital(self) -> float:
+        return self.capital
 
     def trade(
         self, instr_or_symbol: Instrument | str, amount: float, price: float | None = None, time_in_force="gtc"
@@ -59,7 +70,7 @@ class DebugStratageyCtx(StrategyContext):
 class TestTrackersAndGatherers:
 
     def test_simple_tracker_sizer(self):
-        ctx = DebugStratageyCtx(instrs := [lookup.find_symbol("BINANCE.UM", "BTCUSDT")])
+        ctx = DebugStratageyCtx(instrs := [lookup.find_symbol("BINANCE.UM", "BTCUSDT")], 10000)
         tracker = PositionsTracker(FixedSizer(1000.0))
 
         gathering = SimplePositionGatherer()
@@ -70,3 +81,10 @@ class TestTrackersAndGatherers:
         assert ctx._orders_size == 1000.0
         assert ctx._n_orders_buy == 2
         assert ctx._n_orders_sell == 1
+
+    def test_fixed_risk_sizer(self):
+        ctx = DebugStratageyCtx(instrs := [lookup.find_symbol("BINANCE.UM", "BTCUSDT")], 10000)
+        i = instrs[0]
+        sizer = FixedRiskSizer(10.0)
+        s = sizer.get_position_size(ctx, i.signal(1, stop=900.0))
+        assert s == round(10000 * 0.1 / ((1000.5 - 900.0) / 1000.5))
