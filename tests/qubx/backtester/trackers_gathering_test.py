@@ -7,7 +7,7 @@ from qubx.pandaz.utils import *
 from qubx.core.utils import recognize_time
 
 from qubx.core.series import Quote
-from qubx.core.strategy import IStrategy, PositionsTracker, StrategyContext, TriggerEvent
+from qubx.core.strategy import IPositionGathering, IStrategy, PositionsTracker, StrategyContext, TriggerEvent
 from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsTimestampedRecords, AsQuotes, RestoreTicksFromOHLC
 from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider, Position, Signal
 
@@ -15,11 +15,35 @@ from qubx.backtester.ome import OrdersManagementEngine
 
 from qubx.ta.indicators import sma, ema
 from qubx.backtester.simulator import simulate
+from qubx.trackers.rebalancers import PortfolioRebalancerTracker
 from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
 
 
 def Q(time: str, bid: float, ask: float) -> Quote:
     return Quote(recognize_time(time), bid, ask, 0, 0)
+
+
+class TestingPositionGatherer(IPositionGathering):
+    def alter_position_size(
+        self, ctx: StrategyContext, instrument: Instrument, new_size: float, at_price: float | None = None
+    ) -> float:
+        position = ctx.positions[instrument.symbol]
+        current_position = position.quantity
+        to_trade = new_size - current_position
+        if abs(to_trade) < instrument.min_size:
+            logger.warning(
+                f"Can't change position size for {instrument}. Current position: {current_position}, requested size: {new_size}"
+            )
+        else:
+            # position.quantity = new_size
+            position.update_position(ctx.time(), new_size, ctx.quote(instrument.symbol).mid_price())
+            r = ctx.trade(instrument, to_trade, at_price)
+            logger.info(
+                f"{instrument.symbol} >>> (TESTS) Adjusting position from {current_position} to {new_size} : {r}"
+            )
+        return current_position
+
+    def update_by_deal_data(self, instrument: Instrument, deal: Deal): ...
 
 
 class DebugStratageyCtx(StrategyContext):
@@ -44,6 +68,9 @@ class DebugStratageyCtx(StrategyContext):
     def get_capital(self) -> float:
         return self.capital
 
+    def time(self) -> np.datetime64:
+        return np.datetime64("2020-01-01T00:00:00", "ns")
+
     def trade(
         self, instr_or_symbol: Instrument | str, amount: float, price: float | None = None, time_in_force="gtc"
     ) -> Order:
@@ -66,6 +93,9 @@ class DebugStratageyCtx(StrategyContext):
             "test1",
         )
 
+    def get_reserved(self, instrument: Instrument) -> float:
+        return 0.0
+
 
 class TestTrackersAndGatherers:
 
@@ -86,9 +116,55 @@ class TestTrackersAndGatherers:
         ctx = DebugStratageyCtx(instrs := [lookup.find_symbol("BINANCE.UM", "BTCUSDT")], 10000)
         i = instrs[0]
         sizer = FixedRiskSizer(10.0)
-        s = sizer.get_position_size(ctx, i.signal(1, stop=900.0))
-        assert s == round(10000 * 0.1 / ((1000.5 - 900.0) / 1000.5))
+        s = sizer.calculate_position_sizes(ctx, [i.signal(1, stop=900.0)])
+        assert s[0].processed_position_size == round(10000 * 0.1 / ((1000.5 - 900.0) / 1000.5))
 
     def test_rebalancer(self):
-        # TODO: new rebalancer version
-        pass
+        ctx = DebugStratageyCtx(
+            I := [
+                lookup.find_symbol("BINANCE.UM", "BTCUSDT"),
+                lookup.find_symbol("BINANCE.UM", "ETHUSDT"),
+                lookup.find_symbol("BINANCE.UM", "SOLUSDT"),
+            ],
+            30000,
+        )
+        assert I[0] is not None and I[1] is not None and I[2] is not None
+
+        tracker = PortfolioRebalancerTracker(30000, 0)
+        tracker.process_signals(
+            ctx,
+            TestingPositionGatherer(),
+            [
+                I[0].signal(+0.5),
+                I[1].signal(+0.3),
+                I[2].signal(+0.2),
+            ],
+        )
+
+        print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
+
+        tracker.process_signals(
+            ctx,
+            TestingPositionGatherer(),
+            [
+                I[0].signal(+0.1),
+                I[1].signal(+0.8),
+                I[2].signal(+0.1),
+            ],
+        )
+
+        print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
+
+        tracker.process_signals(
+            ctx,
+            TestingPositionGatherer(),
+            [
+                I[0].signal(0),
+                I[1].signal(0),
+                I[2].signal(0),
+            ],
+        )
+
+        assert ctx.positions[I[0].symbol].quantity == 0
+        assert ctx.positions[I[1].symbol].quantity == 0
+        assert ctx.positions[I[2].symbol].quantity == 0

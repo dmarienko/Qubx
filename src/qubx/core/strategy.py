@@ -177,11 +177,12 @@ class IPositionSizer:
     Common interface for any positions size calculator
     """
 
-    def get_position_size(self, ctx: StrategyContext, signal: Signal) -> float:
+    def calculate_position_sizes(self, ctx: StrategyContext, signals: List[Signal]) -> List[Signal]:
         """
         Position size calculator
+
         :param ctx: strategy context object
-        :param signal: signal to process
+        :param signals: list of signals to process
         """
         raise NotImplementedError("get_position_size is not implemented")
 
@@ -196,16 +197,18 @@ class PositionsTracker:
     def __init__(self, sizer: IPositionSizer) -> None:
         self._sizer = sizer
 
-    def get_position_sizer(self, instrument: Instrument) -> IPositionSizer:
+    def get_position_sizer(self) -> IPositionSizer:
         return self._sizer
 
     def process_signals(self, ctx: StrategyContext, gathering: IPositionGathering, signals: List[Signal]):
         """
         By default it just treat signals as pure positions sizes
         """
-        for s in signals:
-            new_position = self.get_position_sizer(s.instrument).get_position_size(ctx, s)
-            gathering.alter_position_size(ctx, s.instrument, new_position, s.price)
+        for s in self.get_position_sizer().calculate_position_sizes(ctx, signals):
+            if s.processed_position_size is not None:
+                gathering.alter_position_size(ctx, s.instrument, s.processed_position_size, s.price)
+            else:
+                logger.error(f"Received signal without processed position size: {s} !")
 
     def update(self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar): ...
 

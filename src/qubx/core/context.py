@@ -35,7 +35,7 @@ from qubx.core.strategy import (
 from qubx.core.series import Trade, Quote, Bar, OHLCV
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.trackers.sizers import FixedSizer
-from qubx.utils.misc import Stopwatch
+from qubx.utils.misc import Stopwatch, round_down_at_min_qty
 from qubx.utils.time import convert_seconds_to_str
 
 
@@ -46,10 +46,6 @@ def _dict_with_exception(dct, f):
     if f not in dct:
         raise ValueError(f"Configuration {dct} must contain field '{f}'")
     return dct[f]
-
-
-def _round_down_at_min_qty(x: float, min_size: float) -> float:
-    return (int(x / min_size)) * min_size
 
 
 class StrategyContextImpl(StrategyContext):
@@ -653,7 +649,7 @@ class StrategyContextImpl(StrategyContext):
             raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
 
         # - adjust size
-        size_adj = _round_down_at_min_qty(abs(amount), instrument.min_size_step)
+        size_adj = round_down_at_min_qty(abs(amount), instrument.min_size_step)
         if size_adj < instrument.min_size:
             raise ValueError(f"Attempt to trade size {abs(amount)} less than minimal allowed {instrument.min_size} !")
 

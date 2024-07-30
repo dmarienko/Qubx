@@ -29,6 +29,7 @@ class Signal:
     take: float | None = None
     group: str = ""
     comment: str = ""
+    processed_position_size: float | None = None  # actual position size after processing in sizer
 
     def __str__(self) -> str:
         _p = f" @ { self.price }" if self.price is not None else ""
