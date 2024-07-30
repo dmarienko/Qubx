@@ -7,7 +7,7 @@ from sortedcontainers import SortedDict
 
 from qubx import logger
 from qubx.core.basics import Deal, Instrument, Order, Position, Signal, TransactionCostsCalculator, dt_64, ITimeProvider
-from qubx.core.series import Quote, Trade, time_as_nsec
+from qubx.core.series import Quote, Trade
 from qubx.core.exceptions import (
     ExchangeError,
     InvalidOrder,

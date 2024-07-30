@@ -335,3 +335,20 @@ class BasicScheduler:
         if _has_tasks:
             Thread(target=_watcher).start()
             self._is_started = True
+
+
+def set_parameters_to_object(strategy: Any, **kwargs):
+    """
+    Set given parameters values to object.
+    Parameter can be set only if it's declared as attribute of object and it's not starting with underscore (_).
+    """
+    _log_info = ""
+    for k, v in kwargs.items():
+        if k.startswith("_"):
+            raise ValueError("Internal variable can't be set from external parameter !")
+        if hasattr(strategy, k):
+            strategy.__dict__[k] = v
+            _log_info += f"\n\tset <green>{k}</green> <- <red>{v}</red>"
+
+    if _log_info:
+        logger.info(f"<yellow>{strategy.__class__.__name__}</yellow> new parameters:" + _log_info)
