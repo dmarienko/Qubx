@@ -43,7 +43,9 @@ class FixedRiskSizer(IPositionSizer):
 
                     _direction = np.sign(signal.signal)
                     # - hey, we can't trade using negative balance ;)
-                    _cap = max(ctx.get_capital() + (max(_pos.total_pnl(), 0) if self.reinvest_profit else 0), 0)
+                    _cap = max(
+                        ctx.acc.get_total_capital() + (max(_pos.total_pnl(), 0) if self.reinvest_profit else 0), 0
+                    )
                     _entry = _q.ask if _direction > 0 else _q.bid
 
                     signal.processed_position_size = (
