@@ -387,24 +387,6 @@ class SimulatedExchange(IBrokerServiceProvider):
         
         return merged
 
-    def _get_chunk_size(self, data_type: str, timeframe: str | None) -> pd.Timedelta:
-        if "trade" in data_type:
-            return pd.Timedelta("30Min")
-        elif "candles" in data_type or "ohlc" in data_type:
-            if timeframe:
-                timeframe_dt = pd.Timedelta(timeframe)
-                if timeframe_dt >= pd.Timedelta("1h"):
-                    return pd.Timedelta("3650D")
-                elif timeframe_dt >= pd.Timedelta("5Min"):
-                    return pd.Timedelta("365D")
-                elif timeframe_dt >= pd.Timedelta("1Min"):
-                    return pd.Timedelta("60D")
-            else:
-                return pd.Timedelta("60D")
-        else:
-            # TODO: add conditions for other data type
-            return pd.Timedelta("60D")
-
     def _run_generated_signals(self, data: pd.DataFrame) -> None:
         cc = self.get_communication_channel()
         s0, e0 = pd.Timestamp(data.index[0]), pd.Timestamp(data.index[-1])

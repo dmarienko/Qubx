@@ -1,37 +1,20 @@
-from collections import defaultdict
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, TypeAlias, Callable
-from itertools import chain
 import numpy as np
 import pandas as pd
+import heapq
+
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import Any, Dict, Iterator, List, Optional, Tuple, TypeAlias, Callable
+from itertools import chain
 from enum import Enum
 from tqdm.auto import tqdm
 
 from qubx import lookup, logger
-from qubx.core.helpers import BasicScheduler
-from qubx.core.loggers import InMemoryLogsWriter
-from qubx.core.series import Quote
-from qubx.core.account import AccountProcessor
 from qubx.core.basics import (
     Instrument,
-    Deal,
-    Order,
-    Signal,
-    SimulatedCtrlChannel,
-    Position,
-    TradingSessionResult,
-    TransactionCostsCalculator,
     dt_64,
 )
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
-from qubx.core.strategy import (
-    IStrategy,
-    IBrokerServiceProvider,
-    ITradingServiceProvider,
-    PositionsTracker,
-    StrategyContext,
-    TriggerEvent,
-)
 from qubx.backtester.ome import OrdersManagementEngine, OmeReport
 
 from qubx.data.readers import (
@@ -55,6 +38,7 @@ class DataLoader:
         timeframe: str | None,
         preload_bars: int = 0,
         data_type: str = "candles",
+        chunksize: int = 10_000,
     ) -> None:
         self._instrument = instrument
         self._spec = f"{instrument.exchange}:{instrument.symbol}"
@@ -64,8 +48,9 @@ class DataLoader:
         self._timeframe = timeframe
         self._data_type = data_type
         self._first_load = True
+        self._chunksize = chunksize
 
-    def load(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> List[Any]:
+    def load(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> Iterator:
         if self._first_load:
             if self._init_bars_required > 0 and self._timeframe:
                 start = pd.Timestamp(start) - self._init_bars_required * pd.Timedelta(self._timeframe)
@@ -77,6 +62,7 @@ class DataLoader:
             stop=end,
             transform=self._transformer,
             data_type=self._data_type,
+            chunksize=self._chunksize,
         )
 
         if self._timeframe:
@@ -103,6 +89,18 @@ class DataLoader:
     def symbol(self) -> str:
         return self._instrument.symbol
 
+    @property
+    def data_type(self) -> str:
+        return self._data_type
+
+    def __hash__(self) -> int:
+        return hash((self._instrument.symbol, self._data_type))
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, DataLoader):
+            return False
+        return self._instrument.symbol == other._instrument.symbol and self._data_type == other._data_type
+
 
 class SimulatedDataQueue:
     _loaders: dict[str, list[DataLoader]]
@@ -111,14 +109,82 @@ class SimulatedDataQueue:
         self._loaders = defaultdict(list)
         self.start = start
         self.stop = stop
+        self._current_time = self.start
+        self._index_to_loader: dict[int, DataLoader] = {}
+        self._loader_to_index = {}
+        self._latest_loader_index = -1
+        self._removed_loader_indices = set()
 
-    def add_loader(self, loader: DataLoader):
+    def __add__(self, loader: DataLoader) -> "SimulatedDataQueue":
+        self._latest_loader_index += 1
+        new_loader_index = self._latest_loader_index
         self._loaders[loader.symbol].append(loader)
+        self._index_to_loader[new_loader_index] = loader
+        self._loader_to_index[loader] = new_loader_index
+        if self._current_time > self.start:
+            self._add_chunk_to_heap(new_loader_index)
+        return self
+
+    def __sub__(self, loader: DataLoader) -> "SimulatedDataQueue":
+        loader_index = self._loader_to_index[loader]
+        self._loaders[loader.symbol].remove(loader)
+        del self._index_to_loader[loader_index]
+        del self._loader_to_index[loader]
+        del self._index_to_chunk_size[loader_index]
+        del self._index_to_iterator[loader_index]
+        self._removed_loader_indices.add(loader_index)
+        return self
+
+    def get_loader(self, symbol: str, data_type: str) -> DataLoader:
+        loaders = self._loaders[symbol]
+        for loader in loaders:
+            if loader.data_type == data_type:
+                return loader
+        raise ValueError(f"Loader for {symbol} and {data_type} not found")
 
     def __iter__(self):
-        _index_to_loader = dict(enumerate(chain.from_iterable(self._loaders.values())))
-        _index_to_events = {
-            index: loader.load(self.start, self.stop) for index, loader in _index_to_loader.items()
-        }
-        events = sorted(chain.from_iterable(_index_to_events.values()), key=lambda e: e.time)
-        yield from events
+        logger.info("Initializing chunks for each loader")
+        self._current_time = self.start
+        self._index_to_chunk_size = {}
+        self._index_to_iterator = {}
+        self._event_heap = []
+        for loader_index in self._index_to_loader.keys():
+            self._add_chunk_to_heap(loader_index)
+        return self
+
+    def __next__(self):
+        if not self._event_heap:
+            raise StopIteration
+
+        loader_index = None
+
+        # get the next event from the heap
+        # if the loader_index is in the removed_loader_indices, skip it (optimization to avoid unnecessary heap operations)
+        while self._event_heap and (loader_index is None or loader_index in self._removed_loader_indices):
+            dt, loader_index, chunk_index, event = heapq.heappop(self._event_heap)
+
+        if loader_index is None or loader_index in self._removed_loader_indices:
+            raise StopIteration
+
+        self._current_time = dt
+        chunk_size = self._index_to_chunk_size[loader_index]
+        if chunk_index + 1 == chunk_size:
+            self._add_chunk_to_heap(loader_index)
+
+        return event
+
+    def _add_chunk_to_heap(self, loader_index: int):
+        chunk = self._next_chunk(loader_index)
+        self._index_to_chunk_size[loader_index] = len(chunk)
+        for chunk_index, event in enumerate(chunk):
+            dt = event.time  # type: ignore
+            heapq.heappush(self._event_heap, (dt, loader_index, chunk_index, event))
+
+    def _next_chunk(self, index: int) -> list[Any]:
+        if index not in self._index_to_iterator:
+            self._index_to_iterator[index] = self._index_to_loader[index].load(self._current_time, self.stop)
+        iterator = self._index_to_iterator[index]
+        try:
+            return next(iterator)
+        except StopIteration:
+            return []

@@ -1,5 +1,5 @@
 import re, os
-from typing import Callable, Dict, List, Union, Optional, Iterable, Any
+from typing import Callable, Dict, List, Union, Optional, Iterator, Iterable, Any
 from os.path import exists, join
 import numpy as np
 import pandas as pd
@@ -95,7 +95,7 @@ class DataReader:
         transform: DataTransformer = DataTransformer(),
         chunksize=0,
         **kwargs,
-    ) -> Iterable | List:
+    ) -> Iterator | List:
         raise NotImplemented()
 
 
