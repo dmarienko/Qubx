@@ -105,15 +105,19 @@ class DataLoader:
 class SimulatedDataQueue:
     _loaders: dict[str, list[DataLoader]]
 
-    def __init__(self, start: str, stop: str):
+    def __init__(self):
         self._loaders = defaultdict(list)
-        self.start = start
-        self.stop = stop
-        self._current_time = self.start
+        self._start = None
+        self._stop = None
+        self._current_time = None
         self._index_to_loader: dict[int, DataLoader] = {}
         self._loader_to_index = {}
         self._latest_loader_index = -1
         self._removed_loader_indices = set()
+
+    @property
+    def is_running(self) -> bool:
+        return self._current_time is not None
 
     def __add__(self, loader: DataLoader) -> "SimulatedDataQueue":
         self._latest_loader_index += 1
@@ -121,7 +125,7 @@ class SimulatedDataQueue:
         self._loaders[loader.symbol].append(loader)
         self._index_to_loader[new_loader_index] = loader
         self._loader_to_index[loader] = new_loader_index
-        if self._current_time > self.start:
+        if self.is_running:
             self._add_chunk_to_heap(new_loader_index)
         return self
 
@@ -142,9 +146,14 @@ class SimulatedDataQueue:
                 return loader
         raise ValueError(f"Loader for {symbol} and {data_type} not found")
 
-    def __iter__(self):
+    def create_iterator(self, start: str | pd.Timestamp, stop: str | pd.Timestamp) -> Iterator:
+        self._start = start
+        self._stop = stop
+        return iter(self)
+
+    def __iter__(self) -> Iterator:
         logger.info("Initializing chunks for each loader")
-        self._current_time = self.start
+        self._current_time = self._start
         self._index_to_chunk_size = {}
         self._index_to_iterator = {}
         self._event_heap = []
@@ -170,8 +179,9 @@ class SimulatedDataQueue:
         chunk_size = self._index_to_chunk_size[loader_index]
         if chunk_index + 1 == chunk_size:
             self._add_chunk_to_heap(loader_index)
-
-        return event
+        
+        s = self._index_to_loader[loader_index].symbol
+        return s, event
 
     def _add_chunk_to_heap(self, loader_index: int):
         chunk = self._next_chunk(loader_index)
@@ -182,7 +192,7 @@ class SimulatedDataQueue:
 
     def _next_chunk(self, index: int) -> list[Any]:
         if index not in self._index_to_iterator:
-            self._index_to_iterator[index] = self._index_to_loader[index].load(self._current_time, self.stop)
+            self._index_to_iterator[index] = self._index_to_loader[index].load(self._current_time, self._stop)
         iterator = self._index_to_iterator[index]
         try:
             return next(iterator)

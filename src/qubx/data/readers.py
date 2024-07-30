@@ -136,6 +136,7 @@ class CsvStorageDataReader(DataReader):
         chunksize=0,
         timestamp_formatters=None,
         timeframe=None,
+        **kwargs,
     ) -> Iterable | Any:
 
         f_path = self.__check_file_name(data_id)

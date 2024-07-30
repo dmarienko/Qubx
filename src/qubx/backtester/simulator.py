@@ -1,10 +1,11 @@
+import numpy as np
+import pandas as pd
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, TypeAlias, Callable
-import numpy as np
-import pandas as pd
 from enum import Enum
 from tqdm.auto import tqdm
+from itertools import chain
 
 from qubx import lookup, logger
 from qubx.core.helpers import BasicScheduler
@@ -331,6 +332,10 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         # - pregenerated signals storage
         self._pregenerated_signals = dict()
+        self._to_process = {}
+
+        # - data queue
+        self._data_queue = SimulatedDataQueue()
 
         logger.info(f"SimulatedData.{exchange_id} initialized")
 
@@ -368,73 +373,73 @@ class SimulatedExchange(IBrokerServiceProvider):
                 _params["data_type"] = "trades"
 
             # - add loader for this instrument
-            self._loaders[instr.symbol].append(DataLoader(**_params))
+            ldr = DataLoader(**_params)
+            self._loaders[instr.symbol].append(ldr)
+            self._data_queue += ldr
 
         return True
 
-    def run(self, start: str | pd.Timestamp, end: str | pd.Timestamp):
-        ds = []
-        for s, ld in self._loaders.items():
-            data = ld.load(start, end)
-            ds.append(pd.Series({q.time: q for q in data}, name=s) if data else pd.Series(name=s))
-
-        merged = scols(*ds)
+    def _try_add_process_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
         if self._pregenerated_signals:
-            self._run_generated_signals(merged)
-        else:
-            self._run_as_strategy(merged)
+            for s, v in self._pregenerated_signals.items():
+                sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
+                self._to_process[s] = list(zip(sel.index, sel.values))
 
-        
-        
-        return merged
+    def run(self, start: str | pd.Timestamp, end: str | pd.Timestamp):
+        logger.info(f"SimulatedExchangeService :: run :: Simulation started at {start}")
+        self._try_add_process_signals(start, end)
 
-    def _run_generated_signals(self, data: pd.DataFrame) -> None:
+        _run = self._run_generated_signals if self._pregenerated_signals else self._run_as_strategy
+
+        qiter = self._data_queue.create_iterator(start, end)
+        total_duration = pd.Timestamp(end) - pd.Timestamp(start)
+        prev_dt = pd.Timestamp(start)
+
+        with tqdm(total=total_duration.total_seconds(), desc="Simulating", unit="s", leave=False) as pbar:
+            for symbol, event in tqdm(qiter):
+                _run(symbol, event)
+                dt = pd.Timestamp(event.time)
+                # update only if date has changed
+                if prev_dt.date() != dt.date():
+                    pbar.n = (dt - pd.Timestamp(start)).total_seconds()
+                    pbar.refresh()
+                    prev_dt = dt
+
+        logger.info(f"SimulatedExchangeService :: run :: Simulation finished at {end}")
+
+    def _run_generated_signals(self, s: str, e: Any) -> None:
         cc = self.get_communication_channel()
-        s0, e0 = pd.Timestamp(data.index[0]), pd.Timestamp(data.index[-1])
-
-        to_process = {}
-        for s, v in self._pregenerated_signals.items():
-            sel = v[s0:e0]
-            to_process[s] = list(zip(sel.index, sel.values))
-
         # - send initial quotes - this will invoke calling of on_fit method
         # for s in data.columns:
         # cc.send((s, "quote", data[s].values[0]))
+        t = e.time  # type: ignore
+        self._current_time = max(np.datetime64(t, "ns"), self._current_time)
+        self.trading_service.update_position_price(s, self._current_time, e)
+        # - we need to send quotes for invoking portfolio logging etc
+        # match event type
+        cc.send((s, self._get_event_type(e), e))
+        sigs = self._to_process[s]
+        if sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
+            cc.send((s, "event", {"order": sigs[0][1]}))
+            sigs.pop(0)
 
-        for t, u in tqdm(zip(data.index, data.values), total=len(data), leave=False):
-            for i, s in enumerate(data.columns):
-                e = u[i]
-                if e:
-                    self._current_time = max(np.datetime64(t, "ns"), self._current_time)
-                    self.trading_service.update_position_price(s, self._current_time, e)
-                    # - we need to send quotes for invoking portfolio logging etc
-                    # match event type
-                    cc.send((s, self._get_event_type(e), e))
-                    sigs = to_process[s]
-                    if sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
-                        cc.send((s, "event", {"order": sigs[0][1]}))
-                        sigs.pop(0)
-
-    def _run_as_strategy(self, data: pd.DataFrame) -> None:
+    def _run_as_strategy(self, s: str, e: Any) -> None:
         cc = self.get_communication_channel()
-        for t, u in tqdm(zip(data.index, data.values), total=len(data), leave=False):
-            for i, s in enumerate(data.columns):
-                e = u[i]
-                if e:
-                    self._current_time = max(np.datetime64(t, "ns"), self._current_time)
-                    q = self.trading_service.emulate_quote_from_data(s, np.datetime64(t, "ns"), e)
-                    if q is not None:
-                        self._last_quotes[s] = q
-                        self.trading_service.update_position_price(s, self._current_time, q)
+        t = e.time  # type: ignore
+        self._current_time = max(np.datetime64(t, "ns"), self._current_time)
+        q = self.trading_service.emulate_quote_from_data(s, np.datetime64(t, "ns"), e)
+        if q is not None:
+            self._last_quotes[s] = q
+            self.trading_service.update_position_price(s, self._current_time, q)
 
-                    cc.send((s, self._get_event_type(e), e))
+        cc.send((s, self._get_event_type(e), e))
 
-                    if q is not None:
-                        cc.send((s, "quote", q))
+        if q is not None:
+            cc.send((s, "quote", q))
 
-            if self._scheduler.check_and_run_tasks():
-                # - push nothing - it will force to process last event
-                cc.send((None, "time", None))
+        if self._scheduler.check_and_run_tasks():
+            # - push nothing - it will force to process last event
+            cc.send((None, "time", None))
 
     def _get_event_type(self, event: Quote | Trade | Bar) -> str:
         if isinstance(event, Quote):
