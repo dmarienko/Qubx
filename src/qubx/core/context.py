@@ -209,10 +209,9 @@ class StrategyContextImpl(StrategyContext):
             case "trade" | "trades" | "tas":
                 timeframe = md_config.get("timeframe", "1Sec")
                 self._market_data_subcription_params = {
-                    "timeframe": timeframe,
                     "nback": md_config.get("nback", 1),
                 }
-                self._cache = CachedMarketDataHolder(timeframe)
+                self._cache = CachedMarketDataHolder("1Sec")
 
             case "quote" | "quotes":
                 self._cache = CachedMarketDataHolder("1Sec")
