@@ -1,6 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, TypeAlias
+from typing import Any, Dict, List, Optional, Tuple, TypeAlias, Callable
 import numpy as np
 import pandas as pd
 from enum import Enum
@@ -43,6 +43,7 @@ from qubx.data.readers import (
     InMemoryDataFrameReader,
 )
 from qubx.pandaz.utils import scols
+from .queue import DataLoader, SimulatedDataQueue
 
 StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
 
@@ -238,7 +239,9 @@ class SimulatedTrading(ITradingServiceProvider):
 
     def emulate_quote_from_data(self, symbol: str, timestamp: dt_64, data: float | Trade | Bar) -> Quote | None:
         _ts2 = self._half_tick_size[symbol]
-        if isinstance(data, Trade):
+        if isinstance(data, Quote):
+            return data
+        elif isinstance(data, Trade):
             if data.taker:  # type: ignore
                 return Quote(timestamp, data.price - _ts2 * 2, data.price, 0, 0)  # type: ignore
             else:
@@ -282,56 +285,6 @@ class SimulatedTrading(ITradingServiceProvider):
                 self.send_execution_report(symbol, r)
 
 
-class DataLoader:
-    def __init__(
-        self,
-        transformer: DataTransformer,
-        reader: DataReader,
-        instrument: Instrument,
-        timeframe: str | None,
-        preload_bars: int = 0,
-        data_type: str = "candles",
-    ) -> None:
-        self._instrument = instrument
-        self._spec = f"{instrument.exchange}:{instrument.symbol}"
-        self._reader = reader
-        self._transformer = transformer
-        self._init_bars_required = preload_bars
-        self._timeframe = timeframe
-        self._data_type = data_type
-        self._first_load = True
-
-    def load(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> List[Quote]:
-        if self._first_load:
-            if self._init_bars_required > 0 and self._timeframe:
-                start = pd.Timestamp(start) - self._init_bars_required * pd.Timedelta(self._timeframe)
-            self._first_load = False
-
-        args = dict(
-            data_id=self._spec,
-            start=start,
-            stop=end,
-            transform=self._transformer,
-            data_type=self._data_type,
-        )
-
-        if self._timeframe:
-            args["timeframe"] = self._timeframe
-
-        return self._reader.read(**args)  # type: ignore
-
-    def get_historical_ohlc(self, timeframe: str, start_time: str, nbarsback: int) -> List[Bar]:
-        start = pd.Timestamp(start_time)
-        end = start - nbarsback * pd.Timedelta(timeframe)
-        records = self._reader.read(
-            data_id=self._spec, start=start, stop=end, transform=AsTimestampedRecords()  # type: ignore
-        )
-        return [
-            Bar(np.datetime64(r["timestamp_ns"], "ns").item(), r["open"], r["high"], r["low"], r["close"], r["volume"])
-            for r in records
-        ]
-
-
 class _SimulatedScheduler(BasicScheduler):
     def run(self):
         self._is_started = True
@@ -347,7 +300,7 @@ class SimulatedExchange(IBrokerServiceProvider):
     _scheduler: BasicScheduler
     _current_time: dt_64
     _hist_data_type: str
-    _loader: Dict[str, DataLoader]
+    _loaders: dict[str, list[DataLoader]]
     _pregenerated_signals: Dict[str, pd.Series]
 
     def __init__(
@@ -365,7 +318,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         # - create exchange's instance
         self._last_quotes = defaultdict(lambda: None)
         self._current_time = np.datetime64(0, "ns")
-        self._loader = {}
+        self._loaders = defaultdict(list)
         self._symbol_to_instrument = {}
 
         # - setup communication bus
@@ -405,20 +358,22 @@ class SimulatedExchange(IBrokerServiceProvider):
                 _params["transformer"] = RestoreTicksFromOHLC(
                     trades="trades" in subscription_type, spread=instr.min_tick, timestamp_units=units
                 )
+                _params["data_type"] = "candles"
             elif "quote" in subscription_type:
                 _params["transformer"] = AsQuotes()
+                _params["data_type"] = "candles"
             elif "trade" in subscription_type:
                 _params["transformer"] = AsTrades()
                 _params["data_type"] = "trades"
 
-            # - create loader for this instrument
-            self._loader[instr.symbol] = DataLoader(**_params)
+            # - add loader for this instrument
+            self._loaders[instr.symbol].append(DataLoader(**_params))
 
         return True
 
     def run(self, start: str | pd.Timestamp, end: str | pd.Timestamp):
         ds = []
-        for s, ld in self._loader.items():
+        for s, ld in self._loaders.items():
             data = ld.load(start, end)
             ds.append(pd.Series({q.time: q for q in data}, name=s) if data else pd.Series(name=s))
 
@@ -427,7 +382,28 @@ class SimulatedExchange(IBrokerServiceProvider):
             self._run_generated_signals(merged)
         else:
             self._run_as_strategy(merged)
+
+        
+        
         return merged
+
+    def _get_chunk_size(self, data_type: str, timeframe: str | None) -> pd.Timedelta:
+        if "trade" in data_type:
+            return pd.Timedelta("30Min")
+        elif "candles" in data_type or "ohlc" in data_type:
+            if timeframe:
+                timeframe_dt = pd.Timedelta(timeframe)
+                if timeframe_dt >= pd.Timedelta("1h"):
+                    return pd.Timedelta("3650D")
+                elif timeframe_dt >= pd.Timedelta("5Min"):
+                    return pd.Timedelta("365D")
+                elif timeframe_dt >= pd.Timedelta("1Min"):
+                    return pd.Timedelta("60D")
+            else:
+                return pd.Timedelta("60D")
+        else:
+            # TODO: add conditions for other data type
+            return pd.Timedelta("60D")
 
     def _run_generated_signals(self, data: pd.DataFrame) -> None:
         cc = self.get_communication_channel()
@@ -503,7 +479,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         return True
 
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
-        return self._loader[symbol].get_historical_ohlc(timeframe, self.time(), nbarsback)
+        return self._loaders[symbol].get_historical_ohlc(timeframe, self.time(), nbarsback)
 
     def set_generated_signals(self, signals: pd.Series | pd.DataFrame):
         logger.debug(f"Using pre-generated signals:\n {str(signals.count()).strip('ndtype: int64')}")
