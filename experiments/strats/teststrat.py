@@ -53,7 +53,7 @@ class FlipFlopStrat(IStrategy):
         if not symbols_to_close:  # first run just open half from all universe
             symbols_to_open = symbols_to_open[: len(symbols_to_open) // 2]
 
-        cap = self._tracker.estimate_capital_to_trade(symbols_to_close)
+        cap = self._tracker.estimate_capital_to_trade(ctx, symbols_to_close)
         capital_per_symbol = np.clip(round(cap.capital / len(symbols_to_open)), 5, np.inf)
 
         logger.info(
@@ -69,7 +69,7 @@ class FlipFlopStrat(IStrategy):
 
         # - process signals
         if self.trading_allowed:
-            self._tracker.process_signals(signals)
+            self._tracker.process_signals(ctx, signals)
         else:
             logger.warning("Trading is disabled - no postions will be changed")
 
@@ -82,7 +82,7 @@ class FlipFlopStrat(IStrategy):
         logger.info(f"> test is stopped")
 
     def tracker(self, ctx: StrategyContext) -> PositionsTracker:
-        return PortfolioRebalancerTracker(self.capital_invested, 0).set_context(ctx)
+        return PortfolioRebalancerTracker(self.capital_invested, 0)
 
     def reporting(self, signals: pd.DataFrame, wealth: Capital):
         _str_pos = tabulate(signals.tail(1), dequotify(list(signals.columns.values)), tablefmt="rounded_grid")  # type: ignore

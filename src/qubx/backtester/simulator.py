@@ -10,7 +10,6 @@ from qubx import lookup, logger
 from qubx.core.helpers import BasicScheduler
 from qubx.core.loggers import InMemoryLogsWriter
 from qubx.core.series import Quote
-from qubx.core.account import AccountProcessor
 from qubx.core.basics import (
     Instrument,
     Deal,
@@ -31,6 +30,8 @@ from qubx.core.strategy import (
     StrategyContext,
     TriggerEvent,
 )
+
+from qubx.core.context import StrategyContextImpl
 from qubx.backtester.ome import OrdersManagementEngine, OmeReport
 
 from qubx.data.readers import (
@@ -747,31 +748,31 @@ def _run_setups(
 
         match s.setup_type:
             case _Types.STRATEGY:
-                strat = s.generator
+                strat = s.generator  # type: ignore
 
             case _Types.STRATEGY_AND_TRACKER:
-                strat = s.generator
-                strat.tracker = lambda ctx: s.tracker.set_context(ctx)
+                strat = s.generator  # type: ignore
+                strat.tracker = lambda ctx: s.tracker  # type: ignore
 
             case _Types.SIGNAL:
                 strat = _GeneratedSignalsStrategy()
-                exchange.set_generated_signals(s.generator)
+                exchange.set_generated_signals(s.generator)  # type: ignore
                 # - we don't need any unexpected triggerings
                 _trigger = "bar: 0s"
-                _stop = s.generator.index[-1]
+                _stop = s.generator.index[-1]  # type: ignore
 
             case _Types.SIGNAL_AND_TRACKER:
                 strat = _GeneratedSignalsStrategy()
-                strat.tracker = lambda ctx: s.tracker.set_context(ctx)
-                exchange.set_generated_signals(s.generator)
+                strat.tracker = lambda ctx: s.tracker
+                exchange.set_generated_signals(s.generator)  # type: ignore
                 # - we don't need any unexpected triggerings
                 _trigger = "bar: 0s"
-                _stop = s.generator.index[-1]
+                _stop = s.generator.index[-1]  # type: ignore
 
             case _:
                 raise ValueError(f"Unsupported setup type: {s.setup_type} !")
 
-        ctx = StrategyContext(
+        ctx = StrategyContextImpl(
             strategy=strat,  # type: ignore
             config=None,  # TODO: need to think how we could pass altered parameters here (from variating etc)
             broker_connector=exchange,
