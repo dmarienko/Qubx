@@ -353,7 +353,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         units = kwargs.get("timestamp_units", "ns")
 
         for instr in instruments:
-            logger.info(f"SimulatedExchangeService :: subscribe :: {instr.symbol} :: {subscription_type}")
+            logger.debug(f"SimulatedExchangeService :: subscribe :: {instr.symbol} :: {subscription_type}")
             self._symbol_to_instrument[instr.symbol] = instr
 
             _params: Dict[str, Any] = dict(
@@ -390,11 +390,14 @@ class SimulatedExchange(IBrokerServiceProvider):
     def unsubscribe(self, subscription_type: str, instruments: List[Instrument]) -> bool:
         for instr in instruments:
             if instr.symbol in self._loaders:
-                logger.info(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol} :: {subscription_type}")
+                logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol} :: {subscription_type}")
                 self._data_queue -= self._loaders[instr.symbol].pop(subscription_type)
                 if not self._loaders[instr.symbol]:
                     self._loaders.pop(instr.symbol)
         return True
+
+    def has_subscription(self, subscription_type: str, instrument: Instrument | str) -> bool:
+        return instrument.symbol in self._loaders and subscription_type in self._loaders[instrument.symbol]
 
     def _try_add_process_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
         if self._pregenerated_signals:
@@ -846,7 +849,11 @@ def _run_setup(
     )
     ctx.start()
 
-    exchange.run(start, _stop, silent=silent)  # type: ignore
+    try:
+        exchange.run(start, _stop, silent=silent)  # type: ignore
+    except KeyboardInterrupt:
+        logger.error("Simulated trading interrupted by user !")
+
     return TradingSessionResult(
         setup.name,
         start,

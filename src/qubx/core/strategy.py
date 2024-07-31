@@ -106,6 +106,9 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
 
     def unsubscribe(self, subscription_type: str, instruments: List[Instrument]) -> bool:
         raise NotImplementedError("unsubscribe")
+    
+    def has_subscription(self, subscription_type: str, instrument: Instrument) -> bool:
+        raise NotImplementedError("has_subscription")
 
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
         raise NotImplementedError("get_historical_ohlcs")
@@ -176,6 +179,8 @@ class StrategyContext:
     def subscribe(self, subscription_type: str, instr_or_symbol: Instrument | str, **kwargs) -> bool: ...
 
     def unsubscribe(self, subscription_type: str, instr_or_symbol: Instrument | str) -> bool: ...
+
+    def has_subscription(self, subscription_type: str, instr_or_symbol: Instrument | str) -> bool: ...
 
 
 class IPositionGathering:
@@ -253,7 +258,7 @@ class IStrategy:
         """
         return None
 
-    def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
+    def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | Signal | None:
         return None
 
     def on_stop(self, ctx: StrategyContext):

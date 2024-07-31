@@ -377,6 +377,8 @@ class StrategyContextImpl(StrategyContext):
 
             # - process and execute signals if they are provided
             if signals:
+                if not isinstance(signals, list):
+                    signals = [signals]
                 self._execute_signals(signals)
 
         # - notify poition and portfolio loggers
@@ -478,6 +480,8 @@ class StrategyContextImpl(StrategyContext):
                 # we want to trigger only first one - not every
                 if not self._current_bar_trigger_processed:
                     self._current_bar_trigger_processed = True
+                    if bar is None:
+                        bar = self._cache.get_ohlcv(symbol)[0]
                     return TriggerEvent(self.time(), "bar", self._symb_to_instr.get(symbol), bar)
             else:
                 self._current_bar_trigger_processed = False
@@ -728,6 +732,18 @@ class StrategyContextImpl(StrategyContext):
             raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
 
         return self.broker_provider.unsubscribe(subscription_type, [instrument])
+
+    def has_subscription(self, subscription_type: str, instr_or_symbol: Instrument | str) -> bool:
+        """
+        Check if subscription is active
+        """
+        instrument: Instrument | None = (
+            self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
+        )
+        if instrument is None:
+            raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
+
+        return self.broker_provider.has_subscription(subscription_type, instrument)
 
     def _run_in_thread_pool(self, func: Callable, args=()):
         """
