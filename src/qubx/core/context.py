@@ -405,7 +405,6 @@ class StrategyContextImpl(StrategyContext):
 
             # - waiting for incoming market data
             symbol, d_type, data = channel.receive()
-            _SW.start("StrategyContext._process_incoming_data")
             if self.process_data(symbol, d_type, data):
                 _SW.stop("StrategyContext._process_incoming_data")
                 channel.stop()
@@ -630,10 +629,6 @@ class StrategyContextImpl(StrategyContext):
         self._logging.close()
         self.get_latencies_report()
 
-    def get_latencies_report(self):
-        for l in _SW.latencies.keys():
-            logger.info(f"\t<w>{l}</w> took <r>{_SW.latency_sec(l):.7f}</r> secs")
-
     def time(self) -> dt_64:
         return self.trading_service.time()
 
@@ -645,7 +640,6 @@ class StrategyContextImpl(StrategyContext):
     def trade(
         self, instr_or_symbol: Instrument | str, amount: float, price: float | None = None, time_in_force="gtc"
     ) -> Order:
-        _SW.start("send_order")
         instrument: Instrument | None = (
             self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
         )

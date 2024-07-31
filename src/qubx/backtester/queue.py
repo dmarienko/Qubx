@@ -7,6 +7,10 @@ from typing import Any, Iterator
 from qubx import logger
 from qubx.core.basics import Instrument
 from qubx.data.readers import DataReader, DataTransformer
+from qubx.utils.misc import Stopwatch
+
+
+_SW = Stopwatch()
 
 
 class DataLoader:
@@ -18,7 +22,7 @@ class DataLoader:
         timeframe: str | None,
         preload_bars: int = 0,
         data_type: str = "ohlc",
-        chunksize: int = 30_000,
+        chunksize: int = 5_000,
     ) -> None:
         self._instrument = instrument
         self._spec = f"{instrument.exchange}:{instrument.symbol}"
@@ -131,6 +135,7 @@ class SimulatedDataQueue:
             self._add_chunk_to_heap(loader_index)
         return self
 
+    @_SW.watch("DataQueue")
     def __next__(self) -> tuple[str, Any]:
         if not self._event_heap:
             raise StopIteration
@@ -153,6 +158,7 @@ class SimulatedDataQueue:
         s = self._index_to_loader[loader_index].symbol
         return s, event
 
+    @_SW.watch("DataQueue")
     def _add_chunk_to_heap(self, loader_index: int):
         chunk = self._next_chunk(loader_index)
         self._index_to_chunk_size[loader_index] = len(chunk)
@@ -160,6 +166,7 @@ class SimulatedDataQueue:
             dt = event.time  # type: ignore
             heapq.heappush(self._event_heap, (dt, loader_index, chunk_index, event))
 
+    @_SW.watch("DataQueue")
     def _next_chunk(self, index: int) -> list[Any]:
         if index not in self._index_to_iterator:
             self._index_to_iterator[index] = self._index_to_loader[index].load(self._current_time, self._stop)

@@ -32,6 +32,9 @@ from qubx.utils.misc import Stopwatch
 from qubx.utils.time import convert_seconds_to_str
 
 
+_SW = Stopwatch()
+
+
 class ITradingServiceProvider(ITimeProvider, IComminucationManager):
     acc: AccountProcessor
 
@@ -106,7 +109,7 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
 
     def unsubscribe(self, subscription_type: str, instruments: List[Instrument]) -> bool:
         raise NotImplementedError("unsubscribe")
-    
+
     def has_subscription(self, subscription_type: str, instrument: Instrument) -> bool:
         raise NotImplementedError("has_subscription")
 
@@ -158,8 +161,6 @@ class StrategyContext:
 
     def stop(self): ...
 
-    def get_latencies_report(self): ...
-
     def time(self) -> dt_64: ...
 
     def trade(
@@ -181,6 +182,25 @@ class StrategyContext:
     def unsubscribe(self, subscription_type: str, instr_or_symbol: Instrument | str) -> bool: ...
 
     def has_subscription(self, subscription_type: str, instr_or_symbol: Instrument | str) -> bool: ...
+
+    @staticmethod
+    def get_latencies_report():
+        scope_to_latency_sec = {scope: _SW.latency_sec(scope) for scope in _SW.latencies.keys()}
+        scope_to_count = {l: _SW.counts[l] for l in scope_to_latency_sec.keys()}
+        scope_to_total_time = {scope: scope_to_count[scope] * lat for scope, lat in scope_to_latency_sec.items()}
+        # create pandas datafrmae from dictionaries
+        lats = pd.DataFrame(
+            {
+                "scope": list(scope_to_latency_sec.keys()),
+                "latency": list(scope_to_latency_sec.values()),
+                "count": list(scope_to_count.values()),
+                "total_time": list(scope_to_total_time.values()),
+            }
+        )
+        lats["latency"] = lats["latency"].apply(lambda x: f"{x:.4f}")
+        lats["total_time (min)"] = lats["total_time"].apply(lambda x: f"{x / 60:.4f}")
+        lats.drop(columns=["total_time"], inplace=True)
+        return lats
 
 
 class IPositionGathering:
