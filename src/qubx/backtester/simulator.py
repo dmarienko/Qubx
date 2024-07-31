@@ -411,19 +411,19 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         _run = self._run_generated_signals if self._pregenerated_signals else self._run_as_strategy
 
-        qiter = self._data_queue.create_iterator(start, end)
+        qiter = self._data_queue.create_iterable(start, end)
         start, end = pd.Timestamp(start), pd.Timestamp(end)
         total_duration = end - start
         update_delta = total_duration / 100
         prev_dt = pd.Timestamp(start)
 
         if silent:
-            for symbol, event in qiter:
-                _run(symbol, event)
+            for symbol, data_type, event in qiter:
+                _run(symbol, data_type, event)
         else:
             with tqdm(total=total_duration.total_seconds(), desc="Simulating", unit="s", leave=False) as pbar:
-                for symbol, event in qiter:
-                    _run(symbol, event)
+                for symbol, data_type, event in qiter:
+                    _run(symbol, data_type, event)
                     dt = pd.Timestamp(event.time)
                     # update only if date has changed
                     if dt - prev_dt > update_delta:
@@ -435,7 +435,7 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         logger.info(f"SimulatedExchangeService :: run :: Simulation finished at {end}")
 
-    def _run_generated_signals(self, s: str, e: Any) -> None:
+    def _run_generated_signals(self, s: str, data_type: str, e: Any) -> None:
         cc = self.get_communication_channel()
         # - send initial quotes - this will invoke calling of on_fit method
         # for s in data.columns:
@@ -445,13 +445,13 @@ class SimulatedExchange(IBrokerServiceProvider):
         self.trading_service.update_position_price(s, self._current_time, e)
         # - we need to send quotes for invoking portfolio logging etc
         # match event type
-        cc.send((s, self._get_event_type(e), e))
+        cc.send((s, self._get_event_type(data_type, e), e))
         sigs = self._to_process[s]
         if sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
             cc.send((s, "event", {"order": sigs[0][1]}))
             sigs.pop(0)
 
-    def _run_as_strategy(self, s: str, e: Any) -> None:
+    def _run_as_strategy(self, s: str, data_type: str, e: Any) -> None:
         cc = self.get_communication_channel()
         t = e.time  # type: ignore
         self._current_time = max(np.datetime64(t, "ns"), self._current_time)
@@ -460,7 +460,7 @@ class SimulatedExchange(IBrokerServiceProvider):
             self._last_quotes[s] = q
             self.trading_service.update_position_price(s, self._current_time, q)
 
-        cc.send((s, self._get_event_type(e), e))
+        cc.send((s, self._get_event_type(data_type, e), e))
 
         if q is not None:
             cc.send((s, "quote", q))
@@ -469,15 +469,25 @@ class SimulatedExchange(IBrokerServiceProvider):
             # - push nothing - it will force to process last event
             cc.send((None, "time", None))
 
-    def _get_event_type(self, event: Quote | Trade | Bar) -> str:
-        if isinstance(event, Quote):
-            return "quote"
-        elif isinstance(event, Trade):
+    def _get_event_type(self, t: str, e: Trade | Bar | Quote | list) -> str:
+        if isinstance(e, list):
+            match t:
+                case "quote":
+                    return "quote"
+                case "trade" | "agg_trade":
+                    return "trade"
+                case "ohlcv" | "ohlc" | "bar":
+                    return "bar"
+                case _:
+                    raise ValueError(f"Unknown event type: {t}")
+        elif isinstance(e, Trade):
             return "trade"
-        elif isinstance(event, Bar):
+        elif isinstance(e, Quote):
+            return "quote"
+        elif isinstance(e, Bar):
             return "bar"
         else:
-            raise ValueError(f"Unknown event type: {type(event)}")
+            raise ValueError(f"Unknown event type: {t}")
 
     def get_quote(self, symbol: str) -> Optional[Quote]:
         return self._last_quotes[symbol]
@@ -663,7 +673,7 @@ def simulate(
     exchange: str | None = None,  # in case if exchange is not specified in symbols list
     base_currency: str = "USDT",
     leverage: float = 1.0,  # TODO: we need to add support for leverage
-    n_jobs: int = -1,
+    n_jobs: int = 1,
     silent: bool = False,
 ) -> TradingSessionResult | List[TradingSessionResult]:
     # - recognize provided data

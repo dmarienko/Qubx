@@ -5,7 +5,7 @@ from collections import defaultdict
 from typing import Any, Iterator
 
 from qubx import logger
-from qubx.core.basics import Instrument
+from qubx.core.basics import Instrument, dt_64
 from qubx.data.readers import DataReader, DataTransformer
 from qubx.utils.misc import Stopwatch
 
@@ -119,7 +119,7 @@ class SimulatedDataQueue:
                 return loader
         raise ValueError(f"Loader for {symbol} and {data_type} not found")
 
-    def create_iterator(self, start: str | pd.Timestamp, stop: str | pd.Timestamp) -> Iterator:
+    def create_iterable(self, start: str | pd.Timestamp, stop: str | pd.Timestamp) -> Iterator:
         self._start = start
         self._stop = stop
         self._current_time = None
@@ -155,8 +155,8 @@ class SimulatedDataQueue:
         if chunk_index + 1 == chunk_size:
             self._add_chunk_to_heap(loader_index)
 
-        s = self._index_to_loader[loader_index].symbol
-        return s, event
+        loader = self._index_to_loader[loader_index]
+        return loader.symbol, loader.data_type, event
 
     @_SW.watch("DataQueue")
     def _add_chunk_to_heap(self, loader_index: int):
@@ -175,3 +175,65 @@ class SimulatedDataQueue:
             return next(iterator)
         except StopIteration:
             return []
+
+
+class EventBatcher:
+    _BATCH_SETTINGS = {
+        "trade": "1Sec",
+        "agg_trade": "1Sec",
+        "orderbook": "1Sec",
+    }
+
+    def __init__(self, source_iterator: Iterator | list, passthrough: bool = False, **kwargs):
+        self.source_iterator = iter(source_iterator) if isinstance(source_iterator, list) else source_iterator
+        self._passthrough = passthrough
+        self._batch_settings = {**self._BATCH_SETTINGS, **kwargs}
+        self._batch_settings = {k: pd.Timedelta(v) for k, v in self._batch_settings.items()}
+        self._event_buffers = defaultdict(lambda: defaultdict(list))
+
+    def __iter__(self):
+        if self._passthrough:
+            yield from self.source_iterator
+        for symbol, data_type, event in self.source_iterator:
+            time: dt_64 = event.time  # type: ignore
+            yield from self._process_buffers(time)
+
+            if data_type not in self._batch_settings:
+                yield symbol, data_type, event
+                continue
+
+            symbol_buffers = self._event_buffers[symbol]
+            buffer = symbol_buffers[data_type]
+            buffer.append(event)
+            delta = pd.Timedelta(time - buffer[0].time)
+
+            if delta >= self._batch_settings[data_type]:
+                symbol_buffers[data_type] = []
+                yield symbol, data_type, buffer
+
+        yield from self._cleanup_buffers()
+
+    def _process_buffers(self, time: dt_64):
+        """
+        Yield all buffers that are older than the batch settings.
+        """
+        yield_buffers = []
+        for symbol, buffers in self._event_buffers.items():
+            for data_type, buffer in buffers.items():
+                if buffer and pd.Timedelta(time - buffer[0].time) >= self._batch_settings[data_type]:
+                    yield_buffers.append((symbol, data_type, buffer))
+                    buffers[data_type] = []
+        yield_buffers.sort(key=lambda x: x[-1][0].time)
+        for symbol, data_type, buffer in yield_buffers:
+            yield symbol, data_type, buffer
+
+    def _cleanup_buffers(self):
+        yield_buffers = []
+        for symbol, buffers in self._event_buffers.items():
+            for data_type, buffer in buffers.items():
+                if buffer:
+                    yield_buffers.append((symbol, data_type, buffer))
+                    buffers[data_type] = []
+        yield_buffers.sort(key=lambda x: x[-1][0].time)
+        for symbol, data_type, buffer in yield_buffers:
+            yield symbol, data_type, buffer
