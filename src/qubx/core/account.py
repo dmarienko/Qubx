@@ -29,7 +29,7 @@ class AccountProcessor:
         initial_capital: float = 0,
     ) -> None:
         self.account_id = account_id
-        self.base_currency = base_currency.lower()
+        self.base_currency = base_currency.upper()
         self.reserved = dict() if reserves is None else reserves
         self._processed_trades = defaultdict(list)
         self._active_orders = dict()
