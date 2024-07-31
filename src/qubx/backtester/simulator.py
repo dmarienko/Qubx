@@ -48,7 +48,7 @@ from qubx.data.readers import (
 from qubx.pandaz.utils import scols
 from qubx.utils.misc import ProgressParallel
 from joblib import delayed
-from .queue import DataLoader, SimulatedDataQueue
+from .queue import DataLoader, SimulatedDataQueue, EventBatcher
 
 StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
 
@@ -405,13 +405,19 @@ class SimulatedExchange(IBrokerServiceProvider):
                 sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
                 self._to_process[s] = list(zip(sel.index, sel.values))
 
-    def run(self, start: str | pd.Timestamp, end: str | pd.Timestamp, silent: bool = False) -> None:
+    def run(
+        self,
+        start: str | pd.Timestamp,
+        end: str | pd.Timestamp,
+        silent: bool = False,
+        enable_event_batching: bool = True,
+    ) -> None:
         logger.info(f"SimulatedExchangeService :: run :: Simulation started at {start}")
         self._try_add_process_signals(start, end)
 
         _run = self._run_generated_signals if self._pregenerated_signals else self._run_as_strategy
 
-        qiter = self._data_queue.create_iterable(start, end)
+        qiter = EventBatcher(self._data_queue.create_iterable(start, end), passthrough=not enable_event_batching)
         start, end = pd.Timestamp(start), pd.Timestamp(end)
         total_duration = end - start
         update_delta = total_duration / 100
@@ -675,6 +681,7 @@ def simulate(
     leverage: float = 1.0,  # TODO: we need to add support for leverage
     n_jobs: int = 1,
     silent: bool = False,
+    enable_event_batching: bool = True,
 ) -> TradingSessionResult | List[TradingSessionResult]:
     # - recognize provided data
     if isinstance(data, dict):
@@ -721,7 +728,17 @@ def simulate(
         stop = pd.Timestamp.now(tz="UTC").astimezone(None)
 
     # - run simulations
-    return _run_setups(setups, start, stop, data_reader, subscription, trigger, n_jobs=n_jobs, silent=silent)
+    return _run_setups(
+        setups,
+        start,
+        stop,
+        data_reader,
+        subscription,
+        trigger,
+        n_jobs=n_jobs,
+        silent=silent,
+        enable_event_batching=enable_event_batching,
+    )
 
 
 def find_instruments_and_exchanges(
@@ -784,6 +801,7 @@ def _run_setups(
     trigger: str | list[str],
     n_jobs: int = -1,
     silent: bool = False,
+    enable_event_batching: bool = True,
 ) -> List[TradingSessionResult]:
     # loggers don't work well with joblib and multiprocessing in general because they contain
     # open file handlers that cannot be pickled. I found a solution which requires the usage of enqueue=True
@@ -794,7 +812,17 @@ def _run_setups(
     n_jobs = 1 if _main_loop_silent else n_jobs
 
     reports = ProgressParallel(n_jobs=n_jobs, total=len(setups), silent=_main_loop_silent, backend="multiprocessing")(
-        delayed(_run_setup)(s, start, stop, data_reader, subscription, trigger, silent=silent) for s in setups
+        delayed(_run_setup)(
+            s,
+            start,
+            stop,
+            data_reader,
+            subscription,
+            trigger,
+            silent=silent,
+            enable_event_batching=enable_event_batching,
+        )
+        for s in setups
     )
     return reports  # type: ignore
 
@@ -807,6 +835,7 @@ def _run_setup(
     subscription: Dict[str, Any],
     trigger: str | list[str],
     silent: bool = False,
+    enable_event_batching: bool = True,
 ) -> TradingSessionResult:
     _trigger = trigger
     _stop = stop
@@ -860,7 +889,7 @@ def _run_setup(
     ctx.start()
 
     try:
-        exchange.run(start, _stop, silent=silent)  # type: ignore
+        exchange.run(start, _stop, silent=silent, enable_event_batching=enable_event_batching)  # type: ignore
     except KeyboardInterrupt:
         logger.error("Simulated trading interrupted by user !")
 

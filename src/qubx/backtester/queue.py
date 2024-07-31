@@ -2,7 +2,7 @@ import pandas as pd
 import heapq
 
 from collections import defaultdict
-from typing import Any, Iterator
+from typing import Any, Iterator, Iterable
 
 from qubx import logger
 from qubx.core.basics import Instrument, dt_64
@@ -184,8 +184,8 @@ class EventBatcher:
         "orderbook": "1Sec",
     }
 
-    def __init__(self, source_iterator: Iterator | list, passthrough: bool = False, **kwargs):
-        self.source_iterator = iter(source_iterator) if isinstance(source_iterator, list) else source_iterator
+    def __init__(self, source_iterator: Iterator | Iterable, passthrough: bool = False, **kwargs):
+        self.source_iterator = source_iterator
         self._passthrough = passthrough
         self._batch_settings = {**self._BATCH_SETTINGS, **kwargs}
         self._batch_settings = {k: pd.Timedelta(v) for k, v in self._batch_settings.items()}
@@ -193,7 +193,9 @@ class EventBatcher:
 
     def __iter__(self):
         if self._passthrough:
-            yield from self.source_iterator
+            _iter = iter(self.source_iterator) if isinstance(self.source_iterator, Iterable) else self.source_iterator
+            yield from _iter
+            return
         for symbol, data_type, event in self.source_iterator:
             time: dt_64 = event.time  # type: ignore
             yield from self._process_buffers(time)
