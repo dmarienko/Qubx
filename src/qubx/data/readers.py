@@ -1013,6 +1013,7 @@ class MultiQdbConnector(QuestDBConnector):
 
     _TYPE_MAPPINGS = {
         "candles": "candles_1m",
+        "ohlc": "candles_1m",
         "trades": "trade",
         "ob": "orderbook",
         "trd": "trade",

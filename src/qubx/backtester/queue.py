@@ -1,32 +1,12 @@
-import numpy as np
 import pandas as pd
 import heapq
 
 from collections import defaultdict
-from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Tuple, TypeAlias, Callable
-from itertools import chain
-from enum import Enum
-from tqdm.auto import tqdm
+from typing import Any, Iterator
 
-from qubx import lookup, logger
-from qubx.core.basics import (
-    Instrument,
-    dt_64,
-)
-from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
-from qubx.backtester.ome import OrdersManagementEngine, OmeReport
-
-from qubx.data.readers import (
-    AsTrades,
-    DataReader,
-    DataTransformer,
-    RestoreTicksFromOHLC,
-    AsQuotes,
-    AsTimestampedRecords,
-    InMemoryDataFrameReader,
-)
-from qubx.pandaz.utils import scols
+from qubx import logger
+from qubx.core.basics import Instrument
+from qubx.data.readers import DataReader, DataTransformer
 
 
 class DataLoader:
@@ -37,8 +17,8 @@ class DataLoader:
         instrument: Instrument,
         timeframe: str | None,
         preload_bars: int = 0,
-        data_type: str = "candles",
-        chunksize: int = 10_000,
+        data_type: str = "ohlc",
+        chunksize: int = 30_000,
     ) -> None:
         self._instrument = instrument
         self._spec = f"{instrument.exchange}:{instrument.symbol}"
@@ -138,7 +118,8 @@ class SimulatedDataQueue:
     def create_iterator(self, start: str | pd.Timestamp, stop: str | pd.Timestamp) -> Iterator:
         self._start = start
         self._stop = stop
-        return iter(self)
+        self._current_time = None
+        return self
 
     def __iter__(self) -> Iterator:
         logger.info("Initializing chunks for each loader")

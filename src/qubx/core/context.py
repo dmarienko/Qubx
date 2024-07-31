@@ -31,6 +31,7 @@ from qubx.core.strategy import (
     ITradingServiceProvider,
     PositionsTracker,
     StrategyContext,
+    SubscriptionType,
 )
 from qubx.core.series import Trade, Quote, Bar, OHLCV
 from qubx.gathering.simplest import SimplePositionGatherer
@@ -654,7 +655,7 @@ class StrategyContextImpl(StrategyContext):
 
         side = "buy" if amount > 0 else "sell"
         type = "limit" if price is not None else "market"
-        logger.info(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} ...")
+        logger.debug(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} ...")
         client_id = self._generate_order_client_id(instrument.symbol)
         order = self.trading_service.send_order(
             instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id
@@ -701,6 +702,32 @@ class StrategyContextImpl(StrategyContext):
         bars = self.broker_provider.get_historical_ohlcs(instr.symbol, timeframe, length)
         r = self._cache.update_by_bars(instr.symbol, timeframe, bars)
         return r
+
+    @_SW.watch("StrategyContext")
+    def subscribe(self, subscription_type: str, instr_or_symbol: Instrument | str, **kwargs) -> bool:
+        """
+        Subscribe to market data updates
+        """
+        instrument: Instrument | None = (
+            self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
+        )
+        if instrument is None:
+            raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
+
+        return self.broker_provider.subscribe(subscription_type, [instrument], **kwargs)
+
+    @_SW.watch("StrategyContext")
+    def unsubscribe(self, subscription_type: str, instr_or_symbol: Instrument | str) -> bool:
+        """
+        Unsubscribe from market data updates
+        """
+        instrument: Instrument | None = (
+            self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
+        )
+        if instrument is None:
+            raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
+
+        return self.broker_provider.unsubscribe(subscription_type, [instrument])
 
     def _run_in_thread_pool(self, func: Callable, args=()):
         """

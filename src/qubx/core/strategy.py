@@ -104,6 +104,9 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
     def subscribe(self, subscription_type: str, instruments: List[Instrument], **kwargs) -> bool:
         raise NotImplementedError("subscribe")
 
+    def unsubscribe(self, subscription_type: str, instruments: List[Instrument]) -> bool:
+        raise NotImplementedError("unsubscribe")
+
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
         raise NotImplementedError("get_historical_ohlcs")
 
@@ -122,6 +125,17 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
     @property
     def is_simulated_trading(self) -> bool:
         return False
+
+
+class SubscriptionType:
+    """
+    Subscription type constants
+    """
+
+    QUOTE = "quote"
+    TRADE = "trade"
+    AGG_TRADE = "agg_trade"
+    OHLC = "ohlc"
 
 
 class StrategyContext:
@@ -158,6 +172,10 @@ class StrategyContext:
     def get_reserved(self, instrument: Instrument) -> float: ...
 
     def get_historical_ohlcs(self, instrument: Instrument | str, timeframe: str, length: int) -> OHLCV | None: ...
+
+    def subscribe(self, subscription_type: str, instr_or_symbol: Instrument | str, **kwargs) -> bool: ...
+
+    def unsubscribe(self, subscription_type: str, instr_or_symbol: Instrument | str) -> bool: ...
 
 
 class IPositionGathering:

@@ -30,6 +30,7 @@ from qubx.core.strategy import (
     PositionsTracker,
     StrategyContext,
     TriggerEvent,
+    SubscriptionType,
 )
 
 from qubx.core.context import StrategyContextImpl
@@ -352,6 +353,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         units = kwargs.get("timestamp_units", "ns")
 
         for instr in instruments:
+            logger.info(f"SimulatedExchangeService :: subscribe :: {instr.symbol} :: {subscription_type}")
             self._symbol_to_instrument[instr.symbol] = instr
 
             _params: Dict[str, Any] = dict(
@@ -361,29 +363,37 @@ class SimulatedExchange(IBrokerServiceProvider):
                 timeframe=timeframe,
             )
 
-            data_type = None
             # - for ohlc data we need to restore ticks from OHLC bars
-            if "ohlc" in subscription_type:
+            if subscription_type == SubscriptionType.OHLC:
                 _params["transformer"] = RestoreTicksFromOHLC(
                     trades="trades" in subscription_type, spread=instr.min_tick, timestamp_units=units
                 )
-                data_type = "candles"
-            elif "quote" in subscription_type:
+            elif subscription_type == SubscriptionType.QUOTE:
                 _params["transformer"] = AsQuotes()
-                data_type = "candles"
-            elif "trade" in subscription_type:
+            # TODO: remove AGG_TRADE from this scope and only map trade to agg_trade for binance
+            elif subscription_type == SubscriptionType.AGG_TRADE:
                 _params["transformer"] = AsTrades()
-                data_type = "agg_trade"
+            elif subscription_type == SubscriptionType.TRADE:
+                _params["transformer"] = AsTrades()
             else:
                 raise ValueError(f"Unknown subscription type: {subscription_type}")
 
-            _params["data_type"] = data_type
+            _params["data_type"] = subscription_type
 
             # - add loader for this instrument
             ldr = DataLoader(**_params)
-            self._loaders[instr.symbol][data_type] = ldr
+            self._loaders[instr.symbol][subscription_type] = ldr
             self._data_queue += ldr
 
+        return True
+
+    def unsubscribe(self, subscription_type: str, instruments: List[Instrument]) -> bool:
+        for instr in instruments:
+            if instr.symbol in self._loaders:
+                logger.info(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol} :: {subscription_type}")
+                self._data_queue -= self._loaders[instr.symbol].pop(subscription_type)
+                if not self._loaders[instr.symbol]:
+                    self._loaders.pop(instr.symbol)
         return True
 
     def _try_add_process_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
@@ -392,7 +402,7 @@ class SimulatedExchange(IBrokerServiceProvider):
                 sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
                 self._to_process[s] = list(zip(sel.index, sel.values))
 
-    def run(self, start: str | pd.Timestamp, end: str | pd.Timestamp):
+    def run(self, start: str | pd.Timestamp, end: str | pd.Timestamp, silent: bool = False) -> None:
         logger.info(f"SimulatedExchangeService :: run :: Simulation started at {start}")
         self._try_add_process_signals(start, end)
 
@@ -404,17 +414,21 @@ class SimulatedExchange(IBrokerServiceProvider):
         update_delta = total_duration / 100
         prev_dt = pd.Timestamp(start)
 
-        with tqdm(total=total_duration.total_seconds(), desc="Simulating", unit="s", leave=False) as pbar:
+        if silent:
             for symbol, event in qiter:
                 _run(symbol, event)
-                dt = pd.Timestamp(event.time)
-                # update only if date has changed
-                if dt - prev_dt > update_delta:
-                    pbar.n = (dt - start).total_seconds()
-                    pbar.refresh()
-                    prev_dt = dt
-            pbar.n = total_duration.total_seconds()
-            pbar.refresh()
+        else:
+            with tqdm(total=total_duration.total_seconds(), desc="Simulating", unit="s", leave=False) as pbar:
+                for symbol, event in qiter:
+                    _run(symbol, event)
+                    dt = pd.Timestamp(event.time)
+                    # update only if date has changed
+                    if dt - prev_dt > update_delta:
+                        pbar.n = (dt - start).total_seconds()
+                        pbar.refresh()
+                        prev_dt = dt
+                pbar.n = total_duration.total_seconds()
+                pbar.refresh()
 
         logger.info(f"SimulatedExchangeService :: run :: Simulation finished at {end}")
 
@@ -639,14 +653,15 @@ def simulate(
     capital: float,
     instruments: List[str] | Dict[str, List[str]] | None,
     subscription: Dict[str, Any],
-    trigger: str,
+    trigger: str | list[str],
     commissions: str,
     start: str | pd.Timestamp,
     stop: str | pd.Timestamp | None = None,
     exchange: str | None = None,  # in case if exchange is not specified in symbols list
     base_currency: str = "USDT",
     leverage: float = 1.0,  # TODO: we need to add support for leverage
-    n_jobs: int = -1,  # TODO: if need to run simulation in parallel
+    n_jobs: int = -1,
+    silent: bool = False,
 ) -> TradingSessionResult | List[TradingSessionResult]:
     # - recognize provided data
     if isinstance(data, dict):
@@ -693,7 +708,7 @@ def simulate(
         stop = pd.Timestamp.now(tz="UTC").astimezone(None)
 
     # - run simulations
-    return _run_setups(setups, start, stop, data_reader, subscription, trigger, n_jobs=n_jobs)
+    return _run_setups(setups, start, stop, data_reader, subscription, trigger, n_jobs=n_jobs, silent=silent)
 
 
 def find_instruments_and_exchanges(
@@ -753,16 +768,20 @@ def _run_setups(
     stop: str | pd.Timestamp,
     data_reader: DataReader,
     subscription: Dict[str, Any],
-    trigger: str,
+    trigger: str | list[str],
     n_jobs: int = -1,
+    silent: bool = False,
 ) -> List[TradingSessionResult]:
     # loggers don't work well with joblib and multiprocessing in general because they contain
     # open file handlers that cannot be pickled. I found a solution which requires the usage of enqueue=True
     # in the logger configuration and specifying backtest "multiprocessing" instead of the default "loky"
     # for joblib. But it works now.
     # See: https://stackoverflow.com/questions/59433146/multiprocessing-logging-how-to-use-loguru-with-joblib-parallel
-    reports = ProgressParallel(n_jobs=n_jobs, total=len(setups), silent=False, backend="multiprocessing")(
-        delayed(_run_setup)(s, start, stop, data_reader, subscription, trigger) for s in setups
+    _main_loop_silent = len(setups) == 1
+    n_jobs = 1 if _main_loop_silent else n_jobs
+
+    reports = ProgressParallel(n_jobs=n_jobs, total=len(setups), silent=_main_loop_silent, backend="multiprocessing")(
+        delayed(_run_setup)(s, start, stop, data_reader, subscription, trigger, silent=silent) for s in setups
     )
     return reports  # type: ignore
 
@@ -773,7 +792,8 @@ def _run_setup(
     stop: str | pd.Timestamp,
     data_reader: DataReader,
     subscription: Dict[str, Any],
-    trigger: str,
+    trigger: str | list[str],
+    silent: bool = False,
 ) -> TradingSessionResult:
     _trigger = trigger
     _stop = stop
@@ -826,7 +846,7 @@ def _run_setup(
     )
     ctx.start()
 
-    exchange.run(start, _stop)  # type: ignore
+    exchange.run(start, _stop, silent=silent)  # type: ignore
     return TradingSessionResult(
         setup.name,
         start,
