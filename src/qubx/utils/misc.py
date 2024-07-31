@@ -4,6 +4,8 @@ from collections import OrderedDict, defaultdict, namedtuple
 from os.path import basename, exists, dirname, join, expanduser
 import time
 from pathlib import Path
+import joblib
+from tqdm.auto import tqdm
 
 
 def version() -> str:
@@ -339,3 +341,22 @@ def dequotify(sx: Union[str, List[str]], quote="USDT"):
 
 def round_down_at_min_qty(x: float, min_size: float) -> float:
     return (int(x / min_size)) * min_size
+
+
+class ProgressParallel(joblib.Parallel):
+    def __init__(self, *args, **kwargs):
+        self.total = kwargs.pop("total", None)
+        self.silent = kwargs.pop("silent", False)
+        super().__init__(*args, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        if self.silent:
+            return joblib.Parallel.__call__(self, *args, **kwargs)
+        with tqdm(total=self.total) as self._pbar:
+            return joblib.Parallel.__call__(self, *args, **kwargs)
+
+    def print_progress(self):
+        if self.silent:
+            return
+        self._pbar.n = self.n_completed_tasks
+        self._pbar.refresh()

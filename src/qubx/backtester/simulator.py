@@ -45,6 +45,8 @@ from qubx.data.readers import (
     InMemoryDataFrameReader,
 )
 from qubx.pandaz.utils import scols
+from qubx.utils.misc import ProgressParallel
+from joblib import delayed
 from .queue import DataLoader, SimulatedDataQueue
 
 StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
@@ -397,18 +399,22 @@ class SimulatedExchange(IBrokerServiceProvider):
         _run = self._run_generated_signals if self._pregenerated_signals else self._run_as_strategy
 
         qiter = self._data_queue.create_iterator(start, end)
-        total_duration = pd.Timestamp(end) - pd.Timestamp(start)
+        start, end = pd.Timestamp(start), pd.Timestamp(end)
+        total_duration = end - start
+        update_delta = total_duration / 100
         prev_dt = pd.Timestamp(start)
 
         with tqdm(total=total_duration.total_seconds(), desc="Simulating", unit="s", leave=False) as pbar:
-            for symbol, event in tqdm(qiter):
+            for symbol, event in qiter:
                 _run(symbol, event)
                 dt = pd.Timestamp(event.time)
                 # update only if date has changed
-                if dt - prev_dt > pd.Timedelta("1D"):
-                    pbar.n = (dt - pd.Timestamp(start)).total_seconds()
+                if dt - prev_dt > update_delta:
+                    pbar.n = (dt - start).total_seconds()
                     pbar.refresh()
                     prev_dt = dt
+            pbar.n = total_duration.total_seconds()
+            pbar.refresh()
 
         logger.info(f"SimulatedExchangeService :: run :: Simulation finished at {end}")
 
@@ -750,78 +756,89 @@ def _run_setups(
     trigger: str,
     n_jobs: int = -1,
 ) -> List[TradingSessionResult]:
-    reports = []
+    # loggers don't work well with joblib and multiprocessing in general because they contain
+    # open file handlers that cannot be pickled. I found a solution which requires the usage of enqueue=True
+    # in the logger configuration and specifying backtest "multiprocessing" instead of the default "loky"
+    # for joblib. But it works now.
+    # See: https://stackoverflow.com/questions/59433146/multiprocessing-logging-how-to-use-loguru-with-joblib-parallel
+    reports = ProgressParallel(n_jobs=n_jobs, total=len(setups), silent=False, backend="multiprocessing")(
+        delayed(_run_setup)(s, start, stop, data_reader, subscription, trigger) for s in setups
+    )
+    return reports  # type: ignore
 
-    # - TODO: we need to run this in multiprocessing environment if n_jobs > 1
-    for s in tqdm(setups, total=len(setups)):
-        _trigger = trigger
-        _stop = stop
-        logger.debug(
-            f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {s.exchange} for {s.capital} x {s.leverage} in {s.base_currency}..."
-        )
-        broker = SimulatedTrading(s.exchange, s.commissions, np.datetime64(start, "ns"))
-        exchange = SimulatedExchange(s.exchange, broker, data_reader)
 
-        # - it will store simulation results into memory
-        logs_writer = InMemoryLogsWriter("test", s.name, "0")
-        strat: IStrategy | None = None
+def _run_setup(
+    setup: SimulationSetup,
+    start: str | pd.Timestamp,
+    stop: str | pd.Timestamp,
+    data_reader: DataReader,
+    subscription: Dict[str, Any],
+    trigger: str,
+) -> TradingSessionResult:
+    _trigger = trigger
+    _stop = stop
+    logger.debug(
+        f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {setup.exchange} for {setup.capital} x {setup.leverage} in {setup.base_currency}..."
+    )
+    broker = SimulatedTrading(setup.exchange, setup.commissions, np.datetime64(start, "ns"))
+    exchange = SimulatedExchange(setup.exchange, broker, data_reader)
 
-        match s.setup_type:
-            case _Types.STRATEGY:
-                strat = s.generator  # type: ignore
+    # - it will store simulation results into memory
+    logs_writer = InMemoryLogsWriter("test", setup.name, "0")
+    strat: IStrategy | None = None
 
-            case _Types.STRATEGY_AND_TRACKER:
-                strat = s.generator  # type: ignore
-                strat.tracker = lambda ctx: s.tracker  # type: ignore
+    match setup.setup_type:
+        case _Types.STRATEGY:
+            strat = setup.generator  # type: ignore
 
-            case _Types.SIGNAL:
-                strat = _GeneratedSignalsStrategy()
-                exchange.set_generated_signals(s.generator)  # type: ignore
-                # - we don't need any unexpected triggerings
-                _trigger = "bar: 0s"
-                _stop = s.generator.index[-1]  # type: ignore
+        case _Types.STRATEGY_AND_TRACKER:
+            strat = setup.generator  # type: ignore
+            strat.tracker = lambda ctx: setup.tracker  # type: ignore
 
-            case _Types.SIGNAL_AND_TRACKER:
-                strat = _GeneratedSignalsStrategy()
-                strat.tracker = lambda ctx: s.tracker
-                exchange.set_generated_signals(s.generator)  # type: ignore
-                # - we don't need any unexpected triggerings
-                _trigger = "bar: 0s"
-                _stop = s.generator.index[-1]  # type: ignore
+        case _Types.SIGNAL:
+            strat = _GeneratedSignalsStrategy()
+            exchange.set_generated_signals(setup.generator)  # type: ignore
+            # - we don't need any unexpected triggerings
+            _trigger = "bar: 0s"
+            _stop = setup.generator.index[-1]  # type: ignore
 
-            case _:
-                raise ValueError(f"Unsupported setup type: {s.setup_type} !")
+        case _Types.SIGNAL_AND_TRACKER:
+            strat = _GeneratedSignalsStrategy()
+            strat.tracker = lambda ctx: setup.tracker
+            exchange.set_generated_signals(setup.generator)  # type: ignore
+            # - we don't need any unexpected triggerings
+            _trigger = "bar: 0s"
+            _stop = setup.generator.index[-1]  # type: ignore
 
-        ctx = StrategyContextImpl(
-            strategy=strat,  # type: ignore
-            config=None,  # TODO: need to think how we could pass altered parameters here (from variating etc)
-            broker_connector=exchange,
-            initial_capital=s.capital,
-            base_currency=s.base_currency,
-            instruments=s.instruments,
-            md_subscription=subscription,
-            trigger_spec=_trigger,
-            logs_writer=logs_writer,
-        )
-        ctx.start()
+        case _:
+            raise ValueError(f"Unsupported setup type: {setup.setup_type} !")
 
-        _r = exchange.run(start, _stop)
-        reports.append(
-            TradingSessionResult(
-                s.name,
-                start,
-                stop,
-                s.exchange,
-                s.instruments,
-                s.capital,
-                s.leverage,
-                s.base_currency,
-                s.commissions,
-                logs_writer.get_portfolio(as_plain_dataframe=True),
-                logs_writer.get_executions(),
-                logs_writer.get_signals(),
-                True,
-            )
-        )
+    ctx = StrategyContextImpl(
+        strategy=strat,  # type: ignore
+        config=None,  # TODO: need to think how we could pass altered parameters here (from variating etc)
+        broker_connector=exchange,
+        initial_capital=setup.capital,
+        base_currency=setup.base_currency,
+        instruments=setup.instruments,
+        md_subscription=subscription,
+        trigger_spec=_trigger,
+        logs_writer=logs_writer,
+    )
+    ctx.start()
 
-    return reports
+    exchange.run(start, _stop)  # type: ignore
+    return TradingSessionResult(
+        setup.name,
+        start,
+        stop,
+        setup.exchange,
+        setup.instruments,
+        setup.capital,
+        setup.leverage,
+        setup.base_currency,
+        setup.commissions,
+        logs_writer.get_portfolio(as_plain_dataframe=True),
+        logs_writer.get_executions(),
+        logs_writer.get_signals(),
+        True,
+    )
