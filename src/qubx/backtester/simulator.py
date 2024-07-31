@@ -1,10 +1,11 @@
-from collections import defaultdict
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, TypeAlias
 import numpy as np
 import pandas as pd
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, TypeAlias, Callable
 from enum import Enum
 from tqdm.auto import tqdm
+from itertools import chain
 
 from qubx import lookup, logger
 from qubx.core.helpers import BasicScheduler
@@ -35,6 +36,7 @@ from qubx.core.context import StrategyContextImpl
 from qubx.backtester.ome import OrdersManagementEngine, OmeReport
 
 from qubx.data.readers import (
+    AsTrades,
     DataReader,
     DataTransformer,
     RestoreTicksFromOHLC,
@@ -43,6 +45,9 @@ from qubx.data.readers import (
     InMemoryDataFrameReader,
 )
 from qubx.pandaz.utils import scols
+from qubx.utils.misc import ProgressParallel
+from joblib import delayed
+from .queue import DataLoader, SimulatedDataQueue
 
 StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
 
@@ -236,9 +241,11 @@ class SimulatedTrading(ITradingServiceProvider):
         self.acc.process_order(order)
         return order, deals
 
-    def _emulate_quote_from_data(self, symbol: str, timestamp: dt_64, data: float | Trade | Bar) -> Quote:
+    def emulate_quote_from_data(self, symbol: str, timestamp: dt_64, data: float | Trade | Bar) -> Quote | None:
         _ts2 = self._half_tick_size[symbol]
-        if isinstance(data, Trade):
+        if isinstance(data, Quote):
+            return data
+        elif isinstance(data, Trade):
             if data.taker:  # type: ignore
                 return Quote(timestamp, data.price - _ts2 * 2, data.price, 0, 0)  # type: ignore
             else:
@@ -248,7 +255,7 @@ class SimulatedTrading(ITradingServiceProvider):
         elif isinstance(data, float):
             return Quote(timestamp, data - _ts2, data + _ts2, 0, 0)
         else:
-            raise ValueError(f"Unknown update type: {type(data)}")
+            return None
 
     def update_position_price(self, symbol: str, timestamp: dt_64, update: float | Trade | Quote | Bar):
         # logger.info(f"{symbol} -> {timestamp} -> {update}")
@@ -260,7 +267,7 @@ class SimulatedTrading(ITradingServiceProvider):
         # - actually if SimulatedExchangeService is used in backtesting mode it will recieve only quotes
         # - case when we need that - SimulatedExchangeService is used for paper trading and data provider configured to listen to OHLC or TAS.
         # - probably we need to subscribe to quotes in real data provider in any case and then this emulation won't be needed.
-        quote = update if isinstance(update, Quote) else self._emulate_quote_from_data(symbol, timestamp, update)
+        quote = update if isinstance(update, Quote) else self.emulate_quote_from_data(symbol, timestamp, update)
 
         # - process new quote
         self._process_new_quote(symbol, quote)
@@ -282,53 +289,6 @@ class SimulatedTrading(ITradingServiceProvider):
                 self.send_execution_report(symbol, r)
 
 
-class DataLoader:
-    def __init__(
-        self,
-        transformer: DataTransformer,
-        reader: DataReader,
-        instrument: Instrument,
-        timeframe: str | None,
-        preload_bars: int = 0,
-    ) -> None:
-        self._instrument = instrument
-        self._spec = f"{instrument.exchange}:{instrument.symbol}"
-        self._reader = reader
-        self._transformer = transformer
-        self._init_bars_required = preload_bars
-        self._timeframe = timeframe
-        self._first_load = True
-
-    def load(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> List[Quote]:
-        if self._first_load:
-            if self._init_bars_required > 0 and self._timeframe:
-                start = pd.Timestamp(start) - self._init_bars_required * pd.Timedelta(self._timeframe)
-            self._first_load = False
-
-        args = dict(
-            data_id=self._spec,
-            start=start,
-            stop=end,
-            transform=self._transformer,
-        )
-
-        if self._timeframe:
-            args["timeframe"] = self._timeframe
-
-        return self._reader.read(**args)  # type: ignore
-
-    def get_historical_ohlc(self, timeframe: str, start_time: str, nbarsback: int) -> List[Bar]:
-        start = pd.Timestamp(start_time)
-        end = start - nbarsback * pd.Timedelta(timeframe)
-        records = self._reader.read(
-            data_id=self._spec, start=start, stop=end, transform=AsTimestampedRecords()  # type: ignore
-        )
-        return [
-            Bar(np.datetime64(r["timestamp_ns"], "ns").item(), r["open"], r["high"], r["low"], r["close"], r["volume"])
-            for r in records
-        ]
-
-
 class _SimulatedScheduler(BasicScheduler):
     def run(self):
         self._is_started = True
@@ -339,17 +299,18 @@ class _SimulatedScheduler(BasicScheduler):
 
 
 class SimulatedExchange(IBrokerServiceProvider):
+    trading_service: SimulatedTrading
     _last_quotes: Dict[str, Optional[Quote]]
     _scheduler: BasicScheduler
     _current_time: dt_64
     _hist_data_type: str
-    _loader: Dict[str, DataLoader]
+    _loaders: dict[str, dict[str, DataLoader]]
     _pregenerated_signals: Dict[str, pd.Series]
 
     def __init__(
         self,
         exchange_id: str,
-        trading_service: ITradingServiceProvider,
+        trading_service: SimulatedTrading,
         reader: DataReader,
         hist_data_type: str = "ohlc",
     ):
@@ -361,7 +322,8 @@ class SimulatedExchange(IBrokerServiceProvider):
         # - create exchange's instance
         self._last_quotes = defaultdict(lambda: None)
         self._current_time = np.datetime64(0, "ns")
-        self._loader = {}
+        self._loaders = defaultdict(dict)
+        self._symbol_to_instrument: dict[str, Instrument] = {}
 
         # - setup communication bus
         self.set_communication_channel(bus := SimulatedCtrlChannel("databus", sentinel=(None, None, None)))
@@ -372,6 +334,10 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         # - pregenerated signals storage
         self._pregenerated_signals = dict()
+        self._to_process = {}
+
+        # - data queue
+        self._data_queue = SimulatedDataQueue()
 
         logger.info(f"SimulatedData.{exchange_id} initialized")
 
@@ -386,6 +352,8 @@ class SimulatedExchange(IBrokerServiceProvider):
         units = kwargs.get("timestamp_units", "ns")
 
         for instr in instruments:
+            self._symbol_to_instrument[instr.symbol] = instr
+
             _params: Dict[str, Any] = dict(
                 reader=self._reader,
                 instrument=instr,
@@ -393,72 +361,106 @@ class SimulatedExchange(IBrokerServiceProvider):
                 timeframe=timeframe,
             )
 
+            data_type = None
             # - for ohlc data we need to restore ticks from OHLC bars
             if "ohlc" in subscription_type:
                 _params["transformer"] = RestoreTicksFromOHLC(
                     trades="trades" in subscription_type, spread=instr.min_tick, timestamp_units=units
                 )
+                data_type = "candles"
             elif "quote" in subscription_type:
                 _params["transformer"] = AsQuotes()
+                data_type = "candles"
+            elif "trade" in subscription_type:
+                _params["transformer"] = AsTrades()
+                data_type = "agg_trade"
+            else:
+                raise ValueError(f"Unknown subscription type: {subscription_type}")
 
-            # - create loader for this instrument
-            self._loader[instr.symbol] = DataLoader(**_params)
+            _params["data_type"] = data_type
+
+            # - add loader for this instrument
+            ldr = DataLoader(**_params)
+            self._loaders[instr.symbol][data_type] = ldr
+            self._data_queue += ldr
 
         return True
 
-    def run(self, start: str | pd.Timestamp, end: str | pd.Timestamp):
-        ds = []
-        for s, ld in self._loader.items():
-            data = ld.load(start, end)
-            ds.append(pd.Series({q.time: q for q in data}, name=s) if data else pd.Series(name=s))
-
-        merged = scols(*ds)
+    def _try_add_process_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
         if self._pregenerated_signals:
-            self._run_generated_signals(merged)
-        else:
-            self._run_as_strategy(merged)
-        return merged
+            for s, v in self._pregenerated_signals.items():
+                sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
+                self._to_process[s] = list(zip(sel.index, sel.values))
 
-    def _run_generated_signals(self, data: pd.DataFrame) -> None:
+    def run(self, start: str | pd.Timestamp, end: str | pd.Timestamp):
+        logger.info(f"SimulatedExchangeService :: run :: Simulation started at {start}")
+        self._try_add_process_signals(start, end)
+
+        _run = self._run_generated_signals if self._pregenerated_signals else self._run_as_strategy
+
+        qiter = self._data_queue.create_iterator(start, end)
+        start, end = pd.Timestamp(start), pd.Timestamp(end)
+        total_duration = end - start
+        update_delta = total_duration / 100
+        prev_dt = pd.Timestamp(start)
+
+        with tqdm(total=total_duration.total_seconds(), desc="Simulating", unit="s", leave=False) as pbar:
+            for symbol, event in qiter:
+                _run(symbol, event)
+                dt = pd.Timestamp(event.time)
+                # update only if date has changed
+                if dt - prev_dt > update_delta:
+                    pbar.n = (dt - start).total_seconds()
+                    pbar.refresh()
+                    prev_dt = dt
+            pbar.n = total_duration.total_seconds()
+            pbar.refresh()
+
+        logger.info(f"SimulatedExchangeService :: run :: Simulation finished at {end}")
+
+    def _run_generated_signals(self, s: str, e: Any) -> None:
         cc = self.get_communication_channel()
-        s0, e0 = pd.Timestamp(data.index[0]), pd.Timestamp(data.index[-1])
-
-        to_process = {}
-        for s, v in self._pregenerated_signals.items():
-            sel = v[s0:e0]
-            to_process[s] = list(zip(sel.index, sel.values))
-
         # - send initial quotes - this will invoke calling of on_fit method
         # for s in data.columns:
         # cc.send((s, "quote", data[s].values[0]))
+        t = e.time  # type: ignore
+        self._current_time = max(np.datetime64(t, "ns"), self._current_time)
+        self.trading_service.update_position_price(s, self._current_time, e)
+        # - we need to send quotes for invoking portfolio logging etc
+        # match event type
+        cc.send((s, self._get_event_type(e), e))
+        sigs = self._to_process[s]
+        if sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
+            cc.send((s, "event", {"order": sigs[0][1]}))
+            sigs.pop(0)
 
-        for t, u in tqdm(zip(data.index, data.values), total=len(data), leave=False):
-            for i, s in enumerate(data.columns):
-                q = u[i]
-                if q:
-                    self._current_time = max(np.datetime64(t, "ns"), self._current_time)
-                    self.trading_service.update_position_price(s, self._current_time, q)
-                    # - we need to send quotes for invoking portfolio logginf etc
-                    cc.send((s, "quote", q))
-                    sigs = to_process[s]
-                    if sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
-                        cc.send((s, "event", {"order": sigs[0][1]}))
-                        sigs.pop(0)
-
-    def _run_as_strategy(self, data: pd.DataFrame) -> None:
+    def _run_as_strategy(self, s: str, e: Any) -> None:
         cc = self.get_communication_channel()
-        for t, u in tqdm(zip(data.index, data.values), total=len(data), leave=False):
-            for i, s in enumerate(data.columns):
-                q = u[i]
-                if q:
-                    self._last_quotes[s] = q
-                    self._current_time = max(np.datetime64(t, "ns"), self._current_time)
-                    self.trading_service.update_position_price(s, self._current_time, q)
-                    cc.send((s, "quote", q))
+        t = e.time  # type: ignore
+        self._current_time = max(np.datetime64(t, "ns"), self._current_time)
+        q = self.trading_service.emulate_quote_from_data(s, np.datetime64(t, "ns"), e)
+        if q is not None:
+            self._last_quotes[s] = q
+            self.trading_service.update_position_price(s, self._current_time, q)
 
-            if self._scheduler.check_and_run_tasks():
-                # - push nothing - it will force to process last event
-                cc.send((None, "time", None))
+        cc.send((s, self._get_event_type(e), e))
+
+        if q is not None:
+            cc.send((s, "quote", q))
+
+        if self._scheduler.check_and_run_tasks():
+            # - push nothing - it will force to process last event
+            cc.send((None, "time", None))
+
+    def _get_event_type(self, event: Quote | Trade | Bar) -> str:
+        if isinstance(event, Quote):
+            return "quote"
+        elif isinstance(event, Trade):
+            return "trade"
+        elif isinstance(event, Bar):
+            return "bar"
+        else:
+            raise ValueError(f"Unknown event type: {type(event)}")
 
     def get_quote(self, symbol: str) -> Optional[Quote]:
         return self._last_quotes[symbol]
@@ -476,7 +478,17 @@ class SimulatedExchange(IBrokerServiceProvider):
         return True
 
     def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
-        return self._loader[symbol].get_historical_ohlc(timeframe, self.time(), nbarsback)
+        start = pd.Timestamp(self.time())
+        end = start - nbarsback * pd.Timedelta(timeframe)
+        instrument = self._symbol_to_instrument[symbol]
+        _spec = f"{instrument.exchange}:{instrument.symbol}"
+        records = self._reader.read(
+            data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()  # type: ignore
+        )
+        return [
+            Bar(np.datetime64(r["timestamp_ns"], "ns").item(), r["open"], r["high"], r["low"], r["close"], r["volume"])
+            for r in records
+        ]
 
     def set_generated_signals(self, signals: pd.Series | pd.DataFrame):
         logger.debug(f"Using pre-generated signals:\n {str(signals.count()).strip('ndtype: int64')}")
@@ -744,78 +756,89 @@ def _run_setups(
     trigger: str,
     n_jobs: int = -1,
 ) -> List[TradingSessionResult]:
-    reports = []
+    # loggers don't work well with joblib and multiprocessing in general because they contain
+    # open file handlers that cannot be pickled. I found a solution which requires the usage of enqueue=True
+    # in the logger configuration and specifying backtest "multiprocessing" instead of the default "loky"
+    # for joblib. But it works now.
+    # See: https://stackoverflow.com/questions/59433146/multiprocessing-logging-how-to-use-loguru-with-joblib-parallel
+    reports = ProgressParallel(n_jobs=n_jobs, total=len(setups), silent=False, backend="multiprocessing")(
+        delayed(_run_setup)(s, start, stop, data_reader, subscription, trigger) for s in setups
+    )
+    return reports  # type: ignore
 
-    # - TODO: we need to run this in multiprocessing environment if n_jobs > 1
-    for s in tqdm(setups, total=len(setups)):
-        _trigger = trigger
-        _stop = stop
-        logger.debug(
-            f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {s.exchange} for {s.capital} x {s.leverage} in {s.base_currency}..."
-        )
-        broker = SimulatedTrading(s.exchange, s.commissions, np.datetime64(start, "ns"))
-        exchange = SimulatedExchange(s.exchange, broker, data_reader)
 
-        # - it will store simulation results into memory
-        logs_writer = InMemoryLogsWriter("test", s.name, "0")
-        strat: IStrategy | None = None
+def _run_setup(
+    setup: SimulationSetup,
+    start: str | pd.Timestamp,
+    stop: str | pd.Timestamp,
+    data_reader: DataReader,
+    subscription: Dict[str, Any],
+    trigger: str,
+) -> TradingSessionResult:
+    _trigger = trigger
+    _stop = stop
+    logger.debug(
+        f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {setup.exchange} for {setup.capital} x {setup.leverage} in {setup.base_currency}..."
+    )
+    broker = SimulatedTrading(setup.exchange, setup.commissions, np.datetime64(start, "ns"))
+    exchange = SimulatedExchange(setup.exchange, broker, data_reader)
 
-        match s.setup_type:
-            case _Types.STRATEGY:
-                strat = s.generator  # type: ignore
+    # - it will store simulation results into memory
+    logs_writer = InMemoryLogsWriter("test", setup.name, "0")
+    strat: IStrategy | None = None
 
-            case _Types.STRATEGY_AND_TRACKER:
-                strat = s.generator  # type: ignore
-                strat.tracker = lambda ctx: s.tracker  # type: ignore
+    match setup.setup_type:
+        case _Types.STRATEGY:
+            strat = setup.generator  # type: ignore
 
-            case _Types.SIGNAL:
-                strat = _GeneratedSignalsStrategy()
-                exchange.set_generated_signals(s.generator)  # type: ignore
-                # - we don't need any unexpected triggerings
-                _trigger = "bar: 0s"
-                _stop = s.generator.index[-1]  # type: ignore
+        case _Types.STRATEGY_AND_TRACKER:
+            strat = setup.generator  # type: ignore
+            strat.tracker = lambda ctx: setup.tracker  # type: ignore
 
-            case _Types.SIGNAL_AND_TRACKER:
-                strat = _GeneratedSignalsStrategy()
-                strat.tracker = lambda ctx: s.tracker
-                exchange.set_generated_signals(s.generator)  # type: ignore
-                # - we don't need any unexpected triggerings
-                _trigger = "bar: 0s"
-                _stop = s.generator.index[-1]  # type: ignore
+        case _Types.SIGNAL:
+            strat = _GeneratedSignalsStrategy()
+            exchange.set_generated_signals(setup.generator)  # type: ignore
+            # - we don't need any unexpected triggerings
+            _trigger = "bar: 0s"
+            _stop = setup.generator.index[-1]  # type: ignore
 
-            case _:
-                raise ValueError(f"Unsupported setup type: {s.setup_type} !")
+        case _Types.SIGNAL_AND_TRACKER:
+            strat = _GeneratedSignalsStrategy()
+            strat.tracker = lambda ctx: setup.tracker
+            exchange.set_generated_signals(setup.generator)  # type: ignore
+            # - we don't need any unexpected triggerings
+            _trigger = "bar: 0s"
+            _stop = setup.generator.index[-1]  # type: ignore
 
-        ctx = StrategyContextImpl(
-            strategy=strat,  # type: ignore
-            config=None,  # TODO: need to think how we could pass altered parameters here (from variating etc)
-            broker_connector=exchange,
-            initial_capital=s.capital,
-            base_currency=s.base_currency,
-            instruments=s.instruments,
-            md_subscription=subscription,
-            trigger_spec=_trigger,
-            logs_writer=logs_writer,
-        )
-        ctx.start()
+        case _:
+            raise ValueError(f"Unsupported setup type: {setup.setup_type} !")
 
-        _r = exchange.run(start, _stop)
-        reports.append(
-            TradingSessionResult(
-                s.name,
-                start,
-                stop,
-                s.exchange,
-                s.instruments,
-                s.capital,
-                s.leverage,
-                s.base_currency,
-                s.commissions,
-                logs_writer.get_portfolio(as_plain_dataframe=True),
-                logs_writer.get_executions(),
-                logs_writer.get_signals(),
-                True,
-            )
-        )
+    ctx = StrategyContextImpl(
+        strategy=strat,  # type: ignore
+        config=None,  # TODO: need to think how we could pass altered parameters here (from variating etc)
+        broker_connector=exchange,
+        initial_capital=setup.capital,
+        base_currency=setup.base_currency,
+        instruments=setup.instruments,
+        md_subscription=subscription,
+        trigger_spec=_trigger,
+        logs_writer=logs_writer,
+    )
+    ctx.start()
 
-    return reports
+    exchange.run(start, _stop)  # type: ignore
+    return TradingSessionResult(
+        setup.name,
+        start,
+        stop,
+        setup.exchange,
+        setup.instruments,
+        setup.capital,
+        setup.leverage,
+        setup.base_currency,
+        setup.commissions,
+        logs_writer.get_portfolio(as_plain_dataframe=True),
+        logs_writer.get_executions(),
+        logs_writer.get_signals(),
+        True,
+    )

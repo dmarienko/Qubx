@@ -24,7 +24,7 @@ class TestDataReaders:
 
     def test_ohlc_reader(self):
         r = CsvStorageDataReader('tests/data/csv/')
-        assert 'BTCUSDT_ohlcv_M1' in r.get_names()
+        assert ':BTCUSDT_ohlcv_M1' in r.get_names()
 
         d0 = r.read('SPY')
         assert len(d0) == 4353

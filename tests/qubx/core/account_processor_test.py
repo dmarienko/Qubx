@@ -21,7 +21,7 @@ def run_debug_sim(
     stop: str,
     initial_capital: float,
     base_currency: str,
-) -> StrategyContext:
+) -> StrategyContextImpl:
     broker = SimulatedTrading(exchange, commissions, np.datetime64(start, "ns"))
     broker = SimulatedExchange(exchange, broker, data_reader)
     logs_writer = InMemoryLogsWriter("test", strategy_id, "0")
@@ -38,7 +38,7 @@ def run_debug_sim(
         logs_writer=logs_writer,
     )
     ctx.start()
-    _ = broker.run(start, stop)
+    broker.run(start, stop)
     return ctx
 
 
@@ -134,11 +134,6 @@ class TestAccountProcessorStuff:
         ctx.trade("BTCUSDT", amount)
         ctx.trade("BTCUSDT", -amount)
 
-        tick_size = ctx.instruments[0].min_tick
-        trade_pnl = -tick_size / quote.ask * leverage
-        new_capital = initial_capital * (1 + trade_pnl)
-
-        # take commissions into account
-        # ctx.acc._positions[s].tcc.get_execution_fees()
-
-        print(logs_writer.get_executions())
+        execs = logs_writer.get_executions()
+        commissions = execs.commissions
+        assert not any(commissions.isna())

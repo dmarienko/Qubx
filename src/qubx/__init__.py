@@ -48,7 +48,7 @@ class QubxLogConfig:
         logger.configure(**config)
         logger.remove(None)
         level = level or QubxLogConfig.get_log_level()
-        logger.add(sys.stdout, format=formatter, colorize=True, level=level)
+        logger.add(sys.stdout, format=formatter, colorize=True, level=level, enqueue=True)
         logger = logger.opt(colors=True)
 
 
