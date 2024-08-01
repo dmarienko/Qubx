@@ -218,7 +218,7 @@ class CsvStorageDataReader(DataReader):
                     if f == self.path:
                         name = n
                     else:
-                        name = f"{f}:{ n }"
+                        name = f"{f}:{ n }" if f else n
                     _n.append(name)
         return _n
 
