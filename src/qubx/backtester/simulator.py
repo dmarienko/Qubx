@@ -366,8 +366,11 @@ class SimulatedExchange(IBrokerServiceProvider):
             # - for ohlc data we need to restore ticks from OHLC bars
             if subscription_type == SubscriptionType.OHLC:
                 _params["transformer"] = RestoreTicksFromOHLC(
-                    trades="trades" in subscription_type, spread=instr.min_tick, timestamp_units=units
+                    trades="trades" in subscription_type,
+                    spread=instr.min_tick,
+                    timestamp_units=units,
                 )
+                _params["output_type"] = SubscriptionType.QUOTE
             elif subscription_type == SubscriptionType.QUOTE:
                 _params["transformer"] = AsQuotes()
             # TODO: remove AGG_TRADE from this scope and only map trade to agg_trade for binance
@@ -430,7 +433,7 @@ class SimulatedExchange(IBrokerServiceProvider):
             with tqdm(total=total_duration.total_seconds(), desc="Simulating", unit="s", leave=False) as pbar:
                 for symbol, data_type, event in qiter:
                     _run(symbol, data_type, event)
-                    dt = pd.Timestamp(self._get_time(event))
+                    dt = pd.Timestamp(event.time)
                     # update only if date has changed
                     if dt - prev_dt > update_delta:
                         pbar.n = (dt - start).total_seconds()
@@ -446,12 +449,12 @@ class SimulatedExchange(IBrokerServiceProvider):
         # - send initial quotes - this will invoke calling of on_fit method
         # for s in data.columns:
         # cc.send((s, "quote", data[s].values[0]))
-        t = self._get_time(e)  # type: ignore
+        t = e.time  # type: ignore
         self._current_time = max(np.datetime64(t, "ns"), self._current_time)
         self.trading_service.update_position_price(s, self._current_time, e)
         # - we need to send quotes for invoking portfolio logging etc
         # match event type
-        cc.send((s, self._get_event_type(data_type, e), e))
+        cc.send((s, data_type, e))
         sigs = self._to_process[s]
         if sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
             cc.send((s, "event", {"order": sigs[0][1]}))
@@ -459,14 +462,14 @@ class SimulatedExchange(IBrokerServiceProvider):
 
     def _run_as_strategy(self, s: str, data_type: str, e: Any) -> None:
         cc = self.get_communication_channel()
-        t = self._get_time(e)  # type: ignore
+        t = e.time  # type: ignore
         self._current_time = max(np.datetime64(t, "ns"), self._current_time)
         q = self.trading_service.emulate_quote_from_data(s, np.datetime64(t, "ns"), e)
         if q is not None:
             self._last_quotes[s] = q
             self.trading_service.update_position_price(s, self._current_time, q)
 
-        cc.send((s, self._get_event_type(data_type, e), e))
+        cc.send((s, data_type, e))
 
         if q is not None:
             cc.send((s, "quote", q))
@@ -474,31 +477,6 @@ class SimulatedExchange(IBrokerServiceProvider):
         if self._scheduler.check_and_run_tasks():
             # - push nothing - it will force to process last event
             cc.send((None, "time", None))
-
-    def _get_time(self, e: Any | list[Any]) -> pd.Timestamp:
-        if isinstance(e, list):
-            return pd.Timestamp(e[-1].time)
-        return pd.Timestamp(e.time)
-
-    def _get_event_type(self, t: str, e: Trade | Bar | Quote | list) -> str:
-        if isinstance(e, list):
-            match t:
-                case "quote":
-                    return "quote"
-                case "trade" | "agg_trade":
-                    return "trade"
-                case "ohlcv" | "ohlc" | "bar":
-                    return "bar"
-                case _:
-                    raise ValueError(f"Unknown event type: {t}")
-        elif isinstance(e, Trade):
-            return "trade"
-        elif isinstance(e, Quote):
-            return "quote"
-        elif isinstance(e, Bar):
-            return "bar"
-        else:
-            raise ValueError(f"Unknown event type: {t}")
 
     def get_quote(self, symbol: str) -> Optional[Quote]:
         return self._last_quotes[symbol]

@@ -22,6 +22,7 @@ from qubx.core.basics import (
     dt_64,
     td_64,
     CtrlChannel,
+    BatchEvent,
 )
 from qubx.core.loggers import StrategyLogging
 from qubx.core.strategy import (
@@ -497,21 +498,20 @@ class StrategyContextImpl(StrategyContext):
         # - check if it's time to trigger the on_event if it's configured
         return self._check_if_need_trigger_on_bar(symbol, bar)
 
-    def _processing_trade(self, symbol: str, trade: Trade | list[Trade]) -> TriggerEvent | None:
-        if isinstance(trade, list):
-            for t in trade:
+    def _processing_trade(self, symbol: str, trade: Trade | BatchEvent) -> TriggerEvent | None:
+        is_batch_event = isinstance(trade, BatchEvent)
+        if is_batch_event:
+            for t in trade.data:
                 self._cache.update_by_trade(symbol, t)
         else:
             self._cache.update_by_trade(symbol, trade)
 
-        last_trade = trade[-1] if isinstance(trade, list) else trade
-
         # - update tracker
-        self.positions_tracker.update(self, self._symb_to_instr[symbol], last_trade)
+        self.positions_tracker.update(self, self._symb_to_instr[symbol], trade.data[-1] if is_batch_event else trade)
 
         if self._trig_on_trade:
-            # TODO: apply throttling or filtering here
-            return TriggerEvent(self.time(), "trade", self._symb_to_instr.get(symbol), trade)
+            event_type = "trade" if not is_batch_event else "batch:trade"
+            return TriggerEvent(self.time(), event_type, self._symb_to_instr.get(symbol), trade)
         return None
 
     def _processing_quote(self, symbol: str, quote: Quote) -> TriggerEvent | None:

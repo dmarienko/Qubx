@@ -1,11 +1,12 @@
 import pandas as pd
 import heapq
 
+from dataclasses import dataclass
 from collections import defaultdict
 from typing import Any, Iterator, Iterable
 
 from qubx import logger
-from qubx.core.basics import Instrument, dt_64
+from qubx.core.basics import Instrument, dt_64, BatchEvent
 from qubx.data.readers import DataReader, DataTransformer
 from qubx.utils.misc import Stopwatch
 
@@ -14,6 +15,8 @@ _SW = Stopwatch()
 
 
 class DataLoader:
+    _TYPE_MAPPERS = {"agg_trade": "trade", "ohlc": "bar", "ohlcv": "bar"}
+
     def __init__(
         self,
         transformer: DataTransformer,
@@ -22,6 +25,7 @@ class DataLoader:
         timeframe: str | None,
         preload_bars: int = 0,
         data_type: str = "ohlc",
+        output_type: str | None = None,  # transfomer can somtimes map to a different output type
         chunksize: int = 5_000,
     ) -> None:
         self._instrument = instrument
@@ -31,6 +35,7 @@ class DataLoader:
         self._init_bars_required = preload_bars
         self._timeframe = timeframe
         self._data_type = data_type
+        self._output_type = output_type
         self._first_load = True
         self._chunksize = chunksize
 
@@ -64,7 +69,9 @@ class DataLoader:
 
     @property
     def data_type(self) -> str:
-        return self._data_type
+        if self._output_type:
+            return self._output_type
+        return self._TYPE_MAPPERS.get(self._data_type, self._data_type)
 
     def __hash__(self) -> int:
         return hash((self._instrument.symbol, self._data_type))
@@ -180,7 +187,6 @@ class SimulatedDataQueue:
 class EventBatcher:
     _BATCH_SETTINGS = {
         "trade": "1Sec",
-        "agg_trade": "1Sec",
         "orderbook": "1Sec",
     }
 
@@ -189,54 +195,49 @@ class EventBatcher:
         self._passthrough = passthrough
         self._batch_settings = {**self._BATCH_SETTINGS, **kwargs}
         self._batch_settings = {k: pd.Timedelta(v) for k, v in self._batch_settings.items()}
-        self._event_buffers = defaultdict(lambda: defaultdict(list))
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[tuple[str, str, Any]]:
         if self._passthrough:
             _iter = iter(self.source_iterator) if isinstance(self.source_iterator, Iterable) else self.source_iterator
             yield from _iter
             return
-        # TODO: only batch consecutive events of the same time
+
+        last_symbol, last_data_type = None, None
+        buffer = []
         for symbol, data_type, event in self.source_iterator:
             time: dt_64 = event.time  # type: ignore
-            yield from self._process_buffers(time)
 
             if data_type not in self._batch_settings:
+                if buffer:
+                    yield last_symbol, last_data_type, self._batch_event(buffer)
+                    buffer = []
                 yield symbol, data_type, event
+                last_symbol, last_data_type = symbol, data_type
                 continue
 
-            symbol_buffers = self._event_buffers[symbol]
-            buffer = symbol_buffers[data_type]
-            buffer.append(event)
-            delta = pd.Timedelta(time - buffer[0].time)
-
-            if delta >= self._batch_settings[data_type]:
-                symbol_buffers[data_type] = []
-                yield symbol, data_type, buffer
-
-        yield from self._cleanup_buffers()
-
-    def _process_buffers(self, time: dt_64):
-        """
-        Yield all buffers that are older than the batch settings.
-        """
-        yield_buffers = []
-        for symbol, buffers in self._event_buffers.items():
-            for data_type, buffer in buffers.items():
-                if buffer and pd.Timedelta(time - buffer[0].time) >= self._batch_settings[data_type]:
-                    yield_buffers.append((symbol, data_type, buffer))
-                    buffers[data_type] = []
-        yield_buffers.sort(key=lambda x: x[-1][0].time)
-        for symbol, data_type, buffer in yield_buffers:
-            yield symbol, data_type, buffer
-
-    def _cleanup_buffers(self):
-        yield_buffers = []
-        for symbol, buffers in self._event_buffers.items():
-            for data_type, buffer in buffers.items():
+            if symbol != last_symbol:
                 if buffer:
-                    yield_buffers.append((symbol, data_type, buffer))
-                    buffers[data_type] = []
-        yield_buffers.sort(key=lambda x: x[-1][0].time)
-        for symbol, data_type, buffer in yield_buffers:
-            yield symbol, data_type, buffer
+                    yield last_symbol, last_data_type, self._batch_event(buffer)
+                last_symbol, last_data_type = symbol, data_type
+                buffer = [event]
+                continue
+
+            if buffer and data_type != last_data_type:
+                yield symbol, last_data_type, buffer
+                buffer = [event]
+                last_symbol, last_data_type = symbol, data_type
+                continue
+
+            last_symbol, last_data_type = symbol, data_type
+            buffer.append(event)
+            if pd.Timedelta(time - buffer[0].time) >= self._batch_settings[data_type]:
+                yield symbol, data_type, self._batch_event(buffer)
+                buffer = []
+                last_symbol, last_data_type = None, None
+
+        if buffer:
+            yield last_symbol, last_data_type, self._batch_event(buffer)
+
+    @staticmethod
+    def _batch_event(buffer: list[Any]) -> Any:
+        return BatchEvent(buffer[-1].time, buffer) if len(buffer) > 1 else buffer[0]
