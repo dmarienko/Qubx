@@ -6,7 +6,7 @@ from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.pandaz.utils import *
 from qubx.core.utils import recognize_time
 
-from qubx.core.series import Quote
+from qubx.core.series import OHLCV, Quote
 from qubx.core.strategy import IPositionGathering, IStrategy, PositionsTracker, StrategyContext, TriggerEvent
 from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsTimestampedRecords, AsQuotes, RestoreTicksFromOHLC
 from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider, Position, Signal
@@ -43,7 +43,7 @@ class TestingPositionGatherer(IPositionGathering):
             )
         return current_position
 
-    def update_by_deal_data(self, instrument: Instrument, deal: Deal): ...
+    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal): ...
 
 
 class DebugStratageyCtx(StrategyContext):
@@ -74,24 +74,15 @@ class DebugStratageyCtx(StrategyContext):
     def trade(
         self, instr_or_symbol: Instrument | str, amount: float, price: float | None = None, time_in_force="gtc"
     ) -> Order:
+        # fmt: off
         self._n_orders += 1
         self._orders_size += amount
-        if amount > 0:
-            self._n_orders_buy += 1
-        if amount < 0:
-            self._n_orders_sell += 1
+        if amount > 0: self._n_orders_buy += 1
+        if amount < 0: self._n_orders_sell += 1
         return Order(
-            "test",
-            "MARKET",
-            instr_or_symbol.symbol if isinstance(instr_or_symbol, Instrument) else instr_or_symbol,
-            np.datetime64(0, "ns"),
-            amount,
-            price if price is not None else 0,
-            "BUY" if amount > 0 else "SELL",
-            "CLOSED",
-            "gtc",
-            "test1",
-        )
+            "test", "MARKET", instr_or_symbol.symbol if isinstance(instr_or_symbol, Instrument) else instr_or_symbol,
+            np.datetime64(0, "ns"), amount, price if price is not None else 0, "BUY" if amount > 0 else "SELL", "CLOSED", "gtc", "test1")
+        # fmt: on
 
     def get_reserved(self, instrument: Instrument) -> float:
         return 0.0
@@ -164,3 +155,10 @@ class TestTrackersAndGatherers:
         assert ctx.positions[I[0].symbol].quantity == 0
         assert ctx.positions[I[1].symbol].quantity == 0
         assert ctx.positions[I[2].symbol].quantity == 0
+
+    def test_atr_tracker(self):
+        ctx = DebugStratageyCtx(
+            I := [lookup.find_symbol("BINANCE.UM", "BTCUSDT")],
+            30000,
+        )
+        assert I[0] is not None

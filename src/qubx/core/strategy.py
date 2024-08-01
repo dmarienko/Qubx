@@ -224,7 +224,7 @@ class IPositionGathering:
                     logger.opt(colors=False).error(traceback.format_exc())
         return res
 
-    def update_by_deal_data(self, instrument: Instrument, deal: Deal): ...
+    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal): ...
 
 
 class IPositionSizer:
@@ -265,6 +265,12 @@ class PositionsTracker:
         """
         Tracker is being updated by new market data.
         It may require to change position size or create new position because of interior tracker's logic (risk management for example).
+        """
+        ...
+
+    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal):
+        """
+        Tracker is notified when execution report is received
         """
         ...
 

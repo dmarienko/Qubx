@@ -444,35 +444,35 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         logger.info(f"SimulatedExchangeService :: run :: Simulation finished at {end}")
 
-    def _run_generated_signals(self, s: str, data_type: str, e: Any) -> None:
+    def _run_generated_signals(self, symbol: str, data_type: str, data: Any) -> None:
         cc = self.get_communication_channel()
-        # - send initial quotes - this will invoke calling of on_fit method
-        # for s in data.columns:
-        # cc.send((s, "quote", data[s].values[0]))
-        t = e.time  # type: ignore
+        t = data.time  # type: ignore
         self._current_time = max(np.datetime64(t, "ns"), self._current_time)
-        self.trading_service.update_position_price(s, self._current_time, e)
+        q = self.trading_service.emulate_quote_from_data(symbol, np.datetime64(t, "ns"), data)
+        self._last_quotes[symbol] = q
+        self.trading_service.update_position_price(symbol, self._current_time, data)
+
         # - we need to send quotes for invoking portfolio logging etc
         # match event type
-        cc.send((s, data_type, e))
-        sigs = self._to_process[s]
+        cc.send((symbol, data_type, data))
+        sigs = self._to_process[symbol]
         if sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
-            cc.send((s, "event", {"order": sigs[0][1]}))
+            cc.send((symbol, "event", {"order": sigs[0][1]}))
             sigs.pop(0)
 
-    def _run_as_strategy(self, s: str, data_type: str, e: Any) -> None:
+    def _run_as_strategy(self, symbol: str, data_type: str, data: Any) -> None:
         cc = self.get_communication_channel()
-        t = e.time  # type: ignore
+        t = data.time  # type: ignore
         self._current_time = max(np.datetime64(t, "ns"), self._current_time)
-        q = self.trading_service.emulate_quote_from_data(s, np.datetime64(t, "ns"), e)
+        q = self.trading_service.emulate_quote_from_data(symbol, np.datetime64(t, "ns"), data)
         if q is not None:
-            self._last_quotes[s] = q
-            self.trading_service.update_position_price(s, self._current_time, q)
+            self._last_quotes[symbol] = q
+            self.trading_service.update_position_price(symbol, self._current_time, q)
 
-        cc.send((s, data_type, e))
+        cc.send((symbol, data_type, data))
 
         if q is not None:
-            cc.send((s, "quote", q))
+            cc.send((symbol, "quote", q))
 
         if self._scheduler.check_and_run_tasks():
             # - push nothing - it will force to process last event
@@ -768,10 +768,11 @@ class _GeneratedSignalsStrategy(IStrategy):
         if event.data and event.type == "event":
             signal = event.data.get("order")
             if signal is not None and event.instrument:
+                return [event.instrument.signal(signal)]
                 # TODO: actually this should be done in position tracker not here !
-                n = signal - ctx.positions[event.instrument.symbol].quantity
-                if n != 0:
-                    ctx.trade(event.instrument, n)
+                # n = signal - ctx.positions[event.instrument.symbol].quantity
+                # if n != 0:
+                # ctx.trade(event.instrument, n)
         return None
 
 
