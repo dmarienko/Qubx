@@ -13,6 +13,7 @@ from qubx.core.account import AccountProcessor
 from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, process_schedule_spec, set_parameters_to_object
 from qubx.core.loggers import LogsWriter, StrategyLogging
 from qubx.core.basics import (
+    TargetPosition,
     TriggerEvent,
     Deal,
     Instrument,
@@ -376,22 +377,16 @@ class StrategyContextImpl(StrategyContext):
 
             # - process and execute signals if they are provided
             if signals:
-                self._execute_signals(signals)
+                # process signals by tracker and turn convert them into positions
+                positions_from_strategy = self.positions_tracker.process_signals(self, signals)
+
+                # gathering in charge of positions
+                self.positions_gathering.alter_positions(self, positions_from_strategy)
 
         # - notify poition and portfolio loggers
         self._logging.notify(self.time())
 
         return False
-
-    @_SW.watch("StrategyContext")
-    def _execute_signals(self, signals: List[Signal]):
-        try:
-            self.positions_tracker.process_signals(self, self.positions_gathering, signals)
-        except Exception as ex:
-            logger.error(
-                f"[{self.time()}]: Strategy {self.strategy.__class__.__name__} failed to execute signals: {ex}"
-            )
-            logger.opt(colors=False).error(traceback.format_exc())
 
     def _process_incoming_data_loop(self, channel: CtrlChannel):
         logger.info("(StrategyContext) Start processing market data")
@@ -487,8 +482,10 @@ class StrategyContextImpl(StrategyContext):
         # - processing current bar's update
         self._cache.update_by_bar(symbol, bar)
 
-        # - update tracker
-        self.positions_tracker.update(self, self._symb_to_instr[symbol], bar)
+        # - update tracker and handle alterd positions if need
+        self.positions_gathering.alter_positions(
+            self, self.positions_tracker.update(self, self._symb_to_instr[symbol], bar)
+        )
 
         # - check if it's time to trigger the on_event if it's configured
         return self._check_if_need_trigger_on_bar(symbol, bar)
@@ -496,8 +493,10 @@ class StrategyContextImpl(StrategyContext):
     def _processing_trade(self, symbol: str, trade: Trade) -> TriggerEvent | None:
         self._cache.update_by_trade(symbol, trade)
 
-        # - update tracker
-        self.positions_tracker.update(self, self._symb_to_instr[symbol], trade)
+        # - update tracker and handle alterd positions if need
+        self.positions_gathering.alter_positions(
+            self, self.positions_tracker.update(self, self._symb_to_instr[symbol], trade)
+        )
 
         if self._trig_on_trade:
             # TODO: apply throttling or filtering here
@@ -507,8 +506,10 @@ class StrategyContextImpl(StrategyContext):
     def _processing_quote(self, symbol: str, quote: Quote) -> TriggerEvent | None:
         self._cache.update_by_quote(symbol, quote)
 
-        # - update tracker
-        self.positions_tracker.update(self, self._symb_to_instr[symbol], quote)
+        # - update tracker and handle alterd positions if need
+        self.positions_gathering.alter_positions(
+            self, self.positions_tracker.update(self, self._symb_to_instr[symbol], quote)
+        )
 
         # - TODO: here we can apply throttlings or filters
         #  - let's say we can skip quotes if bid & ask is not changed

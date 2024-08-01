@@ -16,6 +16,7 @@ from qubx import lookup, logger
 from qubx.core.account import AccountProcessor
 from qubx.core.helpers import BasicScheduler, set_parameters_to_object
 from qubx.core.basics import (
+    TargetPosition,
     TriggerEvent,
     Deal,
     Instrument,
@@ -169,27 +170,38 @@ class IPositionGathering:
         self, ctx: StrategyContext, instrument: Instrument, new_size: float, at_price: float | None = None
     ) -> float: ...
 
+    def alter_positions(self, ctx: StrategyContext, targets: List[TargetPosition]) -> Dict[Instrument, float]:
+        res = {}
+        if targets:
+            for t in targets:
+                try:
+                    res[t.instrument] = self.alter_position_size(ctx, t.instrument, t.target_position_size, t.price)
+                except Exception as ex:
+                    logger.error(f"[{ctx.time()}]: Failed processing target position {t} : {ex}")
+                    logger.opt(colors=False).error(traceback.format_exc())
+        return res
+
     def update_by_deal_data(self, instrument: Instrument, deal: Deal): ...
 
 
 class IPositionSizer:
     """
-    Common interface for any positions size calculator
+    Common interface for get actual positions from signals
     """
 
-    def calculate_position_sizes(self, ctx: StrategyContext, signals: List[Signal]) -> List[Signal]:
+    def calculate_target_positions(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         """
-        Position size calculator
+        Target position size calculator
 
         :param ctx: strategy context object
         :param signals: list of signals to process
         """
-        raise NotImplementedError("get_position_size is not implemented")
+        raise NotImplementedError("calculate_target_positions is not implemented")
 
 
 class PositionsTracker:
     """
-    Tracks position and processing signals. It can contains logic for risk management for example.
+    Process signals from strategy and track position. It can contains logic for risk management for example.
     """
 
     _sizer: IPositionSizer
@@ -200,17 +212,18 @@ class PositionsTracker:
     def get_position_sizer(self) -> IPositionSizer:
         return self._sizer
 
-    def process_signals(self, ctx: StrategyContext, gathering: IPositionGathering, signals: List[Signal]):
+    def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         """
-        By default it just treat signals as pure positions sizes
+        Default implementation just returns calculated target positions
         """
-        for s in self.get_position_sizer().calculate_position_sizes(ctx, signals):
-            if s.processed_position_size is not None:
-                gathering.alter_position_size(ctx, s.instrument, s.processed_position_size, s.price)
-            else:
-                logger.error(f"Received signal without processed position size: {s} !")
+        return self.get_position_sizer().calculate_target_positions(ctx, signals)
 
-    def update(self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar): ...
+    def update(self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar) -> List[TargetPosition]:
+        """
+        Tracker is being updated by new market data.
+        It may require to change position size or create new position because of interior tracker's logic (risk management for example).
+        """
+        ...
 
 
 class IStrategy:

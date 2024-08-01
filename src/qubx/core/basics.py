@@ -29,7 +29,6 @@ class Signal:
     take: float | None = None
     group: str = ""
     comment: str = ""
-    processed_position_size: float | None = None  # actual position size after processing in sizer
 
     def __str__(self) -> str:
         _p = f" @ { self.price }" if self.price is not None else ""
@@ -37,6 +36,35 @@ class Signal:
         _t = f" take: { self.take }" if self.take is not None else ""
         _c = f" [{self.comment}]" if self.take is not None else ""
         return f"{self.group} {self.signal:+f} {self.instrument.symbol}{_p}{_s}{_t} on {self.instrument.exchange}{_c}"
+
+
+@dataclass
+class TargetPosition:
+    """
+    Class for presenting target position calculated from signal
+    """
+
+    signal: Signal  # original signal
+    target_position_size: float  # actual position size after processing in sizer
+
+    @property
+    def instrument(self) -> "Instrument":
+        return self.signal.instrument
+
+    @property
+    def price(self) -> float | None:
+        return self.signal.price
+
+    @property
+    def stop(self) -> float | None:
+        return self.signal.stop
+
+    @property
+    def take(self) -> float | None:
+        return self.signal.take
+
+    def __str__(self) -> str:
+        return f"Target for {self.signal} -> {self.target_position_size}"
 
 
 @dataclass
@@ -100,6 +128,14 @@ class Instrument:
         comment: str = "",
     ) -> Signal:
         return Signal(self, signal, price, stop, take, group, comment)
+
+    def __hash__(self) -> int:
+        return hash((self.symbol, self.exchange, self.market_type))
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, "Instrument"):
+            return False
+        return self.symbol == other.symbol and self.exchange == other.exchange and self.market_type == other.market_type
 
     def __str__(self) -> str:
         return f"{self.exchange}:{self.symbol} [{self.market_type} {str(self.futures_info) if self.futures_info else 'SPOT ' + self.base + '/' + self.quote }]"
