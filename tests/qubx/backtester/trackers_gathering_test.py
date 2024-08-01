@@ -105,7 +105,8 @@ class TestTrackersAndGatherers:
 
         gathering = SimplePositionGatherer()
         i = instrs[0]
-        tracker.process_signals(ctx, gathering, [i.signal(1), i.signal(0.5), i.signal(-0.5)])
+
+        res = gathering.alter_positions(ctx, tracker.process_signals(ctx, [i.signal(1), i.signal(0.5), i.signal(-0.5)]))
 
         assert ctx._n_orders == 3
         assert ctx._orders_size == 1000.0
@@ -116,9 +117,9 @@ class TestTrackersAndGatherers:
         ctx = DebugStratageyCtx(instrs := [lookup.find_symbol("BINANCE.UM", "BTCUSDT")], 10000)
         i = instrs[0]
         sizer = FixedRiskSizer(10.0)
-        s = sizer.calculate_position_sizes(ctx, [i.signal(1, stop=900.0)])
+        s = sizer.calculate_target_positions(ctx, [i.signal(1, stop=900.0)])
         _entry, _stop, _cap_in_risk = 1000.5, 900, 10000 * 10 / 100
-        assert s[0].processed_position_size == (_cap_in_risk / ((_entry - _stop) / _entry)) / _entry
+        assert s[0].target_position_size == (_cap_in_risk / ((_entry - _stop) / _entry)) / _entry
 
     def test_rebalancer(self):
         ctx = DebugStratageyCtx(
@@ -132,21 +133,15 @@ class TestTrackersAndGatherers:
         assert I[0] is not None and I[1] is not None and I[2] is not None
 
         tracker = PortfolioRebalancerTracker(30000, 0)
-        tracker.process_signals(
-            ctx,
-            TestingPositionGatherer(),
-            [
-                I[0].signal(+0.5),
-                I[1].signal(+0.3),
-                I[2].signal(+0.2),
-            ],
-        )
+        targets = tracker.process_signals(ctx, [I[0].signal(+0.5), I[1].signal(+0.3), I[2].signal(+0.2)])
+
+        gathering = TestingPositionGatherer()
+        gathering.alter_positions(ctx, targets)
 
         print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
 
         tracker.process_signals(
             ctx,
-            TestingPositionGatherer(),
             [
                 I[0].signal(+0.1),
                 I[1].signal(+0.8),
@@ -156,15 +151,15 @@ class TestTrackersAndGatherers:
 
         print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
 
-        tracker.process_signals(
+        targets = tracker.process_signals(
             ctx,
-            TestingPositionGatherer(),
             [
                 I[0].signal(0),
                 I[1].signal(0),
                 I[2].signal(0),
             ],
         )
+        gathering.alter_positions(ctx, targets)
 
         assert ctx.positions[I[0].symbol].quantity == 0
         assert ctx.positions[I[1].symbol].quantity == 0

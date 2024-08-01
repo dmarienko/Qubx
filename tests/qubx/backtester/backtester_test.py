@@ -186,6 +186,7 @@ class TestBacktesterStuff:
             "vip0_usdt",
             "2024-01-01",
             "2024-01-02",
+            n_jobs=1,
         )
 
         assert all(

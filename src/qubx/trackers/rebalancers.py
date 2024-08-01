@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from qubx import logger
-from qubx.core.basics import Position, Signal
+from qubx.core.basics import Position, Signal, TargetPosition
 from qubx.core.strategy import IPositionGathering, StrategyContext, PositionsTracker
 from qubx.trackers.sizers import WeightedPortfolioSizer
 
@@ -60,55 +60,42 @@ class PortfolioRebalancerTracker(PositionsTracker):
 
         return Capital(cap_to_invest, released_capital, closed_positions)
 
-    def process_signals(self, ctx: StrategyContext, gathering: IPositionGathering, signals: List[Signal]):
+    def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         """
         Portfolio rebalancer - makes rebalancing portfolio based on provided signals.
         It checks how much funds can be released first and then reallocate it into positions need to be opened.
         """
+        targets = self._positions_sizer.calculate_target_positions(ctx, signals)
 
-        # - close positions first - we need to release capital
-        to_close = [s.instrument.symbol for s in signals if s.signal == 0]
-        for s in to_close:
-            if pos := ctx.positions.get(s):
+        # - find positions where exposure will be decreased
+        _close_first = []
+        _then_open = []
+        for t in targets:
+            pos = ctx.positions.get(t.instrument.symbol)
+            if pos is None:
+                logger.error(f"(PortfolioRebalancerTracker) No position for {t.instrument.symbol} instrument !")
+                continue
+
+            _pa, _ta = abs(pos.quantity), abs(t.target_position_size)
+
+            # - ones which decreases exposure
+            if _ta < _pa:
                 reserved = ctx.get_reserved(pos.instrument)
-                to_close = self._how_much_can_be_closed(pos.quantity, reserved)
+                # - when we have some reserved amount we should check target position size
+                t.target_position_size = self._correct_target_position(pos.quantity, t.target_position_size, reserved)
+                _close_first.append(t)
                 logger.info(
-                    f"(PortfolioRebalancerTracker) {s} - closing {to_close} from {pos.quantity} amount (reserved: {reserved})"
-                )
-                try:
-                    gathering.alter_position_size(ctx, pos.instrument, reserved)
-                except Exception as err:
-                    logger.error(f"(PortfolioRebalancerTracker) {s} Error processing closing order: {str(err)}")
-            else:
-                logger.error(
-                    f"(PortfolioRebalancerTracker) Position for {s} is required to be closed but can't be found in context !"
+                    f"(PortfolioRebalancerTracker) Decreasing exposure for {t.instrument.symbol} from {pos.quantity} -> {t.target_position_size} (reserved: {reserved})"
                 )
 
-        # - alter or open new positions
-        openers = self._positions_sizer.calculate_position_sizes(ctx, [s for s in signals if s.signal != 0])
-        to_open = {s.instrument.symbol: s.processed_position_size for s in openers}
-
-        for s, n in to_open.items():
-            if pos := ctx.positions.get(s):
-                trade_size = n - pos.quantity
-                trade_size_change_pct = abs(trade_size / pos.quantity) if pos.quantity != 0 else 1
-                if 100 * trade_size_change_pct > self.tolerance:
-                    logger.info(
-                        f"(PortfolioRebalancerTracker) {s} - change position {pos.quantity} -> {n} (tolerance: {self.tolerance}%)"
-                    )
-                    try:
-                        gathering.alter_position_size(ctx, pos.instrument, n)
-                    except Exception as err:
-                        logger.error(f"(PortfolioRebalancerTracker) {s} Error processing opening order: {str(err)}")
-                else:
-                    logger.info(
-                        f"(PortfolioRebalancerTracker) {s} - position change ({pos.quantity} -> {n}) is smaller than tolerance {self.tolerance}%"
-                    )
-
-            else:
-                logger.error(
-                    f"(PortfolioRebalancerTracker) Position for {s} is required to be changed but can't be found in context !"
+            # - ones which increases exposure
+            elif _ta > _pa:
+                _then_open.append(t)
+                logger.info(
+                    f"(PortfolioRebalancerTracker) Increasing exposure for {t.instrument.symbol} from {pos.quantity} -> {t.target_position_size})"
                 )
+
+        return _close_first + _then_open
 
     def close_all(self, ctx: StrategyContext) -> None:
         """
@@ -117,20 +104,38 @@ class PortfolioRebalancerTracker(PositionsTracker):
         for s, pos in ctx.positions.items():
             if pos.quantity != 0:
                 reserved = ctx.get_reserved(pos.instrument)
-                to_close = self._how_much_can_be_closed(pos.quantity, reserved)
+                to_close = self._max_size_can_be_closed(pos.quantity, reserved)
                 if to_close != 0:
                     try:
                         logger.info(
                             f"(PortfolioRebalancerTracker) {s} - closing {to_close} from {pos.quantity} amount (reserved: {reserved})"
                         )
                         ctx.trade(s, -pos.quantity)
-                        # gathering.alter_position_size(ctx, pos.instrument, reserved)
                     except Exception as err:
                         logger.error(f"(PortfolioRebalancerTracker) {s} Error processing closing order: {str(err)}")
 
-    def _how_much_can_be_closed(self, position: float, to_remain: float) -> float:
-        d = np.sign(position)
-        qty_to_close = position
-        if to_remain != 0 and position != 0 and np.sign(to_remain) == d:
-            qty_to_close = max(position - to_remain, 0) if d > 0 else min(position - to_remain, 0)
-        return qty_to_close
+    def _correct_target_position(self, start_position: float, new_position: float, reserved: float) -> float:
+        """
+        Calcluate target position size considering reserved quantity.
+        """
+        d = np.sign(start_position)
+        qty_to_close = start_position
+
+        if reserved != 0 and start_position != 0 and np.sign(reserved) == d:
+            qty_to_close = max(start_position - reserved, 0) if d > 0 else min(start_position - reserved, 0)
+
+        # - what's max value allowed to close taking in account reserved quantity
+        max_to_close = -d * qty_to_close
+        pos_change = new_position - start_position
+        direction = np.sign(pos_change)
+        prev_direction = np.sign(start_position)
+
+        # - how many shares are closed/open
+        qty_closing = min(abs(start_position), abs(pos_change)) * direction if prev_direction != direction else 0
+        # qty_opening = pos_change if prev_direction == direction else pos_change - qty_closing
+        # print(qty_closing, qty_opening, max_to_close)
+
+        if abs(qty_closing) > abs(max_to_close):
+            return reserved
+
+        return new_position
