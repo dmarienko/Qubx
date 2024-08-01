@@ -22,7 +22,7 @@ class SimplePositionGatherer(IPositionGathering):
             #   just trade it through the strategy context by using market (or limit) orders.
             # - but in general it may have complex logic for position adjustment
             r = ctx.trade(instrument, to_trade, at_price)
-            logger.info(f"{instrument.symbol} >>> Adjusting position from {current_position} to {new_size} : {r}")
+            logger.debug(f"{instrument.symbol} >>> Adjusting position from {current_position} to {new_size} : {r}")
 
             current_position = new_size
             # - TODO: need to check how fast position is being updated on live

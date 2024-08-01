@@ -1,35 +1,22 @@
-import numpy as np
 import pandas as pd
 import heapq
 
-from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Tuple, TypeAlias, Callable
-from itertools import chain
-from enum import Enum
-from tqdm.auto import tqdm
+from collections import defaultdict
+from typing import Any, Iterator, Iterable
 
-from qubx import lookup, logger
-from qubx.core.basics import (
-    Instrument,
-    dt_64,
-)
-from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
-from qubx.backtester.ome import OrdersManagementEngine, OmeReport
+from qubx import logger
+from qubx.core.basics import Instrument, dt_64, BatchEvent
+from qubx.data.readers import DataReader, DataTransformer
+from qubx.utils.misc import Stopwatch
 
-from qubx.data.readers import (
-    AsTrades,
-    DataReader,
-    DataTransformer,
-    RestoreTicksFromOHLC,
-    AsQuotes,
-    AsTimestampedRecords,
-    InMemoryDataFrameReader,
-)
-from qubx.pandaz.utils import scols
+
+_SW = Stopwatch()
 
 
 class DataLoader:
+    _TYPE_MAPPERS = {"agg_trade": "trade", "ohlc": "bar", "ohlcv": "bar"}
+
     def __init__(
         self,
         transformer: DataTransformer,
@@ -37,8 +24,9 @@ class DataLoader:
         instrument: Instrument,
         timeframe: str | None,
         preload_bars: int = 0,
-        data_type: str = "candles",
-        chunksize: int = 10_000,
+        data_type: str = "ohlc",
+        output_type: str | None = None,  # transfomer can somtimes map to a different output type
+        chunksize: int = 5_000,
     ) -> None:
         self._instrument = instrument
         self._spec = f"{instrument.exchange}:{instrument.symbol}"
@@ -47,6 +35,7 @@ class DataLoader:
         self._init_bars_required = preload_bars
         self._timeframe = timeframe
         self._data_type = data_type
+        self._output_type = output_type
         self._first_load = True
         self._chunksize = chunksize
 
@@ -80,7 +69,9 @@ class DataLoader:
 
     @property
     def data_type(self) -> str:
-        return self._data_type
+        if self._output_type:
+            return self._output_type
+        return self._TYPE_MAPPERS.get(self._data_type, self._data_type)
 
     def __hash__(self) -> int:
         return hash((self._instrument.symbol, self._data_type))
@@ -135,10 +126,11 @@ class SimulatedDataQueue:
                 return loader
         raise ValueError(f"Loader for {symbol} and {data_type} not found")
 
-    def create_iterator(self, start: str | pd.Timestamp, stop: str | pd.Timestamp) -> Iterator:
+    def create_iterable(self, start: str | pd.Timestamp, stop: str | pd.Timestamp) -> Iterator:
         self._start = start
         self._stop = stop
-        return iter(self)
+        self._current_time = None
+        return self
 
     def __iter__(self) -> Iterator:
         logger.info("Initializing chunks for each loader")
@@ -150,7 +142,8 @@ class SimulatedDataQueue:
             self._add_chunk_to_heap(loader_index)
         return self
 
-    def __next__(self) -> tuple[str, Any]:
+    @_SW.watch("DataQueue")
+    def __next__(self) -> tuple[str, str, Any]:
         if not self._event_heap:
             raise StopIteration
 
@@ -169,9 +162,10 @@ class SimulatedDataQueue:
         if chunk_index + 1 == chunk_size:
             self._add_chunk_to_heap(loader_index)
 
-        s = self._index_to_loader[loader_index].symbol
-        return s, event
+        loader = self._index_to_loader[loader_index]
+        return loader.symbol, loader.data_type, event
 
+    @_SW.watch("DataQueue")
     def _add_chunk_to_heap(self, loader_index: int):
         chunk = self._next_chunk(loader_index)
         self._index_to_chunk_size[loader_index] = len(chunk)
@@ -179,11 +173,71 @@ class SimulatedDataQueue:
             dt = event.time  # type: ignore
             heapq.heappush(self._event_heap, (dt, loader_index, chunk_index, event))
 
+    @_SW.watch("DataQueue")
     def _next_chunk(self, index: int) -> list[Any]:
         if index not in self._index_to_iterator:
-            self._index_to_iterator[index] = self._index_to_loader[index].load(self._current_time, self._stop)
+            self._index_to_iterator[index] = self._index_to_loader[index].load(self._current_time, self._stop)  # type: ignore
         iterator = self._index_to_iterator[index]
         try:
             return next(iterator)
         except StopIteration:
             return []
+
+
+class EventBatcher:
+    _BATCH_SETTINGS = {
+        "trade": "1Sec",
+        "orderbook": "1Sec",
+    }
+
+    def __init__(self, source_iterator: Iterator | Iterable, passthrough: bool = False, **kwargs):
+        self.source_iterator = source_iterator
+        self._passthrough = passthrough
+        self._batch_settings = {**self._BATCH_SETTINGS, **kwargs}
+        self._batch_settings = {k: pd.Timedelta(v) for k, v in self._batch_settings.items()}
+
+    def __iter__(self) -> Iterator[tuple[str, str, Any]]:
+        if self._passthrough:
+            _iter = iter(self.source_iterator) if isinstance(self.source_iterator, Iterable) else self.source_iterator
+            yield from _iter
+            return
+
+        last_symbol, last_data_type = None, None
+        buffer = []
+        for symbol, data_type, event in self.source_iterator:
+            time: dt_64 = event.time  # type: ignore
+
+            if data_type not in self._batch_settings:
+                if buffer:
+                    yield last_symbol, last_data_type, self._batch_event(buffer)
+                    buffer = []
+                yield symbol, data_type, event
+                last_symbol, last_data_type = symbol, data_type
+                continue
+
+            if symbol != last_symbol:
+                if buffer:
+                    yield last_symbol, last_data_type, self._batch_event(buffer)
+                last_symbol, last_data_type = symbol, data_type
+                buffer = [event]
+                continue
+
+            if buffer and data_type != last_data_type:
+                yield symbol, last_data_type, buffer
+                buffer = [event]
+                last_symbol, last_data_type = symbol, data_type
+                continue
+
+            last_symbol, last_data_type = symbol, data_type
+            buffer.append(event)
+            if pd.Timedelta(time - buffer[0].time) >= self._batch_settings[data_type]:
+                yield symbol, data_type, self._batch_event(buffer)
+                buffer = []
+                last_symbol, last_data_type = None, None
+
+        if buffer:
+            yield last_symbol, last_data_type, self._batch_event(buffer)
+
+    @staticmethod
+    def _batch_event(buffer: list[Any]) -> Any:
+        return BatchEvent(buffer[-1].time, buffer) if len(buffer) > 1 else buffer[0]

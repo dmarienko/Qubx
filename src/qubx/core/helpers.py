@@ -45,8 +45,8 @@ class CachedMarketDataHolder:
         return True
 
     @_SW.watch("CachedMarketDataHolder")
-    def get_ohlcv(self, symbol: str, timeframe: str, max_size=np.inf) -> OHLCV:
-        tf = convert_tf_str_td64(timeframe)
+    def get_ohlcv(self, symbol: str, timeframe: str | None = None, max_size=np.inf) -> OHLCV:
+        tf = convert_tf_str_td64(timeframe) if timeframe else self.default_timeframe
 
         if symbol not in self._ohlcvs:
             self._ohlcvs[symbol] = {}
