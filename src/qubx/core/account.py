@@ -136,7 +136,7 @@ class AccountProcessor:
                     realized_pnl += r_pnl
                     deal_cost += d.amount * d.price / conversion_rate
                     traded_amnt += d.amount
-                    logger.info(f"  ::  traded {d.amount} for {symbol} @ {d.price} -> {realized_pnl:.2f}")
+                    logger.debug(f"  ::  traded {d.amount} for {symbol} @ {d.price} -> {realized_pnl:.2f}")
                     self.base_currency_balance -= deal_cost + fee_in_base
 
     def _lock_limit_order_value(self, order: Order) -> float:
@@ -188,7 +188,7 @@ class AccountProcessor:
         if _cancel and order.type == "LIMIT":
             self._unlock_limit_order_value(order)
 
-        logger.info(f"Order {order.id} {order.type} {order.side} {order.quantity} of {order.symbol} -> {order.status}")
+        logger.debug(f"Order {order.id} {order.type} {order.side} {order.quantity} of {order.symbol} -> {order.status}")
 
     def add_active_orders(self, orders: Dict[str, Order]):
         for oid, od in orders.items():

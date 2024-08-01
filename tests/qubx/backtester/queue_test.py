@@ -1,13 +1,14 @@
 import pandas as pd
 from typing import Any, Iterator
-from qubx.backtester.queue import SimulatedDataQueue, DataLoader
+from qubx.core.basics import BatchEvent
+from qubx.backtester.queue import SimulatedDataQueue, DataLoader, EventBatcher
 
 
 class DummyEvent:
-    time: str
+    time: pd.Timestamp
     data: str
 
-    def __init__(self, time: str, data: str):
+    def __init__(self, time: pd.Timestamp, data: str):
         self.time = time
         self.data = data
 
@@ -33,6 +34,10 @@ class DummyDataLoader(DataLoader):
     def symbol(self):
         return self._symbol
 
+    @property
+    def data_type(self):
+        return "dummy"
+
     def __hash__(self) -> int:
         return hash((self._symbol, "dummy"))
 
@@ -42,8 +47,8 @@ class DummyDataLoader(DataLoader):
         return self._symbol == other._symbol and "dummy" == other._data_type
 
 
-def get_event_dt(i: int, base: pd.Timestamp = pd.Timestamp("2021-01-01")) -> str:
-    return str(base + pd.Timedelta(i, "D"))
+def get_event_dt(i: float, base: pd.Timestamp = pd.Timestamp("2021-01-01"), offset: str = "D") -> pd.Timestamp:
+    return base + pd.Timedelta(i, offset)  # type: ignore
 
 
 class TestSimulatedQueueStuff:
@@ -68,14 +73,14 @@ class TestSimulatedQueueStuff:
             ],
         )
         expected_event_seq = [
-            ("APPL", DummyEvent(get_event_dt(1), "data1")),
-            ("MSFT", DummyEvent(get_event_dt(2), "data4")),
-            ("APPL", DummyEvent(get_event_dt(3), "data2")),
-            ("MSFT", DummyEvent(get_event_dt(4), "data5")),
-            ("APPL", DummyEvent(get_event_dt(5), "data3")),
-            ("MSFT", DummyEvent(get_event_dt(5), "data6")),
+            ("APPL", "dummy", DummyEvent(get_event_dt(1), "data1")),
+            ("MSFT", "dummy", DummyEvent(get_event_dt(2), "data4")),
+            ("APPL", "dummy", DummyEvent(get_event_dt(3), "data2")),
+            ("MSFT", "dummy", DummyEvent(get_event_dt(4), "data5")),
+            ("APPL", "dummy", DummyEvent(get_event_dt(5), "data3")),
+            ("MSFT", "dummy", DummyEvent(get_event_dt(5), "data6")),
         ]
-        actual_event_seq = list(q.create_iterator(get_event_dt(0), get_event_dt(10)))
+        actual_event_seq = list(q.create_iterable(get_event_dt(0), get_event_dt(10)))
         assert expected_event_seq == actual_event_seq
 
     def test_dummy_data_loader_add(self):
@@ -88,7 +93,7 @@ class TestSimulatedQueueStuff:
             ],
         )
         actual_event_seq = []
-        qiter = q.create_iterator(get_event_dt(0), get_event_dt(10))
+        qiter = iter(q.create_iterable(get_event_dt(0), get_event_dt(10)))
         actual_event_seq.append(next(qiter))
         # now let's add another loader in the middle of the iteration
         q += DummyDataLoader(
@@ -107,12 +112,12 @@ class TestSimulatedQueueStuff:
             except StopIteration:
                 break
         expected_event_seq = [
-            ("APPL", DummyEvent(get_event_dt(1), "data1")),
-            ("MSFT", DummyEvent(get_event_dt(2), "data4")),
-            ("APPL", DummyEvent(get_event_dt(3), "data2")),
-            ("MSFT", DummyEvent(get_event_dt(4), "data5")),
-            ("APPL", DummyEvent(get_event_dt(5), "data3")),
-            ("MSFT", DummyEvent(get_event_dt(5), "data6")),
+            ("APPL", "dummy", DummyEvent(get_event_dt(1), "data1")),
+            ("MSFT", "dummy", DummyEvent(get_event_dt(2), "data4")),
+            ("APPL", "dummy", DummyEvent(get_event_dt(3), "data2")),
+            ("MSFT", "dummy", DummyEvent(get_event_dt(4), "data5")),
+            ("APPL", "dummy", DummyEvent(get_event_dt(5), "data3")),
+            ("MSFT", "dummy", DummyEvent(get_event_dt(5), "data6")),
         ]
         assert expected_event_seq == actual_event_seq
 
@@ -138,7 +143,7 @@ class TestSimulatedQueueStuff:
         q += l1
         q += l2
         actual_event_seq = []
-        qiter = q.create_iterator(get_event_dt(0), get_event_dt(10))
+        qiter = iter(q.create_iterable(get_event_dt(0), get_event_dt(10)))
         for _ in range(3):
             actual_event_seq.append(next(qiter))
         q -= l2
@@ -149,9 +154,99 @@ class TestSimulatedQueueStuff:
                 break
 
         expected_event_seq = [
-            ("APPL", DummyEvent(get_event_dt(1), "data1")),
-            ("MSFT", DummyEvent(get_event_dt(2), "data4")),
-            ("APPL", DummyEvent(get_event_dt(3), "data2")),
-            ("APPL", DummyEvent(get_event_dt(5), "data3")),
+            ("APPL", "dummy", DummyEvent(get_event_dt(1), "data1")),
+            ("MSFT", "dummy", DummyEvent(get_event_dt(2), "data4")),
+            ("APPL", "dummy", DummyEvent(get_event_dt(3), "data2")),
+            ("APPL", "dummy", DummyEvent(get_event_dt(5), "data3")),
         ]
         assert expected_event_seq == actual_event_seq
+
+    def test_batching_basic(self):
+        events = [
+            ("BTCUSDT", "trade", DummyEvent(get_event_dt(1, offset="ms"), "data1")),
+            ("BTCUSDT", "trade", DummyEvent(get_event_dt(2, offset="ms"), "data2")),
+            ("BTCUSDT", "trade", DummyEvent(get_event_dt(5, offset="ms"), "data3")),
+            ("ETHUSDT", "trade", DummyEvent(get_event_dt(7, offset="s"), "data4")),
+            ("ETHUSDT", "trade", DummyEvent(get_event_dt(7.9, offset="s"), "data4")),
+            ("BTCUSDT", "ohlc", DummyEvent(get_event_dt(9, offset="s"), "data5")),
+            ("BTCUSDT", "trade", DummyEvent(get_event_dt(11, offset="s"), "data6")),
+        ]
+
+        # test 1
+        batched_events = list(EventBatcher(events))
+        expected_events = [
+            (
+                "BTCUSDT",
+                "trade",
+                BatchEvent(
+                    get_event_dt(5, offset="ms"),
+                    [
+                        DummyEvent(get_event_dt(1, offset="ms"), "data1"),
+                        DummyEvent(get_event_dt(2, offset="ms"), "data2"),
+                        DummyEvent(get_event_dt(5, offset="ms"), "data3"),
+                    ],
+                ),
+            ),
+            (
+                "ETHUSDT",
+                "trade",
+                BatchEvent(
+                    get_event_dt(7.9, offset="s"),
+                    [
+                        DummyEvent(get_event_dt(7, offset="s"), "data4"),
+                        DummyEvent(get_event_dt(7.9, offset="s"), "data4"),
+                    ],
+                ),
+            ),
+            ("BTCUSDT", "ohlc", DummyEvent(get_event_dt(9, offset="s"), "data5")),
+            ("BTCUSDT", "trade", DummyEvent(get_event_dt(11, offset="s"), "data6")),
+        ]
+        assert expected_events == batched_events
+
+        # test 2 (check if batcher is disabled)
+        nobatched_events = list(EventBatcher(events, passthrough=True))
+        assert events == nobatched_events
+
+    def test_batching_leftover_trades(self):
+        events = [
+            ("BTCUSDT", "trade", DummyEvent(get_event_dt(1, offset="ms"), "data1")),
+            ("BTCUSDT", "trade", DummyEvent(get_event_dt(2, offset="ms"), "data2")),
+            ("BTCUSDT", "trade", DummyEvent(get_event_dt(5, offset="ms"), "data3")),
+            ("ETHUSDT", "trade", DummyEvent(get_event_dt(7, offset="s"), "data4")),
+            ("ETHUSDT", "trade", DummyEvent(get_event_dt(7.9, offset="s"), "data4")),
+            ("BTCUSDT", "ohlc", DummyEvent(get_event_dt(9, offset="s"), "data5")),
+            ("BTCUSDT", "trade", DummyEvent(get_event_dt(11, offset="s"), "data6")),
+            ("ETHUSDT", "ohlc", DummyEvent(get_event_dt(12, offset="s"), "data5")),
+            ("BTCUSDT", "trade", DummyEvent(get_event_dt(13, offset="s"), "data6")),
+        ]
+        expected_events = [
+            (
+                "BTCUSDT",
+                "trade",
+                BatchEvent(
+                    get_event_dt(5, offset="ms"),
+                    [
+                        DummyEvent(get_event_dt(1, offset="ms"), "data1"),
+                        DummyEvent(get_event_dt(2, offset="ms"), "data2"),
+                        DummyEvent(get_event_dt(5, offset="ms"), "data3"),
+                    ],
+                ),
+            ),
+            (
+                "ETHUSDT",
+                "trade",
+                BatchEvent(
+                    get_event_dt(7.9, offset="s"),
+                    [
+                        DummyEvent(get_event_dt(7, offset="s"), "data4"),
+                        DummyEvent(get_event_dt(7.9, offset="s"), "data4"),
+                    ],
+                ),
+            ),
+            ("BTCUSDT", "ohlc", DummyEvent(get_event_dt(9, offset="s"), "data5")),
+            ("BTCUSDT", "trade", DummyEvent(get_event_dt(11, offset="s"), "data6")),
+            ("ETHUSDT", "ohlc", DummyEvent(get_event_dt(12, offset="s"), "data5")),
+            ("BTCUSDT", "trade", DummyEvent(get_event_dt(13, offset="s"), "data6")),
+        ]
+        actual_output = list(EventBatcher(events))
+        assert expected_events == actual_output

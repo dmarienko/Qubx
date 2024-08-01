@@ -280,7 +280,7 @@ class Stopwatch:
         if s:
             lat = t - s
             n = self.counts[scope]
-            self.latencies[scope] = (lat * (n - 1) + self.latencies.get(scope, lat)) // n
+            self.latencies[scope] = (self.latencies.get(scope, lat) * (n - 1) + lat) // n
             del self.starts[scope]
         return lat
 

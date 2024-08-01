@@ -23,6 +23,7 @@ from qubx.core.basics import (
     dt_64,
     td_64,
     CtrlChannel,
+    BatchEvent,
 )
 from qubx.core.loggers import StrategyLogging
 from qubx.core.strategy import (
@@ -32,6 +33,7 @@ from qubx.core.strategy import (
     ITradingServiceProvider,
     PositionsTracker,
     StrategyContext,
+    SubscriptionType,
 )
 from qubx.core.series import Trade, Quote, Bar, OHLCV
 from qubx.gathering.simplest import SimplePositionGatherer
@@ -397,7 +399,6 @@ class StrategyContextImpl(StrategyContext):
 
             # - waiting for incoming market data
             symbol, d_type, data = channel.receive()
-            _SW.start("StrategyContext._process_incoming_data")
             if self.process_data(symbol, d_type, data):
                 _SW.stop("StrategyContext._process_incoming_data")
                 channel.stop()
@@ -472,6 +473,8 @@ class StrategyContextImpl(StrategyContext):
                 # we want to trigger only first one - not every
                 if not self._current_bar_trigger_processed:
                     self._current_bar_trigger_processed = True
+                    if bar is None:
+                        bar = self._cache.get_ohlcv(symbol)[0]
                     return TriggerEvent(self.time(), "bar", self._symb_to_instr.get(symbol), bar)
             else:
                 self._current_bar_trigger_processed = False
@@ -490,8 +493,13 @@ class StrategyContextImpl(StrategyContext):
         # - check if it's time to trigger the on_event if it's configured
         return self._check_if_need_trigger_on_bar(symbol, bar)
 
-    def _processing_trade(self, symbol: str, trade: Trade) -> TriggerEvent | None:
-        self._cache.update_by_trade(symbol, trade)
+    def _processing_trade(self, symbol: str, trade: Trade | BatchEvent) -> TriggerEvent | None:
+        is_batch_event = isinstance(trade, BatchEvent)
+        if is_batch_event:
+            for t in trade.data:
+                self._cache.update_by_trade(symbol, t)
+        else:
+            self._cache.update_by_trade(symbol, trade)
 
         # - update tracker and handle alterd positions if need
         self.positions_gathering.alter_positions(
@@ -499,8 +507,8 @@ class StrategyContextImpl(StrategyContext):
         )
 
         if self._trig_on_trade:
-            # TODO: apply throttling or filtering here
-            return TriggerEvent(self.time(), "trade", self._symb_to_instr.get(symbol), trade)
+            event_type = "trade" if not is_batch_event else "batch:trade"
+            return TriggerEvent(self.time(), event_type, self._symb_to_instr.get(symbol), trade)
         return None
 
     def _processing_quote(self, symbol: str, quote: Quote) -> TriggerEvent | None:
@@ -626,10 +634,6 @@ class StrategyContextImpl(StrategyContext):
         self._logging.close()
         self.get_latencies_report()
 
-    def get_latencies_report(self):
-        for l in _SW.latencies.keys():
-            logger.info(f"\t<w>{l}</w> took <r>{_SW.latency_sec(l):.7f}</r> secs")
-
     def time(self) -> dt_64:
         return self.trading_service.time()
 
@@ -641,7 +645,6 @@ class StrategyContextImpl(StrategyContext):
     def trade(
         self, instr_or_symbol: Instrument | str, amount: float, price: float | None = None, time_in_force="gtc"
     ) -> Order:
-        _SW.start("send_order")
         instrument: Instrument | None = (
             self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
         )
@@ -655,7 +658,7 @@ class StrategyContextImpl(StrategyContext):
 
         side = "buy" if amount > 0 else "sell"
         type = "limit" if price is not None else "market"
-        logger.info(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} ...")
+        logger.debug(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} ...")
         client_id = self._generate_order_client_id(instrument.symbol)
         order = self.trading_service.send_order(
             instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id
@@ -702,6 +705,44 @@ class StrategyContextImpl(StrategyContext):
         bars = self.broker_provider.get_historical_ohlcs(instr.symbol, timeframe, length)
         r = self._cache.update_by_bars(instr.symbol, timeframe, bars)
         return r
+
+    @_SW.watch("StrategyContext")
+    def subscribe(self, subscription_type: str, instr_or_symbol: Instrument | str, **kwargs) -> bool:
+        """
+        Subscribe to market data updates
+        """
+        instrument: Instrument | None = (
+            self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
+        )
+        if instrument is None:
+            raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
+
+        return self.broker_provider.subscribe(subscription_type, [instrument], **kwargs)
+
+    @_SW.watch("StrategyContext")
+    def unsubscribe(self, subscription_type: str, instr_or_symbol: Instrument | str) -> bool:
+        """
+        Unsubscribe from market data updates
+        """
+        instrument: Instrument | None = (
+            self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
+        )
+        if instrument is None:
+            raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
+
+        return self.broker_provider.unsubscribe(subscription_type, [instrument])
+
+    def has_subscription(self, subscription_type: str, instr_or_symbol: Instrument | str) -> bool:
+        """
+        Check if subscription is active
+        """
+        instrument: Instrument | None = (
+            self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
+        )
+        if instrument is None:
+            raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
+
+        return self.broker_provider.has_subscription(subscription_type, instrument)
 
     def _run_in_thread_pool(self, func: Callable, args=()):
         """

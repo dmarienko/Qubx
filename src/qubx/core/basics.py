@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
 
-
 from threading import Thread, Event, Lock, Condition
 from queue import Queue
 
@@ -139,6 +138,12 @@ class Instrument:
 
     def __str__(self) -> str:
         return f"{self.exchange}:{self.symbol} [{self.market_type} {str(self.futures_info) if self.futures_info else 'SPOT ' + self.base + '/' + self.quote }]"
+
+
+@dataclass
+class BatchEvent:
+    time: dt_64 | pd.Timestamp
+    data: list[Any]
 
 
 class TransactionCostsCalculator:

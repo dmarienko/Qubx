@@ -30,6 +30,7 @@ from qubx.core.strategy import (
     PositionsTracker,
     StrategyContext,
     TriggerEvent,
+    SubscriptionType,
 )
 
 from qubx.core.context import StrategyContextImpl
@@ -47,7 +48,7 @@ from qubx.data.readers import (
 from qubx.pandaz.utils import scols
 from qubx.utils.misc import ProgressParallel
 from joblib import delayed
-from .queue import DataLoader, SimulatedDataQueue
+from .queue import DataLoader, SimulatedDataQueue, EventBatcher
 
 StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
 
@@ -352,6 +353,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         units = kwargs.get("timestamp_units", "ns")
 
         for instr in instruments:
+            logger.debug(f"SimulatedExchangeService :: subscribe :: {instr.symbol} :: {subscription_type}")
             self._symbol_to_instrument[instr.symbol] = instr
 
             _params: Dict[str, Any] = dict(
@@ -361,30 +363,44 @@ class SimulatedExchange(IBrokerServiceProvider):
                 timeframe=timeframe,
             )
 
-            data_type = None
             # - for ohlc data we need to restore ticks from OHLC bars
-            if "ohlc" in subscription_type:
+            if subscription_type == SubscriptionType.OHLC:
                 _params["transformer"] = RestoreTicksFromOHLC(
-                    trades="trades" in subscription_type, spread=instr.min_tick, timestamp_units=units
+                    trades="trades" in subscription_type,
+                    spread=instr.min_tick,
+                    timestamp_units=units,
                 )
-                data_type = "candles"
-            elif "quote" in subscription_type:
+                _params["output_type"] = SubscriptionType.QUOTE
+            elif subscription_type == SubscriptionType.QUOTE:
                 _params["transformer"] = AsQuotes()
-                data_type = "candles"
-            elif "trade" in subscription_type:
+            # TODO: remove AGG_TRADE from this scope and only map trade to agg_trade for binance
+            elif subscription_type == SubscriptionType.AGG_TRADE:
                 _params["transformer"] = AsTrades()
-                data_type = "agg_trade"
+            elif subscription_type == SubscriptionType.TRADE:
+                _params["transformer"] = AsTrades()
             else:
                 raise ValueError(f"Unknown subscription type: {subscription_type}")
 
-            _params["data_type"] = data_type
+            _params["data_type"] = subscription_type
 
             # - add loader for this instrument
             ldr = DataLoader(**_params)
-            self._loaders[instr.symbol][data_type] = ldr
+            self._loaders[instr.symbol][subscription_type] = ldr
             self._data_queue += ldr
 
         return True
+
+    def unsubscribe(self, subscription_type: str, instruments: List[Instrument]) -> bool:
+        for instr in instruments:
+            if instr.symbol in self._loaders:
+                logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol} :: {subscription_type}")
+                self._data_queue -= self._loaders[instr.symbol].pop(subscription_type)
+                if not self._loaders[instr.symbol]:
+                    self._loaders.pop(instr.symbol)
+        return True
+
+    def has_subscription(self, subscription_type: str, instrument: Instrument | str) -> bool:
+        return instrument.symbol in self._loaders and subscription_type in self._loaders[instrument.symbol]
 
     def _try_add_process_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
         if self._pregenerated_signals:
@@ -392,33 +408,43 @@ class SimulatedExchange(IBrokerServiceProvider):
                 sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
                 self._to_process[s] = list(zip(sel.index, sel.values))
 
-    def run(self, start: str | pd.Timestamp, end: str | pd.Timestamp):
+    def run(
+        self,
+        start: str | pd.Timestamp,
+        end: str | pd.Timestamp,
+        silent: bool = False,
+        enable_event_batching: bool = True,
+    ) -> None:
         logger.info(f"SimulatedExchangeService :: run :: Simulation started at {start}")
         self._try_add_process_signals(start, end)
 
         _run = self._run_generated_signals if self._pregenerated_signals else self._run_as_strategy
 
-        qiter = self._data_queue.create_iterator(start, end)
+        qiter = EventBatcher(self._data_queue.create_iterable(start, end), passthrough=not enable_event_batching)
         start, end = pd.Timestamp(start), pd.Timestamp(end)
         total_duration = end - start
         update_delta = total_duration / 100
         prev_dt = pd.Timestamp(start)
 
-        with tqdm(total=total_duration.total_seconds(), desc="Simulating", unit="s", leave=False) as pbar:
-            for symbol, event in qiter:
-                _run(symbol, event)
-                dt = pd.Timestamp(event.time)
-                # update only if date has changed
-                if dt - prev_dt > update_delta:
-                    pbar.n = (dt - start).total_seconds()
-                    pbar.refresh()
-                    prev_dt = dt
-            pbar.n = total_duration.total_seconds()
-            pbar.refresh()
+        if silent:
+            for symbol, data_type, event in qiter:
+                _run(symbol, data_type, event)
+        else:
+            with tqdm(total=total_duration.total_seconds(), desc="Simulating", unit="s", leave=False) as pbar:
+                for symbol, data_type, event in qiter:
+                    _run(symbol, data_type, event)
+                    dt = pd.Timestamp(event.time)
+                    # update only if date has changed
+                    if dt - prev_dt > update_delta:
+                        pbar.n = (dt - start).total_seconds()
+                        pbar.refresh()
+                        prev_dt = dt
+                pbar.n = total_duration.total_seconds()
+                pbar.refresh()
 
         logger.info(f"SimulatedExchangeService :: run :: Simulation finished at {end}")
 
-    def _run_generated_signals(self, s: str, e: Any) -> None:
+    def _run_generated_signals(self, s: str, data_type: str, e: Any) -> None:
         cc = self.get_communication_channel()
         # - send initial quotes - this will invoke calling of on_fit method
         # for s in data.columns:
@@ -428,13 +454,13 @@ class SimulatedExchange(IBrokerServiceProvider):
         self.trading_service.update_position_price(s, self._current_time, e)
         # - we need to send quotes for invoking portfolio logging etc
         # match event type
-        cc.send((s, self._get_event_type(e), e))
+        cc.send((s, data_type, e))
         sigs = self._to_process[s]
         if sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
             cc.send((s, "event", {"order": sigs[0][1]}))
             sigs.pop(0)
 
-    def _run_as_strategy(self, s: str, e: Any) -> None:
+    def _run_as_strategy(self, s: str, data_type: str, e: Any) -> None:
         cc = self.get_communication_channel()
         t = e.time  # type: ignore
         self._current_time = max(np.datetime64(t, "ns"), self._current_time)
@@ -443,7 +469,7 @@ class SimulatedExchange(IBrokerServiceProvider):
             self._last_quotes[s] = q
             self.trading_service.update_position_price(s, self._current_time, q)
 
-        cc.send((s, self._get_event_type(e), e))
+        cc.send((s, data_type, e))
 
         if q is not None:
             cc.send((s, "quote", q))
@@ -451,16 +477,6 @@ class SimulatedExchange(IBrokerServiceProvider):
         if self._scheduler.check_and_run_tasks():
             # - push nothing - it will force to process last event
             cc.send((None, "time", None))
-
-    def _get_event_type(self, event: Quote | Trade | Bar) -> str:
-        if isinstance(event, Quote):
-            return "quote"
-        elif isinstance(event, Trade):
-            return "trade"
-        elif isinstance(event, Bar):
-            return "bar"
-        else:
-            raise ValueError(f"Unknown event type: {type(event)}")
 
     def get_quote(self, symbol: str) -> Optional[Quote]:
         return self._last_quotes[symbol]
@@ -639,14 +655,16 @@ def simulate(
     capital: float,
     instruments: List[str] | Dict[str, List[str]] | None,
     subscription: Dict[str, Any],
-    trigger: str,
+    trigger: str | list[str],
     commissions: str,
     start: str | pd.Timestamp,
     stop: str | pd.Timestamp | None = None,
     exchange: str | None = None,  # in case if exchange is not specified in symbols list
     base_currency: str = "USDT",
     leverage: float = 1.0,  # TODO: we need to add support for leverage
-    n_jobs: int = -1,  # TODO: if need to run simulation in parallel
+    n_jobs: int = 1,
+    silent: bool = False,
+    enable_event_batching: bool = True,
 ) -> TradingSessionResult | List[TradingSessionResult]:
     # - recognize provided data
     if isinstance(data, dict):
@@ -693,7 +711,17 @@ def simulate(
         stop = pd.Timestamp.now(tz="UTC").astimezone(None)
 
     # - run simulations
-    return _run_setups(setups, start, stop, data_reader, subscription, trigger, n_jobs=n_jobs)
+    return _run_setups(
+        setups,
+        start,
+        stop,
+        data_reader,
+        subscription,
+        trigger,
+        n_jobs=n_jobs,
+        silent=silent,
+        enable_event_batching=enable_event_batching,
+    )
 
 
 def find_instruments_and_exchanges(
@@ -753,16 +781,31 @@ def _run_setups(
     stop: str | pd.Timestamp,
     data_reader: DataReader,
     subscription: Dict[str, Any],
-    trigger: str,
+    trigger: str | list[str],
     n_jobs: int = -1,
+    silent: bool = False,
+    enable_event_batching: bool = True,
 ) -> List[TradingSessionResult]:
     # loggers don't work well with joblib and multiprocessing in general because they contain
     # open file handlers that cannot be pickled. I found a solution which requires the usage of enqueue=True
     # in the logger configuration and specifying backtest "multiprocessing" instead of the default "loky"
     # for joblib. But it works now.
     # See: https://stackoverflow.com/questions/59433146/multiprocessing-logging-how-to-use-loguru-with-joblib-parallel
-    reports = ProgressParallel(n_jobs=n_jobs, total=len(setups), silent=False, backend="multiprocessing")(
-        delayed(_run_setup)(s, start, stop, data_reader, subscription, trigger) for s in setups
+    _main_loop_silent = len(setups) == 1
+    n_jobs = 1 if _main_loop_silent else n_jobs
+
+    reports = ProgressParallel(n_jobs=n_jobs, total=len(setups), silent=_main_loop_silent, backend="multiprocessing")(
+        delayed(_run_setup)(
+            s,
+            start,
+            stop,
+            data_reader,
+            subscription,
+            trigger,
+            silent=silent,
+            enable_event_batching=enable_event_batching,
+        )
+        for s in setups
     )
     return reports  # type: ignore
 
@@ -773,7 +816,9 @@ def _run_setup(
     stop: str | pd.Timestamp,
     data_reader: DataReader,
     subscription: Dict[str, Any],
-    trigger: str,
+    trigger: str | list[str],
+    silent: bool = False,
+    enable_event_batching: bool = True,
 ) -> TradingSessionResult:
     _trigger = trigger
     _stop = stop
@@ -826,7 +871,11 @@ def _run_setup(
     )
     ctx.start()
 
-    exchange.run(start, _stop)  # type: ignore
+    try:
+        exchange.run(start, _stop, silent=silent, enable_event_batching=enable_event_batching)  # type: ignore
+    except KeyboardInterrupt:
+        logger.error("Simulated trading interrupted by user !")
+
     return TradingSessionResult(
         setup.name,
         start,
