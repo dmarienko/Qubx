@@ -430,7 +430,7 @@ class SimulatedExchange(IBrokerServiceProvider):
             with tqdm(total=total_duration.total_seconds(), desc="Simulating", unit="s", leave=False) as pbar:
                 for symbol, data_type, event in qiter:
                     _run(symbol, data_type, event)
-                    dt = pd.Timestamp(event.time)
+                    dt = pd.Timestamp(self._get_time(event))
                     # update only if date has changed
                     if dt - prev_dt > update_delta:
                         pbar.n = (dt - start).total_seconds()
@@ -446,7 +446,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         # - send initial quotes - this will invoke calling of on_fit method
         # for s in data.columns:
         # cc.send((s, "quote", data[s].values[0]))
-        t = e.time  # type: ignore
+        t = self._get_time(e)  # type: ignore
         self._current_time = max(np.datetime64(t, "ns"), self._current_time)
         self.trading_service.update_position_price(s, self._current_time, e)
         # - we need to send quotes for invoking portfolio logging etc
@@ -459,7 +459,7 @@ class SimulatedExchange(IBrokerServiceProvider):
 
     def _run_as_strategy(self, s: str, data_type: str, e: Any) -> None:
         cc = self.get_communication_channel()
-        t = e.time  # type: ignore
+        t = self._get_time(e)  # type: ignore
         self._current_time = max(np.datetime64(t, "ns"), self._current_time)
         q = self.trading_service.emulate_quote_from_data(s, np.datetime64(t, "ns"), e)
         if q is not None:
@@ -474,6 +474,11 @@ class SimulatedExchange(IBrokerServiceProvider):
         if self._scheduler.check_and_run_tasks():
             # - push nothing - it will force to process last event
             cc.send((None, "time", None))
+
+    def _get_time(self, e: Any | list[Any]) -> pd.Timestamp:
+        if isinstance(e, list):
+            return pd.Timestamp(e[-1].time)
+        return pd.Timestamp(e.time)
 
     def _get_event_type(self, t: str, e: Trade | Bar | Quote | list) -> str:
         if isinstance(e, list):

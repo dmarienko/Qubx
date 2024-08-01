@@ -136,7 +136,7 @@ class SimulatedDataQueue:
         return self
 
     @_SW.watch("DataQueue")
-    def __next__(self) -> tuple[str, Any]:
+    def __next__(self) -> tuple[str, str, Any]:
         if not self._event_heap:
             raise StopIteration
 
@@ -169,7 +169,7 @@ class SimulatedDataQueue:
     @_SW.watch("DataQueue")
     def _next_chunk(self, index: int) -> list[Any]:
         if index not in self._index_to_iterator:
-            self._index_to_iterator[index] = self._index_to_loader[index].load(self._current_time, self._stop)
+            self._index_to_iterator[index] = self._index_to_loader[index].load(self._current_time, self._stop)  # type: ignore
         iterator = self._index_to_iterator[index]
         try:
             return next(iterator)
@@ -196,6 +196,7 @@ class EventBatcher:
             _iter = iter(self.source_iterator) if isinstance(self.source_iterator, Iterable) else self.source_iterator
             yield from _iter
             return
+        # TODO: only batch consecutive events of the same time
         for symbol, data_type, event in self.source_iterator:
             time: dt_64 = event.time  # type: ignore
             yield from self._process_buffers(time)

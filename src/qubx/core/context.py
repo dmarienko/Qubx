@@ -497,11 +497,17 @@ class StrategyContextImpl(StrategyContext):
         # - check if it's time to trigger the on_event if it's configured
         return self._check_if_need_trigger_on_bar(symbol, bar)
 
-    def _processing_trade(self, symbol: str, trade: Trade) -> TriggerEvent | None:
-        self._cache.update_by_trade(symbol, trade)
+    def _processing_trade(self, symbol: str, trade: Trade | list[Trade]) -> TriggerEvent | None:
+        if isinstance(trade, list):
+            for t in trade:
+                self._cache.update_by_trade(symbol, t)
+        else:
+            self._cache.update_by_trade(symbol, trade)
+
+        last_trade = trade[-1] if isinstance(trade, list) else trade
 
         # - update tracker
-        self.positions_tracker.update(self, self._symb_to_instr[symbol], trade)
+        self.positions_tracker.update(self, self._symb_to_instr[symbol], last_trade)
 
         if self._trig_on_trade:
             # TODO: apply throttling or filtering here
