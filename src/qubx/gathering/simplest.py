@@ -30,7 +30,7 @@ class SimplePositionGatherer(IPositionGathering):
 
         return current_position
 
-    def update_by_deal_data(self, instrument: Instrument, deal: Deal): ...
+    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal): ...
 
 
 class SplittedOrdersPositionGatherer(IPositionGathering):

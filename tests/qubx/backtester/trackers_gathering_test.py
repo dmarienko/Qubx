@@ -1,12 +1,12 @@
 from typing import Any, Optional, List
 
-from qubx import lookup, logger
+from qubx import QubxLogConfig, lookup, logger
 from qubx.core.account import AccountProcessor
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.pandaz.utils import *
 from qubx.core.utils import recognize_time
 
-from qubx.core.series import Quote
+from qubx.core.series import OHLCV, Quote
 from qubx.core.strategy import IPositionGathering, IStrategy, PositionsTracker, StrategyContext, TriggerEvent
 from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsTimestampedRecords, AsQuotes, RestoreTicksFromOHLC
 from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider, Position, Signal
@@ -16,6 +16,7 @@ from qubx.backtester.ome import OrdersManagementEngine
 from qubx.ta.indicators import sma, ema
 from qubx.backtester.simulator import simulate
 from qubx.trackers.rebalancers import PortfolioRebalancerTracker
+from qubx.trackers.riskctrl import AtrRiskTracker
 from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
 
 
@@ -43,7 +44,7 @@ class TestingPositionGatherer(IPositionGathering):
             )
         return current_position
 
-    def update_by_deal_data(self, instrument: Instrument, deal: Deal): ...
+    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal): ...
 
 
 class DebugStratageyCtx(StrategyContext):
@@ -74,24 +75,15 @@ class DebugStratageyCtx(StrategyContext):
     def trade(
         self, instr_or_symbol: Instrument | str, amount: float, price: float | None = None, time_in_force="gtc"
     ) -> Order:
+        # fmt: off
         self._n_orders += 1
         self._orders_size += amount
-        if amount > 0:
-            self._n_orders_buy += 1
-        if amount < 0:
-            self._n_orders_sell += 1
+        if amount > 0: self._n_orders_buy += 1
+        if amount < 0: self._n_orders_sell += 1
         return Order(
-            "test",
-            "MARKET",
-            instr_or_symbol.symbol if isinstance(instr_or_symbol, Instrument) else instr_or_symbol,
-            np.datetime64(0, "ns"),
-            amount,
-            price if price is not None else 0,
-            "BUY" if amount > 0 else "SELL",
-            "CLOSED",
-            "gtc",
-            "test1",
-        )
+            "test", "MARKET", instr_or_symbol.symbol if isinstance(instr_or_symbol, Instrument) else instr_or_symbol,
+            np.datetime64(0, "ns"), amount, price if price is not None else 0, "BUY" if amount > 0 else "SELL", "CLOSED", "gtc", "test1")
+        # fmt: on
 
     def get_reserved(self, instrument: Instrument) -> float:
         return 0.0
@@ -164,3 +156,58 @@ class TestTrackersAndGatherers:
         assert ctx.positions[I[0].symbol].quantity == 0
         assert ctx.positions[I[1].symbol].quantity == 0
         assert ctx.positions[I[2].symbol].quantity == 0
+
+    def test_atr_tracker(self):
+
+        r = CsvStorageDataReader("tests/data/csv")
+
+        class StrategyForTracking(IStrategy):
+            timeframe: str = "1Min"
+            fast_period = 5
+            slow_period = 12
+
+            def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
+                signals = []
+                for i in ctx.instruments:
+                    ohlc = ctx.ohlc(i, self.timeframe)
+                    fast = sma(ohlc.close, self.fast_period)
+                    slow = sma(ohlc.close, self.slow_period)
+                    pos = ctx.positions[i.symbol].quantity
+
+                    if pos <= 0 and (fast[0] > slow[0]) and (fast[1] < slow[1]):
+                        signals.append(i.signal(+1, stop=ohlc[1].low))
+
+                    if pos >= 0 and (fast[0] < slow[0]) and (fast[1] > slow[1]):
+                        signals.append(i.signal(-1, stop=ohlc[1].high))
+
+                return signals
+
+            def tracker(self, ctx: StrategyContext) -> PositionsTracker:
+                return PositionsTracker(FixedRiskSizer(1, 10_000, reinvest_profit=True))
+
+        QubxLogConfig.set_log_level("ERROR")
+        rep = simulate(
+            {
+                "As Strategy 1": [
+                    StrategyForTracking(timeframe="15Min", fast_period=5, slow_period=25),
+                ],
+                "As Strategy 2": [
+                    StrategyForTracking(timeframe="15Min", fast_period=5, slow_period=25),
+                    # - it will replace strategy defined tracker
+                    AtrRiskTracker(10, 5, "15Min", 50, atr_smoother="kama", sizer=FixedRiskSizer(0.5)),
+                ],
+            },
+            r,
+            10000,
+            ["BINANCE.UM:BTCUSDT"],
+            dict(type="ohlc", timeframe="15Min", nback=0),
+            "-1Sec",
+            "vip0_usdt",
+            "2024-01-01",
+            "2024-01-05",
+        )
+        # TODO: adds tests
+
+        assert len(rep[0].executions_log) == 23
+        assert len(rep[1].executions_log) == 24
+        # rep[0]

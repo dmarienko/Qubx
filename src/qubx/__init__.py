@@ -1,3 +1,4 @@
+from typing import Callable
 from qubx.utils import set_mpl_theme, runtime_env
 from qubx.utils.misc import install_pyx_recompiler_for_dev
 
@@ -37,7 +38,7 @@ class QubxLogConfig:
         QubxLogConfig.setup_logger(level)
 
     @staticmethod
-    def setup_logger(level: str | None = None):
+    def setup_logger(level: str | None = None, custom_formatter: Callable | None = None):
         global logger
         config = {
             "handlers": [
@@ -48,7 +49,7 @@ class QubxLogConfig:
         logger.configure(**config)
         logger.remove(None)
         level = level or QubxLogConfig.get_log_level()
-        logger.add(sys.stdout, format=formatter, colorize=True, level=level, enqueue=True)
+        logger.add(sys.stdout, format=custom_formatter or formatter, colorize=True, level=level, enqueue=True)
         logger = logger.opt(colors=True)
 
 

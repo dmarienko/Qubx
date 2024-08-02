@@ -7,11 +7,12 @@ from enum import Enum
 from tqdm.auto import tqdm
 from itertools import chain
 
-from qubx import lookup, logger
+from qubx import lookup, logger, QubxLogConfig
 from qubx.core.helpers import BasicScheduler
 from qubx.core.loggers import InMemoryLogsWriter
 from qubx.core.series import Quote
 from qubx.core.basics import (
+    ITimeProvider,
     Instrument,
     Deal,
     Order,
@@ -109,6 +110,33 @@ class SimulationSetup:
     commissions: str
 
 
+import stackprinter
+
+
+class _SimulatedLogFormatter:
+    def __init__(self, time_provider: ITimeProvider):
+        self.time_provider = time_provider
+
+    def formatter(self, record):
+        end = record["extra"].get("end", "\n")
+        fmt = "<lvl>{message}</lvl>%s" % end
+        if record["level"].name in {"WARNING", "SNAKY"}:
+            fmt = "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - %s" % fmt
+
+        now = self.time_provider.time().astype("datetime64[us]").item().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        # prefix = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [ <level>%s</level> ] " % record["level"].icon
+        prefix = f"<yellow>{now}</yellow> [ <level>{record['level'].icon}</level> ] "
+
+        if record["exception"] is not None:
+            record["extra"]["stack"] = stackprinter.format(record["exception"], style="darkbg3")
+            fmt += "\n{extra[stack]}\n"
+
+        if record["level"].name in {"TEXT"}:
+            prefix = ""
+
+        return prefix + fmt
+
+
 class SimulatedTrading(ITradingServiceProvider):
     """
     First implementation of a simulated broker.
@@ -146,6 +174,9 @@ class SimulatedTrading(ITradingServiceProvider):
             raise ValueError(
                 f"SimulatedExchangeService :: Fees configuration '{commissions}' is not found for '{name}' !"
             )
+
+        # - we want to see simulate time in log messages
+        QubxLogConfig.setup_logger(QubxLogConfig.get_log_level(), _SimulatedLogFormatter(self).formatter)
 
     def send_order(
         self,
@@ -444,35 +475,35 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         logger.info(f"SimulatedExchangeService :: run :: Simulation finished at {end}")
 
-    def _run_generated_signals(self, s: str, data_type: str, e: Any) -> None:
+    def _run_generated_signals(self, symbol: str, data_type: str, data: Any) -> None:
         cc = self.get_communication_channel()
-        # - send initial quotes - this will invoke calling of on_fit method
-        # for s in data.columns:
-        # cc.send((s, "quote", data[s].values[0]))
-        t = e.time  # type: ignore
+        t = data.time  # type: ignore
         self._current_time = max(np.datetime64(t, "ns"), self._current_time)
-        self.trading_service.update_position_price(s, self._current_time, e)
+        q = self.trading_service.emulate_quote_from_data(symbol, np.datetime64(t, "ns"), data)
+        self._last_quotes[symbol] = q
+        self.trading_service.update_position_price(symbol, self._current_time, data)
+
         # - we need to send quotes for invoking portfolio logging etc
         # match event type
-        cc.send((s, data_type, e))
-        sigs = self._to_process[s]
+        cc.send((symbol, data_type, data))
+        sigs = self._to_process[symbol]
         if sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
-            cc.send((s, "event", {"order": sigs[0][1]}))
+            cc.send((symbol, "event", {"order": sigs[0][1]}))
             sigs.pop(0)
 
-    def _run_as_strategy(self, s: str, data_type: str, e: Any) -> None:
+    def _run_as_strategy(self, symbol: str, data_type: str, data: Any) -> None:
         cc = self.get_communication_channel()
-        t = e.time  # type: ignore
+        t = data.time  # type: ignore
         self._current_time = max(np.datetime64(t, "ns"), self._current_time)
-        q = self.trading_service.emulate_quote_from_data(s, np.datetime64(t, "ns"), e)
+        q = self.trading_service.emulate_quote_from_data(symbol, np.datetime64(t, "ns"), data)
         if q is not None:
-            self._last_quotes[s] = q
-            self.trading_service.update_position_price(s, self._current_time, q)
+            self._last_quotes[symbol] = q
+            self.trading_service.update_position_price(symbol, self._current_time, q)
 
-        cc.send((s, data_type, e))
+        cc.send((symbol, data_type, data))
 
         if q is not None:
-            cc.send((s, "quote", q))
+            cc.send((symbol, "quote", q))
 
         if self._scheduler.check_and_run_tasks():
             # - push nothing - it will force to process last event
@@ -562,6 +593,7 @@ def _recognize_simulation_setups(
         return _instrs
 
     r = list()
+    # fmt: off
     if isinstance(configs, dict):
         for n, v in configs.items():
             r.extend(
@@ -584,16 +616,9 @@ def _recognize_simulation_setups(
             # - extract actual symbols that have signals
             r.append(
                 SimulationSetup(
-                    _t,
-                    name,
-                    _s,
-                    c1,
-                    _pick_instruments(_s),
-                    exchange,
-                    capital,
-                    leverage,
-                    basic_currency,
-                    commissions,
+                    _t, name, _s, c1, 
+                    _pick_instruments(_s) if _is_signal(c0) else instruments,
+                    exchange, capital, leverage, basic_currency, commissions,
                 )
             )
         else:
@@ -601,14 +626,7 @@ def _recognize_simulation_setups(
                 r.extend(
                     _recognize_simulation_setups(
                         # name + "/" + str(j), s, instruments, exchange, capital, leverage, basic_currency, commissions
-                        name,
-                        s,
-                        instruments,
-                        exchange,
-                        capital,
-                        leverage,
-                        basic_currency,
-                        commissions,
+                        name, s, instruments, exchange, capital, leverage, basic_currency, commissions,
                     )
                 )
 
@@ -616,15 +634,8 @@ def _recognize_simulation_setups(
         r.append(
             SimulationSetup(
                 _Types.STRATEGY,
-                name,
-                configs,
-                None,
-                instruments,
-                exchange,
-                capital,
-                leverage,
-                basic_currency,
-                commissions,
+                name, configs, None, instruments,
+                exchange, capital, leverage, basic_currency, commissions,
             )
         )
 
@@ -634,18 +645,12 @@ def _recognize_simulation_setups(
         r.append(
             SimulationSetup(
                 _Types.SIGNAL,
-                name,
-                c1,
-                None,
-                _pick_instruments(c1),
-                exchange,
-                capital,
-                leverage,
-                basic_currency,
-                commissions,
+                name, c1, None, _pick_instruments(c1),
+                exchange, capital, leverage, basic_currency, commissions,
             )
         )
 
+    # fmt: on
     return r
 
 
@@ -767,11 +772,9 @@ class _GeneratedSignalsStrategy(IStrategy):
     def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
         if event.data and event.type == "event":
             signal = event.data.get("order")
+            # - TODO: also need to think about how to pass stop/take here
             if signal is not None and event.instrument:
-                # TODO: actually this should be done in position tracker not here !
-                n = signal - ctx.positions[event.instrument.symbol].quantity
-                if n != 0:
-                    ctx.trade(event.instrument, n)
+                return [event.instrument.signal(signal)]
         return None
 
 

@@ -357,7 +357,7 @@ class StrategyContextImpl(StrategyContext):
                 )
                 return False
 
-            signals: List[Signal] | None = None
+            signals: List[Signal] | Signal | None = None
             try:
                 _SW.start("strategy.on_event")
                 signals = self.strategy.on_event(self, _strategy_trigger_on_event)
@@ -547,10 +547,14 @@ class StrategyContextImpl(StrategyContext):
         # - log deals in storage
         instr = self._symb_to_instr.get(symbol)
         self._logging.save_deals(symbol, deals)
-        for d in deals:
-            # - notify position gather
-            self.positions_gathering.update_by_deal_data(instr, d)
-            logger.debug(f"Executed {d.amount} @ {d.price} of {symbol} for order {d.order_id}")
+        if instr is not None:
+            for d in deals:
+                # - notify position gatherer and tracker
+                self.positions_gathering.on_execution_report(self, instr, d)
+                self.positions_tracker.on_execution_report(self, instr, d)
+                logger.debug(f"Executed {d.amount} @ {d.price} of {symbol} for order {d.order_id}")
+        else:
+            logger.debug(f"Execution report for unknown instrument {symbol}")
         return None
 
     def ohlc(self, instrument: str | Instrument, timeframe: str) -> OHLCV:
