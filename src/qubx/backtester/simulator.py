@@ -7,11 +7,12 @@ from enum import Enum
 from tqdm.auto import tqdm
 from itertools import chain
 
-from qubx import lookup, logger
+from qubx import lookup, logger, QubxLogConfig
 from qubx.core.helpers import BasicScheduler
 from qubx.core.loggers import InMemoryLogsWriter
 from qubx.core.series import Quote
 from qubx.core.basics import (
+    ITimeProvider,
     Instrument,
     Deal,
     Order,
@@ -109,6 +110,33 @@ class SimulationSetup:
     commissions: str
 
 
+import stackprinter
+
+
+class _SimulatedLogFormatter:
+    def __init__(self, time_provider: ITimeProvider):
+        self.time_provider = time_provider
+
+    def formatter(self, record):
+        end = record["extra"].get("end", "\n")
+        fmt = "<lvl>{message}</lvl>%s" % end
+        if record["level"].name in {"WARNING", "SNAKY"}:
+            fmt = "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - %s" % fmt
+
+        now = self.time_provider.time().astype("datetime64[us]").item().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        # prefix = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [ <level>%s</level> ] " % record["level"].icon
+        prefix = f"<yellow>{now}</yellow> [ <level>{record['level'].icon}</level> ] "
+
+        if record["exception"] is not None:
+            record["extra"]["stack"] = stackprinter.format(record["exception"], style="darkbg3")
+            fmt += "\n{extra[stack]}\n"
+
+        if record["level"].name in {"TEXT"}:
+            prefix = ""
+
+        return prefix + fmt
+
+
 class SimulatedTrading(ITradingServiceProvider):
     """
     First implementation of a simulated broker.
@@ -146,6 +174,9 @@ class SimulatedTrading(ITradingServiceProvider):
             raise ValueError(
                 f"SimulatedExchangeService :: Fees configuration '{commissions}' is not found for '{name}' !"
             )
+
+        # - we want to see simulate time in log messages
+        QubxLogConfig.setup_logger(QubxLogConfig.get_log_level(), _SimulatedLogFormatter(self).formatter)
 
     def send_order(
         self,
@@ -562,6 +593,7 @@ def _recognize_simulation_setups(
         return _instrs
 
     r = list()
+    # fmt: off
     if isinstance(configs, dict):
         for n, v in configs.items():
             r.extend(
@@ -584,16 +616,9 @@ def _recognize_simulation_setups(
             # - extract actual symbols that have signals
             r.append(
                 SimulationSetup(
-                    _t,
-                    name,
-                    _s,
-                    c1,
-                    _pick_instruments(_s),
-                    exchange,
-                    capital,
-                    leverage,
-                    basic_currency,
-                    commissions,
+                    _t, name, _s, c1, 
+                    _pick_instruments(_s) if _is_signal(c0) else instruments,
+                    exchange, capital, leverage, basic_currency, commissions,
                 )
             )
         else:
@@ -601,14 +626,7 @@ def _recognize_simulation_setups(
                 r.extend(
                     _recognize_simulation_setups(
                         # name + "/" + str(j), s, instruments, exchange, capital, leverage, basic_currency, commissions
-                        name,
-                        s,
-                        instruments,
-                        exchange,
-                        capital,
-                        leverage,
-                        basic_currency,
-                        commissions,
+                        name, s, instruments, exchange, capital, leverage, basic_currency, commissions,
                     )
                 )
 
@@ -616,15 +634,8 @@ def _recognize_simulation_setups(
         r.append(
             SimulationSetup(
                 _Types.STRATEGY,
-                name,
-                configs,
-                None,
-                instruments,
-                exchange,
-                capital,
-                leverage,
-                basic_currency,
-                commissions,
+                name, configs, None, instruments,
+                exchange, capital, leverage, basic_currency, commissions,
             )
         )
 
@@ -634,18 +645,12 @@ def _recognize_simulation_setups(
         r.append(
             SimulationSetup(
                 _Types.SIGNAL,
-                name,
-                c1,
-                None,
-                _pick_instruments(c1),
-                exchange,
-                capital,
-                leverage,
-                basic_currency,
-                commissions,
+                name, c1, None, _pick_instruments(c1),
+                exchange, capital, leverage, basic_currency, commissions,
             )
         )
 
+    # fmt: on
     return r
 
 
@@ -767,12 +772,9 @@ class _GeneratedSignalsStrategy(IStrategy):
     def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
         if event.data and event.type == "event":
             signal = event.data.get("order")
+            # - TODO: also need to think about how to pass stop/take here
             if signal is not None and event.instrument:
                 return [event.instrument.signal(signal)]
-                # TODO: actually this should be done in position tracker not here !
-                # n = signal - ctx.positions[event.instrument.symbol].quantity
-                # if n != 0:
-                # ctx.trade(event.instrument, n)
         return None
 
 

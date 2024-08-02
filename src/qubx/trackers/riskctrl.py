@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from typing import Dict, List, Literal
 
 import numpy as np
+
+from qubx import logger
 from qubx.core.basics import Deal, Instrument, Signal, TargetPosition
 from qubx.core.series import Bar, Quote, Trade
 from qubx.core.strategy import IPositionSizer, PositionsTracker, StrategyContext
@@ -77,6 +79,9 @@ class AtrRiskTracker(PositionsTracker):
             target = self.get_position_sizer().calculate_target_positions(ctx, [s])[0]
             targets.append(target)
             self._signals[s.instrument] = SgnCtrl(s, target, "NEW")
+            logger.debug(
+                f"\t ::: <yellow>Start tracking {target}</yellow> of {s.instrument.symbol} take: {s.take} stop: {s.stop}"
+            )
 
         return targets
 
@@ -116,6 +121,7 @@ class AtrRiskTracker(PositionsTracker):
                         or (pos < 0 and self._get_price(update, -1) >= c.signal.stop)
                     ):
                         c.status = "RISK-TRIGGERED"
+                        logger.debug(f"\t ::: <red>Stop triggered</red> for {instrument.symbol} at {c.signal.stop}")
                         return [TargetPosition(instrument.signal(0, group="Risk Manager", comment="Stop triggered"), 0)]
 
                 if c.signal.take:
@@ -125,9 +131,11 @@ class AtrRiskTracker(PositionsTracker):
                         or (pos < 0 and self._get_price(update, +1) <= c.signal.take)
                     ):
                         c.status = "RISK-TRIGGERED"
+                        logger.debug(f"\t ::: <green>Take triggered</green> for {instrument.symbol} at {c.signal.take}")
                         return [TargetPosition(instrument.signal(0, group="Risk Manager", comment="Take triggered"), 0)]
 
             case "DONE":
+                logger.debug(f"\t ::: <yellow>Stop tracking</yellow> {instrument.symbol}")
                 self._signals.pop(instrument)
 
         return []
