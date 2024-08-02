@@ -1,6 +1,6 @@
 from typing import Any, Optional, List
 
-from qubx import lookup, logger
+from qubx import QubxLogConfig, lookup, logger
 from qubx.core.account import AccountProcessor
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.pandaz.utils import *
@@ -16,6 +16,7 @@ from qubx.backtester.ome import OrdersManagementEngine
 from qubx.ta.indicators import sma, ema
 from qubx.backtester.simulator import simulate
 from qubx.trackers.rebalancers import PortfolioRebalancerTracker
+from qubx.trackers.riskctrl import AtrRiskTracker
 from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
 
 
@@ -157,8 +158,56 @@ class TestTrackersAndGatherers:
         assert ctx.positions[I[2].symbol].quantity == 0
 
     def test_atr_tracker(self):
-        ctx = DebugStratageyCtx(
-            I := [lookup.find_symbol("BINANCE.UM", "BTCUSDT")],
-            30000,
+
+        r = CsvStorageDataReader("tests/data/csv")
+
+        class StrategyForTracking(IStrategy):
+            timeframe: str = "1Min"
+            fast_period = 5
+            slow_period = 12
+
+            def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
+                signals = []
+                for i in ctx.instruments:
+                    ohlc = ctx.ohlc(i, self.timeframe)
+                    fast = sma(ohlc.close, self.fast_period)
+                    slow = sma(ohlc.close, self.slow_period)
+                    pos = ctx.positions[i.symbol].quantity
+
+                    if pos <= 0 and (fast[0] > slow[0]) and (fast[1] < slow[1]):
+                        signals.append(i.signal(+1, stop=ohlc[1].low))
+
+                    if pos >= 0 and (fast[0] < slow[0]) and (fast[1] > slow[1]):
+                        signals.append(i.signal(-1, stop=ohlc[1].high))
+
+                return signals
+
+            def tracker(self, ctx: StrategyContext) -> PositionsTracker:
+                return PositionsTracker(FixedRiskSizer(1, 10_000, reinvest_profit=True))
+
+        QubxLogConfig.set_log_level("ERROR")
+        rep = simulate(
+            {
+                "As Strategy 1": [
+                    StrategyForTracking(timeframe="15Min", fast_period=5, slow_period=25),
+                ],
+                "As Strategy 2": [
+                    StrategyForTracking(timeframe="15Min", fast_period=5, slow_period=25),
+                    # - it will replace strategy defined tracker
+                    AtrRiskTracker(10, 5, "15Min", 50, atr_smoother="kama", sizer=FixedRiskSizer(0.5)),
+                ],
+            },
+            r,
+            10000,
+            ["BINANCE.UM:BTCUSDT"],
+            dict(type="ohlc", timeframe="15Min", nback=0),
+            "-1Sec",
+            "vip0_usdt",
+            "2024-01-01",
+            "2024-01-05",
         )
-        assert I[0] is not None
+        # TODO: adds tests
+
+        assert len(rep[0].executions_log) == 23
+        assert len(rep[1].executions_log) == 24
+        # rep[0]
