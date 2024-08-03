@@ -17,7 +17,7 @@ class FixedSizer(IPositionSizer):
         self.fixed_size = abs(fixed_size)
 
     def calculate_target_positions(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
-        return [TargetPosition(s, s.signal * self.fixed_size) for s in signals]
+        return [TargetPosition(ctx.time(), s, s.signal * self.fixed_size) for s in signals]
 
 
 class FixedRiskSizer(IPositionSizer):
@@ -60,7 +60,7 @@ class FixedRiskSizer(IPositionSizer):
                     )
                     continue
 
-            t_pos.append(TargetPosition(signal, target_position_size))
+            t_pos.append(TargetPosition(ctx.time(), signal, target_position_size))
 
         return t_pos
 
@@ -90,6 +90,7 @@ class WeightedPortfolioSizer(IPositionSizer):
             if _q is not None:
                 t_pos.append(
                     TargetPosition(
+                        ctx.time(),
                         signal,
                         round_down_at_min_qty(
                             cap * max(signal.signal, 0) / sw / _q.mid_price(), signal.instrument.min_size_step
