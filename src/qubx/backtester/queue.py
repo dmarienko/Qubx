@@ -4,11 +4,13 @@ import heapq
 from dataclasses import dataclass
 from collections import defaultdict
 from typing import Any, Iterator, Iterable
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, Future
 
 from qubx import logger
 from qubx.core.basics import Instrument, dt_64, BatchEvent
 from qubx.data.readers import DataReader, DataTransformer
 from qubx.utils.misc import Stopwatch
+from qubx.core.exceptions import SimulatorError
 
 
 _SW = Stopwatch()
@@ -184,6 +186,143 @@ class SimulatedDataQueue:
             return []
 
 
+class SimulatedDataQueueWithThreads(SimulatedDataQueue):
+    _loaders: dict[str, list[DataLoader]]
+
+    def __init__(self, workers: int = 4, prefetch_chunk_count: int = 1):
+        self._loaders = defaultdict(list)
+        self._start = None
+        self._stop = None
+        self._current_time = None
+        self._index_to_loader: dict[int, DataLoader] = {}
+        self._index_to_prefetch: dict[int, list[Future]] = defaultdict(list)
+        self._index_to_done: dict[int, bool] = defaultdict(bool)
+        self._loader_to_index = {}
+        self._index_to_chunk_size = {}
+        self._index_to_iterator = {}
+        self._latest_loader_index = -1
+        self._removed_loader_indices = set()
+        # TODO: potentially use ProcessPoolExecutor for better performance
+        self._pool = ThreadPoolExecutor(max_workers=workers)
+        self._prefetch_chunk_count = prefetch_chunk_count
+
+    @property
+    def is_running(self) -> bool:
+        return self._current_time is not None
+
+    def __add__(self, loader: DataLoader) -> "SimulatedDataQueueWithThreads":
+        self._latest_loader_index += 1
+        new_loader_index = self._latest_loader_index
+        self._loaders[loader.symbol].append(loader)
+        self._index_to_loader[new_loader_index] = loader
+        self._loader_to_index[loader] = new_loader_index
+        if self.is_running:
+            self._submit_chunk(new_loader_index)
+            self._add_chunk_to_heap(new_loader_index)
+        return self
+
+    def __sub__(self, loader: DataLoader) -> "SimulatedDataQueueWithThreads":
+        loader_index = self._loader_to_index[loader]
+        self._loaders[loader.symbol].remove(loader)
+        del self._index_to_loader[loader_index]
+        del self._loader_to_index[loader]
+        del self._index_to_chunk_size[loader_index]
+        del self._index_to_iterator[loader_index]
+        del self._index_to_done[loader_index]
+        for future in self._index_to_prefetch[loader_index]:
+            future.cancel()
+        del self._index_to_prefetch[loader_index]
+        self._removed_loader_indices.add(loader_index)
+        return self
+
+    def get_loader(self, symbol: str, data_type: str) -> DataLoader:
+        loaders = self._loaders[symbol]
+        for loader in loaders:
+            if loader.data_type == data_type:
+                return loader
+        raise ValueError(f"Loader for {symbol} and {data_type} not found")
+
+    def create_iterable(self, start: str | pd.Timestamp, stop: str | pd.Timestamp) -> Iterator:
+        self._start = start
+        self._stop = stop
+        self._current_time = None
+        return self
+
+    def __iter__(self) -> Iterator:
+        logger.info("Initializing chunks for each loader")
+        self._current_time = self._start
+        self._index_to_chunk_size = {}
+        self._index_to_iterator = {}
+        self._event_heap = []
+        self._submit_chunk_prefetchers()
+        for loader_index in self._index_to_loader.keys():
+            self._add_chunk_to_heap(loader_index)
+        return self
+
+    @_SW.watch("DataQueue")
+    def __next__(self) -> tuple[str, str, Any]:
+        self._submit_chunk_prefetchers()
+
+        if not self._event_heap:
+            raise StopIteration
+
+        loader_index = None
+
+        # get the next event from the heap
+        # if the loader_index is in the removed_loader_indices, skip it (optimization to avoid unnecessary heap operations)
+        while self._event_heap and (loader_index is None or loader_index in self._removed_loader_indices):
+            dt, loader_index, chunk_index, event = heapq.heappop(self._event_heap)
+
+        if loader_index is None or loader_index in self._removed_loader_indices:
+            raise StopIteration
+
+        self._current_time = dt
+        chunk_size = self._index_to_chunk_size[loader_index]
+        if chunk_index + 1 == chunk_size:
+            self._add_chunk_to_heap(loader_index)
+
+        loader = self._index_to_loader[loader_index]
+        return loader.symbol, loader.data_type, event
+
+    @_SW.watch("DataQueue")
+    def _add_chunk_to_heap(self, loader_index: int):
+        futures = self._index_to_prefetch[loader_index]
+        if not futures and not self._index_to_done[loader_index]:
+            loader = self._index_to_loader[loader_index]
+            logger.error(f"Error state: No submitted tasks for loader {loader.symbol} {loader.data_type}")
+            raise SimulatorError("No submitted tasks for loader")
+        elif self._index_to_done[loader_index]:
+            return
+
+        # wait for future to finish if needed
+        chunk = futures.pop(0).result()
+        self._index_to_chunk_size[loader_index] = len(chunk)
+        for chunk_index, event in enumerate(chunk):
+            dt = event.time  # type: ignore
+            heapq.heappush(self._event_heap, (dt, loader_index, chunk_index, event))
+
+    def _next_chunk(self, index: int) -> list[Any]:
+        if index not in self._index_to_iterator:
+            self._index_to_iterator[index] = self._index_to_loader[index].load(self._current_time, self._stop)  # type: ignore
+        iterator = self._index_to_iterator[index]
+        try:
+            return next(iterator)
+        except StopIteration:
+            return []
+
+    def _submit_chunk_prefetchers(self):
+        for index in self._index_to_loader.keys():
+            if len(self._index_to_prefetch[index]) < self._prefetch_chunk_count:
+                self._submit_chunk(index)
+
+    def _submit_chunk(self, loader_index: int) -> None:
+        future = self._pool.submit(self._next_chunk, loader_index)
+        self._index_to_prefetch[loader_index].append(future)
+
+    def __del__(self):
+        self._pool.shutdown()
+
+
 class EventBatcher:
     _BATCH_SETTINGS = {
         "trade": "1Sec",
@@ -202,7 +341,8 @@ class EventBatcher:
             yield from _iter
             return
 
-        last_symbol, last_data_type = None, None
+        last_symbol: str = None  # type: ignore
+        last_data_type: str = None  # type: ignore
         buffer = []
         for symbol, data_type, event in self.source_iterator:
             time: dt_64 = event.time  # type: ignore
@@ -233,7 +373,7 @@ class EventBatcher:
             if pd.Timedelta(time - buffer[0].time) >= self._batch_settings[data_type]:
                 yield symbol, data_type, self._batch_event(buffer)
                 buffer = []
-                last_symbol, last_data_type = None, None
+                last_symbol, last_data_type = None, None  # type: ignore
 
         if buffer:
             yield last_symbol, last_data_type, self._batch_event(buffer)

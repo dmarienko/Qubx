@@ -1,7 +1,7 @@
 import pandas as pd
 from typing import Any, Iterator
 from qubx.core.basics import BatchEvent
-from qubx.backtester.queue import SimulatedDataQueue, DataLoader, EventBatcher
+from qubx.backtester.queue import SimulatedDataQueue, DataLoader, EventBatcher, SimulatedDataQueueWithThreads
 
 
 class DummyEvent:
@@ -52,17 +52,21 @@ def get_event_dt(i: float, base: pd.Timestamp = pd.Timestamp("2021-01-01"), offs
 
 
 class TestSimulatedQueueStuff:
+    q: SimulatedDataQueue
+
+    def setup_method(self):
+        self.q = SimulatedDataQueue()
+        # self.q = SimulatedDataQueueWithThreads()
 
     def test_dummy_basic_event_sync(self):
-        q = SimulatedDataQueue()
-        q += DummyDataLoader(
+        self.q += DummyDataLoader(
             "APPL",
             [
                 [DummyEvent(get_event_dt(1), "data1")],
                 [DummyEvent(get_event_dt(3), "data2"), DummyEvent(get_event_dt(5), "data3")],
             ],
         )
-        q += DummyDataLoader(
+        self.q += DummyDataLoader(
             "MSFT",
             [
                 [
@@ -80,12 +84,11 @@ class TestSimulatedQueueStuff:
             ("APPL", "dummy", DummyEvent(get_event_dt(5), "data3")),
             ("MSFT", "dummy", DummyEvent(get_event_dt(5), "data6")),
         ]
-        actual_event_seq = list(q.create_iterable(get_event_dt(0), get_event_dt(10)))
+        actual_event_seq = list(self.q.create_iterable(get_event_dt(0), get_event_dt(10)))
         assert expected_event_seq == actual_event_seq
 
     def test_dummy_data_loader_add(self):
-        q = SimulatedDataQueue()
-        q += DummyDataLoader(
+        self.q += DummyDataLoader(
             "APPL",
             [
                 [DummyEvent(get_event_dt(1), "data1")],
@@ -93,10 +96,10 @@ class TestSimulatedQueueStuff:
             ],
         )
         actual_event_seq = []
-        qiter = iter(q.create_iterable(get_event_dt(0), get_event_dt(10)))
+        qiter = iter(self.q.create_iterable(get_event_dt(0), get_event_dt(10)))
         actual_event_seq.append(next(qiter))
         # now let's add another loader in the middle of the iteration
-        q += DummyDataLoader(
+        self.q += DummyDataLoader(
             "MSFT",
             [
                 [
@@ -122,7 +125,6 @@ class TestSimulatedQueueStuff:
         assert expected_event_seq == actual_event_seq
 
     def test_dummy_data_loader_remove(self):
-        q = SimulatedDataQueue()
         l1 = DummyDataLoader(
             "APPL",
             [
@@ -140,13 +142,13 @@ class TestSimulatedQueueStuff:
                 ]
             ],
         )
-        q += l1
-        q += l2
+        self.q += l1
+        self.q += l2
         actual_event_seq = []
-        qiter = iter(q.create_iterable(get_event_dt(0), get_event_dt(10)))
+        qiter = iter(self.q.create_iterable(get_event_dt(0), get_event_dt(10)))
         for _ in range(3):
             actual_event_seq.append(next(qiter))
-        q -= l2
+        self.q -= l2
         while True:
             try:
                 actual_event_seq.append(next(qiter))
