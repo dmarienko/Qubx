@@ -503,7 +503,10 @@ class StrategyContextImpl(StrategyContext):
 
         # - update tracker and handle alterd positions if need
         self.positions_gathering.alter_positions(
-            self, self.positions_tracker.update(self, self._symb_to_instr[symbol], trade)
+            self,
+            self.positions_tracker.update(
+                self, self._symb_to_instr[symbol], trade.data[-1] if is_batch_event else trade
+            ),
         )
 
         if self._trig_on_trade:

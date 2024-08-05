@@ -20,3 +20,7 @@ class OrderNotFound(InvalidOrder):
 
 class NotSupported(ExchangeError):
     pass
+
+
+class SimulatorError(BaseError):
+    pass

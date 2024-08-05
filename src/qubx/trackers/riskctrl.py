@@ -61,6 +61,8 @@ class AtrRiskTracker(PositionsTracker):
                 smoother=self.atr_smoother,
                 percentage=False,
             )
+            if len(volatility) < 2:
+                continue
             last_volatility = volatility[1]
             quote = ctx.quote(s.instrument.symbol)
             if last_volatility is None or not np.isfinite(last_volatility) or quote is None:
