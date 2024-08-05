@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 cimport numpy as np
-from scipy.special.cython_special import ndtri
+from scipy.special.cython_special import ndtri, stdtrit, gamma
 from collections import deque
 
 from qubx.core.series cimport TimeSeries, Indicator, IndicatorOHLC, RollingSum, nans, OHLCV, Bar
@@ -269,6 +269,21 @@ cdef double lognorm_pdf(double x, double s):
     return np.exp(-np.log(x) ** 2 / (2 * s ** 2)) / (x * s * np.sqrt(2 * np.pi))
 
 
+cdef double student_t_pdf(double x, double df):
+    """Compute the PDF of the Student's t-distribution."""
+    gamma_df = gamma(df / 2.0)
+    gamma_df_plus_1 = gamma((df + 1) / 2.0)
+    
+    # Normalization constant
+    normalization = gamma_df_plus_1 / (np.sqrt(df * np.pi) * gamma_df)
+    
+    # PDF calculation
+    term = (1 + (x ** 2) / df) ** (-(df + 1) / 2.0)
+    pdf_value = normalization * term
+    
+    return pdf_value
+
+
 cdef class Pewma(Indicator):
     cdef public TimeSeries std
     cdef double alpha, beta
@@ -347,16 +362,30 @@ cdef class PewmaOutliersDetector(Indicator):
     cdef public TimeSeries upper, lower, outliers, std
     cdef double alpha, beta, threshold
     cdef int T
+    cdef str dist
 
+    cdef double student_t_df
     cdef long _i
     cdef double mean, vstd, variance
     cdef double _mean, _vstd, _variance, _z_thr
 
-    def __init__(self, str name, TimeSeries series, double alpha, double beta, int T, double threshold):
+    def __init__(
+        self,
+        str name,
+        TimeSeries series,
+        double alpha,
+        double beta,
+        int T,
+        double threshold,
+        str dist = "normal",
+        double student_t_df = 3.0
+    ):
         self.alpha = alpha 
         self.beta = beta
         self.T = T
         self.threshold = threshold
+        self.dist = dist
+        self.student_t_df = student_t_df
 
         # - series
         self.upper = TimeSeries('uba', series.timeframe, series.max_series_length)
@@ -366,7 +395,7 @@ cdef class PewmaOutliersDetector(Indicator):
 
         # - local variables
         self._i = 0
-        self._z_thr = ndtri(1 - threshold / 2)
+        self._z_thr = self._get_z_thr()
 
         super().__init__(name, series)
 
@@ -379,6 +408,14 @@ cdef class PewmaOutliersDetector(Indicator):
         self._mean = self.mean
         self._vstd = self.vstd
         self._variance = self.variance
+    
+    cdef double _get_z_thr(self):
+        if self.dist == 'normal':
+            return ndtri(1 - self.threshold / 2)
+        elif self.dist == 'student_t':
+            return stdtrit(self.student_t_df, 1 - self.threshold / 2)
+        else:
+            raise ValueError('Invalid distribution type')
 
     cdef double _get_alpha(self, double p_t):
         if self._i + 1 >= self.T:
@@ -396,16 +433,15 @@ cdef class PewmaOutliersDetector(Indicator):
 
     cdef double _get_p(self, double x):
         cdef double z_t = ((x - self.mean) / self.vstd) if (self.vstd != 0 and not np.isnan(x)) else 0.0
-        # if self.dist == 'normal':
-        # p_t = norm_pdf(z_t)
+        if self.dist == 'normal':
+            p_t = norm_pdf(z_t)
+        elif self.dist == 'student_t':
+            p_t = student_t_pdf(z_t, self.student_t_df)
         # elif self.dist == 'cauchy':
         #     p_t = (1 / (np.pi * (1 + np.square(z_t))))
-        # elif self.dist == 'student_t':
-        #     p_t = (1 + np.square(z_t)) ** (-0.5 * (self.count - 1)) / \
-        #           (np.sqrt(self.count - 1) * np.sqrt(np.pi) * np.exp(np.math.lgamma(0.5 * (self.count - 1))))
-        # else:
-        #     raise ValueError('Invalid distribution type')
-        return norm_pdf(z_t)
+        else:
+            raise ValueError('Invalid distribution type')
+        return p_t
 
     cpdef double calculate(self, long long time, double x, short new_item_started):
         # - first bar - just use it as initial value
@@ -446,11 +482,14 @@ cdef class PewmaOutliersDetector(Indicator):
         return self.mean
 
 
-def pewma_outliers_detector(series:TimeSeries, alpha: float, beta: float, T:int=30, threshold=0.05):
+def pewma_outliers_detector(
+    series: TimeSeries, alpha: float, beta: float, T:int=30, threshold=0.05,
+    dist: str = "normal", student_t_df: float = 3.0
+):
     """
     Outliers detector based on pwma
     """
-    return PewmaOutliersDetector.wrap(series, alpha, beta, T, threshold)
+    return PewmaOutliersDetector.wrap(series, alpha, beta, T, threshold, dist=dist, student_t_df=student_t_df)
 
 
 cdef class Psar(IndicatorOHLC):
