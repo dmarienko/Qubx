@@ -717,10 +717,15 @@ def tearsheet(
     compound: bool = True,
     account_transactions=True,
     performance_statistics_period=365,
+    timeframe: str | pd.Timedelta | None = None,
 ):
+    if timeframe is None:
+        timeframe = _estimate_timeframe(session)
     if isinstance(session, list):
         if len(session) == 1:
-            return _tearsheet_single(session[0], compound, account_transactions, performance_statistics_period)
+            return _tearsheet_single(
+                session[0], compound, account_transactions, performance_statistics_period, timeframe=timeframe
+            )
         else:
             import matplotlib.pyplot as plt
 
@@ -732,10 +737,12 @@ def tearsheet(
                 _rs.append(report)
                 if compound:
                     # _eq.append(pd.Series(100 * mtrx["compound_returns"], name=s.trading_id))
-                    plt.plot(100 * mtrx["compound_returns"], label=s.trading_id)
+                    compound_returns = mtrx["compound_returns"].resample(timeframe).ffill()
+                    plt.plot(100 * compound_returns, label=s.trading_id)
                 else:
                     # _eq.append(pd.Series(mtrx["equity"], name=s.trading_id))
-                    plt.plot(mtrx["equity"], label=s.trading_id)
+                    equity = mtrx["equity"].resample(timeframe).ffill()
+                    plt.plot(equity, label=s.trading_id)
 
             if len(session) <= 15:
                 plt.legend(ncol=max(1, len(session) // 5))
@@ -744,7 +751,25 @@ def tearsheet(
             return pd.concat(_rs, axis=1).T
 
     else:
-        return _tearsheet_single(session, compound, account_transactions, performance_statistics_period)
+        return _tearsheet_single(
+            session, compound, account_transactions, performance_statistics_period, timeframe=timeframe
+        )
+
+
+def _estimate_timeframe(session: TradingSessionResult | list[TradingSessionResult]) -> str:
+    session = session[0] if isinstance(session, list) else session
+    start, end = pd.Timestamp(session.start), pd.Timestamp(session.stop)
+    diff = end - start
+    if diff > pd.Timedelta("360d"):
+        return "1d"
+    elif diff > pd.Timedelta("30d"):
+        return "1h"
+    elif diff > pd.Timedelta("7d"):
+        return "15min"
+    elif diff > pd.Timedelta("1d"):
+        return "5min"
+    else:
+        return "1min"
 
 
 def _pfl_metrics_prepare(session: TradingSessionResult, account_transactions: bool, performance_statistics_period: int):
@@ -768,6 +793,7 @@ def _tearsheet_single(
     compound: bool = True,
     account_transactions=True,
     performance_statistics_period=365,
+    timeframe: str | pd.Timedelta = "1h",
 ):
     report, mtrx = _pfl_metrics_prepare(session, account_transactions, performance_statistics_period)
     tbl = go.Table(
@@ -787,26 +813,17 @@ def _tearsheet_single(
         ),
     )
 
-    _eqty = (
-        ["area", "green", 100 * mtrx["compound_returns"]]
-        if compound
-        else ["area", "green", mtrx["equity"] - mtrx["equity"].iloc[0]]
-    )
-    _dd = (
-        [
-            "area",
-            -mtrx["drawdown_pct"],
-            "lim",
-            [-mtrx["max_dd_pct"], 0],
-        ]
-        if compound
-        else [
-            "area",
-            -mtrx["drawdown_usd"],
-            "lim",
-            [-mtrx["mdd_usd"], 0],
-        ]
-    )
+    eqty = 100 * mtrx["compound_returns"] if compound else mtrx["equity"] - mtrx["equity"].iloc[0]
+    eqty = eqty.resample(timeframe).ffill()
+    _eqty = ["area", "green", eqty]
+    dd = mtrx["drawdown_pct"] if compound else mtrx["drawdown_usd"]
+    dd = dd.resample(timeframe).ffill()
+    _dd = [
+        "area",
+        -dd,
+        "lim",
+        [-dd, 0],
+    ]
     chart = (
         LookingGlass(
             _eqty,
