@@ -13,11 +13,54 @@ class FixedSizer(IPositionSizer):
     We use it for quick backtesting of generated signals in most cases.
     """
 
-    def __init__(self, fixed_size):
+    def __init__(self, fixed_size: float, amount_in_quote: bool = True):
+        self.amount_in_quote = amount_in_quote
         self.fixed_size = abs(fixed_size)
 
     def calculate_target_positions(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
-        return [TargetPosition(s, s.signal * self.fixed_size) for s in signals]
+        if not self.amount_in_quote:
+            return [TargetPosition(s, s.signal * self.fixed_size) for s in signals]
+        positions = []
+        for signal in signals:
+            q = ctx.quote(signal.instrument.symbol)
+            if q is None:
+                logger.error(
+                    f"{self.__class__.__name__}: Can't get actual market quote for {signal.instrument.symbol} !"
+                )
+                continue
+            positions.append(TargetPosition(signal, signal.signal * self.fixed_size / q.mid_price()))
+        return positions
+
+
+class FixedLeverageSizer(IPositionSizer):
+    """
+    Defines the leverage per each unit of signal. If leverage is 1.0, then
+    the position leverage will be equal to the signal value.
+    """
+
+    def __init__(self, leverage: float, split_by_symbols: bool = True):
+        """
+        Args:
+            leverage (float): leverage value per a unit of signal.
+            split_by_symbols (bool): Should the calculated leverage by divided
+            by the number of symbols in the universe.
+        """
+        self.leverage = leverage
+        self.split_by_symbols = split_by_symbols
+
+    def calculate_target_positions(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
+        total_capital = ctx.acc.get_total_capital()
+        positions = []
+        for signal in signals:
+            q = ctx.quote(signal.instrument.symbol)
+            if q is None:
+                logger.error(
+                    f"{self.__class__.__name__}: Can't get actual market quote for {signal.instrument.symbol} !"
+                )
+                continue
+            size = signal.signal * self.leverage * total_capital / q.mid_price()
+            positions.append(TargetPosition(signal, size))
+        return positions
 
 
 class FixedRiskSizer(IPositionSizer):
