@@ -28,7 +28,9 @@ class FixedSizer(IPositionSizer):
                     f"{self.__class__.__name__}: Can't get actual market quote for {signal.instrument.symbol} !"
                 )
                 continue
-            positions.append(TargetPosition(signal, signal.signal * self.fixed_size / q.mid_price()))
+            positions.append(
+                TargetPosition(signal, signal.signal * self.fixed_size / q.mid_price() / len(ctx.instruments))
+            )
         return positions
 
 
@@ -38,7 +40,7 @@ class FixedLeverageSizer(IPositionSizer):
     the position leverage will be equal to the signal value.
     """
 
-    def __init__(self, leverage: float, split_by_symbols: bool = True):
+    def __init__(self, leverage: float):
         """
         Args:
             leverage (float): leverage value per a unit of signal.
@@ -46,7 +48,6 @@ class FixedLeverageSizer(IPositionSizer):
             by the number of symbols in the universe.
         """
         self.leverage = leverage
-        self.split_by_symbols = split_by_symbols
 
     def calculate_target_positions(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         total_capital = ctx.acc.get_total_capital()
@@ -58,7 +59,7 @@ class FixedLeverageSizer(IPositionSizer):
                     f"{self.__class__.__name__}: Can't get actual market quote for {signal.instrument.symbol} !"
                 )
                 continue
-            size = signal.signal * self.leverage * total_capital / q.mid_price()
+            size = signal.signal * self.leverage * total_capital / q.mid_price() / len(ctx.instruments)
             positions.append(TargetPosition(signal, size))
         return positions
 
