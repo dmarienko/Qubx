@@ -673,7 +673,7 @@ def portfolio_metrics(
     sheet["sharpe"] = sharpe_ratio(returns_daily, risk_free, performance_statistics_period)
     sheet["qr"] = qr(equity)
     sheet["drawdown_usd"] = dd_data
-    sheet["drawdown_pct"] = 100 * dd_data / init_cash
+    sheet["drawdown_pct"] = 100 * dd_data / equity.cummax()
     # 25-May-2019: MDE fixed Max DD pct calculations
     sheet["max_dd_pct"] = 100 * mdd / equity.iloc[ddstart]  # max_drawdown_pct(returns)
     # sheet["max_dd_pct_on_init"] = 100 * mdd / init_cash
