@@ -141,6 +141,7 @@ class StrategyContextImpl(StrategyContext):
         self.config = config
         self.instruments = instruments
         self.positions = {}
+        self.strategy_name = strategy.__class__.__name__
         self.__fit_is_running = False
         self.__init_fit_was_called = False
         self.__pool = None
@@ -379,6 +380,11 @@ class StrategyContextImpl(StrategyContext):
 
             # - process and execute signals if they are provided
             if signals:
+                # set strategy group name if not set
+                for signal in signals:
+                    if not signal.group:
+                        signal.group = self.strategy_name
+
                 # process signals by tracker and turn convert them into positions
                 positions_from_strategy = self.__log_target_positions(
                     self.positions_tracker.process_signals(self, signals)
@@ -482,10 +488,15 @@ class StrategyContextImpl(StrategyContext):
                 self._current_bar_trigger_processed = False
         return None
 
-    def __log_target_positions(self, signals: List[TargetPosition] | None) -> List[TargetPosition]:
-        if signals:
-            self._logging.save_signals_targets(signals)
-        return signals
+    def __log_target_positions(self, target_positions: List[TargetPosition] | None) -> List[TargetPosition]:
+        if target_positions:
+            # set reference prices for signals
+            for pos in target_positions:
+                signal = pos.signal
+                if signal.reference_price is None:
+                    signal.reference_price = self.quote(signal.instrument.symbol).mid_price()
+            self._logging.save_signals_targets(target_positions)
+        return target_positions
 
     @_SW.watch("StrategyContext")
     def _processing_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:

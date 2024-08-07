@@ -26,6 +26,7 @@ class Signal:
     price: float | None = None
     stop: float | None = None
     take: float | None = None
+    reference_price: float | None = None
     group: str = ""
     comment: str = ""
 
@@ -33,8 +34,11 @@ class Signal:
         _p = f" @ { self.price }" if self.price is not None else ""
         _s = f" stop: { self.stop }" if self.stop is not None else ""
         _t = f" take: { self.take }" if self.take is not None else ""
+        _r = f" {self.reference_price:.2f}" if self.reference_price is not None else ""
         _c = f" [{self.comment}]" if self.take is not None else ""
-        return f"{self.group} {self.signal:+f} {self.instrument.symbol}{_p}{_s}{_t} on {self.instrument.exchange}{_c}"
+        return (
+            f"{self.group}{_r} {self.signal:+f} {self.instrument.symbol}{_p}{_s}{_t} on {self.instrument.exchange}{_c}"
+        )
 
 
 @dataclass
@@ -127,7 +131,7 @@ class Instrument:
         group: str = "",
         comment: str = "",
     ) -> Signal:
-        return Signal(self, signal, price, stop, take, group, comment)
+        return Signal(self, signal=signal, price=price, stop=stop, take=take, group=group, comment=comment)
 
     def __hash__(self) -> int:
         return hash((self.symbol, self.exchange, self.market_type))
