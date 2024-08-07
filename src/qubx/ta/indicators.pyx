@@ -483,13 +483,18 @@ cdef class PewmaOutliersDetector(Indicator):
 
 
 def pewma_outliers_detector(
-    series: TimeSeries, alpha: float, beta: float, T:int=30, threshold=0.05,
-    dist: str = "normal", student_t_df: float = 3.0
+    series: TimeSeries,
+    alpha: float,
+    beta: float,
+    T:int=30,
+    threshold=0.05,
+    dist: str = "normal",
+    **kwargs
 ):
     """
     Outliers detector based on pwma
     """
-    return PewmaOutliersDetector.wrap(series, alpha, beta, T, threshold, dist=dist, student_t_df=student_t_df)
+    return PewmaOutliersDetector.wrap(series, alpha, beta, T, threshold, dist=dist, **kwargs)
 
 
 cdef class Psar(IndicatorOHLC):
