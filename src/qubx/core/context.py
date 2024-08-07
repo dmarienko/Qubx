@@ -494,9 +494,12 @@ class StrategyContextImpl(StrategyContext):
             for pos in target_positions:
                 signal = pos.signal
                 if signal.reference_price is None:
-                    signal.reference_price = self.quote(signal.instrument.symbol).mid_price()
+                    q = self.quote(signal.instrument.symbol)
+                    if q is None:
+                        continue
+                    signal.reference_price = q.mid_price()
             self._logging.save_signals_targets(target_positions)
-        return target_positions
+        return target_positions if target_positions is not None else []
 
     @_SW.watch("StrategyContext")
     def _processing_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
