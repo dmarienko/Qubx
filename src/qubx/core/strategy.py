@@ -63,6 +63,7 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
         price: float | None = None,
         client_id: str | None = None,
         time_in_force: str = "gtc",
+        **kwargs,
     ) -> Order:
         raise NotImplementedError("send_order is not implemented")
 
@@ -145,7 +146,7 @@ class SubscriptionType:
     OHLC = "ohlc"
 
 
-class StrategyContext:
+class StrategyContext(ITimeProvider):
     """
     Strategy context interface
     """
@@ -165,7 +166,12 @@ class StrategyContext:
     def time(self) -> dt_64: ...
 
     def trade(
-        self, instr_or_symbol: Instrument | str, amount: float, price: float | None = None, time_in_force="gtc"
+        self,
+        instr_or_symbol: Instrument | str,
+        amount: float,
+        price: float | None = None,
+        time_in_force="gtc",
+        **kwargs,
     ) -> Order: ...
 
     def cancel(self, instr_or_symbol: Instrument | str): ...
@@ -209,16 +215,14 @@ class IPositionGathering:
     Common interface for position gathering
     """
 
-    def alter_position_size(
-        self, ctx: StrategyContext, instrument: Instrument, new_size: float, at_price: float | None = None
-    ) -> float: ...
+    def alter_position_size(self, ctx: StrategyContext, target: TargetPosition) -> float: ...
 
     def alter_positions(self, ctx: StrategyContext, targets: List[TargetPosition]) -> Dict[Instrument, float]:
         res = {}
         if targets:
             for t in targets:
                 try:
-                    res[t.instrument] = self.alter_position_size(ctx, t.instrument, t.target_position_size, t.price)
+                    res[t.instrument] = self.alter_position_size(ctx, t)
                 except Exception as ex:
                     logger.error(f"[{ctx.time()}]: Failed processing target position {t} : {ex}")
                     logger.opt(colors=False).error(traceback.format_exc())
@@ -255,13 +259,15 @@ class PositionsTracker:
     def get_position_sizer(self) -> IPositionSizer:
         return self._sizer
 
-    def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
+    def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition] | TargetPosition:
         """
         Default implementation just returns calculated target positions
         """
         return self.get_position_sizer().calculate_target_positions(ctx, signals)
 
-    def update(self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar) -> List[TargetPosition]:
+    def update(
+        self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+    ) -> List[TargetPosition] | TargetPosition:
         """
         Tracker is being updated by new market data.
         It may require to change position size or create new position because of interior tracker's logic (risk management for example).

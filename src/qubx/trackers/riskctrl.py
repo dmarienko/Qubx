@@ -39,24 +39,30 @@ class StopTakePositionTracker(PositionsTracker):
         self.stop_risk = stop_risk
         self._signals = dict()
         super().__init__(sizer)
+        self._take_target_fraction = take_target / 100 if take_target else None
+        self._stop_risk_fraction = stop_risk / 100 if stop_risk else None
 
     def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         targets = []
         for s in signals:
             quote = ctx.quote(s.instrument.symbol)
+            if quote is None:
+                logger.warning(f"Quote not available for {s.instrument.symbol}. Skipping signal {s}")
+                continue
+
             if s.signal > 0:
                 entry = s.price if s.price else quote.ask
-                if self.take_target:
-                    s.take = entry * (1 + self.take_target / 100)
-                if self.stop_risk:
-                    s.stop = entry * (1 - self.stop_risk / 100)
+                if self._take_target_fraction:
+                    s.take = entry * (1 + self._take_target_fraction)
+                if self._stop_risk_fraction:
+                    s.stop = entry * (1 - self._stop_risk_fraction)
 
             elif s.signal < 0:
                 entry = s.price if s.price else quote.bid
-                if self.take_target:
-                    s.take = entry * (1 - self.take_target / 100)
-                if self.stop_risk:
-                    s.stop = entry * (1 + self.stop_risk / 100)
+                if self._take_target_fraction:
+                    s.take = entry * (1 - self._take_target_fraction)
+                if self._stop_risk_fraction:
+                    s.stop = entry * (1 + self._stop_risk_fraction)
 
             target = self.get_position_sizer().calculate_target_positions(ctx, [s])[0]
             targets.append(target)
@@ -80,7 +86,9 @@ class StopTakePositionTracker(PositionsTracker):
         else:
             raise ValueError(f"Unknown update type: {type(update)}")
 
-    def update(self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar) -> List[TargetPosition]:
+    def update(
+        self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+    ) -> List[TargetPosition] | TargetPosition:
         c = self._signals.get(instrument)
         if c is None:
             return []
@@ -90,7 +98,7 @@ class StopTakePositionTracker(PositionsTracker):
                 # - nothing to do just waiting for position to be open
                 pass
 
-            case "TRISK-TRIGGERED":
+            case "RISK-TRIGGERED":
                 # - nothing to do just waiting for position to be closed
                 pass
 
@@ -104,11 +112,16 @@ class StopTakePositionTracker(PositionsTracker):
                     ):
                         c.status = "RISK-TRIGGERED"
                         logger.debug(f"\t ::: <red>Stop triggered</red> for {instrument.symbol} at {c.signal.stop}")
-                        return [
-                            TargetPosition(
-                                ctx.time(), instrument.signal(0, group="Risk Manager", comment="Stop triggered"), 0
-                            )
-                        ]
+                        return TargetPosition.zero(
+                            ctx,
+                            instrument.signal(
+                                0,
+                                price=c.signal.stop,
+                                group="Risk Manager",
+                                comment="Stop triggered",
+                                fill_at_signal_price=True,
+                            ),
+                        )
 
                 if c.signal.take:
                     if (
@@ -118,11 +131,16 @@ class StopTakePositionTracker(PositionsTracker):
                     ):
                         c.status = "RISK-TRIGGERED"
                         logger.debug(f"\t ::: <green>Take triggered</green> for {instrument.symbol} at {c.signal.take}")
-                        return [
-                            TargetPosition(
-                                ctx.time(), instrument.signal(0, group="Risk Manager", comment="Take triggered"), 0
-                            )
-                        ]
+                        return TargetPosition.zero(
+                            ctx,
+                            instrument.signal(
+                                0,
+                                price=c.signal.take,
+                                group="Risk Manager",
+                                comment="Take triggered",
+                                fill_at_signal_price=True,
+                            ),
+                        )
 
             case "DONE":
                 logger.debug(f"\t ::: <yellow>Stop tracking</yellow> {instrument.symbol}")

@@ -90,6 +90,7 @@ class OrdersManagementEngine:
         price: float | None = None,
         client_id: str | None = None,
         time_in_force: str = "gtc",
+        fill_at_price: bool = False,
     ) -> OmeReport:
 
         if self.bbo is None:
@@ -114,12 +115,12 @@ class OrdersManagementEngine:
             client_id,
         )
 
-        return self._process_order(timestamp, order)
+        return self._process_order(timestamp, order, fill_at_price=fill_at_price)
 
     def _dbg(self, message, **kwargs) -> None:
         logger.debug(f"[OMS] {self.instrument.symbol} - {message}", **kwargs)
 
-    def _process_order(self, timestamp: dt_64, order: Order) -> OmeReport:
+    def _process_order(self, timestamp: dt_64, order: Order, fill_at_price: bool = False) -> OmeReport:
         if order.status in ["CLOSED", "CANCELED"]:
             raise InvalidOrder(f"Order {order.id} is already closed or canceled.")
 
@@ -129,7 +130,10 @@ class OrdersManagementEngine:
 
         # - check if order can be "executed" immediately
         exec_price = None
-        if order.type == "MARKET":
+        if fill_at_price and order.price:
+            exec_price = order.price
+
+        elif order.type == "MARKET":
             exec_price = c_ask if buy_side else c_bid
 
         elif order.type == "LIMIT":

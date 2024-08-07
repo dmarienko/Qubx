@@ -187,13 +187,16 @@ class SimulatedTrading(ITradingServiceProvider):
         price: float | None = None,
         client_id: str | None = None,
         time_in_force: str = "gtc",
+        fill_at_price: bool = False,
     ) -> Order:
         ome = self._ome.get(instrument.symbol)
         if ome is None:
             raise ValueError(f"ExchangeService:send_order :: No OME configured for '{instrument.symbol}'!")
 
         # - try to place order in OME
-        report = ome.place_order(order_side.upper(), order_type.upper(), amount, price, client_id, time_in_force)
+        report = ome.place_order(
+            order_side.upper(), order_type.upper(), amount, price, client_id, time_in_force, fill_at_price=fill_at_price
+        )
         order = report.order
         self._order_to_symbol[order.id] = instrument.symbol
 
