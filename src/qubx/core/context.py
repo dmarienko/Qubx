@@ -380,7 +380,9 @@ class StrategyContextImpl(StrategyContext):
             # - process and execute signals if they are provided
             if signals:
                 # process signals by tracker and turn convert them into positions
-                positions_from_strategy = self.positions_tracker.process_signals(self, signals)
+                positions_from_strategy = self.__log_target_positions(
+                    self.positions_tracker.process_signals(self, signals)
+                )
 
                 # gathering in charge of positions
                 self.positions_gathering.alter_positions(self, positions_from_strategy)
@@ -480,6 +482,11 @@ class StrategyContextImpl(StrategyContext):
                 self._current_bar_trigger_processed = False
         return None
 
+    def __log_target_positions(self, signals: List[TargetPosition] | None) -> List[TargetPosition]:
+        if signals:
+            self._logging.save_signals_targets(signals)
+        return signals
+
     @_SW.watch("StrategyContext")
     def _processing_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
         # - processing current bar's update
@@ -487,7 +494,7 @@ class StrategyContextImpl(StrategyContext):
 
         # - update tracker and handle alterd positions if need
         self.positions_gathering.alter_positions(
-            self, self.positions_tracker.update(self, self._symb_to_instr[symbol], bar)
+            self, self.__log_target_positions(self.positions_tracker.update(self, self._symb_to_instr[symbol], bar))
         )
 
         # - check if it's time to trigger the on_event if it's configured
@@ -504,8 +511,10 @@ class StrategyContextImpl(StrategyContext):
         # - update tracker and handle alterd positions if need
         self.positions_gathering.alter_positions(
             self,
-            self.positions_tracker.update(
-                self, self._symb_to_instr[symbol], trade.data[-1] if is_batch_event else trade
+            self.__log_target_positions(
+                self.positions_tracker.update(
+                    self, self._symb_to_instr[symbol], trade.data[-1] if is_batch_event else trade
+                ),
             ),
         )
 
@@ -519,7 +528,7 @@ class StrategyContextImpl(StrategyContext):
 
         # - update tracker and handle alterd positions if need
         self.positions_gathering.alter_positions(
-            self, self.positions_tracker.update(self, self._symb_to_instr[symbol], quote)
+            self, self.__log_target_positions(self.positions_tracker.update(self, self._symb_to_instr[symbol], quote))
         )
 
         # - TODO: here we can apply throttlings or filters

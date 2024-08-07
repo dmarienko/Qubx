@@ -43,6 +43,7 @@ class TargetPosition:
     Class for presenting target position calculated from signal
     """
 
+    time: dt_64  # time when position was set
     signal: Signal  # original signal
     target_position_size: float  # actual position size after processing in sizer
 
@@ -63,7 +64,7 @@ class TargetPosition:
         return self.signal.take
 
     def __str__(self) -> str:
-        return f"Target for {self.signal} -> {self.target_position_size}"
+        return f"Target for {self.signal} -> {self.target_position_size} at {self.time}"
 
 
 @dataclass

@@ -124,7 +124,11 @@ class AtrRiskTracker(PositionsTracker):
                     ):
                         c.status = "RISK-TRIGGERED"
                         logger.debug(f"\t ::: <red>Stop triggered</red> for {instrument.symbol} at {c.signal.stop}")
-                        return [TargetPosition(instrument.signal(0, group="Risk Manager", comment="Stop triggered"), 0)]
+                        return [
+                            TargetPosition(
+                                ctx.time(), instrument.signal(0, group="Risk Manager", comment="Stop triggered"), 0
+                            )
+                        ]
 
                 if c.signal.take:
                     if (
@@ -134,7 +138,11 @@ class AtrRiskTracker(PositionsTracker):
                     ):
                         c.status = "RISK-TRIGGERED"
                         logger.debug(f"\t ::: <green>Take triggered</green> for {instrument.symbol} at {c.signal.take}")
-                        return [TargetPosition(instrument.signal(0, group="Risk Manager", comment="Take triggered"), 0)]
+                        return [
+                            TargetPosition(
+                                ctx.time(), instrument.signal(0, group="Risk Manager", comment="Take triggered"), 0
+                            )
+                        ]
 
             case "DONE":
                 logger.debug(f"\t ::: <yellow>Stop tracking</yellow> {instrument.symbol}")
