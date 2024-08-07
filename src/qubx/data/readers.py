@@ -228,13 +228,17 @@ class InMemoryDataFrameReader(DataReader):
     Data reader for pandas DataFrames
     """
 
-    def __init__(self, data: Dict[str, pd.DataFrame]) -> None:
+    def __init__(self, data: Dict[str, pd.DataFrame], exchange: str | None = None) -> None:
         if not isinstance(data, dict):
             raise ValueError("data must be a dictionary of pandas DataFrames")
         self._data = data
+        self.exchange = exchange
 
     def get_names(self, **kwargs) -> List[str]:
-        return list(self._data.keys())
+        keys = list(self._data.keys())
+        if self.exchange:
+            return [f"{self.exchange}:{k}" for k in keys]
+        return keys
 
     def read(
         self,
@@ -274,13 +278,23 @@ class InMemoryDataFrameReader(DataReader):
             If no data is found for the given data_id.
         """
         start, stop = handle_start_stop(start, stop)
+        if data_id not in self._data:
+            if data_id.startswith(self.exchange):
+                data_id = data_id.split(":")[1]
         d = self._data.get(data_id)
         if d is None:
             raise ValueError(f"No data found for {data_id}")
         d2 = d.loc[start:stop].copy().reset_index()
         transform.start_transform(data_id, list(d2.columns), start=start, stop=stop)
         transform.process_data(d2.values)
-        return transform.collect()
+        res = transform.collect()
+        if chunksize > 0:
+
+            def __iterable():
+                yield res
+
+            return __iterable()
+        return res
 
 
 class AsPandasFrame(DataTransformer):

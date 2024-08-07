@@ -347,6 +347,7 @@ class SignalsLogger(_BaseIntervalDumper):
                     "exchange_id": s.instrument.exchange,
                     "signal": s.signal.signal,
                     "target_position": s.target_position_size,
+                    "reference_price": s.signal.reference_price,
                     "price": s.price,
                     "take": s.take,
                     "stop": s.stop,

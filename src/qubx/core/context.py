@@ -141,6 +141,7 @@ class StrategyContextImpl(StrategyContext):
         self.config = config
         self.instruments = instruments
         self.positions = {}
+        self.strategy_name = strategy.__class__.__name__
         self.__fit_is_running = False
         self.__init_fit_was_called = False
         self.__pool = None
@@ -196,7 +197,7 @@ class StrategyContextImpl(StrategyContext):
 
         # - by default we use default position tracker with fixed 1:1 sizer
         #   so any signal is coinsidered as raw position size
-        self.positions_tracker = _track if _track else PositionsTracker(FixedSizer(1.0))
+        self.positions_tracker = _track if _track else PositionsTracker(FixedSizer(1.0, amount_in_quote=False))
 
     def __check_how_to_listen_to_market_data(self, md_config: dict):
         self._market_data_subcription_type = _dict_with_exception(md_config, "type").lower()
@@ -379,8 +380,16 @@ class StrategyContextImpl(StrategyContext):
 
             # - process and execute signals if they are provided
             if signals:
+                if isinstance(signals, Signal):
+                    signals = [signals]
+
+                # set strategy group name if not set
+                for signal in signals:
+                    if not signal.group:
+                        signal.group = self.strategy_name
+
                 # process signals by tracker and turn convert them into positions
-                positions_from_strategy = self.__log_target_positions(
+                positions_from_strategy = self.__process_target_positions(
                     self.positions_tracker.process_signals(self, signals)
                 )
 
@@ -482,10 +491,25 @@ class StrategyContextImpl(StrategyContext):
                 self._current_bar_trigger_processed = False
         return None
 
-    def __log_target_positions(self, signals: List[TargetPosition] | None) -> List[TargetPosition]:
-        if signals:
-            self._logging.save_signals_targets(signals)
-        return signals
+    def __process_target_positions(
+        self, target_positions: List[TargetPosition] | TargetPosition | None
+    ) -> List[TargetPosition]:
+        if isinstance(target_positions, TargetPosition):
+            target_positions = [target_positions]
+        elif target_positions is None:
+            return []
+
+        # set reference prices for signals
+        for pos in target_positions:
+            signal = pos.signal
+            if signal.reference_price is None:
+                q = self.quote(signal.instrument.symbol)
+                if q is None:
+                    continue
+                signal.reference_price = q.mid_price()
+
+        self._logging.save_signals_targets(target_positions)
+        return target_positions
 
     @_SW.watch("StrategyContext")
     def _processing_bar(self, symbol: str, bar: Bar) -> TriggerEvent | None:
@@ -494,7 +518,7 @@ class StrategyContextImpl(StrategyContext):
 
         # - update tracker and handle alterd positions if need
         self.positions_gathering.alter_positions(
-            self, self.__log_target_positions(self.positions_tracker.update(self, self._symb_to_instr[symbol], bar))
+            self, self.__process_target_positions(self.positions_tracker.update(self, self._symb_to_instr[symbol], bar))
         )
 
         # - check if it's time to trigger the on_event if it's configured
@@ -511,7 +535,7 @@ class StrategyContextImpl(StrategyContext):
         # - update tracker and handle alterd positions if need
         self.positions_gathering.alter_positions(
             self,
-            self.__log_target_positions(
+            self.__process_target_positions(
                 self.positions_tracker.update(
                     self, self._symb_to_instr[symbol], trade.data[-1] if is_batch_event else trade
                 ),
@@ -528,7 +552,8 @@ class StrategyContextImpl(StrategyContext):
 
         # - update tracker and handle alterd positions if need
         self.positions_gathering.alter_positions(
-            self, self.__log_target_positions(self.positions_tracker.update(self, self._symb_to_instr[symbol], quote))
+            self,
+            self.__process_target_positions(self.positions_tracker.update(self, self._symb_to_instr[symbol], quote)),
         )
 
         # - TODO: here we can apply throttlings or filters
@@ -659,7 +684,12 @@ class StrategyContextImpl(StrategyContext):
 
     @_SW.watch("StrategyContext")
     def trade(
-        self, instr_or_symbol: Instrument | str, amount: float, price: float | None = None, time_in_force="gtc"
+        self,
+        instr_or_symbol: Instrument | str,
+        amount: float,
+        price: float | None = None,
+        time_in_force="gtc",
+        **optional,
     ) -> Order:
         instrument: Instrument | None = (
             self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
@@ -676,8 +706,14 @@ class StrategyContextImpl(StrategyContext):
         type = "limit" if price is not None else "market"
         logger.debug(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} ...")
         client_id = self._generate_order_client_id(instrument.symbol)
+
+        if self.broker_provider.is_simulated_trading and optional.get("fill_at_price", False):
+            # assume worst case, if we force execution and certain price, assume it's via market
+            # TODO: add an additional flag besides price to indicate order type
+            type = "market"
+
         order = self.trading_service.send_order(
-            instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id
+            instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id, **optional
         )
 
         return order

@@ -26,14 +26,146 @@ class SgnCtrl:
     status: State = "NEW"
 
 
-class AtrRiskTracker(PositionsTracker):
+class StopTakePositionTracker(PositionsTracker):
+    _signals: Dict[Instrument, SgnCtrl]
+
+    def __init__(
+        self,
+        take_target: float | None = None,
+        stop_risk: float | None = None,
+        sizer: IPositionSizer = FixedSizer(1.0, amount_in_quote=False),
+    ) -> None:
+        self.take_target = take_target
+        self.stop_risk = stop_risk
+        self._signals = dict()
+        super().__init__(sizer)
+        self._take_target_fraction = take_target / 100 if take_target else None
+        self._stop_risk_fraction = stop_risk / 100 if stop_risk else None
+
+    def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
+        targets = []
+        for s in signals:
+            quote = ctx.quote(s.instrument.symbol)
+            if quote is None:
+                logger.warning(f"Quote not available for {s.instrument.symbol}. Skipping signal {s}")
+                continue
+
+            if s.signal > 0:
+                entry = s.price if s.price else quote.ask
+                if self._take_target_fraction:
+                    s.take = entry * (1 + self._take_target_fraction)
+                if self._stop_risk_fraction:
+                    s.stop = entry * (1 - self._stop_risk_fraction)
+
+            elif s.signal < 0:
+                entry = s.price if s.price else quote.bid
+                if self._take_target_fraction:
+                    s.take = entry * (1 - self._take_target_fraction)
+                if self._stop_risk_fraction:
+                    s.stop = entry * (1 + self._stop_risk_fraction)
+
+            target = self.get_position_sizer().calculate_target_positions(ctx, [s])[0]
+            targets.append(target)
+            self._signals[s.instrument] = SgnCtrl(s, target, "NEW")
+            logger.debug(
+                f"\t ::: <yellow>Start tracking {target}</yellow> of {s.instrument.symbol} take: {s.take} stop: {s.stop}"
+            )
+
+        return targets
+
+    @staticmethod
+    def _get_price(update: float | Quote | Trade | Bar, direction: int) -> float:
+        if isinstance(update, float):
+            return update
+        elif isinstance(update, Quote):
+            return update.ask if direction > 0 else update.bid  # type: ignore
+        elif isinstance(update, Trade):
+            return update.price  # type: ignore
+        elif isinstance(update, Bar):
+            return update.close  # type: ignore
+        else:
+            raise ValueError(f"Unknown update type: {type(update)}")
+
+    def update(
+        self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+    ) -> List[TargetPosition] | TargetPosition:
+        c = self._signals.get(instrument)
+        if c is None:
+            return []
+
+        match c.status:
+            case "NEW":
+                # - nothing to do just waiting for position to be open
+                pass
+
+            case "RISK-TRIGGERED":
+                # - nothing to do just waiting for position to be closed
+                pass
+
+            case "OPEN":
+                pos = ctx.positions[instrument.symbol].quantity
+                if c.signal.stop:
+                    if (
+                        pos > 0
+                        and self._get_price(update, +1) <= c.signal.stop
+                        or (pos < 0 and self._get_price(update, -1) >= c.signal.stop)
+                    ):
+                        c.status = "RISK-TRIGGERED"
+                        logger.debug(f"\t ::: <red>Stop triggered</red> for {instrument.symbol} at {c.signal.stop}")
+                        return TargetPosition.zero(
+                            ctx,
+                            instrument.signal(
+                                0,
+                                price=c.signal.stop,
+                                group="Risk Manager",
+                                comment="Stop triggered",
+                                fill_at_signal_price=True,
+                            ),
+                        )
+
+                if c.signal.take:
+                    if (
+                        pos > 0
+                        and self._get_price(update, -1) >= c.signal.take
+                        or (pos < 0 and self._get_price(update, +1) <= c.signal.take)
+                    ):
+                        c.status = "RISK-TRIGGERED"
+                        logger.debug(f"\t ::: <green>Take triggered</green> for {instrument.symbol} at {c.signal.take}")
+                        return TargetPosition.zero(
+                            ctx,
+                            instrument.signal(
+                                0,
+                                price=c.signal.take,
+                                group="Risk Manager",
+                                comment="Take triggered",
+                                fill_at_signal_price=True,
+                            ),
+                        )
+
+            case "DONE":
+                logger.debug(f"\t ::: <yellow>Stop tracking</yellow> {instrument.symbol}")
+                self._signals.pop(instrument)
+
+        return []
+
+    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal):
+        c = self._signals.get(instrument)
+        if c is None:
+            return
+
+        if abs(ctx.positions[instrument.symbol].quantity - c.target.target_position_size) <= instrument.min_size:
+            c.status = "OPEN"
+
+        if c.target.target_position_size == 0:
+            c.status = "DONE"
+
+
+class AtrRiskTracker(StopTakePositionTracker):
     """
     ATR based risk management
     Take at entry +/- ATR[1] * take_target
     Stop at entry -/+ ATR[1] * stop_risk
     """
-
-    _signals: Dict[Instrument, SgnCtrl]
 
     def __init__(
         self,
@@ -44,13 +176,10 @@ class AtrRiskTracker(PositionsTracker):
         atr_smoother="sma",
         sizer: IPositionSizer = FixedSizer(1.0),
     ) -> None:
-        self.take_target = take_target
-        self.stop_risk = stop_risk
         self.atr_timeframe = atr_timeframe
         self.atr_period = atr_period
         self.atr_smoother = atr_smoother
-        self._signals = dict()
-        super().__init__(sizer)
+        super().__init__(take_target, stop_risk, sizer)
 
     def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         targets = []
@@ -86,77 +215,3 @@ class AtrRiskTracker(PositionsTracker):
             )
 
         return targets
-
-    @staticmethod
-    def _get_price(update: float | Quote | Trade | Bar, direction: int) -> float:
-        if isinstance(update, float):
-            return update
-        elif isinstance(update, Quote):
-            return update.ask if direction > 0 else update.bid  # type: ignore
-        elif isinstance(update, Trade):
-            return update.price  # type: ignore
-        elif isinstance(update, Bar):
-            return update.close  # type: ignore
-        else:
-            raise ValueError(f"Unknown update type: {type(update)}")
-
-    def update(self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar) -> List[TargetPosition]:
-        c = self._signals.get(instrument)
-        if c is None:
-            return []
-
-        match c.status:
-            case "NEW":
-                # - nothing to do just waiting for position to be open
-                pass
-
-            case "TRISK-TRIGGERED":
-                # - nothing to do just waiting for position to be closed
-                pass
-
-            case "OPEN":
-                pos = ctx.positions[instrument.symbol].quantity
-                if c.signal.stop:
-                    if (
-                        pos > 0
-                        and self._get_price(update, +1) <= c.signal.stop
-                        or (pos < 0 and self._get_price(update, -1) >= c.signal.stop)
-                    ):
-                        c.status = "RISK-TRIGGERED"
-                        logger.debug(f"\t ::: <red>Stop triggered</red> for {instrument.symbol} at {c.signal.stop}")
-                        return [
-                            TargetPosition(
-                                ctx.time(), instrument.signal(0, group="Risk Manager", comment="Stop triggered"), 0
-                            )
-                        ]
-
-                if c.signal.take:
-                    if (
-                        pos > 0
-                        and self._get_price(update, -1) >= c.signal.take
-                        or (pos < 0 and self._get_price(update, +1) <= c.signal.take)
-                    ):
-                        c.status = "RISK-TRIGGERED"
-                        logger.debug(f"\t ::: <green>Take triggered</green> for {instrument.symbol} at {c.signal.take}")
-                        return [
-                            TargetPosition(
-                                ctx.time(), instrument.signal(0, group="Risk Manager", comment="Take triggered"), 0
-                            )
-                        ]
-
-            case "DONE":
-                logger.debug(f"\t ::: <yellow>Stop tracking</yellow> {instrument.symbol}")
-                self._signals.pop(instrument)
-
-        return []
-
-    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal):
-        c = self._signals.get(instrument)
-        if c is None:
-            return
-
-        if abs(ctx.positions[instrument.symbol].quantity - c.target.target_position_size) <= instrument.min_size:
-            c.status = "OPEN"
-
-        if c.target.target_position_size == 0:
-            c.status = "DONE"

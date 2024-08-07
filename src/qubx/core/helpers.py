@@ -37,12 +37,12 @@ class CachedMarketDataHolder:
 
     def is_data_ready(self) -> bool:
         """
-        Check if all symbols in this cache have at least one update
+        Check if at least one symbol had an update.
         """
         for v in self._ohlcvs.keys():
-            if v not in self._updates:
-                return False
-        return True
+            if v in self._updates:
+                return True
+        return False
 
     @_SW.watch("CachedMarketDataHolder")
     def get_ohlcv(self, symbol: str, timeframe: str | None = None, max_size=np.inf) -> OHLCV:
