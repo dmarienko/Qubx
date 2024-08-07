@@ -28,9 +28,7 @@ class FixedSizer(IPositionSizer):
                     f"{self.__class__.__name__}: Can't get actual market quote for {signal.instrument.symbol} !"
                 )
                 continue
-            positions.append(
-                TargetPosition(signal, signal.signal * self.fixed_size / q.mid_price() / len(ctx.instruments))
-            )
+            positions.append(TargetPosition(signal, signal.signal * self.fixed_size / q.mid_price()))
         return positions
 
 

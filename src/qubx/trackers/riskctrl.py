@@ -26,57 +26,37 @@ class SgnCtrl:
     status: State = "NEW"
 
 
-class AtrRiskTracker(PositionsTracker):
-    """
-    ATR based risk management
-    Take at entry +/- ATR[1] * take_target
-    Stop at entry -/+ ATR[1] * stop_risk
-    """
-
+class StopTakePositionTracker(PositionsTracker):
     _signals: Dict[Instrument, SgnCtrl]
 
     def __init__(
         self,
-        take_target: float,
-        stop_risk: float,
-        atr_timeframe: str,
-        atr_period: int,
-        atr_smoother="sma",
+        take_target: float | None = None,
+        stop_risk: float | None = None,
         sizer: IPositionSizer = FixedSizer(1.0),
     ) -> None:
         self.take_target = take_target
         self.stop_risk = stop_risk
-        self.atr_timeframe = atr_timeframe
-        self.atr_period = atr_period
-        self.atr_smoother = atr_smoother
         self._signals = dict()
         super().__init__(sizer)
 
     def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         targets = []
         for s in signals:
-            volatility = atr(
-                ctx.ohlc(s.instrument, self.atr_timeframe),
-                self.atr_period,
-                smoother=self.atr_smoother,
-                percentage=False,
-            )
-            if len(volatility) < 2:
-                continue
-            last_volatility = volatility[1]
             quote = ctx.quote(s.instrument.symbol)
-            if last_volatility is None or not np.isfinite(last_volatility) or quote is None:
-                continue
-
             if s.signal > 0:
                 entry = s.price if s.price else quote.ask
-                s.stop = entry - self.stop_risk * last_volatility
-                s.take = entry + self.take_target * last_volatility
+                if self.take_target:
+                    s.take = entry * (1 + self.take_target / 100)
+                if self.stop_risk:
+                    s.stop = entry * (1 - self.stop_risk / 100)
 
             elif s.signal < 0:
                 entry = s.price if s.price else quote.bid
-                s.stop = entry + self.stop_risk * last_volatility
-                s.take = entry - self.take_target * last_volatility
+                if self.take_target:
+                    s.take = entry * (1 - self.take_target / 100)
+                if self.stop_risk:
+                    s.stop = entry * (1 + self.stop_risk / 100)
 
             target = self.get_position_sizer().calculate_target_positions(ctx, [s])[0]
             targets.append(target)
@@ -152,3 +132,60 @@ class AtrRiskTracker(PositionsTracker):
 
         if c.target.target_position_size == 0:
             c.status = "DONE"
+
+
+class AtrRiskTracker(StopTakePositionTracker):
+    """
+    ATR based risk management
+    Take at entry +/- ATR[1] * take_target
+    Stop at entry -/+ ATR[1] * stop_risk
+    """
+
+    def __init__(
+        self,
+        take_target: float,
+        stop_risk: float,
+        atr_timeframe: str,
+        atr_period: int,
+        atr_smoother="sma",
+        sizer: IPositionSizer = FixedSizer(1.0),
+    ) -> None:
+        self.atr_timeframe = atr_timeframe
+        self.atr_period = atr_period
+        self.atr_smoother = atr_smoother
+        super().__init__(take_target, stop_risk, sizer)
+
+    def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
+        targets = []
+        for s in signals:
+            volatility = atr(
+                ctx.ohlc(s.instrument, self.atr_timeframe),
+                self.atr_period,
+                smoother=self.atr_smoother,
+                percentage=False,
+            )
+            if len(volatility) < 2:
+                continue
+            last_volatility = volatility[1]
+            quote = ctx.quote(s.instrument.symbol)
+            if last_volatility is None or not np.isfinite(last_volatility) or quote is None:
+                continue
+
+            if s.signal > 0:
+                entry = s.price if s.price else quote.ask
+                s.stop = entry - self.stop_risk * last_volatility
+                s.take = entry + self.take_target * last_volatility
+
+            elif s.signal < 0:
+                entry = s.price if s.price else quote.bid
+                s.stop = entry + self.stop_risk * last_volatility
+                s.take = entry - self.take_target * last_volatility
+
+            target = self.get_position_sizer().calculate_target_positions(ctx, [s])[0]
+            targets.append(target)
+            self._signals[s.instrument] = SgnCtrl(s, target, "NEW")
+            logger.debug(
+                f"\t ::: <yellow>Start tracking {target}</yellow> of {s.instrument.symbol} take: {s.take} stop: {s.stop}"
+            )
+
+        return targets

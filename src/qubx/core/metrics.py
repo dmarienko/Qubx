@@ -15,6 +15,7 @@ from statsmodels.regression.linear_model import OLS
 import plotly.graph_objects as go
 
 from qubx.core.basics import TradingSessionResult
+from qubx.core.series import OHLCV
 from qubx.pandaz.utils import ohlc_resample
 from qubx.utils.charting.lookinglass import LookingGlass
 from qubx.utils.time import infer_series_frequency
@@ -849,8 +850,12 @@ def chart_signals(
     end=None,
     apply_commissions: bool = True,
     indicators={},
-    info=False,
     overlay=[],
+    info=True,
+    show_quantity: bool = False,
+    show_value: bool = False,
+    show_leverage: bool = True,
+    show_table: bool = False,
 ):
     """
     Show trading signals on chart
@@ -874,17 +879,50 @@ def chart_signals(
             comm = portfolio.filter(regex=f"{symbol}_Commissions").loc[start:].cumsum()
             pnl -= comm.values
         indicators["PnL"] = ["area", "green", pnl]
+        if show_quantity:
+            pos = portfolio.filter(regex=f"{symbol}_Pos").loc[start:]
+            indicators["Pos"] = ["area", "cyan", pos]
+        if show_value:
+            value = portfolio.filter(regex=f"{symbol}_Value").loc[start:]
+            indicators["Value"] = ["area", "cyan", value]
+        if show_leverage:
+            capital = result.capital + pnl
+            value = portfolio.filter(regex=f"{symbol}_Value").loc[start:]
+            leverage = (value.values / capital).squeeze().mul(100).rename("Leverage")
+            indicators["Leverage"] = ["area", "cyan", leverage]
 
     if isinstance(ohlc, dict):
         bars = ohlc[symbol]
+        if isinstance(bars, OHLCV):
+            bars = bars.pd()
         bars = ohlc_resample(bars, timeframe) if timeframe else bars
     elif isinstance(ohlc, pd.DataFrame):
         bars = ohlc
         bars = ohlc_resample(bars, timeframe) if timeframe else bars
+    elif isinstance(ohlc, OHLCV):
+        bars = ohlc.pd()
+        bars = ohlc_resample(bars, timeframe) if timeframe else bars
+
+    if timeframe:
+
+        def __resample(ind):
+            if isinstance(ind, list):
+                return [__resample(i) for i in ind]
+            elif isinstance(ind, pd.Series) or isinstance(ind, pd.DataFrame):
+                return ind.resample(timeframe).ffill()
+            else:
+                return ind
+
+        indicators = {k: __resample(v) for k, v in indicators.items()}
 
     excs = executions[executions["instrument"] == symbol][
         ["quantity", "exec_price", "commissions", "commissions_quoted"]
     ]
+
+    chart = LookingGlass([bars, excs, *overlay], indicators).look(start, end, title=symbol).hover(show_info=info)
+    if not show_table:
+        return chart.show()
+
     q_pos = excs["quantity"].cumsum()[start:end]
     # excs['quantity'] = q_pos
     excs = excs[start:end]
@@ -911,8 +949,5 @@ def chart_signals(
             font=dict(color=[colors], size=10),
         ),
     )
-
-    chart = LookingGlass([bars, excs, *overlay], indicators).look(start, end, title=symbol).hover(show_info=info)
     table = go.FigureWidget(tbl).update_layout(margin=dict(r=5, l=5, t=5, b=5), height=200)
-
     return chart.show(), table.show()
