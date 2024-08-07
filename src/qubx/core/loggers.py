@@ -90,7 +90,7 @@ class InMemoryLogsWriter(LogsWriter):
 
     def get_signals(self) -> pd.DataFrame:
         p = pd.DataFrame()
-        if self._execs:
+        if self._signals:
             p = pd.DataFrame.from_records(self._signals, index="timestamp")
             p.index = pd.DatetimeIndex(p.index)
         return p
