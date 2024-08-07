@@ -197,7 +197,7 @@ class StrategyContextImpl(StrategyContext):
 
         # - by default we use default position tracker with fixed 1:1 sizer
         #   so any signal is coinsidered as raw position size
-        self.positions_tracker = _track if _track else PositionsTracker(FixedSizer(1.0))
+        self.positions_tracker = _track if _track else PositionsTracker(FixedSizer(1.0, amount_in_quote=False))
 
     def __check_how_to_listen_to_market_data(self, md_config: dict):
         self._market_data_subcription_type = _dict_with_exception(md_config, "type").lower()
@@ -689,7 +689,7 @@ class StrategyContextImpl(StrategyContext):
         amount: float,
         price: float | None = None,
         time_in_force="gtc",
-        **kwargs,
+        **optional,
     ) -> Order:
         instrument: Instrument | None = (
             self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
@@ -707,18 +707,13 @@ class StrategyContextImpl(StrategyContext):
         logger.debug(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} ...")
         client_id = self._generate_order_client_id(instrument.symbol)
 
-        order_params = {}
-        if self.broker_provider.is_simulated_trading:
-            if "fill_at_price" in kwargs and price is not None:
-                fill_at_price = kwargs["fill_at_price"]
-                order_params["fill_at_price"] = fill_at_price
-                if fill_at_price:
-                    # assume worse case
-                    # TODO: add an additional flag besides price to indicate order type
-                    type = "market"
+        if self.broker_provider.is_simulated_trading and optional.get("fill_at_price", False):
+            # assume worst case, if we force execution and certain price, assume it's via market
+            # TODO: add an additional flag besides price to indicate order type
+            type = "market"
 
         order = self.trading_service.send_order(
-            instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id, **order_params
+            instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id, **optional
         )
 
         return order

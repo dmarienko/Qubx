@@ -33,7 +33,7 @@ class StopTakePositionTracker(PositionsTracker):
         self,
         take_target: float | None = None,
         stop_risk: float | None = None,
-        sizer: IPositionSizer = FixedSizer(1.0),
+        sizer: IPositionSizer = FixedSizer(1.0, amount_in_quote=False),
     ) -> None:
         self.take_target = take_target
         self.stop_risk = stop_risk

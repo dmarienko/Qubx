@@ -73,7 +73,12 @@ class DebugStratageyCtx(StrategyContext):
         return np.datetime64("2020-01-01T00:00:00", "ns")
 
     def trade(
-        self, instr_or_symbol: Instrument | str, amount: float, price: float | None = None, time_in_force="gtc"
+        self,
+        instr_or_symbol: Instrument | str,
+        amount: float,
+        price: float | None = None,
+        time_in_force="gtc",
+        **optional,
     ) -> Order:
         # fmt: off
         self._n_orders += 1
@@ -93,7 +98,7 @@ class TestTrackersAndGatherers:
 
     def test_simple_tracker_sizer(self):
         ctx = DebugStratageyCtx(instrs := [lookup.find_symbol("BINANCE.UM", "BTCUSDT")], 10000)
-        tracker = PositionsTracker(FixedSizer(1000.0))
+        tracker = PositionsTracker(FixedSizer(1000.0, amount_in_quote=False))
 
         gathering = SimplePositionGatherer()
         i = instrs[0]
