@@ -19,7 +19,7 @@ class FixedSizer(IPositionSizer):
 
     def calculate_target_positions(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         if not self.amount_in_quote:
-            return [TargetPosition(s, s.signal * self.fixed_size) for s in signals]
+            return [TargetPosition(ctx.time(), s, s.signal * self.fixed_size) for s in signals]
         positions = []
         for signal in signals:
             q = ctx.quote(signal.instrument.symbol)
@@ -28,7 +28,7 @@ class FixedSizer(IPositionSizer):
                     f"{self.__class__.__name__}: Can't get actual market quote for {signal.instrument.symbol} !"
                 )
                 continue
-            positions.append(TargetPosition(signal, signal.signal * self.fixed_size / q.mid_price()))
+            positions.append(TargetPosition(ctx.time(), signal, signal.signal * self.fixed_size / q.mid_price()))
         return positions
 
 
@@ -58,7 +58,7 @@ class FixedLeverageSizer(IPositionSizer):
                 )
                 continue
             size = signal.signal * self.leverage * total_capital / q.mid_price() / len(ctx.instruments)
-            positions.append(TargetPosition(signal, size))
+            positions.append(TargetPosition(ctx.time(), signal, size))
         return positions
 
 
@@ -102,7 +102,7 @@ class FixedRiskSizer(IPositionSizer):
                     )
                     continue
 
-            t_pos.append(TargetPosition(signal, target_position_size))
+            t_pos.append(TargetPosition(ctx.time(), signal, target_position_size))
 
         return t_pos
 
@@ -132,6 +132,7 @@ class WeightedPortfolioSizer(IPositionSizer):
             if _q is not None:
                 t_pos.append(
                     TargetPosition(
+                        ctx.time(),
                         signal,
                         round_down_at_min_qty(
                             cap * max(signal.signal, 0) / sw / _q.mid_price(), signal.instrument.min_size_step
