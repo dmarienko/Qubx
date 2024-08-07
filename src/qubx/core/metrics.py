@@ -886,9 +886,10 @@ def chart_signals(
             value = portfolio.filter(regex=f"{symbol}_Value").loc[start:]
             indicators["Value"] = ["area", "cyan", value]
         if show_leverage:
-            capital = result.capital + pnl
+            total_pnl = calculate_total_pnl(portfolio, split_cumulative=False).loc[start:]
+            capital = result.capital + total_pnl["Total_PnL"].cumsum() - total_pnl["Total_Commissions"].cumsum()
             value = portfolio.filter(regex=f"{symbol}_Value").loc[start:]
-            leverage = (value.values / capital).squeeze().mul(100).rename("Leverage")
+            leverage = (value.squeeze() / capital).mul(100).rename("Leverage")
             indicators["Leverage"] = ["area", "cyan", leverage]
 
     if isinstance(ohlc, dict):
