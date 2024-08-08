@@ -9,14 +9,15 @@ from qubx.core.utils import recognize_time
 from qubx.core.series import OHLCV, Quote
 from qubx.core.strategy import IPositionGathering, IStrategy, PositionsTracker, StrategyContext, TriggerEvent
 from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsTimestampedRecords, AsQuotes, RestoreTicksFromOHLC
-from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider, Position, Signal
+from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider, Position, Signal, TargetPosition
 
 from qubx.backtester.ome import OrdersManagementEngine
 
 from qubx.ta.indicators import sma, ema
 from qubx.backtester.simulator import simulate
+from qubx.trackers.composite import CompositeTracker
 from qubx.trackers.rebalancers import PortfolioRebalancerTracker
-from qubx.trackers.riskctrl import AtrRiskTracker
+from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
 from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
 
 
@@ -216,3 +217,33 @@ class TestTrackersAndGatherers:
         assert len(rep[0].executions_log) == 23
         assert len(rep[1].executions_log) == 24
         # rep[0]
+
+    def test_composite_tracker(self):
+        ctx = DebugStratageyCtx(
+            I := [
+                lookup.find_symbol("BINANCE.UM", "BTCUSDT"),
+                lookup.find_symbol("BINANCE.UM", "ETHUSDT"),
+                lookup.find_symbol("BINANCE.UM", "SOLUSDT"),
+            ],
+            30000,
+        )
+        assert I[0] is not None and I[1] is not None and I[2] is not None
+
+        class ZeroTracker(PositionsTracker):
+            def __init__(self) -> None:
+                pass
+
+            def process_signals(self, ctx: StrategyContext, signals: list[Signal]) -> list[TargetPosition]:
+                return [TargetPosition.create(ctx, s, target_size=0) for s in signals]
+
+        # 1. Check that we get 0 targets for all symbols
+        tracker = CompositeTracker(ZeroTracker(), StopTakePositionTracker())
+        targets = tracker.process_signals(ctx, [I[0].signal(+0.5), I[1].signal(+0.3), I[2].signal(+0.2)])
+        assert all(t.target_position_size == 0 for t in targets)
+
+        # 2. Check that we get nonzero target positions
+        tracker = CompositeTracker(StopTakePositionTracker(sizer=FixedSizer(1.0, amount_in_quote=False)))
+        targets = tracker.process_signals(ctx, [I[0].signal(+0.5), I[1].signal(+0.3), I[2].signal(+0.2)])
+        assert targets[0].target_position_size == 0.5
+        assert targets[1].target_position_size == 0.3
+        assert targets[2].target_position_size == 0.2
