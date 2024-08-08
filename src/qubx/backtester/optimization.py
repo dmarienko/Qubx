@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple, Type
 import numpy as np
 import re
 
@@ -90,7 +90,7 @@ def permutate_params(
     return _wrap_single_list(result) if wrap_as_list else result
 
 
-def variate(clz, *args, conditions=None, **kwargs) -> Dict[str, Any]:
+def variate(clz: Type[Any] | List[Type[Any]], *args, conditions=None, **kwargs) -> Dict[str, Any]:
     """
     Make variations of parameters for simulations (micro optimizer)
 
@@ -127,15 +127,29 @@ def variate(clz, *args, conditions=None, **kwargs) -> Dict[str, Any]:
     >>>             variate(MomentumStrategy_Ex1_test, 10, lookback_period=[1,2,3], filter_type=['ema', 'sma'], skip_entries_flag=[True, False]),
     >>>             data, capital, ["BINANCE.UM:BTCUSDT"], dict(type="ohlc", timeframe="5Min", nback=0), "5Min -1Sec", "vip0_usdt", "2024-01-01", "2024-01-02"
     >>>    )
+
+    Also it's possible to pass a class with tracker:
+    >>>    variate([MomentumStrategy_Ex1_test, AtrTracker(2, 1)], 10, lookback_period=[1,2,3], filter_type=['ema', 'sma'], skip_entries_flag=[True, False])
     """
 
     def _cmprss(xs: str):
         return "".join([x[0] for x in re.split("((?<!-)(?=[A-Z]))|_|(\d)", xs) if x])
 
-    sfx = _cmprss(clz.__name__)
+    if isinstance(clz, type):
+        sfx = _cmprss(clz.__name__)
+        _mk = lambda k, *args, **kwargs: k(*args, **kwargs)
+    elif isinstance(clz, (list, tuple)) and clz and isinstance(clz[0], type):
+        sfx = _cmprss(clz[0].__name__)
+        _mk = lambda k, *args, **kwargs: [k[0](*args, **kwargs), *k[1:]]
+    else:
+        raise ValueError(
+            "Can't recognize data for variating: must be either a class type or a list where first element is class type"
+        )
+
     to_excl = [s for s, v in kwargs.items() if not isinstance(v, (list, set, tuple, range))]
     dic2str = lambda ds: [_cmprss(k) + "=" + str(v) for k, v in ds.items() if k not in to_excl]
 
     return {
-        f"{sfx}_({ ','.join(dic2str(z)) })": clz(*args, **z) for z in permutate_params(kwargs, conditions=conditions)
+        f"{sfx}_({ ','.join(dic2str(z)) })": _mk(clz, *args, **z)
+        for z in permutate_params(kwargs, conditions=conditions)
     }
