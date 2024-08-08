@@ -73,6 +73,12 @@ class StopTakePositionTracker(PositionsTracker):
 
         return targets
 
+    def is_active(self, instrument: Instrument) -> bool:
+        return instrument in self._signals
+
+    def reset(self, instrument: Instrument):
+        self._signals.pop(instrument, None)
+
     @staticmethod
     def _get_price(update: float | Quote | Trade | Bar, direction: int) -> float:
         if isinstance(update, float):

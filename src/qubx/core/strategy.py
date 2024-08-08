@@ -259,6 +259,12 @@ class PositionsTracker:
     def get_position_sizer(self) -> IPositionSizer:
         return self._sizer
 
+    def is_active(self, instrument: Instrument) -> bool:
+        return True
+
+    def reset(self, instrument: Instrument):
+        pass
+
     def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition] | TargetPosition:
         """
         Default implementation just returns calculated target positions

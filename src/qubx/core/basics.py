@@ -23,6 +23,7 @@ class Signal:
     Attributes:
         reference_price: float - exact price when signal was generated
         fill_at_signal_price: bool - if True, then fill order at signal price (only used in backtesting)
+        allow_override: bool - if True, and there is another signal for the same instrument, then override current.
     """
 
     instrument: "Instrument"
@@ -34,6 +35,7 @@ class Signal:
     group: str = ""
     comment: str = ""
     fill_at_signal_price: bool = False
+    allow_override: bool = False
 
     def __str__(self) -> str:
         _p = f" @ { self.price }" if self.price is not None else ""
@@ -144,6 +146,7 @@ class Instrument:
         group: str = "",
         comment: str = "",
         fill_at_signal_price: bool = False,
+        allow_override: bool = False,
     ) -> Signal:
         return Signal(
             self,
@@ -154,6 +157,7 @@ class Instrument:
             group=group,
             comment=comment,
             fill_at_signal_price=fill_at_signal_price,
+            allow_override=allow_override,
         )
 
     def __hash__(self) -> int:

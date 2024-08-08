@@ -15,7 +15,7 @@ from qubx.backtester.ome import OrdersManagementEngine
 
 from qubx.ta.indicators import sma, ema
 from qubx.backtester.simulator import simulate
-from qubx.trackers.composite import CompositeTracker
+from qubx.trackers.composite import CompositeTracker, CompositeTrackerPerSide, LongTracker
 from qubx.trackers.rebalancers import PortfolioRebalancerTracker
 from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
 from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
@@ -93,6 +93,14 @@ class DebugStratageyCtx(StrategyContext):
 
     def get_reserved(self, instrument: Instrument) -> float:
         return 0.0
+
+
+class ZeroTracker(PositionsTracker):
+    def __init__(self) -> None:
+        pass
+
+    def process_signals(self, ctx: StrategyContext, signals: list[Signal]) -> list[TargetPosition]:
+        return [TargetPosition.create(ctx, s, target_size=0) for s in signals]
 
 
 class TestTrackersAndGatherers:
@@ -229,13 +237,6 @@ class TestTrackersAndGatherers:
         )
         assert I[0] is not None and I[1] is not None and I[2] is not None
 
-        class ZeroTracker(PositionsTracker):
-            def __init__(self) -> None:
-                pass
-
-            def process_signals(self, ctx: StrategyContext, signals: list[Signal]) -> list[TargetPosition]:
-                return [TargetPosition.create(ctx, s, target_size=0) for s in signals]
-
         # 1. Check that we get 0 targets for all symbols
         tracker = CompositeTracker(ZeroTracker(), StopTakePositionTracker())
         targets = tracker.process_signals(ctx, [I[0].signal(+0.5), I[1].signal(+0.3), I[2].signal(+0.2)])
@@ -247,3 +248,52 @@ class TestTrackersAndGatherers:
         assert targets[0].target_position_size == 0.5
         assert targets[1].target_position_size == 0.3
         assert targets[2].target_position_size == 0.2
+
+        # 3. Check that allow_override works
+        tracker = CompositeTracker(StopTakePositionTracker())
+        targets = tracker.process_signals(ctx, [I[0].signal(0, allow_override=True), I[0].signal(+0.5)])
+        assert targets[0].target_position_size == 0.5
+
+    def test_long_short_trackers(self):
+        ctx = DebugStratageyCtx(
+            I := [
+                lookup.find_symbol("BINANCE.UM", "BTCUSDT"),
+            ],
+            30000,
+        )
+        assert I[0] is not None
+
+        # 1. Check that tracker skips the signal if it is not long
+        tracker = LongTracker(StopTakePositionTracker())
+        targets = tracker.process_signals(ctx, [I[0].signal(-0.5)])
+        assert not targets
+
+        # 2. Check that tracker sends 0 target if it was active before
+        tracker = LongTracker(StopTakePositionTracker())
+        _ = tracker.process_signals(ctx, [I[0].signal(+0.5)])
+        targets = tracker.process_signals(ctx, [I[0].signal(-0.5)])
+        assert isinstance(targets, list) and targets[0].target_position_size == 0
+
+    def test_composite_per_side_tracker(self):
+        ctx = DebugStratageyCtx(
+            I := [
+                lookup.find_symbol("BINANCE.UM", "BTCUSDT"),
+                lookup.find_symbol("BINANCE.UM", "ETHUSDT"),
+            ],
+            30000,
+        )
+        assert I[0] is not None and I[1] is not None
+
+        # 1. Check that long and short signals are processed by corresponding trackers
+        tracker = CompositeTrackerPerSide(
+            long_trackers=[StopTakePositionTracker(10, 5)], short_trackers=[StopTakePositionTracker(5, 5)]
+        )
+        targets = tracker.process_signals(ctx, [I[0].signal(-0.5), I[1].signal(+0.5)])
+        short_target = StopTakePositionTracker(5, 5).process_signals(ctx, [I[0].signal(-0.5)])
+        long_target = StopTakePositionTracker(10, 5).process_signals(ctx, [I[1].signal(+0.5)])
+        assert targets[0].signal.stop == short_target[0].signal.stop
+        assert targets[1].signal.stop == long_target[0].signal.stop
+
+        # 2. Check that sending an opposite side signal is processed correctly
+        targets = tracker.process_signals(ctx, [I[0].signal(+0.5)])
+        assert targets[0].target_position_size == 0.5
