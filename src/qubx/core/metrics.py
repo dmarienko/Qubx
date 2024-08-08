@@ -856,6 +856,7 @@ def chart_signals(
     show_value: bool = False,
     show_leverage: bool = True,
     show_table: bool = False,
+    height: int = 800
 ):
     """
     Show trading signals on chart
@@ -920,7 +921,7 @@ def chart_signals(
         ["quantity", "exec_price", "commissions", "commissions_quoted"]
     ]
 
-    chart = LookingGlass([bars, excs, *overlay], indicators).look(start, end, title=symbol).hover(show_info=info)
+    chart = LookingGlass([bars, excs, *overlay], indicators).look(start, end, title=symbol).hover(show_info=info, h=height)
     if not show_table:
         return chart.show()
 
