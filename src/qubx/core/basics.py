@@ -534,7 +534,8 @@ class ITimeProvider:
 
 
 class TradingSessionResult:
-    trading_id: str
+    id: int
+    name: str
     start: str | pd.Timestamp
     stop: str | pd.Timestamp
     exchange: str
@@ -550,7 +551,8 @@ class TradingSessionResult:
 
     def __init__(
         self,
-        trading_id: str,
+        id: int,
+        name: str,
         start: str | pd.Timestamp,
         stop: str | pd.Timestamp,
         exchange: str,
@@ -564,7 +566,8 @@ class TradingSessionResult:
         signals_log: pd.DataFrame,
         is_simulation=True,
     ):
-        self.trading_id = trading_id
+        self.id = id
+        self.name = name
         self.start = start
         self.stop = stop
         self.exchange = exchange

@@ -58,7 +58,7 @@ class CompositeTracker(PositionsTracker):
         """
         filt_symbol_to_targets = {}
         for symbol, targets in symbol_to_targets.items():
-            if len(targets) == 1:
+            if len(targets) == 1 or all(t.signal.allow_override for t in targets):
                 filt_symbol_to_targets[symbol] = targets
                 continue
             filt_symbol_to_targets[symbol] = [target for target in targets if not target.signal.allow_override]
@@ -109,12 +109,18 @@ class ConditionalTracker(PositionsTracker):
 
 class LongTracker(ConditionalTracker):
     def __init__(self, tracker: PositionsTracker) -> None:
-        super().__init__(lambda signal: signal.signal > 0, tracker)
+        super().__init__(self._condition, tracker)
+
+    def _condition(self, signal: Signal) -> bool:
+        return signal.signal > 0
 
 
 class ShortTracker(ConditionalTracker):
     def __init__(self, tracker: PositionsTracker) -> None:
-        super().__init__(lambda signal: signal.signal < 0, tracker)
+        super().__init__(self._condition, tracker)
+
+    def _condition(self, signal: Signal) -> bool:
+        return signal.signal < 0
 
 
 class CompositeTrackerPerSide(CompositeTracker):
