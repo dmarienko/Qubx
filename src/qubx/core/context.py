@@ -380,17 +380,9 @@ class StrategyContextImpl(StrategyContext):
 
             # - process and execute signals if they are provided
             if signals:
-                if isinstance(signals, Signal):
-                    signals = [signals]
-
-                # set strategy group name if not set
-                for signal in signals:
-                    if not signal.group:
-                        signal.group = self.strategy_name
-
                 # process signals by tracker and turn convert them into positions
                 positions_from_strategy = self.__process_target_positions(
-                    self.positions_tracker.process_signals(self, signals)
+                    self.positions_tracker.process_signals(self, self.__process_signals(signals))
                 )
 
                 # gathering in charge of positions
@@ -491,6 +483,37 @@ class StrategyContextImpl(StrategyContext):
                 self._current_bar_trigger_processed = False
         return None
 
+    def __process_signals(self, signals: list[Signal] | Signal | None) -> List[Signal]:
+        if isinstance(signals, Signal):
+            signals = [signals]
+        elif signals is None:
+            return []
+
+        # set strategy group name if not set
+        for signal in signals:
+            if not signal.group:
+                signal.group = self.strategy_name
+
+        # set reference prices for signals
+        for signal in signals:
+            if signal.reference_price is None:
+                q = self.quote(signal.instrument.symbol)
+                if q is None:
+                    continue
+                signal.reference_price = q.mid_price()
+
+        return signals
+
+    def __process_signals_from_target_positions(
+        self, target_positions: List[TargetPosition] | TargetPosition | None
+    ) -> None:
+        if target_positions is None:
+            return
+        if isinstance(target_positions, TargetPosition):
+            target_positions = [target_positions]
+        signals = [pos.signal for pos in target_positions]
+        self.__process_signals(signals)
+
     def __process_target_positions(
         self, target_positions: List[TargetPosition] | TargetPosition | None
     ) -> List[TargetPosition]:
@@ -498,15 +521,6 @@ class StrategyContextImpl(StrategyContext):
             target_positions = [target_positions]
         elif target_positions is None:
             return []
-
-        # set reference prices for signals
-        for pos in target_positions:
-            signal = pos.signal
-            if signal.reference_price is None:
-                q = self.quote(signal.instrument.symbol)
-                if q is None:
-                    continue
-                signal.reference_price = q.mid_price()
 
         self._logging.save_signals_targets(target_positions)
         return target_positions
@@ -532,14 +546,15 @@ class StrategyContextImpl(StrategyContext):
         else:
             self._cache.update_by_trade(symbol, trade)
 
+        target_positions = self.positions_tracker.update(
+            self, self._symb_to_instr[symbol], trade.data[-1] if is_batch_event else trade
+        )
+        self.__process_signals_from_target_positions(target_positions)
+
         # - update tracker and handle alterd positions if need
         self.positions_gathering.alter_positions(
             self,
-            self.__process_target_positions(
-                self.positions_tracker.update(
-                    self, self._symb_to_instr[symbol], trade.data[-1] if is_batch_event else trade
-                ),
-            ),
+            self.__process_target_positions(target_positions),
         )
 
         if self._trig_on_trade:
@@ -550,11 +565,11 @@ class StrategyContextImpl(StrategyContext):
     def _processing_quote(self, symbol: str, quote: Quote) -> TriggerEvent | None:
         self._cache.update_by_quote(symbol, quote)
 
+        target_positions = self.positions_tracker.update(self, self._symb_to_instr[symbol], quote)
+        self.__process_signals_from_target_positions(target_positions)
+
         # - update tracker and handle alterd positions if need
-        self.positions_gathering.alter_positions(
-            self,
-            self.__process_target_positions(self.positions_tracker.update(self, self._symb_to_instr[symbol], quote)),
-        )
+        self.positions_gathering.alter_positions(self, self.__process_target_positions(target_positions))
 
         # - TODO: here we can apply throttlings or filters
         #  - let's say we can skip quotes if bid & ask is not changed
