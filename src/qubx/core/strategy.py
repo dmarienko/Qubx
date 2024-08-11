@@ -217,7 +217,12 @@ class IPositionGathering:
 
     def alter_position_size(self, ctx: StrategyContext, target: TargetPosition) -> float: ...
 
-    def alter_positions(self, ctx: StrategyContext, targets: List[TargetPosition]) -> Dict[Instrument, float]:
+    def alter_positions(
+        self, ctx: StrategyContext, targets: List[TargetPosition] | TargetPosition
+    ) -> Dict[Instrument, float]:
+        if not isinstance(targets, list):
+            targets = [targets]
+
         res = {}
         if targets:
             for t in targets:
@@ -258,6 +263,12 @@ class PositionsTracker:
 
     def get_position_sizer(self) -> IPositionSizer:
         return self._sizer
+
+    def is_active(self, instrument: Instrument) -> bool:
+        return True
+
+    def reset(self, instrument: Instrument):
+        pass
 
     def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition] | TargetPosition:
         """

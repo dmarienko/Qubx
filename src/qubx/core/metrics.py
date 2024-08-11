@@ -668,15 +668,16 @@ def portfolio_metrics(
     # todo: add transaction_cost calculations
     equity = init_cash + pft_total["Total_PnL"]
     mdd, ddstart, ddpeak, ddrecover, dd_data = absmaxdd(equity)
+    mdd_pct = 100 * dd_data / equity.cummax()
     sheet["equity"] = equity
     sheet["gain"] = sheet["equity"].iloc[-1] - sheet["equity"].iloc[0]
     sheet["cagr"] = cagr(returns_daily, performance_statistics_period)
     sheet["sharpe"] = sharpe_ratio(returns_daily, risk_free, performance_statistics_period)
     sheet["qr"] = qr(equity)
     sheet["drawdown_usd"] = dd_data
-    sheet["drawdown_pct"] = 100 * dd_data / equity.cummax()
+    sheet["drawdown_pct"] = mdd_pct
     # 25-May-2019: MDE fixed Max DD pct calculations
-    sheet["max_dd_pct"] = 100 * mdd / equity.iloc[ddstart]  # max_drawdown_pct(returns)
+    sheet["max_dd_pct"] = max(mdd_pct)
     # sheet["max_dd_pct_on_init"] = 100 * mdd / init_cash
     sheet["mdd_usd"] = mdd
     sheet["mdd_start"] = equity.index[ddstart]
@@ -719,6 +720,8 @@ def tearsheet(
     account_transactions=True,
     performance_statistics_period=365,
     timeframe: str | pd.Timedelta | None = None,
+    sort_by: str | None = "Sharpe",
+    sort_ascending: bool = False,
 ):
     if timeframe is None:
         timeframe = _estimate_timeframe(session)
@@ -739,17 +742,22 @@ def tearsheet(
                 if compound:
                     # _eq.append(pd.Series(100 * mtrx["compound_returns"], name=s.trading_id))
                     compound_returns = mtrx["compound_returns"].resample(timeframe).ffill()
-                    plt.plot(100 * compound_returns, label=s.trading_id)
+                    plt.plot(100 * compound_returns, label=s.name)
                 else:
                     # _eq.append(pd.Series(mtrx["equity"], name=s.trading_id))
                     equity = mtrx["equity"].resample(timeframe).ffill()
-                    plt.plot(equity, label=s.trading_id)
+                    plt.plot(equity, label=s.name)
 
             if len(session) <= 15:
                 plt.legend(ncol=max(1, len(session) // 5))
 
             plt.title("Comparison of Equity Curves")
-            return pd.concat(_rs, axis=1).T
+            report = pd.concat(_rs, axis=1).T
+            report["id"] = [s.id for s in session]
+            report = report.set_index("id", append=True).swaplevel()
+            if sort_by:
+                report = report.sort_values(by=sort_by, ascending=sort_ascending)
+            return report
 
     else:
         return _tearsheet_single(
@@ -786,7 +794,7 @@ def _pfl_metrics_prepare(session: TradingSessionResult, account_transactions: bo
         if isinstance(v, (float, int, str)):
             n = (k[0].upper() + k[1:]).replace("_", " ")
             rpt[n] = v if np.isfinite(v) else 0
-    return pd.Series(rpt, name=session.trading_id), mtrx
+    return pd.Series(rpt, name=session.name), mtrx
 
 
 def _tearsheet_single(
@@ -833,7 +841,7 @@ def _tearsheet_single(
             },
             study_plot_height=75,
         )
-        .look(title=("Simulation: " if session.is_simulation else "") + session.trading_id)
+        .look(title=("Simulation: " if session.is_simulation else "") + session.name)
         .hover(h=500)
     )
     table = go.FigureWidget(tbl).update_layout(margin=dict(r=5, l=5, t=0, b=1), height=80)
@@ -856,7 +864,7 @@ def chart_signals(
     show_value: bool = False,
     show_leverage: bool = True,
     show_table: bool = False,
-    height: int = 800
+    height: int = 800,
 ):
     """
     Show trading signals on chart
@@ -921,7 +929,9 @@ def chart_signals(
         ["quantity", "exec_price", "commissions", "commissions_quoted"]
     ]
 
-    chart = LookingGlass([bars, excs, *overlay], indicators).look(start, end, title=symbol).hover(show_info=info, h=height)
+    chart = (
+        LookingGlass([bars, excs, *overlay], indicators).look(start, end, title=symbol).hover(show_info=info, h=height)
+    )
     if not show_table:
         return chart.show()
 
@@ -953,3 +963,16 @@ def chart_signals(
     )
     table = go.FigureWidget(tbl).update_layout(margin=dict(r=5, l=5, t=5, b=5), height=200)
     return chart.show(), table.show()
+
+
+def get_symbol_pnls(
+    session: TradingSessionResult | List[TradingSessionResult],
+) -> pd.DataFrame:
+    if isinstance(session, TradingSessionResult):
+        session = [session]
+
+    pnls = []
+    for s in session:
+        pnls.append(s.portfolio_log.filter(like="_PnL").cumsum().iloc[-1])
+
+    return pd.DataFrame(pnls, index=[s.name for s in session])

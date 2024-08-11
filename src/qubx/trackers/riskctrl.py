@@ -73,6 +73,12 @@ class StopTakePositionTracker(PositionsTracker):
 
         return targets
 
+    def is_active(self, instrument: Instrument) -> bool:
+        return instrument in self._signals
+
+    def reset(self, instrument: Instrument):
+        self._signals.pop(instrument, None)
+
     @staticmethod
     def _get_price(update: float | Quote | Trade | Bar, direction: int) -> float:
         if isinstance(update, float):
@@ -119,7 +125,7 @@ class StopTakePositionTracker(PositionsTracker):
                                 price=c.signal.stop,
                                 group="Risk Manager",
                                 comment="Stop triggered",
-                                fill_at_signal_price=True,
+                                options=dict(fill_at_signal_price=True),
                             ),
                         )
 
@@ -138,7 +144,7 @@ class StopTakePositionTracker(PositionsTracker):
                                 price=c.signal.take,
                                 group="Risk Manager",
                                 comment="Take triggered",
-                                fill_at_signal_price=True,
+                                options=dict(fill_at_signal_price=True),
                             ),
                         )
 
@@ -169,8 +175,8 @@ class AtrRiskTracker(StopTakePositionTracker):
 
     def __init__(
         self,
-        take_target: float,
-        stop_risk: float,
+        take_target: float | None,
+        stop_risk: float | None,
         atr_timeframe: str,
         atr_period: int,
         atr_smoother="sma",
@@ -199,13 +205,17 @@ class AtrRiskTracker(StopTakePositionTracker):
 
             if s.signal > 0:
                 entry = s.price if s.price else quote.ask
-                s.stop = entry - self.stop_risk * last_volatility
-                s.take = entry + self.take_target * last_volatility
+                if self.stop_risk:
+                    s.stop = entry - self.stop_risk * last_volatility
+                if self.take_target:
+                    s.take = entry + self.take_target * last_volatility
 
             elif s.signal < 0:
                 entry = s.price if s.price else quote.bid
-                s.stop = entry + self.stop_risk * last_volatility
-                s.take = entry - self.take_target * last_volatility
+                if self.stop_risk:
+                    s.stop = entry + self.stop_risk * last_volatility
+                if self.take_target:
+                    s.take = entry - self.take_target * last_volatility
 
             target = self.get_position_sizer().calculate_target_positions(ctx, [s])[0]
             targets.append(target)

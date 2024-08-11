@@ -808,6 +808,7 @@ def _run_setups(
 
     reports = ProgressParallel(n_jobs=n_jobs, total=len(setups), silent=_main_loop_silent, backend="multiprocessing")(
         delayed(_run_setup)(
+            id,
             s,
             start,
             stop,
@@ -817,12 +818,13 @@ def _run_setups(
             silent=silent,
             enable_event_batching=enable_event_batching,
         )
-        for s in setups
+        for id, s in enumerate(setups)
     )
     return reports  # type: ignore
 
 
 def _run_setup(
+    setup_id: int,
     setup: SimulationSetup,
     start: str | pd.Timestamp,
     stop: str | pd.Timestamp,
@@ -889,6 +891,7 @@ def _run_setup(
         logger.error("Simulated trading interrupted by user !")
 
     return TradingSessionResult(
+        setup_id,
         setup.name,
         start,
         stop,

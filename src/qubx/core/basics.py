@@ -22,7 +22,10 @@ class Signal:
 
     Attributes:
         reference_price: float - exact price when signal was generated
-        fill_at_signal_price: bool - if True, then fill order at signal price (only used in backtesting)
+
+        Options:
+        - fill_at_signal_price: bool - if True, then fill order at signal price (only used in backtesting)
+        - allow_override: bool - if True, and there is another signal for the same instrument, then override current.
     """
 
     instrument: "Instrument"
@@ -33,7 +36,7 @@ class Signal:
     reference_price: float | None = None
     group: str = ""
     comment: str = ""
-    fill_at_signal_price: bool = False
+    options: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
         _p = f" @ { self.price }" if self.price is not None else ""
@@ -143,7 +146,7 @@ class Instrument:
         take: float | None = None,
         group: str = "",
         comment: str = "",
-        fill_at_signal_price: bool = False,
+        options: dict[str, Any] = None,
     ) -> Signal:
         return Signal(
             self,
@@ -153,7 +156,7 @@ class Instrument:
             take=take,
             group=group,
             comment=comment,
-            fill_at_signal_price=fill_at_signal_price,
+            options=options or {},
         )
 
     def __hash__(self) -> int:
@@ -530,7 +533,8 @@ class ITimeProvider:
 
 
 class TradingSessionResult:
-    trading_id: str
+    id: int
+    name: str
     start: str | pd.Timestamp
     stop: str | pd.Timestamp
     exchange: str
@@ -546,7 +550,8 @@ class TradingSessionResult:
 
     def __init__(
         self,
-        trading_id: str,
+        id: int,
+        name: str,
         start: str | pd.Timestamp,
         stop: str | pd.Timestamp,
         exchange: str,
@@ -560,7 +565,8 @@ class TradingSessionResult:
         signals_log: pd.DataFrame,
         is_simulation=True,
     ):
-        self.trading_id = trading_id
+        self.id = id
+        self.name = name
         self.start = start
         self.stop = stop
         self.exchange = exchange

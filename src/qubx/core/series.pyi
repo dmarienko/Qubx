@@ -1,3 +1,6 @@
+import numpy as np
+from typing import Any
+
 class Bar:
     def __init__(self, time, open, high, low, close, volume, bought_volume=0): ...
 
@@ -24,6 +27,15 @@ class TimeSeries:
     def __getitem__(self, idx): ...
 
 class OHLCV(TimeSeries):
+    open: TimeSeries
+    high: TimeSeries
+    low: TimeSeries
+    close: TimeSeries
+    volume: TimeSeries
+    bvolume: TimeSeries
+
     def __init__(self, name, timeframe, max_series_length) -> None: ...
 
 class Indicator(TimeSeries): ...
+
+def time_as_nsec(time: Any) -> np.datetime64: ...

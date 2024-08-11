@@ -716,7 +716,7 @@ class QuestDBSqlBuilder:
         data_id: str,
         start: str | None,
         end: str | None,
-        resample: str,
+        resample: str | None,
         data_type: str,
     ) -> str | None:
         pass
@@ -769,7 +769,7 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
         data_id: str,
         start: str | None,
         end: str | None,
-        resample: str,
+        resample: str | None,
         data_type: str,
     ) -> str:
         where = ""
@@ -780,13 +780,16 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
         if w0 or w1:
             where = f"where {w0} and {w1}" if (w0 and w1) else f"where {(w0 or w1)}"
 
+        # - filter out candles without any volume
+        where = f"{where} and volume > 0" if where else "where volume > 0"
+
         # - check resample format
         resample = (
             QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(resample)
             if resample
             else "1m"  # if resample is empty let's use 1 minute timeframe
         )
-        _rsmpl = f"SAMPLE by {resample}" if resample else ""
+        _rsmpl = f"SAMPLE by {resample} FILL(NONE)" if resample else ""
 
         table_name = self.get_table_name(data_id, data_type)
         return f"""
