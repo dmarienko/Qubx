@@ -27,6 +27,13 @@ class TimeSeries:
     def __getitem__(self, idx): ...
 
 class OHLCV(TimeSeries):
+    open: TimeSeries
+    high: TimeSeries
+    low: TimeSeries
+    close: TimeSeries
+    volume: TimeSeries
+    bvolume: TimeSeries
+
     def __init__(self, name, timeframe, max_series_length) -> None: ...
 
 class Indicator(TimeSeries): ...

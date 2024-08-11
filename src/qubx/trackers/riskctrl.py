@@ -125,7 +125,7 @@ class StopTakePositionTracker(PositionsTracker):
                                 price=c.signal.stop,
                                 group="Risk Manager",
                                 comment="Stop triggered",
-                                fill_at_signal_price=True,
+                                options=dict(fill_at_signal_price=True),
                             ),
                         )
 
@@ -144,7 +144,7 @@ class StopTakePositionTracker(PositionsTracker):
                                 price=c.signal.take,
                                 group="Risk Manager",
                                 comment="Take triggered",
-                                fill_at_signal_price=True,
+                                options=dict(fill_at_signal_price=True),
                             ),
                         )
 

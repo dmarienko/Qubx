@@ -58,10 +58,12 @@ class CompositeTracker(PositionsTracker):
         """
         filt_symbol_to_targets = {}
         for symbol, targets in symbol_to_targets.items():
-            if len(targets) == 1 or all(t.signal.allow_override for t in targets):
+            if len(targets) == 1 or all(t.signal.options.get("allow_override", False) for t in targets):
                 filt_symbol_to_targets[symbol] = targets
                 continue
-            filt_symbol_to_targets[symbol] = [target for target in targets if not target.signal.allow_override]
+            filt_symbol_to_targets[symbol] = [
+                target for target in targets if not target.signal.options.get("allow_override", False)
+            ]
         return filt_symbol_to_targets
 
 
@@ -93,7 +95,7 @@ class ConditionalTracker(PositionsTracker):
                         reference_price=signal.reference_price,
                         group=signal.group,
                         comment=signal.comment,
-                        allow_override=True,
+                        options=dict(allow_override=True),
                     )
                 )
         return self.tracker.process_signals(ctx, filtered_signals)

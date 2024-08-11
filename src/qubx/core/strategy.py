@@ -217,7 +217,12 @@ class IPositionGathering:
 
     def alter_position_size(self, ctx: StrategyContext, target: TargetPosition) -> float: ...
 
-    def alter_positions(self, ctx: StrategyContext, targets: List[TargetPosition]) -> Dict[Instrument, float]:
+    def alter_positions(
+        self, ctx: StrategyContext, targets: List[TargetPosition] | TargetPosition
+    ) -> Dict[Instrument, float]:
+        if not isinstance(targets, list):
+            targets = [targets]
+
         res = {}
         if targets:
             for t in targets:

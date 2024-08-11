@@ -26,9 +26,8 @@ def Q(time: str, bid: float, ask: float) -> Quote:
 
 
 class TestingPositionGatherer(IPositionGathering):
-    def alter_position_size(
-        self, ctx: StrategyContext, instrument: Instrument, new_size: float, at_price: float | None = None
-    ) -> float:
+    def alter_position_size(self, ctx: StrategyContext, target: TargetPosition) -> float:
+        instrument, new_size, at_price = target.instrument, target.target_position_size, target.price
         position = ctx.positions[instrument.symbol]
         current_position = position.quantity
         to_trade = new_size - current_position
@@ -111,6 +110,7 @@ class TestTrackersAndGatherers:
 
         gathering = SimplePositionGatherer()
         i = instrs[0]
+        assert i is not None
 
         res = gathering.alter_positions(ctx, tracker.process_signals(ctx, [i.signal(1), i.signal(0.5), i.signal(-0.5)]))
 
@@ -122,6 +122,8 @@ class TestTrackersAndGatherers:
     def test_fixed_risk_sizer(self):
         ctx = DebugStratageyCtx(instrs := [lookup.find_symbol("BINANCE.UM", "BTCUSDT")], 10000)
         i = instrs[0]
+        assert i is not None
+
         sizer = FixedRiskSizer(10.0)
         s = sizer.calculate_target_positions(ctx, [i.signal(1, stop=900.0)])
         _entry, _stop, _cap_in_risk = 1000.5, 900, 10000 * 10 / 100
@@ -251,7 +253,7 @@ class TestTrackersAndGatherers:
 
         # 3. Check that allow_override works
         tracker = CompositeTracker(StopTakePositionTracker())
-        targets = tracker.process_signals(ctx, [I[0].signal(0, allow_override=True), I[0].signal(+0.5)])
+        targets = tracker.process_signals(ctx, [I[0].signal(0, options=dict(allow_override=True)), I[0].signal(+0.5)])
         assert targets[0].target_position_size == 0.5
 
     def test_long_short_trackers(self):

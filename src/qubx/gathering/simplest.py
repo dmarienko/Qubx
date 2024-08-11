@@ -20,7 +20,9 @@ class SimplePositionGatherer(IPositionGathering):
             # - here is default inplementation:
             #   just trade it through the strategy context by using market (or limit) orders.
             # - but in general it may have complex logic for position adjustment
-            r = ctx.trade(instrument, to_trade, at_price, fill_at_price=target.signal.fill_at_signal_price)
+            r = ctx.trade(
+                instrument, to_trade, at_price, fill_at_price=target.signal.options.get("fill_at_signal_price", False)
+            )
             logger.debug(f"{instrument.symbol} >>> Adjusting position from {current_position} to {new_size} : {r}")
 
             current_position = new_size
