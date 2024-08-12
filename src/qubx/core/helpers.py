@@ -35,6 +35,11 @@ class CachedMarketDataHolder:
     def init_ohlcv(self, symbol: str, max_size=np.inf):
         self._ohlcvs[symbol] = {self.default_timeframe: OHLCV(symbol, self.default_timeframe, max_size)}
 
+    def remove(self, symbol: str) -> None:
+        self._ohlcvs.pop(symbol, None)
+        self._last_bar.pop(symbol, None)
+        self._updates.pop(symbol, None)
+
     def is_data_ready(self) -> bool:
         """
         Check if at least one symbol had an update.

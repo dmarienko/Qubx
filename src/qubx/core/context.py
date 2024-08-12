@@ -612,46 +612,28 @@ class StrategyContextImpl(StrategyContext):
     def ohlc(self, instrument: str | Instrument, timeframe: str) -> OHLCV:
         return self._cache.get_ohlcv(instrument if isinstance(instrument, str) else instrument.symbol, timeframe)
 
-    def _create_and_update_positions(self):
-        for instrument in self.instruments:
+    def _create_and_update_positions(self, instruments: list[Instrument]):
+        for instrument in instruments:
             symb = instrument.symbol
             self.positions[symb] = self.trading_service.get_position(instrument)
 
             # - check if we need any aux instrument for calculating pnl ?
+            # TODO: test edge cases for aux symbols
             aux = lookup.find_aux_instrument_for(instrument, self.trading_service.get_base_currency())
             if aux is not None:
                 instrument._aux_instrument = aux
-                self.instruments.append(aux)
+                instruments.append(aux)
                 self.positions[aux.symbol] = self.trading_service.get_position(aux)
 
     def start(self, blocking: bool = False):
         if self._is_initilized:
             raise ValueError("Strategy is already started !")
 
-        # - create positions for instruments
-        self._create_and_update_positions()
-
-        # - get actual positions from exchange
-        _symbols = []
-        for instr in self.instruments:
-            # process instruments - need to find convertors etc
-            self._cache.init_ohlcv(instr.symbol)
-            _symbols.append(instr.symbol)
-
         # - create incoming market data processing
         databus = self.broker_provider.get_communication_channel()
         databus.register(self)
 
-        # - subscribe to market data
-        logger.info(
-            f"(StrategyContext) Subscribing to {self._market_data_subcription_type} updates using {self._market_data_subcription_params} for \n\t{_symbols} "
-        )
-        self.broker_provider.subscribe(
-            self._market_data_subcription_type, self.instruments, **self._market_data_subcription_params
-        )
-
-        # - initialize strategy loggers
-        self._logging.initialize(self.time(), self.positions, self.trading_service.get_account().get_balances())
+        self.__add_instruments(self.instruments)
 
         # - initialize strategy (should we do that after any first market data received ?)
         if not self._is_initilized:
@@ -772,6 +754,77 @@ class StrategyContextImpl(StrategyContext):
         bars = self.broker_provider.get_historical_ohlcs(instr.symbol, timeframe, length)
         r = self._cache.update_by_bars(instr.symbol, timeframe, bars)
         return r
+
+    @_SW.watch("StrategyContext")
+    def set_universe(self, instruments: list[Instrument]) -> None:
+        for instr in instruments:
+            self._symb_to_instr[instr.symbol] = instr
+
+        new_set = set(instruments)
+        prev_set = set(self.instruments)
+        rm_instr = list(prev_set - new_set)
+        add_instr = list(new_set - prev_set)
+
+        self.__add_instruments(add_instr)
+        self.__remove_instruments(rm_instr)
+
+        self.strategy.on_universe_change(self, add_instr, rm_instr)
+
+        # set new instruments
+        self.instruments = instruments
+
+    def __remove_instruments(self, instruments: list[Instrument]) -> None:
+        """
+        Remove symbols from universe. Steps:
+        - close all open positions
+        - unsubscribe from market data
+        - remove from data cache
+
+        We are still keeping the symbols in the positions dictionary.
+        """
+        # - close all open positions
+        exit_targets = [
+            TargetPosition.zero(self, instr.signal(0, group="Universe", comment="Universe change"))
+            for instr in instruments
+            if instr.symbol in self.positions and abs(self.positions[instr.symbol].quantity) > instr.min_size
+        ]
+        self.positions_gathering.alter_positions(self, exit_targets)
+
+        # - if still open positions close them manually
+        for instr in instruments:
+            pos = self.positions.get(instr.symbol)
+            if pos and abs(pos.quantity) > instr.min_size:
+                self.trade(instr, -pos.quantity)
+
+        # - unsubscribe from market data
+        for instr in instruments:
+            self.unsubscribe(self._market_data_subcription_type, instr)
+
+        # - remove from data cache
+        for instr in instruments:
+            self._cache.remove(instr.symbol)
+
+    def __add_instruments(self, instruments: list[Instrument]) -> None:
+        # - create positions for instruments
+        self._create_and_update_positions(instruments)
+
+        # - get actual positions from exchange
+        _symbols = []
+        for instr in instruments:
+            # process instruments - need to find convertors etc
+            self._cache.init_ohlcv(instr.symbol)
+            _symbols.append(instr.symbol)
+
+        # - subscribe to market data
+        logger.info(
+            f"(StrategyContext) Subscribing to {self._market_data_subcription_type} updates using {self._market_data_subcription_params} for \n\t{_symbols} "
+        )
+        self.broker_provider.subscribe(
+            self._market_data_subcription_type, instruments, **self._market_data_subcription_params
+        )
+
+        # - initialize strategy loggers
+        self._logging.initialize(self.time(), self.positions, self.trading_service.get_account().get_balances())
 
     @_SW.watch("StrategyContext")
     def subscribe(self, subscription_type: str, instr_or_symbol: Instrument | str, **kwargs) -> bool:

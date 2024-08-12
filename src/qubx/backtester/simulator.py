@@ -673,13 +673,14 @@ def simulate(
     commissions: str,
     start: str | pd.Timestamp,
     stop: str | pd.Timestamp | None = None,
+    fit: str | None = None,
     exchange: str | None = None,  # in case if exchange is not specified in symbols list
     base_currency: str = "USDT",
     leverage: float = 1.0,  # TODO: we need to add support for leverage
     n_jobs: int = 1,
     silent: bool = False,
     enable_event_batching: bool = True,
-) -> TradingSessionResult | List[TradingSessionResult]:
+) -> list[TradingSessionResult]:
     # - recognize provided data
     if isinstance(data, dict):
         data_reader = InMemoryDataFrameReader(data)
@@ -732,6 +733,7 @@ def simulate(
         data_reader,
         subscription,
         trigger,
+        fit=fit,
         n_jobs=n_jobs,
         silent=silent,
         enable_event_batching=enable_event_batching,
@@ -794,6 +796,7 @@ def _run_setups(
     data_reader: DataReader,
     subscription: Dict[str, Any],
     trigger: str | list[str],
+    fit: str | None,
     n_jobs: int = -1,
     silent: bool = False,
     enable_event_batching: bool = True,
@@ -815,6 +818,7 @@ def _run_setups(
             data_reader,
             subscription,
             trigger,
+            fit=fit,
             silent=silent,
             enable_event_batching=enable_event_batching,
         )
@@ -831,6 +835,7 @@ def _run_setup(
     data_reader: DataReader,
     subscription: Dict[str, Any],
     trigger: str | list[str],
+    fit: str | None,
     silent: bool = False,
     enable_event_batching: bool = True,
 ) -> TradingSessionResult:
@@ -881,6 +886,7 @@ def _run_setup(
         instruments=setup.instruments,
         md_subscription=subscription,
         trigger_spec=_trigger,
+        fit_spec=fit,
         logs_writer=logs_writer,
     )
     ctx.start()

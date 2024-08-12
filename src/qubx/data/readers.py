@@ -599,7 +599,11 @@ class RestoreTicksFromOHLC(DataTransformer):
 
         if self._freq is None:
             ts = [t[self._time_idx] for t in rows_data[:100]]
-            self._freq = infer_series_frequency(ts)
+            try:
+                self._freq = infer_series_frequency(ts)
+            except ValueError:
+                logger.warning("Can't determine frequency of incoming data")
+                return
 
             # - timestamps when we emit simulated quotes
             dt = self._freq.astype("timedelta64[ns]").item()
@@ -755,6 +759,9 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
                 )
             )
         return table_name
+
+    def prepare_names_sql(self) -> str:
+        return "select table_name from tables() where table_name like '%candles%'"
 
     @staticmethod
     def _convert_time_delta_to_qdb_resample_format(c_tf: str):
