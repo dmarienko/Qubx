@@ -76,3 +76,14 @@ def get_candles_df_from_questdb(
                 logger.error(f"Error fetching data for symbol {symbol}: {e}")
 
     return pd.concat(symbol_to_candles, axis=1)
+
+
+def get_prices_qdb(
+    exchange: str,
+    symbols: list[str],
+    qdb: MultiQdbConnector,
+    start: str | pd.Timestamp,
+    stop: str | pd.Timestamp,
+    timeframe: str = "1d",
+) -> pd.DataFrame:
+    pass

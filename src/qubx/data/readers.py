@@ -752,12 +752,11 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
                 _exch = _ss[0]
                 _mktype = _ss[1]
             _mktype = _mktype.lower()
-            table_name = ".".join(
-                filter(
-                    lambda x: x,
-                    [_exch.lower(), _aliases.get(_mktype, _mktype), symb.lower(), sfx],
-                )
-            )
+            parts = [_exch.lower(), _aliases.get(_mktype, _mktype)]
+            if "candles" not in sfx:
+                parts.append(symb.lower())
+            parts.append(sfx)
+            table_name = ".".join(filter(lambda x: x, parts))
         return table_name
 
     def prepare_names_sql(self) -> str:
@@ -779,16 +778,24 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
         resample: str | None,
         data_type: str,
     ) -> str:
-        where = ""
+        _ss = data_id.split(":")
+        if len(_ss) > 1:
+            _exch, symb = _ss
+        else:
+            symb = data_id
+
+        symb = symb.lower()
+
+        where = f"where symbol = '{symb}'"
         w0 = f"timestamp >= '{start}'" if start else ""
         w1 = f"timestamp <= '{end}'" if end else ""
 
         # - fix: when no data ranges are provided we must skip empy where keyword
         if w0 or w1:
-            where = f"where {w0} and {w1}" if (w0 and w1) else f"where {(w0 or w1)}"
+            where = f"{where} and {w0} and {w1}" if (w0 and w1) else f"{where} and {(w0 or w1)}"
 
         # - filter out candles without any volume
-        where = f"{where} and volume > 0" if where else "where volume > 0"
+        where = f"{where} and volume > 0"
 
         # - check resample format
         resample = (

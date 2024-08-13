@@ -768,7 +768,8 @@ class StrategyContextImpl(StrategyContext):
         self.__add_instruments(add_instr)
         self.__remove_instruments(rm_instr)
 
-        self.strategy.on_universe_change(self, add_instr, rm_instr)
+        if add_instr or rm_instr:
+            self.strategy.on_universe_change(self, add_instr, rm_instr)
 
         # set new instruments
         self.instruments = instruments
