@@ -89,6 +89,9 @@ class InstrumentsLookup:
                 return i
         return None
 
+    def find_instruments(self, exchange: str, quote: str | None = None) -> list[Instrument]:
+        return [i for i in self._lookup.values() if i.exchange == exchange and (quote is None or i.quote == quote)]
+
     def _save_to_json(self, path, instruments: List[Instrument]):
         with open(path, "w") as f:
             json.dump(instruments, f, cls=_InstrumentEncoder)
@@ -415,6 +418,9 @@ class GlobalLookup:
 
     def find_instrument(self, exchange: str, base: str, quote: str) -> Optional[Instrument]:
         return self.instruments.find(exchange, base, quote)
+
+    def find_instruments(self, exchange: str, quote: str | None = None) -> list[Instrument]:
+        return self.instruments.find_instruments(exchange, quote)
 
     def find_symbol(self, exchange: str, symbol: str) -> Optional[Instrument]:
         return self.instruments.find_symbol(exchange, symbol)

@@ -184,6 +184,8 @@ class StrategyContext(ITimeProvider):
 
     def get_historical_ohlcs(self, instrument: Instrument | str, timeframe: str, length: int) -> OHLCV | None: ...
 
+    def set_universe(self, instruments: list[Instrument]): ...
+
     def subscribe(self, subscription_type: str, instr_or_symbol: Instrument | str, **kwargs) -> bool: ...
 
     def unsubscribe(self, subscription_type: str, instr_or_symbol: Instrument | str) -> bool: ...
@@ -311,6 +313,14 @@ class IStrategy:
         This method is called when it's time to fit model
         :param fit_time: last time of fit data to use
         :param previous_fit_time: last time of fit data used in previous fit call
+        """
+        return None
+
+    def on_universe_change(
+        self, ctx: StrategyContext, add_instruments: list[Instrument], rm_instruments: list[Instrument]
+    ) -> None:
+        """
+        This method is called when the trading universe is updated.
         """
         return None
 

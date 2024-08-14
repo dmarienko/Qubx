@@ -225,3 +225,113 @@ class AtrRiskTracker(StopTakePositionTracker):
             )
 
         return targets
+
+
+class MinAtrExitDistanceTracker(PositionsTracker):
+    """
+    Allow exit only if price has moved away from entry by the specified distance in ATR units.
+    """
+
+    _signals: dict[str, Signal]
+
+    def __init__(
+        self,
+        take_target: float | None,
+        stop_target: float | None,
+        atr_timeframe: str,
+        atr_period: int,
+        atr_smoother="sma",
+        sizer: IPositionSizer = FixedSizer(1.0),
+    ) -> None:
+        super().__init__(sizer)
+        self.atr_timeframe = atr_timeframe
+        self.atr_period = atr_period
+        self.atr_smoother = atr_smoother
+        self.take_target = take_target
+        self.stop_target = stop_target
+        self._signals = dict()
+
+    def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
+        targets = []
+        for s in signals:
+            volatility = atr(
+                ctx.ohlc(s.instrument, self.atr_timeframe),
+                self.atr_period,
+                smoother=self.atr_smoother,
+                percentage=False,
+            )
+            if len(volatility) < 2:
+                continue
+            last_volatility = volatility[1]
+            quote = ctx.quote(s.instrument.symbol)
+            if last_volatility is None or not np.isfinite(last_volatility) or quote is None:
+                continue
+
+            self._signals[s.instrument.symbol] = s
+
+            if s.signal != 0:
+                # if signal is not 0, atr thresholds don't apply
+                # set expected stop price in case sizer needs it
+                if s.stop is None:
+                    price = quote.ask if s.signal > 0 else quote.bid
+                    s.stop = (
+                        price - self.stop_target * last_volatility
+                        if s.signal > 0
+                        else price + self.stop_target * last_volatility
+                    )
+
+                target = self.get_position_sizer().calculate_target_positions(ctx, [s])[0]
+                targets.append(target)
+                continue
+
+            if self.__check_exit(ctx, s.instrument):
+                logger.debug(f"\t ::: <yellow>Min ATR distance reached</yellow> for {s.instrument.symbol}")
+                targets.append(TargetPosition.zero(ctx, s))
+
+        return targets
+
+    def update(
+        self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+    ) -> List[TargetPosition] | TargetPosition:
+        signal = self._signals.get(instrument.symbol)
+        if signal is None or signal.signal != 0:
+            return []
+        if not self.__check_exit(ctx, instrument):
+            return []
+        logger.debug(f"\t ::: <yellow>Min ATR distance reached</yellow> for {instrument.symbol}")
+        return TargetPosition.zero(
+            ctx, instrument.signal(0, group="Risk Manager", comment=f"Original signal price: {signal.reference_price}")
+        )
+
+    def __check_exit(self, ctx: StrategyContext, instrument: Instrument) -> bool:
+        volatility = atr(
+            ctx.ohlc(instrument, self.atr_timeframe),
+            self.atr_period,
+            smoother=self.atr_smoother,
+            percentage=False,
+        )
+        if len(volatility) < 2:
+            return False
+
+        last_volatility = volatility[1]
+        quote = ctx.quote(instrument.symbol)
+        if last_volatility is None or not np.isfinite(last_volatility) or quote is None:
+            return False
+
+        pos = ctx.positions.get(instrument.symbol)
+        if pos is None:
+            return False
+
+        entry = pos.position_avg_price
+        allow_exit = False
+        if pos.quantity > 0:
+            stop = entry - self.stop_target * last_volatility
+            take = entry + self.take_target * last_volatility
+            if quote.bid <= stop or quote.ask >= take:
+                allow_exit = True
+        else:
+            stop = entry + self.stop_target * last_volatility
+            take = entry - self.take_target * last_volatility
+            if quote.ask >= stop or quote.bid <= take:
+                allow_exit = True
+        return allow_exit
