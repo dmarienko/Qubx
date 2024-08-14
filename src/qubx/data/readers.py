@@ -742,6 +742,7 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
             BINANCE.UM:BTCUSDT or BINANCE:BTCUSDT for spot
         """
         _aliases = {"um": "umfutures", "cm": "cmfutures", "f": "futures"}
+        sfx = sfx or "candles_1m"
         table_name = data_id
         _ss = data_id.split(":")
         if len(_ss) > 1:
@@ -881,8 +882,81 @@ class QuestDBConnector(DataReader):
             self._builder,
         )
 
+    def get_symbols(self, exchange: str) -> list[str]:
+        table_name = QuestDBSqlCandlesBuilder().get_table_name(f"{exchange}:BTCUSDT")
+        query = f"""
+        select distinct symbol
+        from "{table_name}";
+        """
+        return self.execute(query)["symbol"].tolist()
+
+    def get_candles(
+        self,
+        exchange: str,
+        symbols: list[str],
+        start: str | pd.Timestamp,
+        stop: str | pd.Timestamp,
+        timeframe: str = "1d",
+    ) -> pd.DataFrame:
+        assert len(symbols) > 0, "No symbols provided"
+        quoted_symbols = [f"'{s.lower()}'" for s in symbols]
+        where = f"where symbol in ({', '.join(quoted_symbols)}) and timestamp >= '{start}' and timestamp < '{stop}'"
+        table_name = QuestDBSqlCandlesBuilder().get_table_name(f"{exchange}:{symbols[0]}")
+
+        _rsmpl = f"sample by {timeframe}"
+
+        query = f"""
+        select timestamp, 
+        symbol,
+        first(open) as open, 
+        max(high) as high,
+        min(low) as low,
+        last(close) as close,
+        sum(volume) as volume,
+        sum(quote_volume) as quote_volume,
+        sum(count) as count,
+        sum(taker_buy_volume) as taker_buy_volume,
+        sum(taker_buy_quote_volume) as taker_buy_quote_volume
+        from "{table_name}" {where} {_rsmpl};
+        """
+        return self.execute(query).set_index(["timestamp", "symbol"])
+
+    def get_average_quote_volume(
+        self,
+        exchange: str,
+        start: str | pd.Timestamp,
+        stop: str | pd.Timestamp,
+        timeframe: str = "1d",
+    ) -> pd.Series:
+        table_name = QuestDBSqlCandlesBuilder().get_table_name(f"{exchange}:BTCUSDT")
+        query = f"""
+        WITH sampled as (
+            select timestamp, symbol, sum(quote_volume) as qvolume 
+            from "{table_name}"
+            where timestamp >= '{start}' and timestamp < '{stop}'
+            SAMPLE BY {timeframe}
+        )
+        select symbol, avg(qvolume) as quote_volume from sampled
+        group by symbol
+        order by quote_volume desc;
+        """
+        vol_stats = self.execute(query)
+        if vol_stats.empty:
+            return pd.Series()
+        return vol_stats.set_index("symbol")["quote_volume"]
+
     def get_names(self) -> List[str]:
         return self._get_names(self._builder)
+
+    @_retry
+    def execute(self, query: str) -> pd.DataFrame:
+        _cursor = self._connection.cursor()  # type: ignore
+        _cursor.execute(query)  # type: ignore
+        names = [d.name for d in _cursor.description]  # type: ignore
+        records = _cursor.fetchall()
+        if not records:
+            return pd.DataFrame()
+        return pd.DataFrame(records, columns=names)
 
     @_retry
     def _read(
