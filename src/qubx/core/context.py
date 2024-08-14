@@ -462,6 +462,22 @@ class StrategyContextImpl(StrategyContext):
         self._cache.update_by_bar(symbol, bar)
         return None
 
+    def _processing_hist_quote(self, symbol: str, quote: Quote | BatchEvent) -> TriggerEvent | None:
+        if isinstance(quote, BatchEvent):
+            for q in quote.data:
+                self._cache.update_by_quote(symbol, q)
+        else:
+            self._cache.update_by_quote(symbol, quote)
+        return None
+
+    def _processing_hist_trade(self, symbol: str, trade: Trade | BatchEvent) -> TriggerEvent | None:
+        if isinstance(trade, BatchEvent):
+            for t in trade.data:
+                self._cache.update_by_trade(symbol, t)
+        else:
+            self._cache.update_by_trade(symbol, trade)
+        return None
+
     def _processing_hist_bars(self, symbol: str, bars: List[Bar]) -> TriggerEvent | None:
         # - processing historical bars as list
         for b in bars:
@@ -817,7 +833,7 @@ class StrategyContextImpl(StrategyContext):
             _symbols.append(instr.symbol)
 
         # - subscribe to market data
-        logger.info(
+        logger.debug(
             f"(StrategyContext) Subscribing to {self._market_data_subcription_type} updates using {self._market_data_subcription_params} for \n\t{_symbols} "
         )
         self.broker_provider.subscribe(

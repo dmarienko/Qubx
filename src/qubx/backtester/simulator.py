@@ -485,6 +485,9 @@ class SimulatedExchange(IBrokerServiceProvider):
         logger.info(f"SimulatedExchangeService :: run :: Simulation finished at {end}")
 
     def _run_generated_signals(self, symbol: str, data_type: str, data: Any) -> None:
+        is_hist = data_type.startswith("hist")
+        if is_hist:
+            raise ValueError("Historical data is not supported for pre-generated signals !")
         cc = self.get_communication_channel()
         t = data.time  # type: ignore
         self._current_time = max(np.datetime64(t, "ns"), self._current_time)
@@ -505,18 +508,20 @@ class SimulatedExchange(IBrokerServiceProvider):
         t = data.time  # type: ignore
         self._current_time = max(np.datetime64(t, "ns"), self._current_time)
         q = self.trading_service.emulate_quote_from_data(symbol, np.datetime64(t, "ns"), data)
-        if q is not None:
+        is_hist = data_type.startswith("hist")
+        if not is_hist and q is not None:
             self._last_quotes[symbol] = q
             self.trading_service.update_position_price(symbol, self._current_time, q)
 
         cc.send((symbol, data_type, data))
 
-        if q is not None:
-            cc.send((symbol, "quote", q))
+        if not is_hist:
+            if q is not None and data_type != "quote":
+                cc.send((symbol, "quote", q))
 
-        if self._scheduler.check_and_run_tasks():
-            # - push nothing - it will force to process last event
-            cc.send((None, "time", None))
+            if self._scheduler.check_and_run_tasks():
+                # - push nothing - it will force to process last event
+                cc.send((None, "time", None))
 
     def get_quote(self, symbol: str) -> Optional[Quote]:
         return self._last_quotes[symbol]

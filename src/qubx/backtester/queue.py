@@ -135,8 +135,9 @@ class SimulatedDataQueue:
         return self
 
     def __iter__(self) -> Iterator:
-        logger.info("Initializing chunks for each loader")
-        self._current_time = self._start
+        logger.debug("Initializing chunks for each loader")
+        assert self._start is not None
+        self._current_time = int(pd.Timestamp(self._start).timestamp() * 1_000_000)
         self._index_to_chunk_size = {}
         self._index_to_iterator = {}
         self._event_heap = []
@@ -159,13 +160,19 @@ class SimulatedDataQueue:
         if loader_index is None or loader_index in self._removed_loader_indices:
             raise StopIteration
 
-        self._current_time = dt
+        loader = self._index_to_loader[loader_index]
+        data_type = loader.data_type
+        if dt < self._current_time:  # type: ignore
+            data_type = f"hist_{data_type}"
+        else:
+            # only update the current time if the event is not historical
+            self._current_time = dt
+
         chunk_size = self._index_to_chunk_size[loader_index]
         if chunk_index + 1 == chunk_size:
             self._add_chunk_to_heap(loader_index)
 
-        loader = self._index_to_loader[loader_index]
-        return loader.symbol, loader.data_type, event
+        return loader.symbol, data_type, event
 
     @_SW.watch("DataQueue")
     def _add_chunk_to_heap(self, loader_index: int):
@@ -249,7 +256,7 @@ class SimulatedDataQueueWithThreads(SimulatedDataQueue):
         return self
 
     def __iter__(self) -> Iterator:
-        logger.info("Initializing chunks for each loader")
+        logger.debug("Initializing chunks for each loader")
         self._current_time = self._start
         self._index_to_chunk_size = {}
         self._index_to_iterator = {}
