@@ -163,7 +163,9 @@ class Instrument:
         return hash((self.symbol, self.exchange, self.market_type))
 
     def __eq__(self, other: Any) -> bool:
-        if not isinstance(other, "Instrument"):
+        if other is None:
+            return False
+        if type(other) != type(self):
             return False
         return self.symbol == other.symbol and self.exchange == other.exchange and self.market_type == other.market_type
 

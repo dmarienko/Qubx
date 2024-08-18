@@ -71,7 +71,7 @@ def permutate_params(
             case str():
                 vals.append([v])
             case _:
-                vals.append(list(v))
+                vals.append([v])
         # vals.append(v if isinstance(v, (List, Tuple)) else list(v) if isinstance(v, range) else [v])
     d = [dict(zip(args, p)) for p in product(*vals)]
     result = []

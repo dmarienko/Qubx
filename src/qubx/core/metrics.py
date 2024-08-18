@@ -765,6 +765,28 @@ def tearsheet(
         )
 
 
+def get_equity(
+    sessions: TradingSessionResult | list[TradingSessionResult],
+    account_transactions: bool = True,
+    timeframe: str | None = None,
+) -> pd.DataFrame:
+    if timeframe is None:
+        timeframe = _estimate_timeframe(sessions)
+
+    def _get_single_equity(session: TradingSessionResult) -> pd.Series:
+        pnl = calculate_total_pnl(session.portfolio_log, split_cumulative=False)
+        pnl["Total_PnL"] = pnl["Total_PnL"].cumsum()
+        if account_transactions:
+            pnl["Total_PnL"] -= pnl["Total_Commissions"].cumsum()
+        returns = portfolio_returns(pnl, init_cash=session.capital)
+        return ((returns + 1).cumprod(axis=0) - 1).resample(timeframe).ffill().rename(session.name)
+
+    if isinstance(sessions, list):
+        return pd.concat([_get_single_equity(s) for s in sessions], axis=1, names=[s.name for s in sessions])
+    else:
+        return _get_single_equity(sessions)
+
+
 def _estimate_timeframe(session: TradingSessionResult | list[TradingSessionResult]) -> str:
     session = session[0] if isinstance(session, list) else session
     start, end = pd.Timestamp(session.start), pd.Timestamp(session.stop)
