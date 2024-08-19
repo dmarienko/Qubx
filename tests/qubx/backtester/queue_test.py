@@ -48,7 +48,7 @@ class DummyDataLoader(DataLoader):
 
 
 def get_event_dt(i: float, base: pd.Timestamp = pd.Timestamp("2021-01-01"), offset: str = "D") -> pd.Timestamp:
-    return base + pd.Timedelta(i, offset)  # type: ignore
+    return (base + pd.Timedelta(i, offset)).as_unit("ns").asm8.item()  # type: ignore
 
 
 class TestSimulatedQueueStuff:

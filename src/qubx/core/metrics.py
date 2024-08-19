@@ -668,12 +668,13 @@ def portfolio_metrics(
     # todo: add transaction_cost calculations
     equity = init_cash + pft_total["Total_PnL"]
     mdd, ddstart, ddpeak, ddrecover, dd_data = absmaxdd(equity)
-    mdd_pct = 100 * dd_data / equity.cummax()
+    execs = len(executions_log)
+    mdd_pct = 100 * dd_data / equity.cummax() if execs > 0 else pd.Series(0, index=equity.index)
     sheet["equity"] = equity
     sheet["gain"] = sheet["equity"].iloc[-1] - sheet["equity"].iloc[0]
     sheet["cagr"] = cagr(returns_daily, performance_statistics_period)
     sheet["sharpe"] = sharpe_ratio(returns_daily, risk_free, performance_statistics_period)
-    sheet["qr"] = qr(equity)
+    sheet["qr"] = qr(equity) if execs > 0 else 0
     sheet["drawdown_usd"] = dd_data
     sheet["drawdown_pct"] = mdd_pct
     # 25-May-2019: MDE fixed Max DD pct calculations
@@ -709,7 +710,7 @@ def portfolio_metrics(
     sheet["fees"] = pft_total["Total_Commissions"].iloc[-1]
 
     # executions metrics
-    sheet["execs"] = len(executions_log)
+    sheet["execs"] = execs
 
     return sheet
 
