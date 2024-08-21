@@ -4,6 +4,11 @@ from typing import Any, Tuple
 import pandas as pd
 
 class Bar:
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
     def __init__(self, time, open, high, low, close, volume, bought_volume=0): ...
 
 class Quote:
@@ -28,8 +33,15 @@ class Locator:
     def __getitem__(self, idx): ...
     def find(self, t: str) -> Tuple[np.datetime64, Any]: ...
 
+class Indexed:
+    def __getitem__(self, idx): ...
+
 class TimeSeries:
     loc: Locator
+    timeframe: str
+    max_series_length: int
+    times: Indexed
+    values: Indexed
     def __init__(self, name, timeframe, max_series_length, process_every_update=True) -> None: ...
     def __getitem__(self, idx): ...
     def update(self, time: int, value: float) -> bool: ...

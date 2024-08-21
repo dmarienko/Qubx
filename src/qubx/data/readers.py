@@ -789,7 +789,7 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
 
         where = f"where symbol = '{symb}'"
         w0 = f"timestamp >= '{start}'" if start else ""
-        w1 = f"timestamp <= '{end}'" if end else ""
+        w1 = f"timestamp < '{end}'" if end else ""
 
         # - fix: when no data ranges are provided we must skip empy where keyword
         if w0 or w1:
