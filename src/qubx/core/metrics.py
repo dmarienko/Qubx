@@ -661,9 +661,12 @@ def portfolio_metrics(
         returns_on_init_bp = returns_on_init_bp[:end]
 
     # aggregate them to daily (if we have intraday portfolio)
-    if infer_series_frequency(returns) < pd.Timedelta("1D").to_timedelta64():
-        returns_daily = aggregate_returns(returns, "daily")
-        returns_on_init_bp = aggregate_returns(returns_on_init_bp, "daily")
+    try:
+        if infer_series_frequency(returns) < pd.Timedelta("1D").to_timedelta64():
+            returns_daily = aggregate_returns(returns, "daily")
+            returns_on_init_bp = aggregate_returns(returns_on_init_bp, "daily")
+    except:
+        returns_daily = returns
 
     # todo: add transaction_cost calculations
     equity = init_cash + pft_total["Total_PnL"]
@@ -723,6 +726,7 @@ def tearsheet(
     timeframe: str | pd.Timedelta | None = None,
     sort_by: str | None = "Sharpe",
     sort_ascending: bool = False,
+    plot_equities: bool = True,
 ):
     if timeframe is None:
         timeframe = _estimate_timeframe(session)
@@ -740,19 +744,21 @@ def tearsheet(
             for s in session:
                 report, mtrx = _pfl_metrics_prepare(s, account_transactions, performance_statistics_period)
                 _rs.append(report)
-                if compound:
-                    # _eq.append(pd.Series(100 * mtrx["compound_returns"], name=s.trading_id))
-                    compound_returns = mtrx["compound_returns"].resample(timeframe).ffill()
-                    plt.plot(100 * compound_returns, label=s.name)
-                else:
-                    # _eq.append(pd.Series(mtrx["equity"], name=s.trading_id))
-                    equity = mtrx["equity"].resample(timeframe).ffill()
-                    plt.plot(equity, label=s.name)
+                if plot_equities:
+                    if compound:
+                        # _eq.append(pd.Series(100 * mtrx["compound_returns"], name=s.trading_id))
+                        compound_returns = mtrx["compound_returns"].resample(timeframe).ffill()
+                        plt.plot(100 * compound_returns, label=s.name)
+                    else:
+                        # _eq.append(pd.Series(mtrx["equity"], name=s.trading_id))
+                        equity = mtrx["equity"].resample(timeframe).ffill()
+                        plt.plot(equity, label=s.name)
 
-            if len(session) <= 15:
-                plt.legend(ncol=max(1, len(session) // 5))
+            if plot_equities:
+                if len(session) <= 15:
+                    plt.legend(ncol=max(1, len(session) // 5))
+                plt.title("Comparison of Equity Curves")
 
-            plt.title("Comparison of Equity Curves")
             report = pd.concat(_rs, axis=1).T
             report["id"] = [s.id for s in session]
             report = report.set_index("id", append=True).swaplevel()

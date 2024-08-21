@@ -63,7 +63,13 @@ class FixedLeverageSizer(IPositionSizer):
 
 
 class FixedRiskSizer(IPositionSizer):
-    def __init__(self, max_cap_in_risk: float, max_allowed_position=np.inf, reinvest_profit=True):
+    def __init__(
+        self,
+        max_cap_in_risk: float,
+        max_allowed_position=np.inf,
+        reinvest_profit: bool = True,
+        divide_by_symbols: bool = True,
+    ):
         """
         Create fixed risk sizer calculator instance.
         :param max_cap_in_risk: maximal risked capital (in percentage)
@@ -73,6 +79,7 @@ class FixedRiskSizer(IPositionSizer):
         self.max_cap_in_risk = max_cap_in_risk / 100
         self.max_allowed_position_quoted = max_allowed_position
         self.reinvest_profit = reinvest_profit
+        self.divide_by_symbols = divide_by_symbols
 
     def calculate_target_positions(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         t_pos = []
@@ -91,6 +98,7 @@ class FixedRiskSizer(IPositionSizer):
                     target_position_size = (  
                         _direction
                         *min((_cap * self.max_cap_in_risk) / abs(signal.stop / _entry - 1), self.max_allowed_position_quoted) / _entry
+                        / len(ctx.instruments) if self.divide_by_symbols else 1
                     )  
                     # fmt: on
 

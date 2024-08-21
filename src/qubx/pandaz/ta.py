@@ -695,7 +695,7 @@ def macd(x: pd.Series, fast=12, slow=26, signal=9, method="ema", signal_method="
     return smooth(x_diff, signal_method, signal).rename("macd")
 
 
-def atr(x: pd.Series, window=14, smoother="sma", percentage=False) -> pd.Series:
+def atr(x: pd.DataFrame, window=14, smoother="sma", percentage=False) -> pd.Series:
     """
     Average True Range indicator
 
