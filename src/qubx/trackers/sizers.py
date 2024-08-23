@@ -98,7 +98,7 @@ class FixedRiskSizer(IPositionSizer):
                     target_position_size = (  
                         _direction
                         *min((_cap * self.max_cap_in_risk) / abs(signal.stop / _entry - 1), self.max_allowed_position_quoted) / _entry
-                        / len(ctx.instruments) if self.divide_by_symbols else 1
+                        / (len(ctx.instruments) if self.divide_by_symbols else 1)
                     )  
                     # fmt: on
 
