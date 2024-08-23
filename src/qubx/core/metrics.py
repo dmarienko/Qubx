@@ -794,9 +794,11 @@ def get_equity(
         return _get_single_equity(sessions)
 
 
-def _estimate_timeframe(session: TradingSessionResult | list[TradingSessionResult]) -> str:
+def _estimate_timeframe(
+    session: TradingSessionResult | list[TradingSessionResult], start: str | None = None, stop: str | None = None
+) -> str:
     session = session[0] if isinstance(session, list) else session
-    start, end = pd.Timestamp(session.start), pd.Timestamp(session.stop)
+    start, end = pd.Timestamp(start or session.start), pd.Timestamp(stop or session.stop)
     diff = end - start
     if diff > pd.Timedelta("360d"):
         return "1d"
@@ -889,6 +891,7 @@ def chart_signals(
     indicators={},
     overlay=[],
     info=True,
+    show_trades: bool = True,
     show_quantity: bool = False,
     show_value: bool = False,
     show_leverage: bool = True,
@@ -899,6 +902,8 @@ def chart_signals(
     Show trading signals on chart
     """
     indicators = indicators | {}
+    if timeframe is None:
+        timeframe = _estimate_timeframe(result, start, end)
 
     executions = result.executions_log.rename(
         columns={"instrument_id": "instrument", "filled_qty": "quantity", "price": "exec_price"}
@@ -954,13 +959,13 @@ def chart_signals(
 
         indicators = {k: __resample(v) for k, v in indicators.items()}
 
-    excs = executions[executions["instrument"] == symbol][
-        ["quantity", "exec_price", "commissions", "commissions_quoted"]
-    ]
+    if show_trades:
+        excs = executions[executions["instrument"] == symbol][
+            ["quantity", "exec_price", "commissions", "commissions_quoted"]
+        ]
+        overlay = list(overlay) + [excs]
 
-    chart = (
-        LookingGlass([bars, excs, *overlay], indicators).look(start, end, title=symbol).hover(show_info=info, h=height)
-    )
+    chart = LookingGlass([bars, *overlay], indicators).look(start, end, title=symbol).hover(show_info=info, h=height)
     if not show_table:
         return chart.show()
 

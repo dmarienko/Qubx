@@ -144,7 +144,7 @@ cdef class Kama(Indicator):
             self._x_past[-1] = value
 
         cdef double rs = self.summator.update(abs(value - self._x_past[-2]), new_item_started)
-        cdef double er = abs(value - self._x_past[0]) / rs
+        cdef double er = (abs(value - self._x_past[0]) / rs) if rs != 0.0 else 1.0
         cdef double sc = (er * self._K1 + self._S1) ** 2
 
         if self.summator.is_init_stage:

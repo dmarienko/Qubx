@@ -37,8 +37,9 @@ class Indexed:
     def __getitem__(self, idx): ...
 
 class TimeSeries:
+    name: str
     loc: Locator
-    timeframe: str
+    timeframe: int
     max_series_length: int
     times: Indexed
     values: Indexed
@@ -77,6 +78,9 @@ class OHLCV(TimeSeries):
     def pd(self) -> pd.DataFrame: ...
 
 class Indicator(TimeSeries):
+    name: str
+    series: TimeSeries
+
     def update(self, time: int, value, new_item_started: bool) -> object: ...
 
 class IndicatorOHLC(Indicator): ...
