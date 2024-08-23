@@ -146,7 +146,8 @@ class Instrument:
         take: float | None = None,
         group: str = "",
         comment: str = "",
-        options: dict[str, Any] = None,
+        options: dict[str, Any] | None = None,  # - probably we need to remove it ?
+        **kwargs,
     ) -> Signal:
         return Signal(
             self,
@@ -156,7 +157,7 @@ class Instrument:
             take=take,
             group=group,
             comment=comment,
-            options=options or {},
+            options=(options or {}) | kwargs,
         )
 
     def __hash__(self) -> int:

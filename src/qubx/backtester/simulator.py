@@ -871,6 +871,9 @@ def _run_setup(
             _trigger = "bar: 0s"
             _stop = setup.generator.index[-1]  # type: ignore
 
+            # - no historical data for generated signals, so disable it
+            enable_event_batching = False
+
         case _Types.SIGNAL_AND_TRACKER:
             strat = _GeneratedSignalsStrategy()
             strat.tracker = lambda ctx: setup.tracker
@@ -878,6 +881,9 @@ def _run_setup(
             # - we don't need any unexpected triggerings
             _trigger = "bar: 0s"
             _stop = setup.generator.index[-1]  # type: ignore
+
+            # - no historical data for generated signals, so disable it
+            enable_event_batching = False
 
         case _:
             raise ValueError(f"Unsupported setup type: {setup.setup_type} !")
