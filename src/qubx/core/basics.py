@@ -4,11 +4,11 @@ import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
 
-from threading import Thread, Event, Lock, Condition
+from threading import Event, Lock
 from queue import Queue
 
 from qubx.core.series import Quote, Trade, time_as_nsec
-from qubx.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
+from qubx.core.utils import prec_ceil, prec_floor
 
 
 dt_64 = np.datetime64
@@ -137,6 +137,15 @@ class Instrument:
         if self._size_precision < 0:
             self._size_precision = int(abs(np.log10(self.min_size_step)))
         return self._size_precision
+
+    def round_size_down(self, size: float) -> float:
+        return prec_floor(size, self.size_precision)
+
+    def round_size_up(self, size: float) -> float:
+        return prec_ceil(size, self.size_precision)
+
+    def round_price(self, price: float) -> float:
+        return prec_floor(price, self.price_precision)
 
     def signal(
         self,
@@ -338,7 +347,11 @@ class Position:
         self, timestamp: dt_64, amount: float, exec_price: float, fee_amount: float = 0, conversion_rate: float = 1
     ) -> tuple[float, float]:
         return self.update_position(
-            timestamp, self.quantity + amount, exec_price, fee_amount, conversion_rate=conversion_rate
+            timestamp,
+            self.instrument.round_size_down(self.quantity + amount),
+            exec_price,
+            fee_amount,
+            conversion_rate=conversion_rate,
         )
 
     def update_position(
