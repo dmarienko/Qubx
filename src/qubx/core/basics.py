@@ -139,13 +139,40 @@ class Instrument:
         return self._size_precision
 
     def round_size_down(self, size: float) -> float:
+        """
+        Round down size to specified precision
+
+        i.size_precision == 3
+        i.round_size_up(0.1234) -> 0.123
+        """
         return prec_floor(size, self.size_precision)
 
     def round_size_up(self, size: float) -> float:
+        """
+        Round up size to specified precision
+
+        i.size_precision == 3
+        i.round_size_up(0.1234) -> 0.124
+        """
         return prec_ceil(size, self.size_precision)
 
-    def round_price(self, price: float) -> float:
+    def round_price_down(self, price: float) -> float:
+        """
+        Round down price to specified precision
+
+        i.price_precision == 3
+        i.round_price_down(1.234999, 3) -> 1.234
+        """
         return prec_floor(price, self.price_precision)
+
+    def round_price_up(self, price: float) -> float:
+        """
+        Round up price to specified precision
+
+        i.price_precision == 3
+        i.round_price_up(1.234999) -> 1.235
+        """
+        return prec_ceil(price, self.price_precision)
 
     def signal(
         self,
@@ -382,7 +409,7 @@ class Position:
                     self.__pos_incr_qty + _abs_qty_open
                 )
                 # - round position average price to be in line with how it's calculated by broker
-                self.position_avg_price = self.instrument.round_price(pos_avg_price_raw)
+                self.position_avg_price = self.instrument.round_price_down(pos_avg_price_raw)
                 self.__pos_incr_qty += _abs_qty_open
 
             # - update position and position's price
