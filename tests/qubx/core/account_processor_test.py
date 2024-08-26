@@ -5,7 +5,6 @@ from qubx.core.context import StrategyContextImpl
 from qubx.core.loggers import InMemoryLogsWriter
 from qubx.data.readers import CsvStorageDataReader, DataReader
 from qubx.backtester.simulator import simulate, SimulatedTrading, SimulatedExchange, find_instruments_and_exchanges
-from qubx.utils.misc import round_down_at_min_qty
 
 
 def run_debug_sim(
@@ -74,10 +73,9 @@ class TestAccountProcessorStuff:
         leverage = 0.5
         s = "BTCUSDT"
         quote = ctx.quote(s)
-        min_size_step = ctx.instruments[0].min_size_step
         capital = ctx.acc.get_total_capital()
         amount_in_base = capital * leverage
-        amount = round_down_at_min_qty(amount_in_base / quote.mid_price(), min_size_step)
+        amount = ctx.instruments[0].round_size_down(amount_in_base / quote.mid_price())
         leverage_adj = amount * quote.ask / capital
         ctx.trade("BTCUSDT", amount)
 
@@ -127,10 +125,9 @@ class TestAccountProcessorStuff:
         leverage = 0.5
         s = "BTCUSDT"
         quote = ctx.quote(s)
-        min_size_step = ctx.instruments[0].min_size_step
         capital = ctx.acc.get_total_capital()
         amount_in_base = capital * leverage
-        amount = round_down_at_min_qty(amount_in_base / quote.mid_price(), min_size_step)
+        amount = ctx.instruments[0].round_size_down(amount_in_base / quote.mid_price())
         ctx.trade("BTCUSDT", amount)
         ctx.trade("BTCUSDT", -amount)
 

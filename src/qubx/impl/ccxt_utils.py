@@ -101,9 +101,12 @@ def ccxt_restore_position_from_deals(
         else:
             for d in _last_deals:
                 pos.update_position_by_deal(d)
+                fees = 0.0
                 if d.fee_amount is not None:
                     if instr.base == d.fee_currency:
-                        pos.quantity -= d.fee_amount
+                        fees += d.fee_amount
+            # - we round fees up in case of fees in base currency
+            pos.quantity -= pos.instrument.round_size_up(fees)
     return pos
 
 

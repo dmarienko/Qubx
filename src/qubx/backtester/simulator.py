@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, TypeAlias, Callable
+from typing import Any, Dict, List, Optional, Tuple, TypeAlias, Callable, Literal
 from enum import Enum
 from tqdm.auto import tqdm
 from itertools import chain
@@ -187,7 +187,7 @@ class SimulatedTrading(ITradingServiceProvider):
         price: float | None = None,
         client_id: str | None = None,
         time_in_force: str = "gtc",
-        **optional,
+        **options,
     ) -> Order:
         ome = self._ome.get(instrument.symbol)
         if ome is None:
@@ -201,7 +201,7 @@ class SimulatedTrading(ITradingServiceProvider):
             price,
             client_id,
             time_in_force,
-            fill_at_price=optional.get("fill_at_price", False),
+            fill_at_price=options.get("fill_at_price", False),
         )
         order = report.order
         self._order_to_symbol[order.id] = instrument.symbol
@@ -685,7 +685,12 @@ def simulate(
     n_jobs: int = 1,
     silent: bool = False,
     enable_event_batching: bool = True,
+    debug: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None = "WARNING",
 ) -> list[TradingSessionResult]:
+
+    # - setup logging
+    QubxLogConfig.set_log_level(debug.upper() if debug else "WARNING")
+
     # - recognize provided data
     if isinstance(data, dict):
         data_reader = InMemoryDataFrameReader(data)
@@ -707,13 +712,13 @@ def simulate(
             f"No exchange iformation provided - you can specify it by exchange parameter or use <yellow>EXCHANGE:SYMBOL</yellow> format for symbols"
         )
         # - TODO: probably we need to raise exceptions here ?
-        return None
+        return []
 
     # - check exchanges
     if len(set(_exchanges)) > 1:
         logger.error(f"Multiple exchanges found: {', '.join(_exchanges)} - this mode is not supported yet in Qubx !")
         # - TODO: probably we need to raise exceptions here ?
-        return None
+        return []
 
     exchange = list(set(_exchanges))[0]
 
@@ -724,7 +729,7 @@ def simulate(
             f"Can't recognize setup - it should be a strategy, a set of signals or list of signals/strategies + tracker !"
         )
         # - TODO: probably we need to raise exceptions here ?
-        return None
+        return []
 
     # - check stop time : here we try to backtest till now (may be we need to get max available time from data reader ?)
     if stop is None:
