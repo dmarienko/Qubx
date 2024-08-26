@@ -275,11 +275,6 @@ class Order:
         return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
 
 
-def round_down(x, n):
-    dvz = 10 ** (-n)
-    return (int(x / dvz)) * dvz
-
-
 class Position:
     instrument: Instrument  # instrument for this poisition
     quantity: float = 0.0  # quantity positive for long and negative for short
@@ -387,7 +382,7 @@ class Position:
                     self.__pos_incr_qty + _abs_qty_open
                 )
                 # - round position average price to be in line with how it's calculated by broker
-                self.position_avg_price = round_down(pos_avg_price_raw, self.instrument.price_precision)
+                self.position_avg_price = self.instrument.round_price(pos_avg_price_raw)
                 self.__pos_incr_qty += _abs_qty_open
 
             # - update position and position's price
