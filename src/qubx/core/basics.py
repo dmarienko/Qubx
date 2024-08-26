@@ -382,6 +382,7 @@ class Position:
         # - realized PnL of this fill
         deal_pnl = 0
         quantity = self.quantity
+        comms = 0
 
         if quantity != position:
             pos_change = position - quantity
