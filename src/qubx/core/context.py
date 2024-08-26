@@ -702,7 +702,7 @@ class StrategyContextImpl(StrategyContext):
         amount: float,
         price: float | None = None,
         time_in_force="gtc",
-        **optional,
+        **options,
     ) -> Order:
         instrument: Instrument | None = (
             self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
@@ -720,13 +720,13 @@ class StrategyContextImpl(StrategyContext):
         logger.debug(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} ...")
         client_id = self._generate_order_client_id(instrument.symbol)
 
-        if self.broker_provider.is_simulated_trading and optional.get("fill_at_price", False):
+        if self.broker_provider.is_simulated_trading and options.get("fill_at_price", False):
             # assume worst case, if we force execution and certain price, assume it's via market
             # TODO: add an additional flag besides price to indicate order type
             type = "market"
 
         order = self.trading_service.send_order(
-            instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id, **optional
+            instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id, **options
         )
 
         return order

@@ -187,7 +187,7 @@ class SimulatedTrading(ITradingServiceProvider):
         price: float | None = None,
         client_id: str | None = None,
         time_in_force: str = "gtc",
-        **optional,
+        **options,
     ) -> Order:
         ome = self._ome.get(instrument.symbol)
         if ome is None:
@@ -201,7 +201,7 @@ class SimulatedTrading(ITradingServiceProvider):
             price,
             client_id,
             time_in_force,
-            fill_at_price=optional.get("fill_at_price", False),
+            fill_at_price=options.get("fill_at_price", False),
         )
         order = report.order
         self._order_to_symbol[order.id] = instrument.symbol
