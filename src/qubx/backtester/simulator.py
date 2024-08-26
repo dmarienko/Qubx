@@ -685,11 +685,11 @@ def simulate(
     n_jobs: int = 1,
     silent: bool = False,
     enable_event_batching: bool = True,
-    debug: Literal["DEBUG", "INFO", "WARN", "ERROR", "CRITICAL"] = "WARN",
+    debug: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None = "WARNING",
 ) -> list[TradingSessionResult]:
 
     # - setup logging
-    QubxLogConfig.set_log_level(debug)
+    QubxLogConfig.set_log_level(debug.upper() if debug else "WARNING")
 
     # - recognize provided data
     if isinstance(data, dict):
