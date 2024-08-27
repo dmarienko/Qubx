@@ -11,6 +11,8 @@ import re
 from scipy import stats
 from scipy.stats import norm
 from statsmodels.regression.linear_model import OLS
+from copy import copy
+from itertools import chain
 
 import plotly.graph_objects as go
 
@@ -917,10 +919,13 @@ def chart_signals(
         end = executions.index[-1]
 
     if portfolio is not None:
-        pnl = portfolio.filter(regex=f"{symbol}_PnL").loc[start:].cumsum()
+        symbol_count = len(portfolio.filter(like="_PnL").columns)
+        pnl = portfolio.filter(regex=f"{symbol}_PnL").cumsum() + result.capital / symbol_count
+        pnl = pnl.loc[start:]
         if apply_commissions:
             comm = portfolio.filter(regex=f"{symbol}_Commissions").loc[start:].cumsum()
             pnl -= comm.values
+        pnl = (pnl / pnl.iloc[0] - 1) * 100
         indicators["PnL"] = ["area", "green", pnl]
         if show_quantity:
             pos = portfolio.filter(regex=f"{symbol}_Pos").loc[start:]
@@ -1010,3 +1015,24 @@ def get_symbol_pnls(
         pnls.append(s.portfolio_log.filter(like="_PnL").cumsum().iloc[-1])
 
     return pd.DataFrame(pnls, index=[s.name for s in session])
+
+
+def combine_sessions(sessions: list[TradingSessionResult], name: str = "Portfolio") -> TradingSessionResult:
+    session = copy(sessions[0])
+    session.name = name
+    session.instruments = list(set(chain.from_iterable([e.instruments for e in sessions])))
+    session.portfolio_log = pd.concat(
+        [e.portfolio_log.loc[:, (e.portfolio_log != 0).any(axis=0)] for e in sessions], axis=1
+    )
+    # remove duplicated columns, keep first
+    session.portfolio_log = session.portfolio_log.loc[:, ~session.portfolio_log.columns.duplicated()]
+    session.executions_log = pd.concat([s.executions_log for s in sessions], axis=0).sort_index()
+    session.signals_log = pd.concat([s.signals_log for s in sessions], axis=0).sort_index()
+    # remove duplicated rows
+    session.executions_log = (
+        session.executions_log.set_index("instrument_id", append=True).drop_duplicates().reset_index("instrument_id")
+    )
+    session.signals_log = (
+        session.signals_log.set_index("instrument_id", append=True).drop_duplicates().reset_index("instrument_id")
+    )
+    return session

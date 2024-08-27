@@ -612,6 +612,9 @@ cdef class Swings(IndicatorOHLC):
         self.bottoms = TimeSeries("bottoms", series.timeframe, series.max_series_length)
         self.bottoms_detection_lag = TimeSeries("bottoms_lag", series.timeframe, series.max_series_length)
 
+        self.middles = TimeSeries("middles", series.timeframe, series.max_series_length)
+        self.deltas = TimeSeries("deltas", series.timeframe, series.max_series_length)
+
         self._min_l = +np.inf
         self._max_h = -np.inf
         self._max_t = 0
@@ -630,6 +633,9 @@ cdef class Swings(IndicatorOHLC):
                 if self._max_t > 0:
                     self.tops.update(self._max_t, self._max_h)
                     self.tops_detection_lag.update(self._max_t, time - self._max_t)
+                    if len(self.bottoms) > 0:
+                        self.middles.update(time, (self.tops[0] + self.bottoms[0]) / 2)
+                        self.deltas.update(time, self.tops[0] - self.bottoms[0])
 
                 if bar.low <= self._min_l:
                     self._min_l = bar.low
@@ -642,6 +648,9 @@ cdef class Swings(IndicatorOHLC):
                 if self._min_t > 0:
                     self.bottoms.update(self._min_t, self._min_l)
                     self.bottoms_detection_lag.update(self._min_t, time - self._min_t)
+                    if len(self.tops) > 0:
+                        self.middles.update(time, (self.tops[0] + self.bottoms[0]) / 2)
+                        self.deltas.update(time, self.tops[0] - self.bottoms[0])
 
                 if bar.high >= self._max_h:
                     self._max_h = bar.high
