@@ -108,5 +108,5 @@ cdef class Quote:
 
 
 cdef class IndicatorOHLC(Indicator):
-    cdef public OHLCV series
+    pass
 
