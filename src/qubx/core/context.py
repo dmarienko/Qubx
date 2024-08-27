@@ -38,7 +38,7 @@ from qubx.core.strategy import (
 from qubx.core.series import Trade, Quote, Bar, OHLCV
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.trackers.sizers import FixedSizer
-from qubx.utils.misc import Stopwatch, round_down_at_min_qty
+from qubx.utils.misc import Stopwatch
 from qubx.utils.time import convert_seconds_to_str
 
 
@@ -702,7 +702,7 @@ class StrategyContextImpl(StrategyContext):
         amount: float,
         price: float | None = None,
         time_in_force="gtc",
-        **optional,
+        **options,
     ) -> Order:
         instrument: Instrument | None = (
             self._symb_to_instr.get(instr_or_symbol) if isinstance(instr_or_symbol, str) else instr_or_symbol
@@ -711,7 +711,7 @@ class StrategyContextImpl(StrategyContext):
             raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
 
         # - adjust size
-        size_adj = round_down_at_min_qty(abs(amount), instrument.min_size_step)
+        size_adj = instrument.round_size_down(abs(amount))
         if size_adj < instrument.min_size:
             raise ValueError(f"Attempt to trade size {abs(amount)} less than minimal allowed {instrument.min_size} !")
 
@@ -720,13 +720,13 @@ class StrategyContextImpl(StrategyContext):
         logger.debug(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} ...")
         client_id = self._generate_order_client_id(instrument.symbol)
 
-        if self.broker_provider.is_simulated_trading and optional.get("fill_at_price", False):
+        if self.broker_provider.is_simulated_trading and options.get("fill_at_price", False):
             # assume worst case, if we force execution and certain price, assume it's via market
             # TODO: add an additional flag besides price to indicate order type
             type = "market"
 
         order = self.trading_service.send_order(
-            instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id, **optional
+            instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id, **options
         )
 
         return order

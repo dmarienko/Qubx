@@ -339,10 +339,6 @@ def dequotify(sx: Union[str, List[str]], quote="USDT"):
     raise ValueError("Can't process input data !")
 
 
-def round_down_at_min_qty(x: float, min_size: float) -> float:
-    return (int(x / min_size)) * min_size
-
-
 class ProgressParallel(joblib.Parallel):
     def __init__(self, *args, **kwargs):
         self.total = kwargs.pop("total", None)

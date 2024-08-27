@@ -894,6 +894,7 @@ def chart_signals(
     overlay=[],
     info=True,
     show_trades: bool = True,
+    show_signals: bool = False,
     show_quantity: bool = False,
     show_value: bool = False,
     show_leverage: bool = True,
@@ -969,6 +970,10 @@ def chart_signals(
             ["quantity", "exec_price", "commissions", "commissions_quoted"]
         ]
         overlay = list(overlay) + [excs]
+
+    if show_signals:
+        sigs = result.signals_log[result.signals_log["instrument_id"] == symbol]
+        overlay = list(overlay) + [sigs]
 
     chart = LookingGlass([bars, *overlay], indicators).look(start, end, title=symbol).hover(show_info=info, h=height)
     if not show_table:

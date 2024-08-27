@@ -4,7 +4,6 @@ import numpy as np
 from qubx import logger
 from qubx.core.basics import Position, Signal, TargetPosition
 from qubx.core.strategy import IPositionSizer, StrategyContext
-from qubx.utils.misc import round_down_at_min_qty
 
 
 class FixedSizer(IPositionSizer):
@@ -98,7 +97,7 @@ class FixedRiskSizer(IPositionSizer):
                     target_position_size = (  
                         _direction
                         *min((_cap * self.max_cap_in_risk) / abs(signal.stop / _entry - 1), self.max_allowed_position_quoted) / _entry
-                        / len(ctx.instruments) if self.divide_by_symbols else 1
+                        / (len(ctx.instruments) if self.divide_by_symbols else 1)
                     )  
                     # fmt: on
 
@@ -140,9 +139,7 @@ class WeightedPortfolioSizer(IPositionSizer):
                     TargetPosition(
                         ctx.time(),
                         signal,
-                        round_down_at_min_qty(
-                            cap * max(signal.signal, 0) / sw / _q.mid_price(), signal.instrument.min_size_step
-                        ),
+                        signal.instrument.round_size_down(cap * max(signal.signal, 0) / sw / _q.mid_price()),
                     )
                 )
             else:
