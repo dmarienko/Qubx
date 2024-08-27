@@ -4,6 +4,7 @@ import plotly.graph_objects as go
 from plotly.graph_objs.graph_objs import FigureWidget
 from plotly.subplots import make_subplots
 
+from qubx.core.series import OHLCV, TimeSeries
 from qubx.utils.charting.mpl_helpers import ohlc_plot
 from qubx.utils.charting.mpl_helpers import plot_trends
 from qubx.utils.charting.mpl_helpers import subplot
@@ -110,7 +111,7 @@ def install_plotly_helpers():
                 arrowcolor=c,
             )
 
-        def custom_hover(v, h=600, n=2, legend=False, show_info=True):
+        def hover(v, h=600, n=2, legend=False, show_info=True):
             return (
                 v.update_traces(xaxis="x1")
                 .update_layout(
@@ -140,7 +141,7 @@ def install_plotly_helpers():
                 )
             )
 
-        FigureWidget.hover = custom_hover  # type: ignore
+        FigureWidget.hover = hover  # type: ignore
         FigureWidget.rline = rline  # type: ignore
         FigureWidget.rlinex = rlinex  # type: ignore
         FigureWidget.rline_ = rline_  # type: ignore
@@ -287,7 +288,8 @@ class LookingGlassMatplotLib(AbstractLookingGlass):
         else:
             _lbl = y.name if hasattr(y, "name") and y.name else ("%s_%d" % (study_name, k))
 
-            if isinstance(y, pd.DataFrame):
+            if isinstance(y, (pd.DataFrame, OHLCV)):
+                y = y.pd() if isinstance(y, OHLCV) else y
 
                 yy = y[zoom] if zoom else y
 
@@ -429,6 +431,7 @@ class LookingGlassMatplotLib(AbstractLookingGlass):
                     for _col in yy.columns:
                         self.__plot_as_type(yy[_col], plot_style, self._n_style, _col)
             else:
+                y = y.pd() if isinstance(y, TimeSeries) else y
                 yy = y[zoom] if zoom else y
                 self.__plot_as_type(yy, plot_style, self._n_style, _lbl)
 
@@ -561,7 +564,8 @@ class LookingGlassPlotly(AbstractLookingGlass):
             )
             self.fig.add_trace(go.Scatter(**_args), row=row, col=col)
 
-        if isinstance(y, pd.DataFrame):
+        if isinstance(y, (pd.DataFrame, OHLCV)):
+            y = y.pd() if isinstance(y, OHLCV) else y
             yy = y[zoom] if zoom else y
 
             # candlesticks
@@ -812,6 +816,7 @@ class LookingGlassPlotly(AbstractLookingGlass):
                 for _col in yy.columns:
                     self.__plot_as_type(yy[_col], row, col, plot_style, _col)
         else:
+            y = y.pd() if isinstance(y, TimeSeries) else y
             yy = y[zoom] if zoom else y
             self.__plot_as_type(yy, row, col, plot_style, _lbl)
 

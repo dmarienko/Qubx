@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Qubx"
-version = "0.2.64"
+version = "0.2.65"
 description = "Qubx - quantitative trading framework"
 authors = ["Dmitry Marienko <dmitry@gmail.com>", "Yuriy Arabskyy <yuriy.arabskyy@gmail.com>"]
 readme = "README.md"
