@@ -61,7 +61,7 @@ class TargetPosition:
 
     @staticmethod
     def create(ctx: "ITimeProvider", signal: Signal, target_size: float) -> "TargetPosition":
-        return TargetPosition(ctx.time(), signal, target_size)
+        return TargetPosition(ctx.time(), signal, signal.instrument.round_size_down(target_size))
 
     @staticmethod
     def zero(ctx: "ITimeProvider", signal: Signal) -> "TargetPosition":
