@@ -55,8 +55,8 @@ cpdef recognize_timeframe(timeframe):
 
 
 cpdef double prec_ceil(double a, int precision):
-    return np.sign(a) * np.true_divide(np.ceil(abs(a) * 10**precision), 10**precision)
+    return np.sign(a) * np.true_divide(np.ceil(round(abs(a) * 10**precision, precision)), 10**precision)
 
 
 cpdef double prec_floor(double a, int precision):
-    return np.sign(a) * np.true_divide(np.floor(abs(a) * 10**precision), 10**precision)
+    return np.sign(a) * np.true_divide(np.floor(round(abs(a) * 10**precision, precision)), 10**precision)
