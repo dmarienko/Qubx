@@ -647,6 +647,7 @@ def portfolio_metrics(
     pft_total["Total_Commissions"] = pft_total["Total_Commissions"].cumsum()
 
     # if it's asked to account transactions into equ
+    pft_total["Total_Commissions"] *= kwargs.get("commission_factor", 1)
     if account_transactions:
         pft_total["Total_PnL"] -= pft_total["Total_Commissions"]
 
@@ -729,13 +730,19 @@ def tearsheet(
     sort_by: str | None = "Sharpe",
     sort_ascending: bool = False,
     plot_equities: bool = True,
+    commission_factor: float = 1,
 ):
     if timeframe is None:
         timeframe = _estimate_timeframe(session)
     if isinstance(session, list):
         if len(session) == 1:
             return _tearsheet_single(
-                session[0], compound, account_transactions, performance_statistics_period, timeframe=timeframe
+                session[0],
+                compound,
+                account_transactions,
+                performance_statistics_period,
+                timeframe=timeframe,
+                commission_factor=commission_factor,
             )
         else:
             import matplotlib.pyplot as plt
@@ -744,7 +751,9 @@ def tearsheet(
             _rs = []
             # _eq = []
             for s in session:
-                report, mtrx = _pfl_metrics_prepare(s, account_transactions, performance_statistics_period)
+                report, mtrx = _pfl_metrics_prepare(
+                    s, account_transactions, performance_statistics_period, commission_factor=commission_factor
+                )
                 _rs.append(report)
                 if plot_equities:
                     if compound:
@@ -770,7 +779,12 @@ def tearsheet(
 
     else:
         return _tearsheet_single(
-            session, compound, account_transactions, performance_statistics_period, timeframe=timeframe
+            session,
+            compound,
+            account_transactions,
+            performance_statistics_period,
+            timeframe=timeframe,
+            commission_factor=commission_factor,
         )
 
 
@@ -814,13 +828,19 @@ def _estimate_timeframe(
         return "1min"
 
 
-def _pfl_metrics_prepare(session: TradingSessionResult, account_transactions: bool, performance_statistics_period: int):
+def _pfl_metrics_prepare(
+    session: TradingSessionResult,
+    account_transactions: bool,
+    performance_statistics_period: int,
+    commission_factor: float = 1,
+):
     mtrx = portfolio_metrics(
         session.portfolio_log,
         session.executions_log,
         session.capital,
         performance_statistics_period=performance_statistics_period,
         account_transactions=account_transactions,
+        commission_factor=commission_factor,
     )
     rpt = {}
     for k, v in mtrx.items():
@@ -836,8 +856,11 @@ def _tearsheet_single(
     account_transactions=True,
     performance_statistics_period=365,
     timeframe: str | pd.Timedelta = "1h",
+    commission_factor: float = 1,
 ):
-    report, mtrx = _pfl_metrics_prepare(session, account_transactions, performance_statistics_period)
+    report, mtrx = _pfl_metrics_prepare(
+        session, account_transactions, performance_statistics_period, commission_factor=commission_factor
+    )
     tbl = go.Table(
         columnwidth=[130, 130, 130, 130, 200],
         header=dict(
