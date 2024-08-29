@@ -201,7 +201,7 @@ class SimulatedTrading(ITradingServiceProvider):
             price,
             client_id,
             time_in_force,
-            fill_at_price=options.get("fill_at_price", False),
+            **options,
         )
         order = report.order
         self._order_to_symbol[order.id] = instrument.symbol

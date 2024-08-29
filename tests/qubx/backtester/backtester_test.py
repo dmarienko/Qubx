@@ -119,6 +119,7 @@ class TestBacktesterStuff:
 
     def test_ome_loop(self):
         instr = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        assert instr is not None
         r = CsvStorageDataReader("tests/data/csv")
         stream = r.read("BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=False, spread=instr.min_tick))
 
@@ -193,3 +194,28 @@ class TestBacktesterStuff:
             rep1[0].executions_log[["filled_qty", "price", "side"]]
             == rep1[1].executions_log[["filled_qty", "price", "side"]]
         )
+
+    def test_ome_stop_orders(self):
+        instr = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        assert instr is not None
+
+        r = CsvStorageDataReader("tests/data/csv")
+        stream = r.read("BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=False, spread=instr.min_tick))
+
+        ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
+        ome.update_bbo(t.g(stream[0]))
+        l0 = ome.place_order("BUY", "STOP_LIMIT", 0.5, 39500.0, "Test1")
+
+        # l1 = ome.place_order("BUY", "STOP_MARKET", 0.5, 39500.0, "Test1")
+        # l2 = ome.place_order("SELL", "STOP_MARKET", 0.5, 52000.0, "Test2")
+
+        # execs = []
+        # for i in range(len(stream)):
+        #     rs = ome.update_bbo(t.g(stream[i]))
+        #     if rs:
+        #         execs.append(rs[0].exec)
+
+        # assert l1.order.status == "CLOSED"
+        # assert l2.order.status == "CLOSED"
+        # assert execs[0].price == 39500.0
+        # assert execs[1].price == 52000.0

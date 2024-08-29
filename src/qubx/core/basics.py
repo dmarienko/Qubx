@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
@@ -284,19 +284,25 @@ class Deal:
     fee_currency: str | None = None
 
 
+OrderType = Literal["MARKET", "LIMIT", "STOP_MARKET", "STOP_LIMIT"]
+OrderSide = Literal["BUY", "SELL"]
+OrderStatus = Literal["OPEN", "CLOSED", "CANCELED", "NEW"]
+
+
 @dataclass
 class Order:
     id: str
-    type: str
+    type: OrderType
     symbol: str
     time: dt_64
     quantity: float
     price: float
-    side: str
-    status: str
+    side: OrderSide
+    status: OrderStatus
     time_in_force: str
     client_id: str | None = None
     cost: float = 0.0
+    options: dict[str, Any] = {}
 
     def __str__(self) -> str:
         return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
