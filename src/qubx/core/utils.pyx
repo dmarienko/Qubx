@@ -52,3 +52,11 @@ cpdef recognize_timeframe(timeframe):
     else:
         raise ValueError(f'Unknown timeframe type: {timeframe} !')
     return tf
+
+
+cpdef double prec_ceil(double a, int precision):
+    return np.sign(a) * np.true_divide(np.ceil(round(abs(a) * 10**precision, precision)), 10**precision)
+
+
+cpdef double prec_floor(double a, int precision):
+    return np.sign(a) * np.true_divide(np.floor(round(abs(a) * 10**precision, precision)), 10**precision)

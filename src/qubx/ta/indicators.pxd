@@ -134,5 +134,6 @@ cdef class Swings(IndicatorOHLC):
     # tops_detection_lag contain time lag when top was actually spotted
     cdef public TimeSeries tops, tops_detection_lag
     cdef public TimeSeries bottoms, bottoms_detection_lag
+    cdef public TimeSeries middles, deltas
 
     cpdef double calculate(self, long long time, Bar bar, short new_item_started)

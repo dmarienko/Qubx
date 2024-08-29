@@ -36,11 +36,6 @@ cdef class Indicator(TimeSeries):
     cdef public TimeSeries series
     cdef public TimeSeries parent
 
-
-cdef class IndicatorOHLC(Indicator):
-    pass
-
-
 cdef class RollingSum:
     """
     Rolling fast summator
@@ -49,7 +44,7 @@ cdef class RollingSum:
     cdef np.ndarray __s
     cdef unsigned int __i
     cdef double rsum
-    cdef unsigned short is_init_stage 
+    cdef public unsigned short is_init_stage 
 
     cpdef double update(RollingSum self, double value, short new_item_started)
 
@@ -110,3 +105,8 @@ cdef class Quote:
     cdef public double ask_size
 
     cpdef double mid_price(Quote self)
+
+
+cdef class IndicatorOHLC(Indicator):
+    pass
+

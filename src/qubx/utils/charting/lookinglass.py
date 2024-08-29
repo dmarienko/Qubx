@@ -4,6 +4,7 @@ import plotly.graph_objects as go
 from plotly.graph_objs.graph_objs import FigureWidget
 from plotly.subplots import make_subplots
 
+from qubx.core.series import OHLCV, TimeSeries
 from qubx.utils.charting.mpl_helpers import ohlc_plot
 from qubx.utils.charting.mpl_helpers import plot_trends
 from qubx.utils.charting.mpl_helpers import subplot
@@ -110,7 +111,7 @@ def install_plotly_helpers():
                 arrowcolor=c,
             )
 
-        def custom_hover(v, h=600, n=2, legend=False, show_info=True):
+        def hover(v, h=600, n=2, legend=False, show_info=True):
             return (
                 v.update_traces(xaxis="x1")
                 .update_layout(
@@ -140,7 +141,7 @@ def install_plotly_helpers():
                 )
             )
 
-        FigureWidget.hover = custom_hover  # type: ignore
+        FigureWidget.hover = hover  # type: ignore
         FigureWidget.rline = rline  # type: ignore
         FigureWidget.rlinex = rlinex  # type: ignore
         FigureWidget.rline_ = rline_  # type: ignore
@@ -287,7 +288,8 @@ class LookingGlassMatplotLib(AbstractLookingGlass):
         else:
             _lbl = y.name if hasattr(y, "name") and y.name else ("%s_%d" % (study_name, k))
 
-            if isinstance(y, pd.DataFrame):
+            if isinstance(y, (pd.DataFrame, OHLCV)):
+                y = y.pd() if isinstance(y, OHLCV) else y
 
                 yy = y[zoom] if zoom else y
 
@@ -429,6 +431,7 @@ class LookingGlassMatplotLib(AbstractLookingGlass):
                     for _col in yy.columns:
                         self.__plot_as_type(yy[_col], plot_style, self._n_style, _col)
             else:
+                y = y.pd() if isinstance(y, TimeSeries) else y
                 yy = y[zoom] if zoom else y
                 self.__plot_as_type(yy, plot_style, self._n_style, _lbl)
 
@@ -544,7 +547,25 @@ class LookingGlassPlotly(AbstractLookingGlass):
     def __plt_series(self, y, zoom, study_name, k, row, col, plot_style="line"):
         _lbl = y.name if hasattr(y, "name") and y.name else ("%s_%d" % (study_name, k))
 
-        if isinstance(y, pd.DataFrame):
+        def _scatter(
+            xs: pd.Series, comments: pd.Series | None, name: str, marker: str, color: str, size: int = 11
+        ) -> None:
+            _args = dict(
+                x=xs.index,
+                y=xs,
+                mode="markers",
+                name=name,
+                text=comments,
+                marker={
+                    "symbol": marker,
+                    "size": size,
+                    "color": color,
+                },
+            )
+            self.fig.add_trace(go.Scatter(**_args), row=row, col=col)
+
+        if isinstance(y, (pd.DataFrame, OHLCV)):
+            y = y.pd() if isinstance(y, OHLCV) else y
             yy = y[zoom] if zoom else y
 
             # candlesticks
@@ -760,70 +781,42 @@ class LookingGlassPlotly(AbstractLookingGlass):
             elif self._frame_has_cols(y, ["Type", "Time", "Price", "PriceOccured"]):
                 _bot = yy[yy.Type == "-"]
                 _top = yy[yy.Type == "+"]
-                self.fig.add_trace(
-                    go.Scatter(
-                        x=_bot.index,
-                        y=_bot.PriceOccured,
-                        mode="markers",
-                        name="B",
-                        marker={"symbol": "triangle-right"},
-                    ),
-                    row=row,
-                    col=col,
-                )
 
-                self.fig.add_trace(
-                    go.Scatter(
-                        x=_top.index,
-                        y=_top.PriceOccured,
-                        mode="markers",
-                        name="T",
-                        marker={"symbol": "triangle-right"},
-                    ),
-                    row=row,
-                    col=col,
-                )
+                _scatter(_bot.PriceOccured, None, "B", "triangle-right", "#3cfa00", 12)
+                _scatter(_top.PriceOccured, None, "T", "triangle-right", "#3cfa00", 12)
 
-            # executed signals from signal tester
+            # executions from executor's log
             elif self._frame_has_cols(y, ["exec_price", "quantity"]):
                 _b_ords = yy[yy.quantity > 0]
                 _s_ords = yy[yy.quantity < 0]
-                self.fig.add_trace(
-                    go.Scatter(
-                        x=_b_ords.index,
-                        y=_b_ords.exec_price,
-                        mode="markers",
-                        name="BOT",
-                        marker={
-                            "symbol": "triangle-up",
-                            "size": 13,
-                            "color": "#3cfa00",
-                        },
-                    ),
-                    row=row,
-                    col=col,
-                )
 
-                self.fig.add_trace(
-                    go.Scatter(
-                        x=_s_ords.index,
-                        y=_s_ords.exec_price,
-                        mode="markers",
-                        name="SLD",
-                        marker={
-                            "symbol": "triangle-down",
-                            "size": 13,
-                            "color": "#20ffff",
-                        },
-                    ),
-                    row=row,
-                    col=col,
-                )
+                _scatter(_b_ords.exec_price, None, "BOT", "triangle-up", "#3cfa00", 12)
+                _scatter(_s_ords.exec_price, None, "SLD", "triangle-down", "#20ffff", 12)
+
+            # 27-aug-2024: show generated signals from Qubx backtester
+            elif self._frame_has_cols(y, ["signal", "reference_price", "price", "take", "stop", "group", "comment"]):
+                _sel_price = lambda x: x["reference_price"].where(x["price"].isna(), x["price"])
+                _b_sigs = yy[yy.signal > 0]
+                _z_sigs = yy[yy.signal == 0]
+                _s_sigs = yy[yy.signal < 0]
+                # - Longs
+                _scatter(_sel_price(_b_sigs), _b_sigs["comment"], "LONG", "triangle-up-open-dot", "#3cfa00")
+                _scatter(_b_sigs[~_b_sigs["take"].isna()]["take"], None, "Take", "line-ew-open", "#3cfa00")
+                _scatter(_b_sigs[~_b_sigs["stop"].isna()]["stop"], None, "Stop", "line-ew-open", "#fa3c00")
+
+                # - Shorts
+                _scatter(_sel_price(_s_sigs), _s_sigs["comment"], "SHORTS", "triangle-down-open-dot", "#20ffff")
+                _scatter(_s_sigs[~_s_sigs["take"].isna()]["take"], None, "Take", "line-ew-open", "#3cfa00")
+                _scatter(_s_sigs[~_s_sigs["stop"].isna()]["stop"], None, "Stop", "line-ew-open", "#fa3c00")
+
+                # - Exits
+                _scatter(_sel_price(_z_sigs), _z_sigs["comment"], "EXITS", "circle-open-dot", "#ffffff")
 
             else:
                 for _col in yy.columns:
                     self.__plot_as_type(yy[_col], row, col, plot_style, _col)
         else:
+            y = y.pd() if isinstance(y, TimeSeries) else y
             yy = y[zoom] if zoom else y
             self.__plot_as_type(yy, row, col, plot_style, _lbl)
 

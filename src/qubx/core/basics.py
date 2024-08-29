@@ -4,11 +4,11 @@ import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
 
-from threading import Thread, Event, Lock, Condition
+from threading import Event, Lock
 from queue import Queue
 
 from qubx.core.series import Quote, Trade, time_as_nsec
-from qubx.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
+from qubx.core.utils import prec_ceil, prec_floor
 
 
 dt_64 = np.datetime64
@@ -61,7 +61,7 @@ class TargetPosition:
 
     @staticmethod
     def create(ctx: "ITimeProvider", signal: Signal, target_size: float) -> "TargetPosition":
-        return TargetPosition(ctx.time(), signal, target_size)
+        return TargetPosition(ctx.time(), signal, signal.instrument.round_size_down(target_size))
 
     @staticmethod
     def zero(ctx: "ITimeProvider", signal: Signal) -> "TargetPosition":
@@ -138,6 +138,42 @@ class Instrument:
             self._size_precision = int(abs(np.log10(self.min_size_step)))
         return self._size_precision
 
+    def round_size_down(self, size: float) -> float:
+        """
+        Round down size to specified precision
+
+        i.size_precision == 3
+        i.round_size_up(0.1234) -> 0.123
+        """
+        return prec_floor(size, self.size_precision)
+
+    def round_size_up(self, size: float) -> float:
+        """
+        Round up size to specified precision
+
+        i.size_precision == 3
+        i.round_size_up(0.1234) -> 0.124
+        """
+        return prec_ceil(size, self.size_precision)
+
+    def round_price_down(self, price: float) -> float:
+        """
+        Round down price to specified precision
+
+        i.price_precision == 3
+        i.round_price_down(1.234999, 3) -> 1.234
+        """
+        return prec_floor(price, self.price_precision)
+
+    def round_price_up(self, price: float) -> float:
+        """
+        Round up price to specified precision
+
+        i.price_precision == 3
+        i.round_price_up(1.234999) -> 1.235
+        """
+        return prec_ceil(price, self.price_precision)
+
     def signal(
         self,
         signal: float,
@@ -146,7 +182,8 @@ class Instrument:
         take: float | None = None,
         group: str = "",
         comment: str = "",
-        options: dict[str, Any] = None,
+        options: dict[str, Any] | None = None,  # - probably we need to remove it ?
+        **kwargs,
     ) -> Signal:
         return Signal(
             self,
@@ -156,7 +193,7 @@ class Instrument:
             take=take,
             group=group,
             comment=comment,
-            options=options or {},
+            options=(options or {}) | kwargs,
         )
 
     def __hash__(self) -> int:
@@ -265,11 +302,6 @@ class Order:
         return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
 
 
-def round_down(x, n):
-    dvz = 10 ** (-n)
-    return (int(x / dvz)) * dvz
-
-
 class Position:
     instrument: Instrument  # instrument for this poisition
     quantity: float = 0.0  # quantity positive for long and negative for short
@@ -337,7 +369,11 @@ class Position:
         self, timestamp: dt_64, amount: float, exec_price: float, fee_amount: float = 0, conversion_rate: float = 1
     ) -> tuple[float, float]:
         return self.update_position(
-            timestamp, self.quantity + amount, exec_price, fee_amount, conversion_rate=conversion_rate
+            timestamp,
+            self.instrument.round_size_down(self.quantity + amount),
+            exec_price,
+            fee_amount,
+            conversion_rate=conversion_rate,
         )
 
     def update_position(
@@ -346,6 +382,7 @@ class Position:
         # - realized PnL of this fill
         deal_pnl = 0
         quantity = self.quantity
+        comms = 0
 
         if quantity != position:
             pos_change = position - quantity
@@ -373,7 +410,7 @@ class Position:
                     self.__pos_incr_qty + _abs_qty_open
                 )
                 # - round position average price to be in line with how it's calculated by broker
-                self.position_avg_price = round_down(pos_avg_price_raw, self.instrument.price_precision)
+                self.position_avg_price = self.instrument.round_price_down(pos_avg_price_raw)
                 self.__pos_incr_qty += _abs_qty_open
 
             # - update position and position's price
