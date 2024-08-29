@@ -63,7 +63,7 @@ class TestPortfolioLoggers:
     def test_positions_dumper(self):
         # - initialize positions: this will be done in StrategyContext
         positions = [
-            Position(lookup.find_symbol('BINANCE', s), ZERO_COSTS) for s in ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'] # type: ignore
+            Position(lookup.find_symbol('BINANCE', s)) for s in ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'] # type: ignore
         ] 
         positions[0].change_position_by(0, 0.05, 63000)
         positions[1].change_position_by(0, 0.5, 3200)

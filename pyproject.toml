@@ -1,8 +1,8 @@
 [tool.poetry]
 name = "Qubx"
-version = "0.1.90"
+version = "0.2.5"
 description = "Qubx - quantitative trading framework"
-authors = ["Dmitry Marienko <dmitry@gmail.com>"]
+authors = ["Dmitry Marienko <dmitry@gmail.com>", "Yuriy Arabskyy <yuriy.arabskyy@gmail.com>"]
 readme = "README.md"
 packages = [
     { include = "qubx", from = "src" },
@@ -41,6 +41,7 @@ scikit-learn = "^1.4.2"
 plotly = "^5.22.0"
 psycopg-binary = "^3.1.19"
 psycopg-pool = "^3.2.2"
+sortedcontainers = "^2.4.0"
 
 
 [tool.poetry.group.dev.dependencies]

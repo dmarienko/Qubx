@@ -695,7 +695,7 @@ def macd(x: pd.Series, fast=12, slow=26, signal=9, method="ema", signal_method="
     return smooth(x_diff, signal_method, signal).rename("macd")
 
 
-def atr(x: pd.Series, window=14, smoother="sma", percentage=False) -> pd.Series:
+def atr(x: pd.DataFrame, window=14, smoother="sma", percentage=False) -> pd.Series:
     """
     Average True Range indicator
 
@@ -1551,7 +1551,7 @@ def choppyness(data, period, upper=61.8, lower=38.2, atr_smoother="sma") -> pd.S
     rs = pd.Series(rolling_sum(column_vector(a.copy()), period).flatten(), a.index)
     ci = 100 * np.log(rs / rng) * (1 / np.log(period))
 
-    f0 = pd.Series(np.nan, ci.index)
+    f0 = pd.Series(np.nan, ci.index, dtype=bool)
     f0[ci >= upper] = True
     f0[ci <= lower] = False
     return f0.ffill().fillna(False)

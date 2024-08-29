@@ -7,15 +7,15 @@ import traceback
 import ccxt
 import ccxt.pro as cxp
 from ccxt.base.decimal_to_precision import ROUND_UP
-from ccxt.base.exchange import Exchange
+from ccxt.base.exchange import Exchange, ExchangeError
 
 import numpy as np
 import pandas as pd
 
 from qubx import logger, lookup
 from qubx.core.account import AccountProcessor
-from qubx.core.basics import Instrument, Position, Order, TransactionCostsCalculator, dt_64, Deal
-from qubx.core.strategy import IDataProvider, CtrlChannel, IExchangeServiceProvider
+from qubx.core.basics import Instrument, Position, Order, TransactionCostsCalculator, dt_64, Deal, CtrlChannel
+from qubx.core.strategy import IBrokerServiceProvider, ITradingServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.impl.ccxt_utils import (
     EXCHANGE_ALIASES,
@@ -24,50 +24,49 @@ from qubx.impl.ccxt_utils import (
     ccxt_extract_deals_from_exec,
     ccxt_restore_position_from_deals,
 )
+from qubx.utils.ntp import time_now
 
 
 ORDERS_HISTORY_LOOKBACK_DAYS = 30
 
 
-class CCXTSyncTradingConnector(IExchangeServiceProvider):
+class CCXTTradingConnector(ITradingServiceProvider):
     """
     Synchronous instance of trading API
     """
 
     sync: Exchange
 
-    _fees_calculator: Optional[TransactionCostsCalculator] = None  # type: ignore
+    _fees_calculator: TransactionCostsCalculator
     _positions: Dict[str, Position]
 
     def __init__(
         self,
         exchange_id: str,
         account_id: str,
-        base_currency: str | None,
         commissions: str | None = None,
-        reserves: Dict[str, float] | None = None,
         **exchange_auth,
     ):
-        if base_currency is None:
-            raise ValueError("Base currency is not specified !")
-
         exchange_id = exchange_id.lower()
         exch = EXCHANGE_ALIASES.get(exchange_id, exchange_id)
-
         if exch not in ccxt.exchanges:
             raise ValueError(f"Exchange {exchange_id} -> {exch} is not supported by CCXT!")
 
         self.exchange_id = exchange_id
+        self.account_id = account_id
+        self.commissions = commissions
 
         # - sync exchange
         self.sync: Exchange = getattr(ccxt, exch.lower())(exchange_auth)
-        self.acc = AccountProcessor(account_id, base_currency, reserves)
 
         logger.info(f"{exch.upper()} loading ...")
         self.sync.load_markets()
-        self._sync_account_info(commissions)
-        self._positions = self.acc._positions
 
+    def set_account(self, acc: AccountProcessor):
+        super().set_account(acc)
+        # TODO: move sync account info call to base class, could be useful also for IB
+        self._sync_account_info(self.commissions)
+        self._positions = self.acc._positions
         # - show reserves info
         for s, v in self.acc.reserved.items():
             logger.info(f" > {v} of {s} is reserved from trading")
@@ -79,10 +78,6 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
 
         # - check what we have on balance: TODO test on futures account
         for k, vol in self._balance["total"].items():  # type: ignore
-            if k.lower() == self.acc.base_currency.lower():
-                _free = self._balance["free"][self.acc.base_currency]
-                self.acc.update_base_balance(vol, vol - _free)
-
             if vol != 0.0:  # - get all non zero balances
                 self.acc.update_balance(k, vol, vol - self._balance["free"].get(k, 0))
 
@@ -148,18 +143,15 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
 
         return position
 
-    def get_position(self, instrument: Instrument) -> Position:
-        symbol = instrument.symbol
+    def get_position(self, instrument: Instrument | str) -> Position:
+        symbol = instrument.symbol if isinstance(instrument, Instrument) else instrument
 
         if symbol not in self._positions:
-            position = Position(instrument, self._fees_calculator)  # type: ignore
+            position = Position(instrument)  # type: ignore
             position = self._sync_position_and_orders(position)
             self.acc.attach_positions(position)
 
         return self._positions[symbol]
-
-    def update_position_price(self, symbol: str, price: float):
-        self.acc.update_position_price(self.time(), symbol, price)
 
     def send_order(
         self,
@@ -170,7 +162,7 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
         price: float | None = None,
         client_id: str | None = None,
         time_in_force: str = "gtc",
-    ) -> Optional[Order]:
+    ) -> Order:
         params = {}
         symbol = instrument.symbol
 
@@ -182,10 +174,9 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
         if client_id:
             params["newClientOrderId"] = client_id
 
+        r: Dict[str, Any] | None = None
         try:
-            r: Dict[str, Any] | None = self.sync.create_order(
-                symbol, order_type, order_side, amount, price, params=params  # type: ignore
-            )
+            r = self.sync.create_order(symbol, order_type, order_side, amount, price, params=params)  # type: ignore
         except ccxt.BadRequest as exc:
             logger.error(
                 f"(CCXTSyncTradingConnector::send_order) BAD REQUEST for {order_side} {amount} {order_type} for {symbol} : {exc}"
@@ -198,12 +189,13 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
             logger.error(traceback.format_exc())
             raise err
 
-        if r is not None:
-            order = ccxt_convert_order_info(symbol, r)
-            logger.info(f"(CCXTSyncTradingConnector) New order {order}")
-            return order
+        if r is None:
+            logger.error(f"(CCXTSyncTradingConnector::send_order) No response from exchange")
+            raise ExchangeError("(CCXTSyncTradingConnector::send_order) No response from exchange")
 
-        return None
+        order = ccxt_convert_order_info(symbol, r)
+        logger.info(f"(CCXTSyncTradingConnector) New order {order}")
+        return order
 
     def cancel_order(self, order_id: str) -> Order | None:
         order = None
@@ -221,16 +213,21 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
 
     def time(self) -> dt_64:
         """
-        Returns current time in nanoseconds
+        Returns current time as dt64
         """
-        return np.datetime64(self.sync.microseconds() * 1000, "ns")
+        # return np.datetime64(self.sync.microseconds() * 1000, "ns")
+        return time_now()
 
     def get_name(self) -> str:
         return self.sync.name  # type: ignore
 
-    def _process_execution_report(self, symbol: str, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
+    def get_account_id(self) -> str:
+        return self.account_id
+
+    def process_execution_report(self, symbol: str, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
         order = ccxt_convert_order_info(symbol, report)
         deals = ccxt_extract_deals_from_exec(report)
+        self._fill_missing_fee_info(self._get_instrument(symbol), deals)
         self.acc.process_deals(symbol, deals)
         self.acc.process_order(order)
         return order, deals
@@ -240,3 +237,15 @@ class CCXTSyncTradingConnector(IExchangeServiceProvider):
 
     def get_base_currency(self) -> str:
         return self.acc.base_currency
+
+    def _get_instrument(self, symbol: str) -> Instrument:
+        return self.get_position(symbol).instrument
+
+    def _fill_missing_fee_info(self, instrument: Instrument, deals: List[Deal]) -> None:
+        for d in deals:
+            if d.fee_amount is None:
+                d.fee_amount = self._fees_calculator.get_execution_fees(
+                    instrument=instrument, exec_price=d.price, amount=d.amount, crossed_market=d.aggressive
+                )
+                # this is only true for linear contracts
+                d.fee_currency = instrument.quote

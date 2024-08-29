@@ -4,7 +4,7 @@ import numpy as np
 from tabulate import tabulate
 
 from qubx import logger
-from qubx.core.strategy import IStrategy, TriggerEvent, StrategyContext
+from qubx.core.strategy import IStrategy, PositionsTracker, TriggerEvent, StrategyContext
 from qubx.core.basics import Instrument, Position, Signal
 from qubx.pandaz import srows, scols, ohlc_resample, retain_columns_and_join
 from qubx.trackers import Capital, PortfolioRebalancerTracker
@@ -53,7 +53,7 @@ class FlipFlopStrat(IStrategy):
         if not symbols_to_close:  # first run just open half from all universe
             symbols_to_open = symbols_to_open[: len(symbols_to_open) // 2]
 
-        cap = self._tracker.estimate_capital_to_trade(symbols_to_close)
+        cap = self._tracker.estimate_capital_to_trade(ctx, symbols_to_close)
         capital_per_symbol = np.clip(round(cap.capital / len(symbols_to_open)), 5, np.inf)
 
         logger.info(
@@ -69,7 +69,7 @@ class FlipFlopStrat(IStrategy):
 
         # - process signals
         if self.trading_allowed:
-            self._tracker.process_signals(signals)
+            self._tracker.process_signals(ctx, signals)
         else:
             logger.warning("Trading is disabled - no postions will be changed")
 
@@ -81,8 +81,8 @@ class FlipFlopStrat(IStrategy):
     def on_stop(self, ctx: StrategyContext):
         logger.info(f"> test is stopped")
 
-    def tracker(self, ctx: StrategyContext) -> PortfolioRebalancerTracker:
-        return PortfolioRebalancerTracker(ctx, self.capital_invested, 0)
+    def tracker(self, ctx: StrategyContext) -> PositionsTracker:
+        return PortfolioRebalancerTracker(self.capital_invested, 0)
 
     def reporting(self, signals: pd.DataFrame, wealth: Capital):
         _str_pos = tabulate(signals.tail(1), dequotify(list(signals.columns.values)), tablefmt="rounded_grid")  # type: ignore
@@ -90,5 +90,5 @@ class FlipFlopStrat(IStrategy):
         if wealth.symbols_to_close:
             _mesg = f"({wealth.released_amount:.2f} will be released from closing <red>{wealth.symbols_to_close}</red>)"
         logger.info(
-            f"Positions to process for {wealth.capital:.2f} {self.ctx.exchange_service.get_base_currency()} {_mesg}:\n<blue>{_str_pos}</blue>"
+            f"Positions to process for {wealth.capital:.2f} {self.ctx.trading_service.get_base_currency()} {_mesg}:\n<blue>{_str_pos}</blue>"
         )

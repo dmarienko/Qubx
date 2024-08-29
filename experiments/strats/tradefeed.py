@@ -4,7 +4,7 @@ import numpy as np
 from tabulate import tabulate
 
 from qubx import logger
-from qubx.core.strategy import IStrategy, TriggerEvent, StrategyContext
+from qubx.core.strategy import IStrategy, PositionsTracker, TriggerEvent, StrategyContext
 from qubx.core.basics import Instrument, Position, Signal
 from qubx.pandaz import srows, scols, ohlc_resample, retain_columns_and_join
 from qubx.trackers import Capital, PortfolioRebalancerTracker
@@ -59,8 +59,8 @@ class TradeTestStrat(IStrategy):
     def on_stop(self, ctx: StrategyContext):
         logger.info(f"> test is stopped")
 
-    def tracker(self, ctx: StrategyContext) -> PortfolioRebalancerTracker:
-        return PortfolioRebalancerTracker(ctx, self.capital_invested, 0)
+    def tracker(self, ctx: StrategyContext) -> PositionsTracker:
+        return PortfolioRebalancerTracker(self.capital_invested, 0)
 
     def reporting(self, signals: pd.DataFrame, wealth: Capital):
         _str_pos = tabulate(signals.tail(1), dequotify(list(signals.columns.values)), tablefmt="rounded_grid")  # type: ignore
@@ -68,5 +68,5 @@ class TradeTestStrat(IStrategy):
         if wealth.symbols_to_close:
             _mesg = f"({wealth.released_amount:.2f} will be released from closing <red>{wealth.symbols_to_close}</red>)"
         logger.info(
-            f"Positions to process for {wealth.capital:.2f} {self.ctx.exchange_service.get_base_currency()} {_mesg}:\n<blue>{_str_pos}</blue>"
+            f"Positions to process for {wealth.capital:.2f} {self.ctx.trading_service.get_base_currency()} {_mesg}:\n<blue>{_str_pos}</blue>"
         )

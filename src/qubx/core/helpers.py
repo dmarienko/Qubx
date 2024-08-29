@@ -35,18 +35,23 @@ class CachedMarketDataHolder:
     def init_ohlcv(self, symbol: str, max_size=np.inf):
         self._ohlcvs[symbol] = {self.default_timeframe: OHLCV(symbol, self.default_timeframe, max_size)}
 
+    def remove(self, symbol: str) -> None:
+        self._ohlcvs.pop(symbol, None)
+        self._last_bar.pop(symbol, None)
+        self._updates.pop(symbol, None)
+
     def is_data_ready(self) -> bool:
         """
-        Check if all symbols in this cache have at least one update
+        Check if at least one symbol had an update.
         """
         for v in self._ohlcvs.keys():
-            if v not in self._updates:
-                return False
-        return True
+            if v in self._updates:
+                return True
+        return False
 
     @_SW.watch("CachedMarketDataHolder")
-    def get_ohlcv(self, symbol: str, timeframe: str, max_size=np.inf) -> OHLCV:
-        tf = convert_tf_str_td64(timeframe)
+    def get_ohlcv(self, symbol: str, timeframe: str | None = None, max_size=np.inf) -> OHLCV:
+        tf = convert_tf_str_td64(timeframe) if timeframe else self.default_timeframe
 
         if symbol not in self._ohlcvs:
             self._ohlcvs[symbol] = {}
@@ -295,7 +300,9 @@ class BasicScheduler:
         next_time = iter.get_next(start_time=start_time)
         if next_time:
             self._scdlr.enterabs(next_time, 1, self._trigger, (event, prev_time, next_time))
-            logger.debug(f"Next ({event}) event scheduled at <red>{_SEC2TS(next_time)}</red>")
+            logger.debug(
+                f"Now is <red>{_SEC2TS(self.time_sec())}</red> next ({event}) at <cyan>{_SEC2TS(next_time)}</cyan>"
+            )
             return True
         logger.debug(f"({event}) task is not scheduled")
         return False
@@ -304,8 +311,7 @@ class BasicScheduler:
         now = self.time_sec()
 
         # - send notification to channel
-        if self._chan.control.is_set():
-            self._chan.queue.put((None, event, (prev_time_sec, trig_time)))
+        self._chan.send((None, event, (prev_time_sec, trig_time)))
 
         # - try to arm this event again
         self._arm_schedule(event, now)
@@ -334,3 +340,21 @@ class BasicScheduler:
         if _has_tasks:
             Thread(target=_watcher).start()
             self._is_started = True
+
+
+def set_parameters_to_object(strategy: Any, **kwargs):
+    """
+    Set given parameters values to object.
+    Parameter can be set only if it's declared as attribute of object and it's not starting with underscore (_).
+    """
+    _log_info = ""
+    for k, v in kwargs.items():
+        if k.startswith("_"):
+            raise ValueError("Internal variable can't be set from external parameter !")
+        if hasattr(strategy, k):
+            strategy.__dict__[k] = v
+            v_str = str(v).replace(">", "").replace("<", "")
+            _log_info += f"\n\tset <green>{k}</green> <- <red>{v_str}</red>"
+
+    if _log_info:
+        logger.info(f"<yellow>{strategy.__class__.__name__}</yellow> new parameters:" + _log_info)

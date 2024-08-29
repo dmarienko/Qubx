@@ -4,6 +4,8 @@ from collections import OrderedDict, defaultdict, namedtuple
 from os.path import basename, exists, dirname, join, expanduser
 import time
 from pathlib import Path
+import joblib
+from tqdm.auto import tqdm
 
 
 def version() -> str:
@@ -82,9 +84,7 @@ def add_project_to_system_path(project_folder: str = "~/projects"):
         # This error can occur on Windows if user folder and python file are on different drives
         print(f"Qube> Error during get path to projects folder:\n{e}")
     else:
-        insert_path_iff = lambda p: (
-            sys.path.insert(0, p.as_posix()) if p.as_posix() not in sys.path else None
-        )
+        insert_path_iff = lambda p: (sys.path.insert(0, p.as_posix()) if p.as_posix() not in sys.path else None)
         if prj.exists():
             insert_path_iff(prj)
 
@@ -97,9 +97,7 @@ def add_project_to_system_path(project_folder: str = "~/projects"):
                     else:
                         insert_path_iff(di)
         else:
-            print(
-                f"Qube> Cant find {project_folder} folder for adding to python path !"
-            )
+            print(f"Qube> Cant find {project_folder} folder for adding to python path !")
 
 
 def is_localhost(host):
@@ -282,9 +280,7 @@ class Stopwatch:
         if s:
             lat = t - s
             n = self.counts[scope]
-            self.latencies[scope] = (
-                lat * (n - 1) + self.latencies.get(scope, lat)
-            ) // n
+            self.latencies[scope] = (self.latencies.get(scope, lat) * (n - 1) + lat) // n
             del self.starts[scope]
         return lat
 
@@ -341,3 +337,26 @@ def dequotify(sx: Union[str, List[str]], quote="USDT"):
         return [dequotify(s, quote) for s in sx]
 
     raise ValueError("Can't process input data !")
+
+
+def round_down_at_min_qty(x: float, min_size: float) -> float:
+    return (int(x / min_size)) * min_size
+
+
+class ProgressParallel(joblib.Parallel):
+    def __init__(self, *args, **kwargs):
+        self.total = kwargs.pop("total", None)
+        self.silent = kwargs.pop("silent", False)
+        super().__init__(*args, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        if self.silent:
+            return joblib.Parallel.__call__(self, *args, **kwargs)
+        with tqdm(total=self.total) as self._pbar:
+            return joblib.Parallel.__call__(self, *args, **kwargs)
+
+    def print_progress(self):
+        if self.silent:
+            return
+        self._pbar.n = self.n_completed_tasks
+        self._pbar.refresh()
