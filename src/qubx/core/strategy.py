@@ -171,7 +171,7 @@ class StrategyContext(ITimeProvider):
         amount: float,
         price: float | None = None,
         time_in_force="gtc",
-        **optional,
+        **options,
     ) -> Order: ...
 
     def cancel(self, instr_or_symbol: Instrument | str): ...
