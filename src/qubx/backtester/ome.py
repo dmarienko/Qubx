@@ -92,9 +92,17 @@ class OrdersManagementEngine:
                         rep.append(self._execute_order(timestamp, order.price, order, False))
                     self.bids.pop(level)
 
-            # - TODO: processing stop orders
-            if self.stop_orders:
-                raise NotImplementedError("Stop orders processing is not implemented yet")
+            # - processing stop orders
+            for soid in list(self.stop_orders.keys()):
+                so = self.stop_orders[soid]
+                if so.side == "BUY" and quote.ask >= so.price:
+                    _exec_price = quote.ask if not so.options.get("fill_at_signal_price", False) else so.price
+                    self.stop_orders.pop(soid)
+                    rep.append(self._execute_order(timestamp, _exec_price, so, True))
+                elif so.side == "SELL" and quote.bid <= so.price:
+                    _exec_price = quote.bid if not so.options.get("fill_at_signal_price", False) else so.price
+                    self.stop_orders.pop(soid)
+                    rep.append(self._execute_order(timestamp, _exec_price, so, True))
 
         self.bbo = quote
         return rep
@@ -226,7 +234,7 @@ class OrdersManagementEngine:
         if _ot.startswith("STOP"):
             assert price is not None
             c_ask, c_bid = self.bbo.ask, self.bbo.bid
-            if (order_side == "BUY" and c_ask < price) or (order_side == "SELL" and c_bid > price):
+            if (order_side == "BUY" and c_ask >= price) or (order_side == "SELL" and c_bid <= price):
                 raise ExchangeError(
                     f"Stop price would trigger immediately: STOP_MARKET {order_side} {amount} of {self.instrument.symbol} at {price} | market: {c_ask} / {c_bid}"
                 )

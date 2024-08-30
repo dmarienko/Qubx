@@ -122,6 +122,7 @@ class TestBacktesterStuff:
         assert instr is not None
         r = CsvStorageDataReader("tests/data/csv")
         stream = r.read("BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=False, spread=instr.min_tick))
+        assert isinstance(stream, List)
 
         ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
         ome.update_bbo(t.g(stream[0]))
@@ -200,22 +201,70 @@ class TestBacktesterStuff:
         assert instr is not None
 
         r = CsvStorageDataReader("tests/data/csv")
-        stream = r.read("BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=False, spread=instr.min_tick))
+        stream = r.read(
+            "BTCUSDT_ohlcv_M1",
+            start="2024-01-01",
+            stop="2024-01-15",
+            transform=RestoreTicksFromOHLC(trades=False, spread=instr.min_tick),
+        )
+        assert isinstance(stream, List)
 
         ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
-        ome.update_bbo(t.g(stream[0]))
-        l0 = ome.place_order("BUY", "STOP_LIMIT", 0.5, 39500.0, "Test1")
+        q0 = t.g(stream[0])
+        ome.update_bbo(t.g(q0))
 
-        # l1 = ome.place_order("BUY", "STOP_MARKET", 0.5, 39500.0, "Test1")
-        # l2 = ome.place_order("SELL", "STOP_MARKET", 0.5, 52000.0, "Test2")
+        # - trigger immediate exception test
+        try:
+            ome.place_order("BUY", "STOP_MARKET", 0.5, q0.mid_price() - 100.0, "Failed")
+            assert False
+        except Exception as e:
+            print(f" -> {e}")
 
-        # execs = []
-        # for i in range(len(stream)):
-        #     rs = ome.update_bbo(t.g(stream[i]))
-        #     if rs:
-        #         execs.append(rs[0].exec)
+        try:
+            ome.place_order("SELL", "STOP_MARKET", 0.5, q0.mid_price() + 100.0, "Failed")
+            assert False
+        except Exception as e:
+            print(f" -> {e}")
 
-        # assert l1.order.status == "CLOSED"
-        # assert l2.order.status == "CLOSED"
-        # assert execs[0].price == 39500.0
-        # assert execs[1].price == 52000.0
+        ent0 = q0.mid_price() + 1000.0
+        ent1 = q0.mid_price() - 150.0
+
+        # - stop orders
+        stp1 = ome.place_order("BUY", "STOP_MARKET", 0.5, ent0, "Buy1", fill_at_signal_price=True)
+        stp2 = ome.place_order("BUY", "STOP_MARKET", 0.5, ent0, "Buy2", fill_at_signal_price=False)
+        stp3 = ome.place_order("SELL", "STOP_MARKET", 0.5, ent1, "Sell1", fill_at_signal_price=True)
+        stp4 = ome.place_order("SELL", "STOP_MARKET", 0.5, ent1, "Sell2", fill_at_signal_price=False)
+
+        # - just to put limit orders to test it together
+        ent2 = q0.mid_price() + 2000.0
+        ent3 = q0.mid_price() - 1900.0
+        ent4 = q0.mid_price() - 5000.0
+        lmt1 = ome.place_order("SELL", "LIMIT", 0.5, ent2, "LimitSell1")
+        lmt2 = ome.place_order("BUY", "LIMIT", 0.5, ent3, "LimitBuy2")
+        lmt3 = ome.place_order("BUY", "LIMIT", 0.5, ent4, "LimitBuy3")
+
+        [print(" --> " + str(s)) for s in [stp1, stp2, stp3, stp4]]
+        [print(" --> " + str(l)) for l in [lmt1, lmt2, lmt3]]
+
+        execs = []
+        for i in range(len(stream)):
+            rs = ome.update_bbo(t.g(stream[i]))
+            if rs:
+                execs.extend([r.exec for r in rs])
+
+        assert stp1.order.status == "CLOSED"
+        assert stp2.order.status == "CLOSED"
+        assert stp3.order.status == "CLOSED"
+        assert stp4.order.status == "CLOSED"
+        assert lmt1.order.status == "CLOSED"
+        assert lmt2.order.status == "CLOSED"
+        assert lmt3.order.status == "OPEN"
+        assert execs[0].price == ent0
+        assert execs[1].price > ent0
+        assert execs[2].price == ent2
+        assert execs[3].price == ent1
+        assert execs[4].price < ent1
+        assert execs[5].price == ent3
+
+        assert len(ome.get_open_orders()) == 1
+        [print(" ::::: " + str(s)) for s in ome.get_open_orders()]

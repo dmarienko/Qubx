@@ -24,7 +24,6 @@ class Signal:
         reference_price: float - exact price when signal was generated
 
         Options:
-        - fill_at_signal_price: bool - if True, then fill order at signal price (only used in backtesting)
         - allow_override: bool - if True, and there is another signal for the same instrument, then override current.
     """
 
@@ -302,7 +301,7 @@ class Order:
     time_in_force: str
     client_id: str | None = None
     cost: float = 0.0
-    options: dict[str, Any] = {}
+    options: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
         return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
