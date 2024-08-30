@@ -1,14 +1,23 @@
 from typing import Any, Optional, List
 
+from pandas import Timestamp
+
 from qubx import QubxLogConfig, lookup, logger
 from qubx.core.account import AccountProcessor
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.pandaz.utils import *
-from qubx.core.utils import recognize_time
+from qubx.core.utils import recognize_time, time_to_str
 
 from qubx.core.series import OHLCV, Quote
 from qubx.core.strategy import IPositionGathering, IStrategy, PositionsTracker, StrategyContext, TriggerEvent
-from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsTimestampedRecords, AsQuotes, RestoreTicksFromOHLC
+from qubx.data.readers import (
+    AsOhlcvSeries,
+    CsvStorageDataReader,
+    AsTimestampedRecords,
+    AsQuotes,
+    RestoreTicksFromOHLC,
+    AsPandasFrame,
+)
 from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider, Position, Signal, TargetPosition
 
 from qubx.backtester.ome import OrdersManagementEngine
@@ -299,3 +308,48 @@ class TestTrackersAndGatherers:
         # 2. Check that sending an opposite side signal is processed correctly
         targets = tracker.process_signals(ctx, [I[0].signal(+0.5)])
         assert targets[0].target_position_size == 0.5
+
+    def test_tracker_with_stop_loss_in_advance(self):
+        # from qubx.core.series import st
+        class GuineaPig(IStrategy):
+            tests = {}
+
+            def on_fit(
+                self, ctx: StrategyContext, fit_time: str | Timestamp, previous_fit_time: str | Timestamp | None = None
+            ):
+                self.tests = {recognize_time(k): v for k, v in self.tests.items()}
+
+            def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
+                r = []
+                for k in list(self.tests.keys()):
+                    if event.time >= k:
+                        r.append(self.tests.pop(k))
+                        # print(time_to_str(event.time))
+                return r
+
+        I = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        assert I is not None
+        ohlc = CsvStorageDataReader("tests/data/csv").read(
+            "BTCUSDT_ohlcv_M1", start="2024-01-01", stop="2024-01-15", transform=AsPandasFrame()
+        )
+        assert isinstance(ohlc, pd.DataFrame)
+
+        result = simulate(
+            {
+                "TEST": [
+                    GuineaPig(tests={"2024-01-01 20:00:00": I.signal(-1, stop=43800)}),
+                    StopTakePositionTracker(None, None, sizer=FixedRiskSizer(1)),
+                ]
+            },
+            {f"BINANCE.UM:BTCUSDT": ohlc},
+            10000,
+            instruments=[f"BINANCE.UM:BTCUSDT"],
+            subscription=dict(type="ohlc", timeframe="1Min"),
+            trigger="-1Sec",
+            silent=True,
+            # debug="ERROR",
+            commissions="vip0_usdt",
+            start="2024-01-01",
+            stop="2024-01-03",
+        )
+        print(result[0].executions_log)
