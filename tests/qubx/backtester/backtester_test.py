@@ -16,8 +16,10 @@ from qubx.backtester.simulator import simulate
 
 
 class _TimeService(ITimeProvider):
+    _time: np.datetime64
+
     def g(self, quote: Quote) -> Quote:
-        self._time = quote.time
+        self._time = quote.time  # type: ignore
         return quote
 
     def time(self) -> np.datetime64:
@@ -32,6 +34,7 @@ class TestBacktesterStuff:
 
     def test_basic_ome(self):
         instr = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        assert instr
         ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
 
         q0 = Q("2020-01-01 10:00", 32000, 32001)
@@ -93,6 +96,7 @@ class TestBacktesterStuff:
 
     def test_ome_execution(self):
         instr = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        assert instr
         ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
 
         q0 = Q("2020-01-01 10:00", 32000, 32001)
@@ -166,14 +170,14 @@ class TestBacktesterStuff:
 
         r = CsvStorageDataReader("tests/data/csv")
         ohlc = r.read("BINANCE.UM:BTCUSDT", "2024-01-01", "2024-01-02", AsOhlcvSeries("5Min"))
-        fast = ema(ohlc.close, 5)
-        slow = ema(ohlc.close, 15)
+        fast = ema(ohlc.close, 5)  # type: ignore
+        slow = ema(ohlc.close, 15)  # type: ignore
         sigs = (((fast > slow) + (fast.shift(1) < slow.shift(1))) == 2) - (
             ((fast < slow) + (fast.shift(1) > slow.shift(1))) == 2
         )
         sigs = sigs.pd()
         sigs = sigs[sigs != 0]
-        s2 = shift_series(sigs, "4Min59Sec").rename("BTCUSDT") / 100
+        s2 = shift_series(sigs, "4Min59Sec").rename("BTCUSDT") / 100  # type: ignore
         rep1 = simulate(
             {
                 # - generated signals as series
