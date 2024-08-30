@@ -943,14 +943,6 @@ def chart_signals(
         end = executions.index[-1]
 
     if portfolio is not None:
-        symbol_count = len(portfolio.filter(like="_PnL").columns)
-        pnl = portfolio.filter(regex=f"{symbol}_PnL").cumsum() + result.capital / symbol_count
-        pnl = pnl.loc[start:]
-        if apply_commissions:
-            comm = portfolio.filter(regex=f"{symbol}_Commissions").loc[start:].cumsum()
-            pnl -= comm.values
-        pnl = (pnl / pnl.iloc[0] - 1) * 100
-        indicators["PnL"] = ["area", "green", pnl]
         if show_quantity:
             pos = portfolio.filter(regex=f"{symbol}_Pos").loc[start:]
             indicators["Pos"] = ["area", "cyan", pos]
@@ -963,6 +955,14 @@ def chart_signals(
             value = portfolio.filter(regex=f"{symbol}_Value").loc[start:]
             leverage = (value.squeeze() / capital).mul(100).rename("Leverage")
             indicators["Leverage"] = ["area", "cyan", leverage]
+        symbol_count = len(portfolio.filter(like="_PnL").columns)
+        pnl = portfolio.filter(regex=f"{symbol}_PnL").cumsum() + result.capital / symbol_count
+        pnl = pnl.loc[start:]
+        if apply_commissions:
+            comm = portfolio.filter(regex=f"{symbol}_Commissions").loc[start:].cumsum()
+            pnl -= comm.values
+        pnl = (pnl / pnl.iloc[0] - 1) * 100
+        indicators["PnL"] = ["area", "green", pnl]
 
     if isinstance(ohlc, dict):
         bars = ohlc[symbol]
