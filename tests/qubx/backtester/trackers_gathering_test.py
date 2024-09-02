@@ -26,7 +26,7 @@ from qubx.ta.indicators import sma, ema
 from qubx.backtester.simulator import simulate
 from qubx.trackers.composite import CompositeTracker, CompositeTrackerPerSide, LongTracker
 from qubx.trackers.rebalancers import PortfolioRebalancerTracker
-from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
+from qubx.trackers.riskctrl import AdvancedStopTakePositionTracker, AtrRiskTracker, StopTakePositionTracker
 from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
 
 
@@ -336,10 +336,21 @@ class TestTrackersAndGatherers:
 
         result = simulate(
             {
-                "TEST": [
+                "TEST_StopTakePositionTracker": [
                     GuineaPig(tests={"2024-01-01 20:00:00": I.signal(-1, stop=43800)}),
-                    StopTakePositionTracker(None, None, sizer=FixedRiskSizer(1)),
-                ]
+                    t1 := StopTakePositionTracker(None, None, sizer=FixedRiskSizer(1)),
+                ],
+                "TEST2_AdvancedStopTakePositionTracker": [
+                    GuineaPig(
+                        tests={
+                            "2024-01-01 20:00:00": I.signal(-1, stop=43800, take=43400),
+                            "2024-01-01 23:10:00": I.signal(+1, stop=43400, take=44200),
+                            "2024-01-02 00:00:00": I.signal(+1, stop=43500, take=45500),
+                            "2024-01-02 01:10:00": I.signal(-1, stop=45500, take=44800),
+                        }
+                    ),
+                    t2 := AdvancedStopTakePositionTracker(None, None, sizer=FixedRiskSizer(1)),
+                ],
             },
             {f"BINANCE.UM:BTCUSDT": ohlc},
             10000,
@@ -347,9 +358,15 @@ class TestTrackersAndGatherers:
             subscription=dict(type="ohlc", timeframe="1Min"),
             trigger="-1Sec",
             silent=True,
-            # debug="ERROR",
+            debug="DEBUG",
             commissions="vip0_usdt",
             start="2024-01-01",
             stop="2024-01-03",
         )
-        print(result[0].executions_log)
+        assert len(result[0].executions_log) == 2
+        assert not t1.is_active(I)
+
+        assert len(result[1].executions_log) == 7
+        assert len(result[1].signals_log) == 7
+        assert result[1].signals_log.iloc[-1]["service"] == True
+        assert not t2.is_active(I)

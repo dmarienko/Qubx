@@ -176,6 +176,8 @@ class StrategyContext(ITimeProvider):
 
     def cancel(self, instr_or_symbol: Instrument | str): ...
 
+    def cancel_order(self, order_id: str): ...
+
     def quote(self, symbol: str) -> Quote | None: ...
 
     def get_capital(self) -> float: ...
@@ -270,9 +272,6 @@ class PositionsTracker:
 
     def is_active(self, instrument: Instrument) -> bool:
         return True
-
-    def reset(self, instrument: Instrument):
-        pass
 
     def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition] | TargetPosition:
         """

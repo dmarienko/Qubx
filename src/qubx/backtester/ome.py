@@ -17,6 +17,7 @@ from qubx.core.basics import (
     TransactionCostsCalculator,
     dt_64,
     ITimeProvider,
+    OPTION_FILL_AT_SIGNAL_PRICE,
 )
 from qubx.core.series import Quote, Trade
 from qubx.core.exceptions import (
@@ -96,11 +97,11 @@ class OrdersManagementEngine:
             for soid in list(self.stop_orders.keys()):
                 so = self.stop_orders[soid]
                 if so.side == "BUY" and quote.ask >= so.price:
-                    _exec_price = quote.ask if not so.options.get("fill_at_signal_price", False) else so.price
+                    _exec_price = quote.ask if not so.options.get(OPTION_FILL_AT_SIGNAL_PRICE, False) else so.price
                     self.stop_orders.pop(soid)
                     rep.append(self._execute_order(timestamp, _exec_price, so, True))
                 elif so.side == "SELL" and quote.bid <= so.price:
-                    _exec_price = quote.bid if not so.options.get("fill_at_signal_price", False) else so.price
+                    _exec_price = quote.bid if not so.options.get(OPTION_FILL_AT_SIGNAL_PRICE, False) else so.price
                     self.stop_orders.pop(soid)
                     rep.append(self._execute_order(timestamp, _exec_price, so, True))
 
@@ -194,7 +195,7 @@ class OrdersManagementEngine:
 
     def _execute_order(self, timestamp: dt_64, exec_price: float, order: Order, taker: bool) -> OmeReport:
         order.status = "CLOSED"
-        self._dbg(f"{order.id} {order.type} {order.side} {order.quantity} executed at {exec_price}")
+        self._dbg(f"<red>{order.id}</red> {order.type} {order.side} {order.quantity} executed at {exec_price}")
         return OmeReport(
             timestamp,
             order,

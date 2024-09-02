@@ -25,10 +25,21 @@ class SgnCtrl:
     signal: Signal
     target: TargetPosition
     status: State = State.NEW
+    take_order_id: str | None = None
+    stop_order_id: str | None = None
+    take_executed_price: float | None = None
+    stop_executed_price: float | None = None
 
 
 class StopTakePositionTracker(PositionsTracker):
-    _signals: Dict[Instrument, SgnCtrl]
+    """
+    Basic stop-take position tracker. It observes position opening or closing and controls stop-take logic.
+    It doesn't use any limit or stop order but processes market quotes in real time and verifies
+    if any risk level is crossed, then generates a zero position.
+    One drawback of this approach is the additional slippage that might occur due to stop-take logic latency.
+    """
+
+    _trackings: Dict[Instrument, SgnCtrl]
 
     def __init__(
         self,
@@ -38,7 +49,7 @@ class StopTakePositionTracker(PositionsTracker):
     ) -> None:
         self.take_target = take_target
         self.stop_risk = stop_risk
-        self._signals = dict()
+        self._trackings = dict()
         super().__init__(sizer)
         self._take_target_fraction = take_target / 100 if take_target else None
         self._stop_risk_fraction = stop_risk / 100 if stop_risk else None
@@ -65,20 +76,25 @@ class StopTakePositionTracker(PositionsTracker):
                 if self._stop_risk_fraction:
                     s.stop = entry * (1 + self._stop_risk_fraction)
 
+            # - final step - calculate actual target position and check if tracker can approve it
             target = self.get_position_sizer().calculate_target_positions(ctx, [s])[0]
-            targets.append(target)
-            self._signals[s.instrument] = SgnCtrl(s, target, State.NEW)
-            logger.debug(
-                f"<yellow>{self.__class__.__name__}</yellow> started tracking <cyan><b>{target}</b></cyan> of {s.instrument.symbol} take: {s.take} stop: {s.stop}"
-            )
+            if self._handle_new_target(ctx, s, target):
+                targets.append(target)
 
         return targets
 
-    def is_active(self, instrument: Instrument) -> bool:
-        return instrument in self._signals
+    def _handle_new_target(self, ctx: StrategyContext, signal: Signal, target: TargetPosition) -> bool:
+        """
+        As it doesn't use any referenced orders for position - new target is always approved
+        """
+        self._trackings[signal.instrument] = SgnCtrl(signal, target, State.NEW)
+        logger.debug(
+            f"<yellow>{self.__class__.__name__}</yellow> started tracking <cyan><b>{target}</b></cyan> of {signal.instrument.symbol} take: {signal.take} stop: {signal.stop}"
+        )
+        return True
 
-    def reset(self, instrument: Instrument):
-        self._signals.pop(instrument, None)
+    def is_active(self, instrument: Instrument) -> bool:
+        return instrument in self._trackings
 
     @staticmethod
     def _get_price(update: float | Quote | Trade | Bar, direction: int) -> float:
@@ -96,7 +112,7 @@ class StopTakePositionTracker(PositionsTracker):
     def update(
         self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar
     ) -> List[TargetPosition] | TargetPosition:
-        c = self._signals.get(instrument)
+        c = self._trackings.get(instrument)
         if c is None:
             return []
 
@@ -110,7 +126,7 @@ class StopTakePositionTracker(PositionsTracker):
                 pass
 
             case State.OPEN:
-                pos = ctx.positions[instrument.symbol].quantity
+                pos = c.target.target_position_size
                 if c.signal.stop:
                     if (
                         pos > 0
@@ -128,7 +144,6 @@ class StopTakePositionTracker(PositionsTracker):
                                 price=c.signal.stop,
                                 group="Risk Manager",
                                 comment="Stop triggered",
-                                options=dict(fill_at_signal_price=True),
                             ),
                         )
 
@@ -149,7 +164,6 @@ class StopTakePositionTracker(PositionsTracker):
                                 price=c.signal.take,
                                 group="Risk Manager",
                                 comment="Take triggered",
-                                options=dict(fill_at_signal_price=True),
                             ),
                         )
 
@@ -157,12 +171,12 @@ class StopTakePositionTracker(PositionsTracker):
                 logger.debug(
                     f"<yellow>{self.__class__.__name__}</yellow> stops tracking <green>{instrument.symbol}</green>"
                 )
-                self._signals.pop(instrument)
+                self._trackings.pop(instrument)
 
         return []
 
     def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal):
-        c = self._signals.get(instrument)
+        c = self._trackings.get(instrument)
         if c is None:
             return
 
@@ -172,6 +186,139 @@ class StopTakePositionTracker(PositionsTracker):
 
         if c.status == State.RISK_TRIGGERED and abs(pos) <= instrument.min_size:
             c.status = State.DONE
+
+
+class AdvancedStopTakePositionTracker(StopTakePositionTracker):
+    """
+    Provides the same functionality as StopTakePositionTracker but sends take/stop
+    as limit/stop orders immediately after the tracked position is opened.
+    If new signal is received it should adjust take and stop orders.
+    """
+
+    def update(self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar) -> List[TargetPosition]:
+        # fmt: off
+        c = self._trackings.get(instrument)
+        if c is None:
+            return []
+
+        match c.status:
+            case State.NEW:
+                # - nothing to do just waiting for position to be open
+                pass
+
+            case State.RISK_TRIGGERED:
+                c.status = State.DONE
+                # - send service signal that risk triggeres (it won't be processed by StrategyContext)
+                if c.stop_executed_price: 
+                    return [
+                            TargetPosition.service(
+                                ctx, instrument.signal(0, price=c.stop_executed_price, group="Risk Manager", comment="Stop triggered"),
+                            )
+                    ]
+                elif c.take_executed_price: 
+                    return [
+                            TargetPosition.service(
+                                ctx, instrument.signal(0, price=c.take_executed_price, group="Risk Manager", comment="Take triggered"),
+                            )
+                    ]
+
+            case State.OPEN:
+                pass
+
+            case State.DONE:
+                logger.debug(
+                    f"<yellow>{self.__class__.__name__}</yellow> stops tracking <green>{instrument.symbol}</green>"
+                )
+                self._trackings.pop(instrument)
+
+        # fmt: on
+        return []
+
+    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal):
+        c = self._trackings.get(instrument)
+        if c is None:
+            return
+
+        pos = ctx.positions[instrument.symbol].quantity
+        if abs(pos - c.target.target_position_size) <= instrument.min_size:
+            c.status = State.OPEN
+            if c.target.take:
+                try:
+                    logger.debug(
+                        f"<yellow>{self.__class__.__name__}</yellow> is sending take limit order for <green>{instrument.symbol}</green> at {c.target.take}"
+                    )
+                    order = ctx.trade(instrument, -pos, c.target.take)
+                    c.take_order_id = order.id
+                except Exception as e:
+                    logger.error(
+                        f"<yellow>{self.__class__.__name__}</yellow> couldn't send take limit order for <green>{instrument.symbol}</green>: {str(e)}"
+                    )
+
+            if c.target.stop:
+                try:
+                    logger.debug(
+                        f"<yellow>{self.__class__.__name__}</yellow> is sending stop order for <green>{instrument.symbol}</green> at {c.target.stop}"
+                    )
+                    # - for simulation purposes we assume that stop order will be executed at stop price
+                    order = ctx.trade(instrument, -pos, c.target.stop, stop_type="market", fill_at_signal_price=True)
+                    c.stop_order_id = order.id
+                except Exception as e:
+                    logger.error(
+                        f"<yellow>{self.__class__.__name__}</yellow> couldn't send stop order for <green>{instrument.symbol}</green>: {str(e)}"
+                    )
+
+        if c.status == State.OPEN and abs(pos) <= instrument.min_size:
+            if deal.order_id == c.take_order_id:
+                c.status = State.RISK_TRIGGERED
+                c.take_executed_price = deal.price
+                logger.debug(
+                    f"<yellow>{self.__class__.__name__}</yellow> triggered <green>TAKE PROFIT</green> (<red>{c.take_order_id}</red>) for <green>{instrument.symbol}</green> at {c.take_executed_price}"
+                )
+                # - cancel stop if need
+                self.__cncl_stop(ctx, c)
+
+            elif deal.order_id == c.stop_order_id:
+                c.status = State.RISK_TRIGGERED
+                c.stop_executed_price = deal.price
+                logger.debug(
+                    f"<yellow>{self.__class__.__name__}</yellow> triggered <magenta>STOP LOSS</magenta> (<red>{c.take_order_id}</red>) for <green>{instrument.symbol}</green> at {c.stop_executed_price}"
+                )
+                # - cancel take if need
+                self.__cncl_take(ctx, c)
+
+            else:
+                # - closed by opposite signal or externally
+                c.status = State.DONE
+                self.__cncl_stop(ctx, c)
+                self.__cncl_take(ctx, c)
+
+    def __cncl_stop(self, ctx: StrategyContext, ctrl: SgnCtrl):
+        if ctrl.stop_order_id is not None:
+            logger.debug(
+                f"<yellow>{self.__class__.__name__}</yellow> canceling stop order <red>{ctrl.stop_order_id}</red> for {ctrl.signal.instrument.symbol}"
+            )
+            ctx.cancel_order(ctrl.stop_order_id)
+            ctrl.stop_order_id = None
+
+    def __cncl_take(self, ctx: StrategyContext, ctrl: SgnCtrl):
+        if ctrl.take_order_id is not None:
+            logger.debug(
+                f"<yellow>{self.__class__.__name__}</yellow> canceling take order <red>{ctrl.stop_order_id}</red> for {ctrl.signal.instrument.symbol}"
+            )
+            ctx.cancel_order(ctrl.take_order_id)
+            ctrl.take_order_id = None
+
+    def _handle_new_target(self, ctx: StrategyContext, signal: Signal, target: TargetPosition) -> bool:
+        """
+        If new target differs from current and take / stop were sent
+        we need to cancel them first
+        """
+        ctr1 = self._trackings.get(signal.instrument)
+        if ctr1 is not None and ctr1.target.target_position_size != target.target_position_size:
+            self.__cncl_stop(ctx, ctr1)
+            self.__cncl_take(ctx, ctr1)
+
+        return super()._handle_new_target(ctx, signal, target)
 
 
 class AtrRiskTracker(StopTakePositionTracker):
@@ -227,7 +374,7 @@ class AtrRiskTracker(StopTakePositionTracker):
 
             target = self.get_position_sizer().calculate_target_positions(ctx, [s])[0]
             targets.append(target)
-            self._signals[s.instrument] = SgnCtrl(s, target, "NEW")
+            self._trackings[s.instrument] = SgnCtrl(s, target, "NEW")
             logger.debug(
                 f"\t ::: <yellow>Start tracking {target}</yellow> of {s.instrument.symbol} take: {s.take} stop: {s.stop}"
             )

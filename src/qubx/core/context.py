@@ -719,7 +719,12 @@ class StrategyContextImpl(StrategyContext):
             raise ValueError(f"Attempt to trade size {abs(amount)} less than minimal allowed {instrument.min_size} !")
 
         side = "buy" if amount > 0 else "sell"
-        type = "limit" if price is not None else "market"
+        type = "market"
+        if price is not None:
+            type = "limit"
+            if (stp_type := options.get("stop_type")) is not None:
+                type = f"stop_{stp_type}"
+
         logger.debug(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} ...")
         client_id = self._generate_order_client_id(instrument.symbol)
 
@@ -738,6 +743,10 @@ class StrategyContextImpl(StrategyContext):
             raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
         for o in self.trading_service.get_orders(instrument.symbol):
             self.trading_service.cancel_order(o.id)
+
+    def cancel_order(self, order_id: str):
+        if order_id:
+            self.trading_service.cancel_order(order_id)
 
     def quote(self, symbol: str) -> Quote | None:
         return self.broker_provider.get_quote(symbol)
