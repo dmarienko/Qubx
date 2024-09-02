@@ -170,9 +170,7 @@ class CsvStorageDataReader(DataReader):
                 _time_data = _time_cast_function(_time_data)
 
             # - preprocessing start and stop
-            t_0, t_1 = handle_start_stop(
-                start, stop, convert=lambda x: _recognize_t(x, None, _time_unit)
-            )
+            t_0, t_1 = handle_start_stop(start, stop, convert=lambda x: _recognize_t(x, None, _time_unit))
 
             # - check requested range
             if t_0:
@@ -198,14 +196,8 @@ class CsvStorageDataReader(DataReader):
 
             def _iter_chunks():
                 for n in range(0, length // chunksize + 1):
-                    transform.start_transform(
-                        data_id, fieldnames, start=start, stop=stop
-                    )
-                    raw_data = (
-                        selected_table[n * chunksize : min((n + 1) * chunksize, length)]
-                        .to_pandas()
-                        .to_numpy()
-                    )
+                    transform.start_transform(data_id, fieldnames, start=start, stop=stop)
+                    raw_data = selected_table[n * chunksize : min((n + 1) * chunksize, length)].to_pandas().to_numpy()
                     transform.process_data(raw_data)
                     yield transform.collect()
 
@@ -237,9 +229,7 @@ class InMemoryDataFrameReader(DataReader):
     Data reader for pandas DataFrames
     """
 
-    def __init__(
-        self, data: Dict[str, pd.DataFrame], exchange: str | None = None
-    ) -> None:
+    def __init__(self, data: Dict[str, pd.DataFrame], exchange: str | None = None) -> None:
         if not isinstance(data, dict):
             raise ValueError("data must be a dictionary of pandas DataFrames")
         self._data = data
@@ -325,11 +315,7 @@ class AsPandasFrame(DataTransformer):
         self._frame
         p = pd.DataFrame.from_records(rows_data, columns=self._column_names)
         p.set_index(self._column_names[self._time_idx], drop=True, inplace=True)
-        p.index = (
-            pd.to_datetime(p.index, unit=self.timestamp_units)
-            if self.timestamp_units
-            else p.index
-        )
+        p.index = pd.to_datetime(p.index, unit=self.timestamp_units) if self.timestamp_units else p.index
         p.index.rename("timestamp", inplace=True)
         p.sort_index(inplace=True)
         self._frame = pd.concat((self._frame, p), axis=0, sort=True)
@@ -370,9 +356,7 @@ class AsOhlcvSeries(DataTransformer):
             self._low_idx = _find_column_index_in_list(column_names, "low")
 
             try:
-                self._volume_idx = _find_column_index_in_list(
-                    column_names, "quote_volume", "volume", "vol"
-                )
+                self._volume_idx = _find_column_index_in_list(column_names, "quote_volume", "volume", "vol")
             except:
                 pass
 
@@ -414,9 +398,7 @@ class AsOhlcvSeries(DataTransformer):
 
                     self._data_type = "trades"
                 except:
-                    raise ValueError(
-                        f"Can't recognize data for update from header: {column_names}"
-                    )
+                    raise ValueError(f"Can't recognize data for update from header: {column_names}")
 
         self._column_names = column_names
         self._name = name
@@ -447,9 +429,7 @@ class AsOhlcvSeries(DataTransformer):
             a = d[self._taker_idx] if self._taker_idx else 0
             s = d[self._size_idx]
             b = s if a else 0
-            self._series.update(
-                _time(d[self._time_idx], self.timestamp_units), d[self._price_idx], s, b
-            )
+            self._series.update(_time(d[self._time_idx], self.timestamp_units), d[self._price_idx], s, b)
 
     def process_data(self, rows_data: List[List]) -> Any:
         if self._series is None:
@@ -484,12 +464,8 @@ class AsQuotes(DataTransformer):
         self._time_idx = _FIND_TIME_COL_IDX(column_names)
         self._bid_idx = _find_column_index_in_list(column_names, "bid")
         self._ask_idx = _find_column_index_in_list(column_names, "ask")
-        self._bidvol_idx = _find_column_index_in_list(
-            column_names, "bidvol", "bid_vol", "bidsize", "bid_size"
-        )
-        self._askvol_idx = _find_column_index_in_list(
-            column_names, "askvol", "ask_vol", "asksize", "ask_size"
-        )
+        self._bidvol_idx = _find_column_index_in_list(column_names, "bidvol", "bid_vol", "bidsize", "bid_size")
+        self._askvol_idx = _find_column_index_in_list(column_names, "askvol", "ask_vol", "asksize", "ask_size")
 
     def process_data(self, rows_data: Iterable) -> Any:
         if rows_data is not None:
@@ -538,9 +514,7 @@ class AsLiquidations(DataTransformer):
     def start_transform(self, name: str, column_names: List[str], **kwargs):
         self.buffer = list()
         self._time_idx = _FIND_TIME_COL_IDX(column_names)
-        self._size_idx = _find_column_index_in_list(
-            column_names, "size", "qty", "amount", "volume"
-        )
+        self._size_idx = _find_column_index_in_list(column_names, "size", "qty", "amount", "volume")
         try:
             self._side_idx = _find_column_index_in_list(column_names, "side")
         except:
@@ -553,21 +527,43 @@ class AsLiquidations(DataTransformer):
         self._filled_size_idx = _find_column_index_in_list(
             column_names, "filled_size", "filled_qty", "filled_amount", "filled_volume"
         )
+        self._quote_filled_size_idx = _find_column_index_in_list(
+            column_names,
+            "quote_filled_size",
+            "quote_filled_qty",
+            "quote_filled_amount",
+            "quote_filled_volume",
+        )
+        self._unfilled_size_idx = _find_column_index_in_list(
+            column_names,
+            "unfilled_size",
+            "unfilled_qty",
+            "unfilled_amount",
+            "unfilled_volume",
+        )
+        self._quote_unfilled_size_idx = _find_column_index_in_list(
+            column_names,
+            "quote_unfilled_size",
+            "quote_unfilled_qty",
+            "quote_unfilled_amount",
+            "quote_unfilled_volume",
+        )
+        self._price_diff_idx = _find_column_index_in_list(column_names, "price_diff")
 
     def process_data(self, rows_data: Iterable) -> Any:
         if rows_data is not None:
             for d in rows_data:
                 t = d[self._time_idx]
-                s = (
-                    d[self._side_idx]
-                    if self._side_idx
-                    else ("BUY" if d[self._size_idx] > 0 else "SELL")
-                )
+                s = d[self._side_idx] if self._side_idx else ("BUY" if d[self._size_idx] > 0 else "SELL")
                 p = d[self._price_idx] if self._price_idx else d[self._avg_price_idx]
                 ap = d[self._avg_price_idx]
                 sz = d[self._size_idx]
                 fsz = d[self._filled_size_idx]
-                self.buffer.append(Liquidation(t, s, p, ap, sz, fsz))
+                qfsz = d[self._quote_filled_size_idx]
+                ufsz = d[self._unfilled_size_idx]
+                qufsz = d[self._quote_unfilled_size_idx]
+                pdf = d[self._price_diff_idx]
+                self.buffer.append(Liquidation(t, s, p, ap, sz, fsz, qfsz, ufsz, qufsz, pdf))
 
 
 class AsTimestampedRecords(DataTransformer):
@@ -654,9 +650,7 @@ class RestoreTicksFromOHLC(DataTransformer):
             pass
 
         if self._volume_idx is None and self._trades:
-            logger.warning(
-                "Input OHLC data doesn't contain volume information so trades can't be emulated !"
-            )
+            logger.warning("Input OHLC data doesn't contain volume information so trades can't be emulated !")
             self._trades = False
 
     def process_data(self, rows_data: List[List]) -> Any:
@@ -697,17 +691,11 @@ class RestoreTicksFromOHLC(DataTransformer):
             rv = data[self._volume_idx] if self._volume_idx else 0
 
             # - opening quote
-            self.buffer.append(
-                Quote(
-                    ti + self._t_start, o - s2, o + s2, self._bid_size, self._ask_size
-                )
-            )
+            self.buffer.append(Quote(ti + self._t_start, o - s2, o + s2, self._bid_size, self._ask_size))
 
             if c >= o:
                 if self._trades:
-                    self.buffer.append(
-                        Trade(ti + self._t_start, o - s2, rv * (o - l))
-                    )  # sell 1
+                    self.buffer.append(Trade(ti + self._t_start, o - s2, rv * (o - l)))  # sell 1
                 self.buffer.append(
                     Quote(
                         ti + self._t_mid1,
@@ -719,9 +707,7 @@ class RestoreTicksFromOHLC(DataTransformer):
                 )
 
                 if self._trades:
-                    self.buffer.append(
-                        Trade(ti + self._t_mid1, l + s2, rv * (c - o))
-                    )  # buy 1
+                    self.buffer.append(Trade(ti + self._t_mid1, l + s2, rv * (c - o)))  # buy 1
                 self.buffer.append(
                     Quote(
                         ti + self._t_mid2,
@@ -733,14 +719,10 @@ class RestoreTicksFromOHLC(DataTransformer):
                 )
 
                 if self._trades:
-                    self.buffer.append(
-                        Trade(ti + self._t_mid2, h - s2, rv * (h - c))
-                    )  # sell 2
+                    self.buffer.append(Trade(ti + self._t_mid2, h - s2, rv * (h - c)))  # sell 2
             else:
                 if self._trades:
-                    self.buffer.append(
-                        Trade(ti + self._t_start, o + s2, rv * (h - o))
-                    )  # buy 1
+                    self.buffer.append(Trade(ti + self._t_start, o + s2, rv * (h - o)))  # buy 1
                 self.buffer.append(
                     Quote(
                         ti + self._t_mid1,
@@ -752,9 +734,7 @@ class RestoreTicksFromOHLC(DataTransformer):
                 )
 
                 if self._trades:
-                    self.buffer.append(
-                        Trade(ti + self._t_mid1, h - s2, rv * (o - c))
-                    )  # sell 1
+                    self.buffer.append(Trade(ti + self._t_mid1, h - s2, rv * (o - c)))  # sell 1
                 self.buffer.append(
                     Quote(
                         ti + self._t_mid2,
@@ -766,14 +746,10 @@ class RestoreTicksFromOHLC(DataTransformer):
                 )
 
                 if self._trades:
-                    self.buffer.append(
-                        Trade(ti + self._t_mid2, l + s2, rv * (c - l))
-                    )  # buy 2
+                    self.buffer.append(Trade(ti + self._t_mid2, l + s2, rv * (c - l)))  # buy 2
 
             # - closing quote
-            self.buffer.append(
-                Quote(ti + self._t_end, c - s2, c + s2, self._bid_size, self._ask_size)
-            )
+            self.buffer.append(Quote(ti + self._t_end, c - s2, c + s2, self._bid_size, self._ask_size))
 
 
 def _retry(fn):
@@ -879,20 +855,14 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
 
         # - fix: when no data ranges are provided we must skip empy where keyword
         if w0 or w1:
-            where = (
-                f"{where} and {w0} and {w1}"
-                if (w0 and w1)
-                else f"{where} and {(w0 or w1)}"
-            )
+            where = f"{where} and {w0} and {w1}" if (w0 and w1) else f"{where} and {(w0 or w1)}"
 
         # - filter out candles without any volume
         where = f"{where} and volume > 0"
 
         # - check resample format
         resample = (
-            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(
-                resample
-            )
+            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(resample)
             if resample
             else "1m"  # if resample is empty let's use 1 minute timeframe
         )
@@ -993,9 +963,7 @@ class QuestDBConnector(DataReader):
         assert len(symbols) > 0, "No symbols provided"
         quoted_symbols = [f"'{s.lower()}'" for s in symbols]
         where = f"where symbol in ({', '.join(quoted_symbols)}) and timestamp >= '{start}' and timestamp < '{stop}'"
-        table_name = QuestDBSqlCandlesBuilder().get_table_name(
-            f"{exchange}:{symbols[0]}"
-        )
+        table_name = QuestDBSqlCandlesBuilder().get_table_name(f"{exchange}:{symbols[0]}")
 
         _rsmpl = f"sample by {timeframe}"
 
@@ -1138,9 +1106,7 @@ class QuestDBSqlOrderBookBuilder(QuestDBSqlCandlesBuilder):
         start_dt, end_dt = pd.Timestamp(start), pd.Timestamp(end)
         delta = end_dt - start_dt
         if delta > self.MAX_TIME_DELTA:
-            raise ValueError(
-                f"Time range is too big for orderbook data: {delta}, max allowed: {self.MAX_TIME_DELTA}"
-            )
+            raise ValueError(f"Time range is too big for orderbook data: {delta}, max allowed: {self.MAX_TIME_DELTA}")
 
         raw_start_dt = start_dt.floor(self.SNAPSHOT_DELTA) - self.MIN_DELTA
 
@@ -1172,11 +1138,7 @@ class TradeSql(QuestDBSqlCandlesBuilder):
             where = f"where {w0} and {w1}" if (w0 and w1) else f"where {(w0 or w1)}"
 
         resample = (
-            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(
-                resample
-            )
-            if resample
-            else resample
+            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(resample) if resample else resample
         )
         if resample:
             sql = f"""
@@ -1207,60 +1169,70 @@ class LiquidationSql(QuestDBSqlCandlesBuilder):
             where = f"where {w0} and {w1}" if (w0 and w1) else f"where {(w0 or w1)}"
 
         resample = (
-            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(
-                resample
-            )
-            if resample
-            else resample
+            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(resample) if resample else resample
         )
-        # if resample:
-        #     sql = f"""
-        #         select timestamp, side, price, average_price, size, filled_size
-        #         from "{table_name}" {where} SAMPLE by {resample};"""
-        # else:
-        #     sql = f"""select timestamp, side, price, average_price, size, filled_size
-        #         from "{table_name}" {where};"""
-        # return sql
 
         if resample:
-            # sql = f"""
-            #     WITH aggregated_data AS (
-            #         SELECT
-            #             MAX(timestamp) AS timestamp,
-            #             SUM(CASE WHEN side = 'SELL' THEN -size ELSE size END) AS size,
-            #             SUM(CASE WHEN side = 'SELL' THEN -filled_size ELSE filled_size END) AS filled_size,
-            #             SUM(average_price * size) / NULLIF(SUM(size), 0) AS average_price
-            #         FROM "{table_name}"
-            #         {where}
-            #         SAMPLE BY {resample}
-            #     )
-            #     SELECT
-            #         timestamp,
-            #         CASE
-            #             WHEN size > 0 THEN 'BUY'
-            #             WHEN size < 0 THEN 'SELL'
-            #             ELSE 'NEUTRAL'
-            #         END AS side,
-            #         size,
-            #         filled_size,
-            #         average_price
-            #     FROM aggregated_data
-            #     ORDER BY timestamp;
-            # """
 
             sql = f"""
                 SELECT 
-                    timestamp,
-                    SUM(average_price * size) / NULLIF(SUM(size), 0) AS average_price, 
-                    SUM((CASE WHEN side = 'BUY' then 1 else -1 END) * size) AS size,  
-                    SUM((CASE WHEN side = 'BUY' then 1 else -1 END) * filled_size) AS filled_size,
+                    MAX(timestamp) AS timestamp,
+                    SUM(price * size) / NULLIF(SUM(size), 0) AS price,  
+                    SUM(average_price * filled_size) / NULLIF(SUM(filled_size), 0) AS average_price, 
+                    SUM(
+                        CASE 
+                            WHEN side = 'BUY' THEN 1 
+                            ELSE -1 
+                        END * size
+                    ) AS size,
+                    SUM(
+                        CASE 
+                            WHEN side = 'BUY' THEN 1 
+                            ELSE -1 
+                        END * filled_size
+                    ) AS filled_size,
+                    SUM(
+                        CASE 
+                            WHEN side = 'BUY' THEN 1 
+                            ELSE -1 
+                        END * filled_size * average_price
+                    ) AS quote_filled_size,
+                    SUM(
+                        CASE 
+                            WHEN side = 'BUY' THEN 1 
+                            ELSE -1 
+                        END * (size - filled_size)
+                    ) AS unfilled_size,
+                    SUM(
+                        CASE 
+                            WHEN side = 'BUY' THEN 1 
+                            ELSE -1 
+                        END * (price - average_price)
+                    ) AS price_diff,
+                    SUM(
+                        CASE 
+                            WHEN side = 'BUY' THEN 1 
+                            ELSE -1 
+                        END * ( size - filled_size) * price
+                    ) AS quote_unfilled_size
                 FROM "{table_name}"
                 {where}
                 SAMPLE BY {resample}
             """
+
         else:
             sql = f"""
-                SELECT timestamp, side, price, average_price, size, filled_size
+                SELECT 
+                    timestamp, 
+                    side, 
+                    price, 
+                    average_price, 
+                    size, 
+                    filled_size,
+                    filled_size * average_price AS quote_filled_size,
+                    size - filled_size AS unfilled_size,
+                    (size - filled_size) * price AS quote_unfilled_size,
+                    price - average_price AS price_diff
                 FROM "{table_name}" 
                 {where};
             """
@@ -1286,12 +1258,9 @@ class FundingRateSql(QuestDBSqlCandlesBuilder):
             where = f"where {w0} and {w1}" if (w0 and w1) else f"where {(w0 or w1)}"
 
         resample = (
-            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(
-                resample
-            )
-            if resample
-            else resample
+            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(resample) if resample else resample
         )
+        # TODO: resampling should be improved by using logical aggregation
         if resample:
             sql = f"""
                 select timestamp, funding_rate, next_funding_ts, mark_price, index_price
@@ -1321,12 +1290,9 @@ class OpenInterestSql(QuestDBSqlCandlesBuilder):
             where = f"where {w0} and {w1}" if (w0 and w1) else f"where {(w0 or w1)}"
 
         resample = (
-            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(
-                resample
-            )
-            if resample
-            else resample
+            QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(resample) if resample else resample
         )
+        # TODO: resampling should be improved by using logical aggregation
         if resample:
             sql = f"""
                 select ts as timestamp, open_interest
@@ -1434,6 +1400,4 @@ class MultiQdbConnector(QuestDBConnector):
         )
 
     def get_names(self, data_type: str) -> List[str]:
-        return self._get_names(
-            self._TYPE_TO_BUILDER[self._TYPE_MAPPINGS.get(data_type, data_type)]
-        )
+        return self._get_names(self._TYPE_TO_BUILDER[self._TYPE_MAPPINGS.get(data_type, data_type)])
