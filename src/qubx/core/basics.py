@@ -57,6 +57,7 @@ class TargetPosition:
     time: dt_64  # time when position was set
     signal: Signal  # original signal
     target_position_size: float  # actual position size after processing in sizer
+    _is_service: bool = False
 
     @staticmethod
     def create(ctx: "ITimeProvider", signal: Signal, target_size: float) -> "TargetPosition":
@@ -65,6 +66,13 @@ class TargetPosition:
     @staticmethod
     def zero(ctx: "ITimeProvider", signal: Signal) -> "TargetPosition":
         return TargetPosition(ctx.time(), signal, 0.0)
+
+    @staticmethod
+    def service(ctx: "ITimeProvider", signal: Signal, size: float | None = None) -> "TargetPosition":
+        """
+        Generate just service position target (for logging purposes)
+        """
+        return TargetPosition(ctx.time(), signal, size if size else signal.signal, _is_service=True)
 
     @property
     def instrument(self) -> "Instrument":
@@ -82,8 +90,15 @@ class TargetPosition:
     def take(self) -> float | None:
         return self.signal.take
 
+    @property
+    def is_service(self) -> bool:
+        """
+        Some target may be used just for informative purposes (post-factum risk management etc)
+        """
+        return self._is_service
+
     def __str__(self) -> str:
-        return f"Target for {self.signal} -> {self.target_position_size} at {self.time}"
+        return f"{'::: INFORMATIVE ::: ' if self.is_service else ''}Target for {self.signal} -> {self.target_position_size} at {self.time}"
 
 
 @dataclass

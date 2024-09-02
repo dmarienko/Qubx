@@ -353,6 +353,7 @@ class SignalsLogger(_BaseIntervalDumper):
                     "stop": s.stop,
                     "group": s.signal.group,
                     "comment": s.signal.comment,
+                    "service": s.is_service,
                 }
             )
         self._targets.clear()

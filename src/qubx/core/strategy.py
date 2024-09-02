@@ -228,6 +228,8 @@ class IPositionGathering:
         res = {}
         if targets:
             for t in targets:
+                if t.is_service:  # we skip processing service positions
+                    continue
                 try:
                     res[t.instrument] = self.alter_position_size(ctx, t)
                 except Exception as ex:

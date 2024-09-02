@@ -381,7 +381,7 @@ class StrategyContextImpl(StrategyContext):
             # - process and execute signals if they are provided
             if signals:
                 # process signals by tracker and turn convert them into positions
-                positions_from_strategy = self.__process_target_positions(
+                positions_from_strategy = self.__process_and_log_target_positions(
                     self.positions_tracker.process_signals(self, self.__process_signals(signals))
                 )
 
@@ -505,13 +505,12 @@ class StrategyContextImpl(StrategyContext):
         elif signals is None:
             return []
 
-        # set strategy group name if not set
         for signal in signals:
+            # set strategy group name if not set
             if not signal.group:
                 signal.group = self.strategy_name
 
-        # set reference prices for signals
-        for signal in signals:
+            # set reference prices for signals
             if signal.reference_price is None:
                 q = self.quote(signal.instrument.symbol)
                 if q is None:
@@ -530,9 +529,10 @@ class StrategyContextImpl(StrategyContext):
         signals = [pos.signal for pos in target_positions]
         self.__process_signals(signals)
 
-    def __process_target_positions(
+    def __process_and_log_target_positions(
         self, target_positions: List[TargetPosition] | TargetPosition | None
     ) -> List[TargetPosition]:
+
         if isinstance(target_positions, TargetPosition):
             target_positions = [target_positions]
         elif target_positions is None:
@@ -548,7 +548,10 @@ class StrategyContextImpl(StrategyContext):
 
         # - update tracker and handle alterd positions if need
         self.positions_gathering.alter_positions(
-            self, self.__process_target_positions(self.positions_tracker.update(self, self._symb_to_instr[symbol], bar))
+            self,
+            self.__process_and_log_target_positions(
+                self.positions_tracker.update(self, self._symb_to_instr[symbol], bar)
+            ),
         )
 
         # - check if it's time to trigger the on_event if it's configured
@@ -570,7 +573,7 @@ class StrategyContextImpl(StrategyContext):
         # - update tracker and handle alterd positions if need
         self.positions_gathering.alter_positions(
             self,
-            self.__process_target_positions(target_positions),
+            self.__process_and_log_target_positions(target_positions),
         )
 
         if self._trig_on_trade:
@@ -585,7 +588,7 @@ class StrategyContextImpl(StrategyContext):
         self.__process_signals_from_target_positions(target_positions)
 
         # - update tracker and handle alterd positions if need
-        self.positions_gathering.alter_positions(self, self.__process_target_positions(target_positions))
+        self.positions_gathering.alter_positions(self, self.__process_and_log_target_positions(target_positions))
 
         # - TODO: here we can apply throttlings or filters
         #  - let's say we can skip quotes if bid & ask is not changed
