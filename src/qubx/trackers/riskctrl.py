@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from enum import Enum
 from typing import Dict, List, Literal
 
 import numpy as np
@@ -11,19 +12,19 @@ from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
 
 from qubx.ta.indicators import atr
 
-State = Literal[
-    "NEW",
-    "OPEN",
-    "RISK-TRIGGERED",
-    "DONE",
-]
+
+class State(Enum):
+    NEW = 0
+    OPEN = 1
+    RISK_TRIGGERED = 2
+    DONE = 3
 
 
 @dataclass
 class SgnCtrl:
     signal: Signal
     target: TargetPosition
-    status: State = "NEW"
+    status: State = State.NEW
 
 
 class StopTakePositionTracker(PositionsTracker):
@@ -66,9 +67,9 @@ class StopTakePositionTracker(PositionsTracker):
 
             target = self.get_position_sizer().calculate_target_positions(ctx, [s])[0]
             targets.append(target)
-            self._signals[s.instrument] = SgnCtrl(s, target, "NEW")
+            self._signals[s.instrument] = SgnCtrl(s, target, State.NEW)
             logger.debug(
-                f"\t ::: <yellow>Start tracking {target}</yellow> of {s.instrument.symbol} take: {s.take} stop: {s.stop}"
+                f"<yellow>{self.__class__.__name__}</yellow> started tracking <cyan><b>{target}</b></cyan> of {s.instrument.symbol} take: {s.take} stop: {s.stop}"
             )
 
         return targets
@@ -100,15 +101,15 @@ class StopTakePositionTracker(PositionsTracker):
             return []
 
         match c.status:
-            case "NEW":
+            case State.NEW:
                 # - nothing to do just waiting for position to be open
                 pass
 
-            case "RISK-TRIGGERED":
+            case State.RISK_TRIGGERED:
                 # - nothing to do just waiting for position to be closed
                 pass
 
-            case "OPEN":
+            case State.OPEN:
                 pos = ctx.positions[instrument.symbol].quantity
                 if c.signal.stop:
                     if (
@@ -116,8 +117,10 @@ class StopTakePositionTracker(PositionsTracker):
                         and self._get_price(update, +1) <= c.signal.stop
                         or (pos < 0 and self._get_price(update, -1) >= c.signal.stop)
                     ):
-                        c.status = "RISK-TRIGGERED"
-                        logger.debug(f"\t ::: <red>Stop triggered</red> for {instrument.symbol} at {c.signal.stop}")
+                        c.status = State.RISK_TRIGGERED
+                        logger.debug(
+                            f"<yellow>{self.__class__.__name__}</yellow> triggered <red>STOP LOSS</red> for <green>{instrument.symbol}</green> at {c.signal.stop}"
+                        )
                         return TargetPosition.zero(
                             ctx,
                             instrument.signal(
@@ -135,8 +138,10 @@ class StopTakePositionTracker(PositionsTracker):
                         and self._get_price(update, -1) >= c.signal.take
                         or (pos < 0 and self._get_price(update, +1) <= c.signal.take)
                     ):
-                        c.status = "RISK-TRIGGERED"
-                        logger.debug(f"\t ::: <green>Take triggered</green> for {instrument.symbol} at {c.signal.take}")
+                        c.status = State.RISK_TRIGGERED
+                        logger.debug(
+                            f"<yellow>{self.__class__.__name__}</yellow> triggered <green>TAKE PROFIT</green> for <green>{instrument.symbol}</green> at {c.signal.take}"
+                        )
                         return TargetPosition.zero(
                             ctx,
                             instrument.signal(
@@ -148,8 +153,10 @@ class StopTakePositionTracker(PositionsTracker):
                             ),
                         )
 
-            case "DONE":
-                logger.debug(f"\t ::: <yellow>Stop tracking</yellow> {instrument.symbol}")
+            case State.DONE:
+                logger.debug(
+                    f"<yellow>{self.__class__.__name__}</yellow> stops tracking <green>{instrument.symbol}</green>"
+                )
                 self._signals.pop(instrument)
 
         return []
@@ -159,11 +166,12 @@ class StopTakePositionTracker(PositionsTracker):
         if c is None:
             return
 
-        if abs(ctx.positions[instrument.symbol].quantity - c.target.target_position_size) <= instrument.min_size:
-            c.status = "OPEN"
+        pos = ctx.positions[instrument.symbol].quantity
+        if abs(pos - c.target.target_position_size) <= instrument.min_size:
+            c.status = State.OPEN
 
-        if c.target.target_position_size == 0:
-            c.status = "DONE"
+        if c.status == State.RISK_TRIGGERED and abs(pos) <= instrument.min_size:
+            c.status = State.DONE
 
 
 class AtrRiskTracker(StopTakePositionTracker):
