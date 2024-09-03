@@ -374,7 +374,7 @@ class AtrRiskTracker(StopTakePositionTracker):
 
             target = self.get_position_sizer().calculate_target_positions(ctx, [s])[0]
             targets.append(target)
-            self._trackings[s.instrument] = SgnCtrl(s, target, "NEW")
+            self._trackings[s.instrument] = SgnCtrl(s, target, State.NEW)
             logger.debug(
                 f"\t ::: <yellow>Start tracking {target}</yellow> of {s.instrument.symbol} take: {s.take} stop: {s.stop}"
             )
