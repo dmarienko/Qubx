@@ -136,7 +136,7 @@ class TestTrackersAndGatherers:
         sizer = FixedRiskSizer(10.0)
         s = sizer.calculate_target_positions(ctx, [i.signal(1, stop=900.0)])
         _entry, _stop, _cap_in_risk = 1000.5, 900, 10000 * 10 / 100
-        assert s[0].target_position_size == (_cap_in_risk / ((_entry - _stop) / _entry)) / _entry
+        assert s[0].target_position_size == i.round_size_down((_cap_in_risk / ((_entry - _stop) / _entry)) / _entry)
 
     def test_rebalancer(self):
         ctx = DebugStratageyCtx(
@@ -255,10 +255,12 @@ class TestTrackersAndGatherers:
 
         # 2. Check that we get nonzero target positions
         tracker = CompositeTracker(StopTakePositionTracker(sizer=FixedSizer(1.0, amount_in_quote=False)))
-        targets = tracker.process_signals(ctx, [I[0].signal(+0.5), I[1].signal(+0.3), I[2].signal(+0.2)])
+        targets = tracker.process_signals(ctx, [I[0].signal(+0.5), I[1].signal(+0.3), I[2].signal(+2.0)])
         assert targets[0].target_position_size == 0.5
         assert targets[1].target_position_size == 0.3
-        assert targets[2].target_position_size == 0.2
+        assert (  # SOL has 1 as min_size_step so anything below 1 would be rounded to 0
+            targets[2].target_position_size == 2.0
+        )
 
         # 3. Check that allow_override works
         tracker = CompositeTracker(StopTakePositionTracker())
