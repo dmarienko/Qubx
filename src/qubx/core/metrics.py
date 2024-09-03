@@ -975,6 +975,8 @@ def chart_signals(
     elif isinstance(ohlc, OHLCV):
         bars = ohlc.pd()
         bars = ohlc_resample(bars, timeframe) if timeframe else bars
+    else:
+        raise ValueError(f"Invalid data type {type(ohlc)}")
 
     if timeframe:
 

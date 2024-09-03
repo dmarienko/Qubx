@@ -210,7 +210,6 @@ class TestTrackersAndGatherers:
             def tracker(self, ctx: StrategyContext) -> PositionsTracker:
                 return PositionsTracker(FixedRiskSizer(1, 10_000, reinvest_profit=True))
 
-        QubxLogConfig.set_log_level("ERROR")
         rep = simulate(
             {
                 "As Strategy 1": [

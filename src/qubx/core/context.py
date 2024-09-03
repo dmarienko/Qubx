@@ -721,11 +721,12 @@ class StrategyContextImpl(StrategyContext):
         side = "buy" if amount > 0 else "sell"
         type = "market"
         if price is not None:
+            price = instrument.round_price_down(price) if amount > 0 else instrument.round_price_up(price)
             type = "limit"
             if (stp_type := options.get("stop_type")) is not None:
                 type = f"stop_{stp_type}"
 
-        logger.debug(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} ...")
+        logger.debug(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} @ {price} ...")
         client_id = self._generate_order_client_id(instrument.symbol)
 
         order = self.trading_service.send_order(

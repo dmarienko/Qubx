@@ -373,10 +373,11 @@ class AtrRiskTracker(StopTakePositionTracker):
                     s.take = entry - self.take_target * last_volatility
 
             target = self.get_position_sizer().calculate_target_positions(ctx, [s])[0]
-            targets.append(target)
-            self._trackings[s.instrument] = SgnCtrl(s, target, State.NEW)
+            if self._handle_new_target(ctx, s, target):
+                targets.append(target)
+
             logger.debug(
-                f"\t ::: <yellow>Start tracking {target}</yellow> of {s.instrument.symbol} take: {s.take} stop: {s.stop}"
+                f"<yellow>{self.__class__.__name__}</yellow> starts tracking <green>{s.instrument.symbol}</green> with take: {s.take} stop: {s.stop}"
             )
 
         return targets
