@@ -171,10 +171,12 @@ class StrategyContext(ITimeProvider):
         amount: float,
         price: float | None = None,
         time_in_force="gtc",
-        **optional,
+        **options,
     ) -> Order: ...
 
     def cancel(self, instr_or_symbol: Instrument | str): ...
+
+    def cancel_order(self, order_id: str): ...
 
     def quote(self, symbol: str) -> Quote | None: ...
 
@@ -228,6 +230,8 @@ class IPositionGathering:
         res = {}
         if targets:
             for t in targets:
+                if t.is_service:  # we skip processing service positions
+                    continue
                 try:
                     res[t.instrument] = self.alter_position_size(ctx, t)
                 except Exception as ex:
@@ -268,9 +272,6 @@ class PositionsTracker:
 
     def is_active(self, instrument: Instrument) -> bool:
         return True
-
-    def reset(self, instrument: Instrument):
-        pass
 
     def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition] | TargetPosition:
         """

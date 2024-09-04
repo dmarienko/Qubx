@@ -16,8 +16,10 @@ from qubx.backtester.simulator import simulate
 
 
 class _TimeService(ITimeProvider):
+    _time: np.datetime64
+
     def g(self, quote: Quote) -> Quote:
-        self._time = quote.time
+        self._time = quote.time  # type: ignore
         return quote
 
     def time(self) -> np.datetime64:
@@ -32,6 +34,7 @@ class TestBacktesterStuff:
 
     def test_basic_ome(self):
         instr = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        assert instr
         ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
 
         q0 = Q("2020-01-01 10:00", 32000, 32001)
@@ -93,6 +96,7 @@ class TestBacktesterStuff:
 
     def test_ome_execution(self):
         instr = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        assert instr
         ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
 
         q0 = Q("2020-01-01 10:00", 32000, 32001)
@@ -119,8 +123,10 @@ class TestBacktesterStuff:
 
     def test_ome_loop(self):
         instr = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        assert instr is not None
         r = CsvStorageDataReader("tests/data/csv")
         stream = r.read("BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=False, spread=instr.min_tick))
+        assert isinstance(stream, List)
 
         ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
         ome.update_bbo(t.g(stream[0]))
@@ -164,14 +170,14 @@ class TestBacktesterStuff:
 
         r = CsvStorageDataReader("tests/data/csv")
         ohlc = r.read("BINANCE.UM:BTCUSDT", "2024-01-01", "2024-01-02", AsOhlcvSeries("5Min"))
-        fast = ema(ohlc.close, 5)
-        slow = ema(ohlc.close, 15)
+        fast = ema(ohlc.close, 5)  # type: ignore
+        slow = ema(ohlc.close, 15)  # type: ignore
         sigs = (((fast > slow) + (fast.shift(1) < slow.shift(1))) == 2) - (
             ((fast < slow) + (fast.shift(1) > slow.shift(1))) == 2
         )
         sigs = sigs.pd()
         sigs = sigs[sigs != 0]
-        s2 = shift_series(sigs, "4Min59Sec").rename("BTCUSDT") / 100
+        s2 = shift_series(sigs, "4Min59Sec").rename("BTCUSDT") / 100  # type: ignore
         rep1 = simulate(
             {
                 # - generated signals as series
@@ -193,3 +199,76 @@ class TestBacktesterStuff:
             rep1[0].executions_log[["filled_qty", "price", "side"]]
             == rep1[1].executions_log[["filled_qty", "price", "side"]]
         )
+
+    def test_ome_stop_orders(self):
+        instr = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        assert instr is not None
+
+        r = CsvStorageDataReader("tests/data/csv")
+        stream = r.read(
+            "BTCUSDT_ohlcv_M1",
+            start="2024-01-01",
+            stop="2024-01-15",
+            transform=RestoreTicksFromOHLC(trades=False, spread=instr.min_tick),
+        )
+        assert isinstance(stream, List)
+
+        ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
+        q0 = t.g(stream[0])
+        ome.update_bbo(t.g(q0))
+
+        # - trigger immediate exception test
+        try:
+            ome.place_order("BUY", "STOP_MARKET", 0.5, q0.mid_price() - 100.0, "Failed")
+            assert False
+        except Exception as e:
+            print(f" -> {e}")
+
+        try:
+            ome.place_order("SELL", "STOP_MARKET", 0.5, q0.mid_price() + 100.0, "Failed")
+            assert False
+        except Exception as e:
+            print(f" -> {e}")
+
+        ent0 = q0.mid_price() + 1000.0
+        ent1 = q0.mid_price() - 150.0
+
+        # - stop orders
+        stp1 = ome.place_order("BUY", "STOP_MARKET", 0.5, ent0, "Buy1", fill_at_signal_price=True)
+        stp2 = ome.place_order("BUY", "STOP_MARKET", 0.5, ent0, "Buy2", fill_at_signal_price=False)
+        stp3 = ome.place_order("SELL", "STOP_MARKET", 0.5, ent1, "Sell1", fill_at_signal_price=True)
+        stp4 = ome.place_order("SELL", "STOP_MARKET", 0.5, ent1, "Sell2", fill_at_signal_price=False)
+
+        # - just to put limit orders to test it together
+        ent2 = q0.mid_price() + 2000.0
+        ent3 = q0.mid_price() - 1900.0
+        ent4 = q0.mid_price() - 5000.0
+        lmt1 = ome.place_order("SELL", "LIMIT", 0.5, ent2, "LimitSell1")
+        lmt2 = ome.place_order("BUY", "LIMIT", 0.5, ent3, "LimitBuy2")
+        lmt3 = ome.place_order("BUY", "LIMIT", 0.5, ent4, "LimitBuy3")
+
+        [print(" --> " + str(s)) for s in [stp1, stp2, stp3, stp4]]
+        [print(" --> " + str(l)) for l in [lmt1, lmt2, lmt3]]
+
+        execs = []
+        for i in range(len(stream)):
+            rs = ome.update_bbo(t.g(stream[i]))
+            if rs:
+                execs.extend([r.exec for r in rs])
+
+        assert stp1.order.status == "CLOSED"
+        assert stp2.order.status == "CLOSED"
+        assert stp3.order.status == "CLOSED"
+        assert stp4.order.status == "CLOSED"
+        assert lmt1.order.status == "CLOSED"
+        assert lmt2.order.status == "CLOSED"
+        assert lmt3.order.status == "OPEN"
+        assert execs[0].price == ent0
+        assert execs[1].price > ent0
+        assert execs[2].price == ent2
+        assert execs[3].price == ent1
+        assert execs[4].price < ent1
+        assert execs[5].price == ent3
+
+        assert len(ome.get_open_orders()) == 1
+        [print(" ::::: " + str(s)) for s in ome.get_open_orders()]

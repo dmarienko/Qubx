@@ -92,6 +92,20 @@ def install_plotly_helpers():
                 )
             )
 
+        def hline(look, y, c="yellow", lw=1, ls="dot"):
+            return look.add_shape(
+                go.layout.Shape(
+                    type="line",
+                    x0=0,
+                    x1=1,
+                    y0=y,
+                    y1=y,
+                    xref="paper",
+                    yref="y1",
+                    line=dict(width=lw, color=c, dash=ls),
+                )
+            )
+
         def arrow(look, x2, y2, x1, y1, c="red", text="", lw=1, font=dict(size=8)):
             return look.add_annotation(
                 x=x1,
@@ -146,6 +160,7 @@ def install_plotly_helpers():
         FigureWidget.rlinex = rlinex  # type: ignore
         FigureWidget.rline_ = rline_  # type: ignore
         FigureWidget.vline = vline  # type: ignore
+        FigureWidget.hline = hline  # type: ignore
         FigureWidget.dliney = dliney  # type: ignore
         FigureWidget.arrow = arrow  # type: ignore
     except:

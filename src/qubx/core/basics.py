@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
@@ -14,6 +14,8 @@ from qubx.core.utils import prec_ceil, prec_floor
 dt_64 = np.datetime64
 td_64 = np.timedelta64
 
+OPTION_FILL_AT_SIGNAL_PRICE = "fill_at_signal_price"
+
 
 @dataclass
 class Signal:
@@ -24,7 +26,6 @@ class Signal:
         reference_price: float - exact price when signal was generated
 
         Options:
-        - fill_at_signal_price: bool - if True, then fill order at signal price (only used in backtesting)
         - allow_override: bool - if True, and there is another signal for the same instrument, then override current.
     """
 
@@ -58,6 +59,7 @@ class TargetPosition:
     time: dt_64  # time when position was set
     signal: Signal  # original signal
     target_position_size: float  # actual position size after processing in sizer
+    _is_service: bool = False
 
     @staticmethod
     def create(ctx: "ITimeProvider", signal: Signal, target_size: float) -> "TargetPosition":
@@ -66,6 +68,13 @@ class TargetPosition:
     @staticmethod
     def zero(ctx: "ITimeProvider", signal: Signal) -> "TargetPosition":
         return TargetPosition(ctx.time(), signal, 0.0)
+
+    @staticmethod
+    def service(ctx: "ITimeProvider", signal: Signal, size: float | None = None) -> "TargetPosition":
+        """
+        Generate just service position target (for logging purposes)
+        """
+        return TargetPosition(ctx.time(), signal, size if size else signal.signal, _is_service=True)
 
     @property
     def instrument(self) -> "Instrument":
@@ -83,8 +92,15 @@ class TargetPosition:
     def take(self) -> float | None:
         return self.signal.take
 
+    @property
+    def is_service(self) -> bool:
+        """
+        Some target may be used just for informative purposes (post-factum risk management etc)
+        """
+        return self._is_service
+
     def __str__(self) -> str:
-        return f"Target for {self.signal} -> {self.target_position_size} at {self.time}"
+        return f"{'::: INFORMATIVE ::: ' if self.is_service else ''}Target for {self.signal} -> {self.target_position_size} at {self.time}"
 
 
 @dataclass
@@ -284,19 +300,25 @@ class Deal:
     fee_currency: str | None = None
 
 
+OrderType = Literal["MARKET", "LIMIT", "STOP_MARKET", "STOP_LIMIT"]
+OrderSide = Literal["BUY", "SELL"]
+OrderStatus = Literal["OPEN", "CLOSED", "CANCELED", "NEW"]
+
+
 @dataclass
 class Order:
     id: str
-    type: str
+    type: OrderType
     symbol: str
     time: dt_64
     quantity: float
     price: float
-    side: str
-    status: str
+    side: OrderSide
+    status: OrderStatus
     time_in_force: str
     client_id: str | None = None
     cost: float = 0.0
+    options: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
         return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"

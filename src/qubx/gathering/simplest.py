@@ -14,15 +14,14 @@ class SimplePositionGatherer(IPositionGathering):
         to_trade = new_size - current_position
         if abs(to_trade) < instrument.min_size:
             logger.warning(
-                f"Can't change position size for {instrument}. Current position: {current_position}, requested size: {new_size}"
+                f"{instrument.exchange}:{instrument.symbol}: Unable change position from {current_position} to {new_size} : too small difference"
             )
         else:
             # - here is default inplementation:
             #   just trade it through the strategy context by using market (or limit) orders.
             # - but in general it may have complex logic for position adjustment
-            r = ctx.trade(
-                instrument, to_trade, at_price, fill_at_price=target.signal.options.get("fill_at_signal_price", False)
-            )
+            r = ctx.trade(instrument, to_trade, at_price)
+            # , fill_at_price=target.signal.options.get("fill_at_signal_price", False)
             logger.debug(f"{instrument.symbol} >>> Adjusting position from {current_position} to {new_size} : {r}")
 
             current_position = new_size
@@ -31,7 +30,8 @@ class SimplePositionGatherer(IPositionGathering):
 
         return current_position
 
-    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal): ...
+    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal):
+        pass
 
 
 class SplittedOrdersPositionGatherer(IPositionGathering):
