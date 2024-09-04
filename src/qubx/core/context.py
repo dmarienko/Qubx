@@ -381,7 +381,7 @@ class StrategyContextImpl(StrategyContext):
             # - process and execute signals if they are provided
             if signals:
                 # process signals by tracker and turn convert them into positions
-                positions_from_strategy = self.__process_target_positions(
+                positions_from_strategy = self.__process_and_log_target_positions(
                     self.positions_tracker.process_signals(self, self.__process_signals(signals))
                 )
 
@@ -505,13 +505,12 @@ class StrategyContextImpl(StrategyContext):
         elif signals is None:
             return []
 
-        # set strategy group name if not set
         for signal in signals:
+            # set strategy group name if not set
             if not signal.group:
                 signal.group = self.strategy_name
 
-        # set reference prices for signals
-        for signal in signals:
+            # set reference prices for signals
             if signal.reference_price is None:
                 q = self.quote(signal.instrument.symbol)
                 if q is None:
@@ -530,9 +529,10 @@ class StrategyContextImpl(StrategyContext):
         signals = [pos.signal for pos in target_positions]
         self.__process_signals(signals)
 
-    def __process_target_positions(
+    def __process_and_log_target_positions(
         self, target_positions: List[TargetPosition] | TargetPosition | None
     ) -> List[TargetPosition]:
+
         if isinstance(target_positions, TargetPosition):
             target_positions = [target_positions]
         elif target_positions is None:
@@ -548,7 +548,10 @@ class StrategyContextImpl(StrategyContext):
 
         # - update tracker and handle alterd positions if need
         self.positions_gathering.alter_positions(
-            self, self.__process_target_positions(self.positions_tracker.update(self, self._symb_to_instr[symbol], bar))
+            self,
+            self.__process_and_log_target_positions(
+                self.positions_tracker.update(self, self._symb_to_instr[symbol], bar)
+            ),
         )
 
         # - check if it's time to trigger the on_event if it's configured
@@ -570,7 +573,7 @@ class StrategyContextImpl(StrategyContext):
         # - update tracker and handle alterd positions if need
         self.positions_gathering.alter_positions(
             self,
-            self.__process_target_positions(target_positions),
+            self.__process_and_log_target_positions(target_positions),
         )
 
         if self._trig_on_trade:
@@ -585,7 +588,7 @@ class StrategyContextImpl(StrategyContext):
         self.__process_signals_from_target_positions(target_positions)
 
         # - update tracker and handle alterd positions if need
-        self.positions_gathering.alter_positions(self, self.__process_target_positions(target_positions))
+        self.positions_gathering.alter_positions(self, self.__process_and_log_target_positions(target_positions))
 
         # - TODO: here we can apply throttlings or filters
         #  - let's say we can skip quotes if bid & ask is not changed
@@ -716,14 +719,15 @@ class StrategyContextImpl(StrategyContext):
             raise ValueError(f"Attempt to trade size {abs(amount)} less than minimal allowed {instrument.min_size} !")
 
         side = "buy" if amount > 0 else "sell"
-        type = "limit" if price is not None else "market"
-        logger.debug(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} ...")
-        client_id = self._generate_order_client_id(instrument.symbol)
+        type = "market"
+        if price is not None:
+            price = instrument.round_price_down(price) if amount > 0 else instrument.round_price_up(price)
+            type = "limit"
+            if (stp_type := options.get("stop_type")) is not None:
+                type = f"stop_{stp_type}"
 
-        if self.broker_provider.is_simulated_trading and options.get("fill_at_price", False):
-            # assume worst case, if we force execution and certain price, assume it's via market
-            # TODO: add an additional flag besides price to indicate order type
-            type = "market"
+        logger.debug(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} @ {price} ...")
+        client_id = self._generate_order_client_id(instrument.symbol)
 
         order = self.trading_service.send_order(
             instrument, side, type, size_adj, price, time_in_force=time_in_force, client_id=client_id, **options
@@ -740,6 +744,10 @@ class StrategyContextImpl(StrategyContext):
             raise ValueError(f"Can't find instrument for symbol {instr_or_symbol}")
         for o in self.trading_service.get_orders(instrument.symbol):
             self.trading_service.cancel_order(o.id)
+
+    def cancel_order(self, order_id: str):
+        if order_id:
+            self.trading_service.cancel_order(order_id)
 
     def quote(self, symbol: str) -> Quote | None:
         return self.broker_provider.get_quote(symbol)

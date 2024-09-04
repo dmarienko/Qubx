@@ -91,21 +91,24 @@ class TestStrats:
 
         instr1: Instrument = lookup.find_symbol("BINANCE", "SOLUSDT")  # type: ignore
         pos1 = Position(instr1)  # type: ignore
-        vol1 = np.sum([d.amount for d in deals])
+        vol1 = np.sum([d.amount for d in deals]) - instr1.round_size_up(
+            deals[-1].fee_amount if deals[-1].fee_amount else 0
+        )
 
         pos1 = ccxt_restore_position_from_deals(pos1, vol1, deals)
         assert N(pos1.quantity, instr1.min_size_step) == vol1
 
         deals = [
             Deal("0", 2, time=pd.Timestamp("2024-04-07 12:40:41.717000"), amount=0.154, price=587.1, aggressive=True, fee_amount=0.0001155, fee_currency="BNB"),  # type: ignore
-            Deal("1", 2, time=pd.Timestamp("2024-04-07 12:41:59.307000"), amount=-0.153, price=586.6, aggressive=True, fee_amount=0.00011472, fee_currency="BNB"),  # type: ignore
+            Deal("1", 2, time=pd.Timestamp("2024-04-07 12:41:59.307000"), amount=-0.154, price=586.6, aggressive=True, fee_amount=0.00011472, fee_currency="BNB"),  # type: ignore
             Deal("2", 2, time=pd.Timestamp("2024-04-07 13:44:45.991000"), amount=-0.199, price=588.5, aggressive=True, fee_amount=0.00014922, fee_currency="BNB"),  # type: ignore
             Deal("3", 2, time=pd.Timestamp("2024-04-08 12:45:49.738000"), amount=0.025, price=594.1, aggressive=True, fee_amount=1.875e-05, fee_currency="BNB"),  # type: ignore
             Deal("4", 2, time=pd.Timestamp("2024-04-08 12:48:37.543000"), amount=0.011, price=594.0, aggressive=True, fee_amount=8.25e-06, fee_currency="BNB"),  # type: ignore
         ]
 
-        instr2 = lookup.find_symbol("BINANCE", "BNBUSDT")  # type: ignore
-        pos2 = Position(instr2)  # type: ignore
+        instr2 = lookup.find_symbol("BINANCE", "BNBUSDT")
+        assert instr2 is not None
+        pos2 = Position(instr2)
         vol2 = np.sum([d.amount for d in deals]) - instr2.round_size_up(np.sum([d.fee_amount for d in deals]))  # type: ignore
 
         pos2 = ccxt_restore_position_from_deals(pos2, vol2, deals)

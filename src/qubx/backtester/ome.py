@@ -6,7 +6,19 @@ import numpy as np
 from sortedcontainers import SortedDict
 
 from qubx import logger
-from qubx.core.basics import Deal, Instrument, Order, Position, Signal, TransactionCostsCalculator, dt_64, ITimeProvider
+from qubx.core.basics import (
+    Deal,
+    Instrument,
+    Order,
+    OrderSide,
+    OrderType,
+    Position,
+    Signal,
+    TransactionCostsCalculator,
+    dt_64,
+    ITimeProvider,
+    OPTION_FILL_AT_SIGNAL_PRICE,
+)
 from qubx.core.series import Quote, Trade
 from qubx.core.exceptions import (
     ExchangeError,
@@ -25,6 +37,7 @@ class OrdersManagementEngine:
     instrument: Instrument
     time_service: ITimeProvider
     active_orders: Dict[str, Order]
+    stop_orders: Dict[str, Order]
     asks: SortedDict[float, List[str]]
     bids: SortedDict[float, List[str]]
     bbo: Quote | None  # current best bid/ask order book (simplest impl)
@@ -40,6 +53,7 @@ class OrdersManagementEngine:
         self.asks = SortedDict()
         self.bids = SortedDict(neg)
         self.active_orders = dict()
+        self.stop_orders = dict()
         self.bbo = None
         self.__order_id = 100000
         self.__trade_id = 100000
@@ -58,7 +72,7 @@ class OrdersManagementEngine:
         return self.bbo
 
     def get_open_orders(self) -> List[Order]:
-        return list(self.active_orders.values())
+        return list(self.active_orders.values()) + list(self.stop_orders.values())
 
     def update_bbo(self, quote: Quote) -> List[OmeReport]:
         timestamp = self.time_service.time()
@@ -79,18 +93,30 @@ class OrdersManagementEngine:
                         rep.append(self._execute_order(timestamp, order.price, order, False))
                     self.bids.pop(level)
 
+            # - processing stop orders
+            for soid in list(self.stop_orders.keys()):
+                so = self.stop_orders[soid]
+                if so.side == "BUY" and quote.ask >= so.price:
+                    _exec_price = quote.ask if not so.options.get(OPTION_FILL_AT_SIGNAL_PRICE, False) else so.price
+                    self.stop_orders.pop(soid)
+                    rep.append(self._execute_order(timestamp, _exec_price, so, True))
+                elif so.side == "SELL" and quote.bid <= so.price:
+                    _exec_price = quote.bid if not so.options.get(OPTION_FILL_AT_SIGNAL_PRICE, False) else so.price
+                    self.stop_orders.pop(soid)
+                    rep.append(self._execute_order(timestamp, _exec_price, so, True))
+
         self.bbo = quote
         return rep
 
     def place_order(
         self,
-        order_side: str,
-        order_type: str,
+        order_side: OrderSide,
+        order_type: OrderType,
         amount: float,
         price: float | None = None,
         client_id: str | None = None,
         time_in_force: str = "gtc",
-        fill_at_price: bool = False,
+        **options,
     ) -> OmeReport:
 
         if self.bbo is None:
@@ -113,14 +139,15 @@ class OrdersManagementEngine:
             "NEW",
             time_in_force,
             client_id,
+            options=options,
         )
 
-        return self._process_order(timestamp, order, fill_at_price=fill_at_price)
+        return self._process_order(timestamp, order)
 
     def _dbg(self, message, **kwargs) -> None:
         logger.debug(f"[OMS] {self.instrument.symbol} - {message}", **kwargs)
 
-    def _process_order(self, timestamp: dt_64, order: Order, fill_at_price: bool = False) -> OmeReport:
+    def _process_order(self, timestamp: dt_64, order: Order) -> OmeReport:
         if order.status in ["CLOSED", "CANCELED"]:
             raise InvalidOrder(f"Order {order.id} is already closed or canceled.")
 
@@ -130,33 +157,45 @@ class OrdersManagementEngine:
 
         # - check if order can be "executed" immediately
         exec_price = None
-        if fill_at_price and order.price:
-            exec_price = order.price
+        _need_update_book = False
 
-        elif order.type == "MARKET":
+        if order.type == "MARKET":
             exec_price = c_ask if buy_side else c_bid
 
         elif order.type == "LIMIT":
+            _need_update_book = True
             if (buy_side and order.price >= c_ask) or (not buy_side and order.price <= c_bid):
                 exec_price = c_ask if buy_side else c_bid
+
+        elif order.type == "STOP_MARKET":
+            # - it processes stop orders separately without adding to orderbook (as on real exchanges)
+            order.status = "OPEN"
+            self.stop_orders[order.id] = order
+
+        elif order.type == "STOP_LIMIT":
+            # TODO: check trigger conditions in options etc
+            raise NotImplementedError("'STOP_LIMIT' order is not supported in Qubx simulator yet !")
 
         # - if order must be "executed" immediately
         if exec_price is not None:
             return self._execute_order(timestamp, exec_price, order, True)
 
         # - processing limit orders
-        if buy_side:
-            self.bids.setdefault(order.price, list()).append(order.id)
-        else:
-            self.asks.setdefault(order.price, list()).append(order.id)
-        order.status = "OPEN"
+        if _need_update_book:
+            if buy_side:
+                self.bids.setdefault(order.price, list()).append(order.id)
+            else:
+                self.asks.setdefault(order.price, list()).append(order.id)
+
+            order.status = "OPEN"
+            self.active_orders[order.id] = order
+
         self._dbg(f"registered {order.id} {order.type} {order.side} {order.quantity} {order.price}")
-        self.active_orders[order.id] = order
         return OmeReport(timestamp, order, None)
 
     def _execute_order(self, timestamp: dt_64, exec_price: float, order: Order, taker: bool) -> OmeReport:
         order.status = "CLOSED"
-        self._dbg(f"{order.id} {order.type} {order.side} {order.quantity} executed at {exec_price}")
+        self._dbg(f"<red>{order.id}</red> {order.type} {order.side} {order.quantity} executed at {exec_price}")
         return OmeReport(
             timestamp,
             order,
@@ -180,38 +219,51 @@ class OrdersManagementEngine:
         if order_side.upper() not in ["BUY", "SELL"]:
             raise InvalidOrder("Invalid order side. Only BUY or SELL is allowed.")
 
-        if order_type.upper() not in ["LIMIT", "MARKET"]:
-            raise InvalidOrder("Invalid order type. Only LIMIT or MARKET is supported.")
+        _ot = order_type.upper()
+        if _ot not in ["LIMIT", "MARKET", "STOP_MARKET", "STOP_LIMIT"]:
+            raise InvalidOrder("Invalid order type. Only LIMIT, MARKET, STOP_MARKET, STOP_LIMIT are supported.")
 
         if amount <= 0:
             raise InvalidOrder("Invalid order amount. Amount must be positive.")
 
-        if order_type.upper() == "LIMIT" and (price is None or price <= 0):
-            raise InvalidOrder("Invalid order price. Price must be positively defined for LIMIT orders.")
+        if (_ot == "LIMIT" or _ot.startswith("STOP")) and (price is None or price <= 0):
+            raise InvalidOrder("Invalid order price. Price must be positively defined for LIMIT or STOP orders.")
 
         if time_in_force.upper() not in ["GTC", "IOC"]:
             raise InvalidOrder("Invalid time in force. Only GTC or IOC is supported for now.")
 
-    def cancel_order(self, order_id: str) -> OmeReport:
-        if order_id not in self.active_orders:
-            raise InvalidOrder(f"Order {order_id} not found for {self.instrument.symbol}")
+        if _ot.startswith("STOP"):
+            assert price is not None
+            c_ask, c_bid = self.bbo.ask, self.bbo.bid
+            if (order_side == "BUY" and c_ask >= price) or (order_side == "SELL" and c_bid <= price):
+                raise ExchangeError(
+                    f"Stop price would trigger immediately: STOP_MARKET {order_side} {amount} of {self.instrument.symbol} at {price} | market: {c_ask} / {c_bid}"
+                )
 
-        timestamp = self.time_service.time()
-        order = self.active_orders.pop(order_id)
-        if order.side == "BUY":
-            oids = self.bids[order.price]
-            oids.remove(order_id)
-            if not oids:
-                self.bids.pop(order.price)
+    def cancel_order(self, order_id: str) -> OmeReport:
+        # - check limit orders
+        if order_id in self.active_orders:
+            order = self.active_orders.pop(order_id)
+            if order.side == "BUY":
+                oids = self.bids[order.price]
+                oids.remove(order_id)
+                if not oids:
+                    self.bids.pop(order.price)
+            else:
+                oids = self.asks[order.price]
+                oids.remove(order_id)
+                if not oids:
+                    self.asks.pop(order.price)
+        # - check stop orders
+        elif order_id in self.stop_orders:
+            order = self.stop_orders.pop(order_id)
+        # - wrong order_id
         else:
-            oids = self.asks[order.price]
-            oids.remove(order_id)
-            if not oids:
-                self.asks.pop(order.price)
+            raise InvalidOrder(f"Order {order_id} not found for {self.instrument.symbol}")
 
         order.status = "CANCELED"
         self._dbg(f"{order.id} {order.type} {order.side} {order.quantity} canceled")
-        return OmeReport(timestamp, order, None)
+        return OmeReport(self.time_service.time(), order, None)
 
     def __str__(self) -> str:
         _a, _b = True, True
