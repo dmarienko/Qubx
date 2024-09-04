@@ -26,7 +26,7 @@ from qubx.ta.indicators import sma, ema
 from qubx.backtester.simulator import simulate
 from qubx.trackers.composite import CompositeTracker, CompositeTrackerPerSide, LongTracker
 from qubx.trackers.rebalancers import PortfolioRebalancerTracker
-from qubx.trackers.riskctrl import AdvancedStopTakePositionTracker, AtrRiskTracker, StopTakePositionTracker
+from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
 from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
 
 
@@ -184,6 +184,9 @@ class TestTrackersAndGatherers:
 
     def test_atr_tracker(self):
 
+        I = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        assert I is not None
+
         r = CsvStorageDataReader("tests/data/csv")
 
         class StrategyForTracking(IStrategy):
@@ -200,10 +203,10 @@ class TestTrackersAndGatherers:
                     pos = ctx.positions[i.symbol].quantity
 
                     if pos <= 0 and (fast[0] > slow[0]) and (fast[1] < slow[1]):
-                        signals.append(i.signal(+1, stop=ohlc[1].low))
+                        signals.append(i.signal(+1, stop=min(ohlc[0].low, ohlc[1].low)))
 
                     if pos >= 0 and (fast[0] < slow[0]) and (fast[1] > slow[1]):
-                        signals.append(i.signal(-1, stop=ohlc[1].high))
+                        signals.append(i.signal(-1, stop=max(ohlc[0].high, ohlc[1].high)))
 
                 return signals
 
@@ -212,13 +215,41 @@ class TestTrackersAndGatherers:
 
         rep = simulate(
             {
-                "As Strategy 1": [
-                    StrategyForTracking(timeframe="15Min", fast_period=5, slow_period=25),
+                "Strategy ST client": [
+                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
+                    t0 := StopTakePositionTracker(
+                        None, None, sizer=FixedRiskSizer(1, 10_000), risk_controlling_side="client"
+                    ),
                 ],
-                "As Strategy 2": [
-                    StrategyForTracking(timeframe="15Min", fast_period=5, slow_period=25),
-                    # - it will replace strategy defined tracker
-                    AtrRiskTracker(10, 5, "15Min", 50, atr_smoother="kama", sizer=FixedRiskSizer(0.5)),
+                "Strategy ST broker": [
+                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
+                    t1 := StopTakePositionTracker(
+                        None, None, sizer=FixedRiskSizer(1, 10_000), risk_controlling_side="broker"
+                    ),
+                ],
+                "Strategy ATR client": [
+                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
+                    t2 := AtrRiskTracker(
+                        5,
+                        5,
+                        "15Min",
+                        25,
+                        atr_smoother="kama",
+                        sizer=FixedRiskSizer(1, 10_000),
+                        risk_controlling_side="client",
+                    ),
+                ],
+                "Strategy ATR broker": [
+                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
+                    t3 := AtrRiskTracker(
+                        5,
+                        5,
+                        "15Min",
+                        25,
+                        atr_smoother="kama",
+                        sizer=FixedRiskSizer(1, 10_000),
+                        risk_controlling_side="broker",
+                    ),
                 ],
             },
             r,
@@ -228,13 +259,12 @@ class TestTrackersAndGatherers:
             "-1Sec",
             "vip0_usdt",
             "2024-01-01",
-            "2024-01-05",
+            "2024-01-03 13:00",
         )
-        # TODO: adds tests
 
-        assert len(rep[0].executions_log) == 23
-        assert len(rep[1].executions_log) == 24
-        # rep[0]
+        assert rep[2].executions_log.iloc[-1].price < rep[3].executions_log.iloc[-1].price
+        assert t0.is_active(I) and t1.is_active(I)
+        assert not t2.is_active(I) and not t3.is_active(I)
 
     def test_composite_tracker(self):
         ctx = DebugStratageyCtx(
@@ -339,7 +369,7 @@ class TestTrackersAndGatherers:
             {
                 "TEST_StopTakePositionTracker": [
                     GuineaPig(tests={"2024-01-01 20:00:00": I.signal(-1, stop=43800)}),
-                    t1 := StopTakePositionTracker(None, None, sizer=FixedRiskSizer(1)),
+                    t1 := StopTakePositionTracker(None, None, sizer=FixedRiskSizer(1), risk_controlling_side="client"),
                 ],
                 "TEST2_AdvancedStopTakePositionTracker": [
                     GuineaPig(
@@ -350,7 +380,7 @@ class TestTrackersAndGatherers:
                             "2024-01-02 01:10:00": I.signal(-1, stop=45500, take=44800),
                         }
                     ),
-                    t2 := AdvancedStopTakePositionTracker(None, None, sizer=FixedRiskSizer(1)),
+                    t2 := StopTakePositionTracker(None, None, sizer=FixedRiskSizer(1), risk_controlling_side="broker"),
                 ],
             },
             {f"BINANCE.UM:BTCUSDT": ohlc},
