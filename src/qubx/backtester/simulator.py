@@ -362,7 +362,7 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         # - create exchange's instance
         self._last_quotes = defaultdict(lambda: None)
-        self._current_time = np.datetime64(0, "ns")
+        self._current_time = self.trading_service.time()
         self._loaders = defaultdict(dict)
         self._symbol_to_instrument: dict[str, Instrument] = {}
 
