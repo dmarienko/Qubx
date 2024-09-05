@@ -442,6 +442,17 @@ cdef class IndicatorOHLC(Indicator):
     def _clone_empty(self, str name, long long timeframe, float max_series_length):
         return OHLCV(name, timeframe, max_series_length)
 
+    def _copy_internal_series(self, int start, int stop, *origins):
+        """
+        Helper method to copy internal series data
+        """
+        t0, t1 = self.times.values[start], self.times.values[stop - 1]
+        return [
+            o.loc[
+                o.times.lookup_idx(t0, 'bfill') : o.times.lookup_idx(t1, 'ffill') + 1
+            ] for o in origins
+        ]
+
     def calculate(self, long long time, Bar value, short new_item_started) -> object:
         raise ValueError("Indicator must implement calculate() method")
 

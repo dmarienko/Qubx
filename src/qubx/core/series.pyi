@@ -87,6 +87,7 @@ class Indicator(TimeSeries):
 
 class IndicatorOHLC(Indicator):
     series: OHLCV
+    def _copy_internal_series(self, start: int, stop: int, *origins): ...
 
 def time_as_nsec(time: Any) -> np.datetime64: ...
 
