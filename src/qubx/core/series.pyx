@@ -116,6 +116,20 @@ cdef class Indexed:
         self.values.clear()
         self._is_empty = 1
 
+    def lookup_idx(self, value, str method) -> int:
+        """
+        Find value's index in series using specified method (ffill: previous index, bfill: next index)
+        """
+        cdef int i0
+        if method == 'ffill':
+            i0 = int(np.searchsorted(self.values, value, side='right'))
+            return max(-1, i0 - 1)
+        elif method == 'bfill':
+            i0 = int(np.searchsorted(self.values, value, side='left'))
+            return -1 if i0 >= len(self.values) else i0
+        else:
+            raise ValueError(f"Unsupported method {method}")
+
 
 global _plot_func
 
@@ -130,24 +144,35 @@ cdef class Locator:
 
     def __getitem__(self, idx):
         cdef int _nlen = len(self._series)
+        cdef int _ix
 
         if isinstance(idx, slice):
-            start = 0 if idx.start is None else idx.start
-            if isinstance(start, str):
-                start = max(self._get_time_index(start), 0)
+
+            # - check slice has the same type or None
+            if not ((type(idx.start) == type(idx.stop)) or idx.start is None or idx.stop is None):
+                raise TypeError(f"Cannot do slice indexing with indexers of different types: [{idx.start} : {idx.stop}]")
+
+            start_idx = 0 if idx.start is None else idx.start
+
+            if isinstance(idx.start, str):
+                # - even if start is not found we still want to start from first record
+                start_idx = max(self._series.times.lookup_idx(np.datetime64(start_idx, 'ns').item(), 'ffill'), 0)
 
             if idx.stop is None:
-                stop = (_nlen - 1) 
+                stop_idx = _nlen
             else: 
                 if isinstance(idx.stop, str):
-                    stop = self._get_time_index(idx.stop)
+                    _ix = self._series.times.lookup_idx(np.datetime64(idx.stop, 'ns').item(), 'ffill')
+
+                    if _ix < 0 or _ix < start_idx:
+                        raise IndexError(f"Stop index {idx.stop} is not found or before start index {idx.start}")
+                    
+                    stop_idx = min(max(_ix, 0) + 1, _nlen)
                 else:
-                    stop = idx.stop - 1
+                    stop_idx = min(idx.stop, _nlen)
             
-            new_ts = self._series._clone_empty(self._series.name, self._series.timeframe, self._series.max_series_length)
-            for i in range(start, min(stop + 1, _nlen)):
-                new_ts._add_new_item(self._series.times.values[i], self._series.values.values[i])
-            return new_ts
+            # print(f" >>>> LOC[{start_idx} : {stop_idx}] stop={stop_idx}")
+            return self._series.copy(start_idx, stop_idx)
 
         elif isinstance(idx, str):
             # - handle single timestamp string
@@ -155,16 +180,8 @@ cdef class Locator:
 
         return self._series.values[idx]
 
-    def _get_time_index(self, str t) -> int:
-        cdef long long _t = np.datetime64(t, 'ns').item()
-        cdef int idx = int(np.searchsorted(self._series.times.values, _t, side='right'))
-        idx = min(idx, len(self._series.values))
-        if idx == 0:
-            raise ValueError(f"Time {t} not found in {self._series.name}!")
-        return idx - 1
-
-    def find(self, str t):
-        ix = self._get_time_index(t)
+    def find(self, t: str):
+        ix = self._series.times.lookup_idx(np.datetime64(t, 'ns').item(), 'ffill')
         return np.datetime64(self._series.times.values[ix], 'ns'), self._series.values.values[ix]
 
 
@@ -197,6 +214,12 @@ cdef class TimeSeries:
         Make empty TimeSeries instance (no data and indicators)
         """
         return TimeSeries(name, timeframe, max_series_length)
+
+    def copy(self, int start, int stop):
+        ts_copy = self._clone_empty(self.name, self.timeframe, self.max_series_length)
+        for i in range(start, stop):
+            ts_copy._add_new_item(self.times.values[i], self.values.values[i])
+        return ts_copy
 
     def clone(self):
         """
@@ -418,6 +441,17 @@ cdef class IndicatorOHLC(Indicator):
     """
     def _clone_empty(self, str name, long long timeframe, float max_series_length):
         return OHLCV(name, timeframe, max_series_length)
+
+    def _copy_internal_series(self, int start, int stop, *origins):
+        """
+        Helper method to copy internal series data
+        """
+        t0, t1 = self.times.values[start], self.times.values[stop - 1]
+        return [
+            o.loc[
+                o.times.lookup_idx(t0, 'bfill') : o.times.lookup_idx(t1, 'ffill') + 1
+            ] for o in origins
+        ]
 
     def calculate(self, long long time, Bar value, short new_item_started) -> object:
         raise ValueError("Indicator must implement calculate() method")

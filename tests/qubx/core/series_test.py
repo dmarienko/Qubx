@@ -2,6 +2,8 @@ import numpy as np
 
 from qubx.core.series import TimeSeries, OHLCV
 from qubx.core.utils import recognize_time
+from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader
+from qubx.ta.indicators import psar, swings
 from tests.qubx.ta.utils_for_testing import N, push
 
 
@@ -98,3 +100,20 @@ class TestCoreSeries:
         assert len(ts.loc[0:4]) == 4
         assert len(ts.loc[0:100]) == 15
         assert ts.loc["2024-01-01 00:10"] == (np.datetime64("2024-01-01 00:10"), 12.0)
+        assert len(ts.loc[:]) == 15
+
+    def test_indicator_locator(self):
+        ohlc = CsvStorageDataReader("tests/data/csv").read(
+            "BTCUSDT_ohlcv_M1", start="2024-01-01", stop="2024-01-15", transform=AsOhlcvSeries("15Min")
+        )
+        assert isinstance(ohlc, OHLCV)
+        sw = swings(ohlc, psar)
+
+        cln1 = sw.loc[:]
+
+        assert all(sw.tops.pd() == cln1.tops.pd())
+        assert all(sw.bottoms.pd() == cln1.bottoms.pd())
+
+        # - slices
+        assert len(sw.loc["2024-01-01 00:30:00":"2024-01-01 11:30:00"]) == 45
+        assert len(sw.loc[:"2024-01-02 00:00:00"]) == 97

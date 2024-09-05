@@ -130,6 +130,9 @@ cdef class Swings(IndicatorOHLC):
     cdef long long _max_t
     cdef OHLCV base
     cdef Indicator trend
+
+    cdef object _trend_indicator
+    cdef object _indicator_args
     # tops contain upper pivot point prices
     # tops_detection_lag contain time lag when top was actually spotted
     cdef public TimeSeries tops, tops_detection_lag
