@@ -5,6 +5,7 @@ from scipy.special.cython_special import ndtri, stdtrit, gamma
 from collections import deque
 
 from qubx.core.series cimport TimeSeries, Indicator, IndicatorOHLC, RollingSum, nans, OHLCV, Bar
+from qubx.core.utils import time_to_str
 from qubx.pandaz.utils import scols, srows
 
 
@@ -615,6 +616,10 @@ cdef class Swings(IndicatorOHLC):
         self.middles = TimeSeries("middles", series.timeframe, series.max_series_length)
         self.deltas = TimeSeries("deltas", series.timeframe, series.max_series_length)
 
+        # - store parameters for copying
+        self._trend_indicator = trend_indicator
+        self._indicator_args = indicator_args
+
         self._min_l = +np.inf
         self._max_h = -np.inf
         self._max_t = 0
@@ -668,6 +673,51 @@ cdef class Swings(IndicatorOHLC):
         elif np.isfinite(self._max_h):
             return pd.Timestamp(self._max_t, 'ns'), self._max_h
         return (None, None)
+
+    def _copy_internal_series(self, int start, int stop, *origins):
+        t0, t1 = self.times.values[start], self.times.values[stop - 1]
+        return [
+            o.loc[o.times.lookup_idx(t0, 'bfill') : o.times.lookup_idx(t1, 'ffill') + 1]
+            for o in origins
+        ]
+
+    def copy(self, int start, int stop):
+        n_ts = Swings(self.name, OHLCV("base", self.series.timeframe), self._trend_indicator, **self._indicator_args)
+
+        for i in range(start, stop):
+            n_ts._add_new_item(self.times.values[i], self.values.values[i])
+            n_ts.trend._add_new_item(self.trend.times.values[i], self.trend.values.values[i])
+
+        (
+            n_ts.tops, 
+            n_ts.tops_detection_lag,
+            n_ts.bottoms,
+            n_ts.bottoms_detection_lag,
+            n_ts.middles,
+            n_ts.deltas
+        ) = self._copy_internal_series(start, stop, 
+            self.tops, 
+            self.tops_detection_lag,
+            self.bottoms,
+            self.bottoms_detection_lag,
+            self.middles,
+            self.deltas
+        )
+        # t0, t1 = self.times.values[start], self.times.values[stop - 1]
+        # _cpy = lambda src: src.loc[
+            # src.times.lookup_idx(t0, 'bfill') : src.times.lookup_idx(t1, 'ffill') + 1
+        # ]
+
+        # n_ts.tops = _cpy(self.tops)
+        # n_ts.tops_detection_lag = _cpy(self.tops_detection_lag)
+
+        # n_ts.bottoms = _cpy(self.bottoms)
+        # n_ts.bottoms_detection_lag = _cpy(self.bottoms_detection_lag)
+
+        # n_ts.middles = _cpy(self.middles)
+        # n_ts.deltas = _cpy(self.deltas)
+
+        return n_ts
 
     def pd(self) -> pd.DataFrame:
         _t, _d = self.get_current_trend_end()
