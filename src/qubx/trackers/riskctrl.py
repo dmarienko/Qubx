@@ -243,18 +243,6 @@ class BrokerSideRiskController(RiskController):
             ctx.cancel_order(ctrl.take_order_id)
             ctrl.take_order_id = None
 
-    def handle_new_target(self, ctx: StrategyContext, signal: Signal, target: TargetPosition) -> bool:
-        """
-        If new target differs from current and take / stop were sent
-        we need to cancel them first
-        """
-        # ctr1 = self._trackings.get(signal.instrument)
-        # if ctr1 is not None and ctr1.target.target_position_size != target.target_position_size:
-        #     self.__cncl_stop(ctx, ctr1)
-        #     self.__cncl_take(ctx, ctr1)
-
-        return super().handle_new_target(ctx, signal, target)
-
     def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal):
         pos = ctx.positions[instrument.symbol].quantity
 

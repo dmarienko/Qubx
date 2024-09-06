@@ -306,13 +306,18 @@ class TestTrackersAndGatherers:
         assert I[0] is not None
 
         # 1. Check that tracker skips the signal if it is not long
-        tracker = LongTracker(StopTakePositionTracker())
+        tracker = LongTracker(StopTakePositionTracker(risk_controlling_side="client"))
         targets = tracker.process_signals(ctx, [I[0].signal(-0.5)])
         assert not targets
 
         # 2. Check that tracker sends 0 target if it was active before
-        tracker = LongTracker(StopTakePositionTracker())
+        tracker = LongTracker(StopTakePositionTracker(risk_controlling_side="client"))
         _ = tracker.process_signals(ctx, [I[0].signal(+0.5)])
+
+        # - now tracker works only by execution reports, so we 'emulate' it here
+        ctx.positions[I[0].symbol].quantity = +0.5
+        tracker.on_execution_report(ctx, I[0], Deal(0, "0", np.datetime64(10000, "ns"), +0.5, 1.0, True))
+
         targets = tracker.process_signals(ctx, [I[0].signal(-0.5)])
         assert isinstance(targets, list) and targets[0].target_position_size == 0
 
