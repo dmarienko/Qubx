@@ -727,7 +727,7 @@ class StrategyContextImpl(StrategyContext):
                 type = f"stop_{stp_type}"
 
         logger.debug(
-            f"(StrategyContext) sending {type} {side} for {size_adj} of <green>{instrument.symbol}<green> @ {price} ..."
+            f"(StrategyContext) sending {type} {side} for {size_adj} of <green>{instrument.symbol}</green> @ {price} ..."
         )
         client_id = self._generate_order_client_id(instrument.symbol)
 
