@@ -22,7 +22,9 @@ class SimplePositionGatherer(IPositionGathering):
             # - but in general it may have complex logic for position adjustment
             r = ctx.trade(instrument, to_trade, at_price)
             # , fill_at_price=target.signal.options.get("fill_at_signal_price", False)
-            logger.debug(f"{instrument.symbol} >>> Adjusting position from {current_position} to {new_size} : {r}")
+            logger.debug(
+                f"<green>{instrument.symbol}</green>: Adjusting position from {current_position} to {new_size} : {r}"
+            )
 
             current_position = new_size
             # - TODO: need to check how fast position is being updated on live

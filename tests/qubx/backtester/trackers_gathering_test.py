@@ -20,14 +20,18 @@ from qubx.data.readers import (
 )
 from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider, Position, Signal, TargetPosition
 
-from qubx.backtester.ome import OrdersManagementEngine
 
+from qubx.core.metrics import portfolio_metrics
 from qubx.ta.indicators import sma, ema
 from qubx.backtester.simulator import simulate
 from qubx.trackers.composite import CompositeTracker, CompositeTrackerPerSide, LongTracker
 from qubx.trackers.rebalancers import PortfolioRebalancerTracker
 from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
-from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
+from qubx.trackers.sizers import FixedLeverageSizer, FixedRiskSizer, FixedSizer
+
+from pytest import approx
+
+N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
 
 
 def Q(time: str, bid: float, ask: float) -> Quote:
@@ -109,6 +113,24 @@ class ZeroTracker(PositionsTracker):
 
     def process_signals(self, ctx: StrategyContext, signals: list[Signal]) -> list[TargetPosition]:
         return [TargetPosition.create(ctx, s, target_size=0) for s in signals]
+
+
+class GuineaPig(IStrategy):
+    """
+    Simple signals player
+    """
+
+    tests = {}
+
+    def on_fit(self, ctx: StrategyContext, fit_time: str | Timestamp, previous_fit_time: str | Timestamp | None = None):
+        self.tests = {recognize_time(k): v for k, v in self.tests.items()}
+
+    def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
+        r = []
+        for k in list(self.tests.keys()):
+            if event.time >= k:
+                r.append(self.tests.pop(k))
+        return r
 
 
 class TestTrackersAndGatherers:
@@ -306,13 +328,18 @@ class TestTrackersAndGatherers:
         assert I[0] is not None
 
         # 1. Check that tracker skips the signal if it is not long
-        tracker = LongTracker(StopTakePositionTracker())
+        tracker = LongTracker(StopTakePositionTracker(risk_controlling_side="client"))
         targets = tracker.process_signals(ctx, [I[0].signal(-0.5)])
         assert not targets
 
         # 2. Check that tracker sends 0 target if it was active before
-        tracker = LongTracker(StopTakePositionTracker())
+        tracker = LongTracker(StopTakePositionTracker(risk_controlling_side="client"))
         _ = tracker.process_signals(ctx, [I[0].signal(+0.5)])
+
+        # - now tracker works only by execution reports, so we 'emulate' it here
+        ctx.positions[I[0].symbol].quantity = +0.5
+        tracker.on_execution_report(ctx, I[0], Deal(0, "0", np.datetime64(10000, "ns"), +0.5, 1.0, True))
+
         targets = tracker.process_signals(ctx, [I[0].signal(-0.5)])
         assert isinstance(targets, list) and targets[0].target_position_size == 0
 
@@ -341,23 +368,6 @@ class TestTrackersAndGatherers:
         assert targets[0].target_position_size == 0.5
 
     def test_tracker_with_stop_loss_in_advance(self):
-        # from qubx.core.series import st
-        class GuineaPig(IStrategy):
-            tests = {}
-
-            def on_fit(
-                self, ctx: StrategyContext, fit_time: str | Timestamp, previous_fit_time: str | Timestamp | None = None
-            ):
-                self.tests = {recognize_time(k): v for k, v in self.tests.items()}
-
-            def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
-                r = []
-                for k in list(self.tests.keys()):
-                    if event.time >= k:
-                        r.append(self.tests.pop(k))
-                        # print(time_to_str(event.time))
-                return r
-
         I = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         assert I is not None
         ohlc = CsvStorageDataReader("tests/data/csv").read(
@@ -401,3 +411,50 @@ class TestTrackersAndGatherers:
         assert len(result[1].signals_log) == 7
         assert result[1].signals_log.iloc[-1]["service"] == True
         assert not t2.is_active(I)
+
+    def test_stop_loss_broker_side(self):
+        reader = CsvStorageDataReader("tests/data/csv")
+        ohlc = reader.read("BTCUSDT_ohlcv_M1", transform=AsPandasFrame())
+        assert isinstance(ohlc, pd.DataFrame)
+
+        S = pd.DataFrame(
+            {
+                "BTCUSDT": {
+                    pd.Timestamp("2024-01-10 15:08:59.716000"): 1,
+                    pd.Timestamp("2024-01-10 15:10:52.679000"): 1,
+                    pd.Timestamp("2024-01-10 15:32:44.798000"): 1,
+                    pd.Timestamp("2024-01-10 15:59:55.303000"): 1,
+                    pd.Timestamp("2024-01-10 16:09:00.970000"): 1,
+                    pd.Timestamp("2024-01-10 16:12:34.233000"): 1,
+                    pd.Timestamp("2024-01-10 19:16:00.905000"): 1,
+                    pd.Timestamp("2024-01-10 19:44:37.785000"): 1,
+                    pd.Timestamp("2024-01-10 20:06:00.322000"): 1,
+                }
+            }
+        )
+
+        rep = simulate(
+            {
+                "liq_buy_bounces_c": [S, StopTakePositionTracker(2.5, 0.5, FixedLeverageSizer(0.1), "client")],
+                "liq_buy_bounces_b": [S, StopTakePositionTracker(2.5, 0.5, FixedLeverageSizer(0.1), "broker")],
+            },
+            {f"BINANCE.UM:BTCUSDT": ohlc},
+            10000,
+            ["BINANCE.UM:BTCUSDT"],
+            dict(type="ohlc", timeframe="1Min"),
+            "1Min -1Sec",
+            "vip9_usdt",
+            S.index[0],
+            S.index[-1] + pd.Timedelta("5Min"),
+            debug="DEBUG",
+        )
+        assert len(rep[0].executions_log) == len(rep[1].executions_log)
+
+        mtrx0 = portfolio_metrics(
+            rep[0].portfolio_log, rep[0].executions_log, rep[0].capital, account_transactions=False, commission_factor=1
+        )
+        mtrx1 = portfolio_metrics(
+            rep[1].portfolio_log, rep[1].executions_log, rep[1].capital, account_transactions=False, commission_factor=1
+        )
+        assert N(mtrx0["gain"]) == 23.87925
+        assert N(mtrx1["gain"]) == 23.36390

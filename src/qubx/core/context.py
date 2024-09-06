@@ -415,11 +415,11 @@ class StrategyContextImpl(StrategyContext):
         try:
             self.__fit_is_running = True
             logger.debug(
-                f"[{self.time()}]: Invoking {self.strategy.__class__.__name__} on_fit('{current_fit_time}', '{prev_fit_time}')"
+                f"Invoking <green>{self.strategy.__class__.__name__}</green> on_fit('{current_fit_time}', '{prev_fit_time}')"
             )
             _SW.start("strategy.on_fit")
             self.strategy.on_fit(self, current_fit_time, prev_fit_time)
-            logger.debug(f"[{self.time()}]: {self.strategy.__class__.__name__} is fitted")
+            logger.debug(f"<green>{self.strategy.__class__.__name__}</green> is fitted")
         except Exception as strat_error:
             logger.error(
                 f"[{self.time()}]: Strategy {self.strategy.__class__.__name__} on_fit('{current_fit_time}', '{prev_fit_time}') raised an exception: {strat_error}"
@@ -602,7 +602,7 @@ class StrategyContextImpl(StrategyContext):
     @_SW.watch("StrategyContext")
     def _processing_order(self, symbol: str, order: Order) -> TriggerEvent | None:
         logger.debug(
-            f"[{order.id} / {order.client_id}] : {order.type} {order.side} {order.quantity} of {symbol} { (' @ ' + str(order.price)) if order.price else '' } -> [{order.status}]"
+            f"[<red>{order.id}</red> / {order.client_id}] : {order.type} {order.side} {order.quantity} of {symbol} { (' @ ' + str(order.price)) if order.price else '' } -> [{order.status}]"
         )
         # - check if we want to trigger any strat's logic on order
         return None
@@ -623,7 +623,7 @@ class StrategyContextImpl(StrategyContext):
                 # - notify position gatherer and tracker
                 self.positions_gathering.on_execution_report(self, instr, d)
                 self.positions_tracker.on_execution_report(self, instr, d)
-                logger.debug(f"Executed {d.amount} @ {d.price} of {symbol} for order {d.order_id}")
+                logger.debug(f"Executed {d.amount} @ {d.price} of {symbol} for order <red>{d.order_id}</red>")
         else:
             logger.debug(f"Execution report for unknown instrument {symbol}")
         return None
@@ -726,7 +726,9 @@ class StrategyContextImpl(StrategyContext):
             if (stp_type := options.get("stop_type")) is not None:
                 type = f"stop_{stp_type}"
 
-        logger.debug(f"(StrategyContext) sending {type} {side} for {size_adj} of {instrument.symbol} @ {price} ...")
+        logger.debug(
+            f"(StrategyContext) sending {type} {side} for {size_adj} of <green>{instrument.symbol}</green> @ {price} ..."
+        )
         client_id = self._generate_order_client_id(instrument.symbol)
 
         order = self.trading_service.send_order(
