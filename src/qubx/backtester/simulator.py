@@ -125,7 +125,7 @@ class _SimulatedLogFormatter:
 
         now = self.time_provider.time().astype("datetime64[us]").item().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         # prefix = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [ <level>%s</level> ] " % record["level"].icon
-        prefix = f"<yellow>{now}</yellow> [ <level>{record['level'].icon}</level> ] "
+        prefix = f"<lc>{now}</lc> [<level>{record['level'].icon}</level>] "
 
         if record["exception"] is not None:
             record["extra"]["stack"] = stackprinter.format(record["exception"], style="darkbg3")
@@ -362,7 +362,7 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         # - create exchange's instance
         self._last_quotes = defaultdict(lambda: None)
-        self._current_time = np.datetime64(0, "ns")
+        self._current_time = self.trading_service.time()
         self._loaders = defaultdict(dict)
         self._symbol_to_instrument: dict[str, Instrument] = {}
 
@@ -785,7 +785,7 @@ def find_instruments_and_exchanges(
     return _instrs, _exchanges
 
 
-class _GeneratedSignalsStrategy(IStrategy):
+class SignalsProxy(IStrategy):
 
     def on_fit(
         self, ctx: StrategyContext, fit_time: str | pd.Timestamp, previous_fit_time: str | pd.Timestamp | None = None
@@ -872,7 +872,7 @@ def _run_setup(
             strat.tracker = lambda ctx: setup.tracker  # type: ignore
 
         case _Types.SIGNAL:
-            strat = _GeneratedSignalsStrategy()
+            strat = SignalsProxy()
             exchange.set_generated_signals(setup.generator)  # type: ignore
             # - we don't need any unexpected triggerings
             _trigger = "bar: 0s"
@@ -882,7 +882,7 @@ def _run_setup(
             enable_event_batching = False
 
         case _Types.SIGNAL_AND_TRACKER:
-            strat = _GeneratedSignalsStrategy()
+            strat = SignalsProxy()
             strat.tracker = lambda ctx: setup.tracker
             exchange.set_generated_signals(setup.generator)  # type: ignore
             # - we don't need any unexpected triggerings

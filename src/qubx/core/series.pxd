@@ -36,6 +36,7 @@ cdef class Indicator(TimeSeries):
     cdef public TimeSeries series
     cdef public TimeSeries parent
 
+
 cdef class RollingSum:
     """
     Rolling fast summator
