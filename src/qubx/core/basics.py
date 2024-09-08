@@ -570,6 +570,12 @@ class SimulatedCtrlChannel(CtrlChannel):
     def receive(self) -> Any:
         raise ValueError("This method should not be called in a simulated environment.")
 
+    def stop(self):
+        self.control.clear()
+
+    def start(self):
+        self.control.set()
+
 
 class IComminucationManager:
     databus: CtrlChannel
