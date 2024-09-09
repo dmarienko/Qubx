@@ -468,11 +468,13 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         if silent:
             for symbol, data_type, event in qiter:
-                _run(symbol, data_type, event)
+                if not _run(symbol, data_type, event):
+                    break
         else:
             with tqdm(total=total_duration.total_seconds(), desc="Simulating", unit="s", leave=False) as pbar:
                 for symbol, data_type, event in qiter:
-                    _run(symbol, data_type, event)
+                    if not _run(symbol, data_type, event):
+                        break
                     dt = pd.Timestamp(event.time)
                     # update only if date has changed
                     if dt - prev_dt > update_delta:
@@ -484,7 +486,7 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         logger.info(f"SimulatedExchangeService :: run :: Simulation finished at {end}")
 
-    def _run_generated_signals(self, symbol: str, data_type: str, data: Any) -> None:
+    def _run_generated_signals(self, symbol: str, data_type: str, data: Any) -> bool:
         is_hist = data_type.startswith("hist")
         if is_hist:
             raise ValueError("Historical data is not supported for pre-generated signals !")
@@ -503,7 +505,9 @@ class SimulatedExchange(IBrokerServiceProvider):
             cc.send((symbol, "event", {"order": sigs[0][1]}))
             sigs.pop(0)
 
-    def _run_as_strategy(self, symbol: str, data_type: str, data: Any) -> None:
+        return cc.control.is_set()
+
+    def _run_as_strategy(self, symbol: str, data_type: str, data: Any) -> bool:
         cc = self.get_communication_channel()
         t = data.time  # type: ignore
         self._current_time = max(np.datetime64(t, "ns"), self._current_time)
@@ -524,6 +528,8 @@ class SimulatedExchange(IBrokerServiceProvider):
         if not is_hist:
             if q is not None and data_type != "quote":
                 cc.send((symbol, "quote", q))
+
+        return cc.control.is_set()
 
     def get_quote(self, symbol: str) -> Optional[Quote]:
         return self._last_quotes[symbol]
