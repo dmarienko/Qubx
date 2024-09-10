@@ -201,6 +201,13 @@ class BrokerSideRiskController(RiskController):
 
             case State.RISK_TRIGGERED:
                 c.status = State.DONE
+
+                # - remove from the tracking list
+                logger.debug(
+                    f"<yellow>{self.__class__.__name__}</yellow> -- stops tracking -- <green>{instrument.symbol}</green>"
+                )
+                self._trackings.pop(instrument)
+
                 # - send service signal that risk triggeres (it won't be processed by StrategyContext)
                 if c.stop_executed_price: 
                     return [
@@ -214,9 +221,6 @@ class BrokerSideRiskController(RiskController):
                                 ctx, instrument.signal(0, price=c.take_executed_price, group="Risk Manager", comment="Take triggered"),
                             )
                     ]
-
-            case State.OPEN:
-                pass
 
             case State.DONE:
                 logger.debug(
