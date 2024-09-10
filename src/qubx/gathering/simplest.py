@@ -34,7 +34,7 @@ class SimplePositionGatherer(IPositionGathering):
 
         if abs(to_trade) < instrument.min_size:
             if current_position != 0:
-                logger.warning(
+                logger.debug(
                     f"{instrument.exchange}:{instrument.symbol}: Unable change position from {current_position} to {new_size} : too small difference"
                 )
         else:
@@ -45,7 +45,7 @@ class SimplePositionGatherer(IPositionGathering):
             if at_price:
                 # - we already havbe position but it's requested to change at a specific price
                 if abs(current_position) > instrument.min_size:
-                    logger.warning(
+                    logger.debug(
                         f"<green>{instrument.symbol}</green>: Attempt to change current position {current_position} to {new_size} at {at_price} !"
                     )
 
