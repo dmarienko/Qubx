@@ -43,9 +43,15 @@ class OrdersManagementEngine:
     bbo: Quote | None  # current best bid/ask order book (simplest impl)
     __order_id: int
     __trade_id: int
+    _fill_stops_at_price: bool
 
     def __init__(
-        self, instrument: Instrument, time_provider: ITimeProvider, tcc: TransactionCostsCalculator, debug: bool = True
+        self,
+        instrument: Instrument,
+        time_provider: ITimeProvider,
+        tcc: TransactionCostsCalculator,
+        fill_stop_order_at_price: bool = False,  # emulate stop orders execution at order's exact limit price
+        debug: bool = True,
     ) -> None:
         self.instrument = instrument
         self.time_service = time_provider
@@ -57,6 +63,7 @@ class OrdersManagementEngine:
         self.bbo = None
         self.__order_id = 100000
         self.__trade_id = 100000
+        self._fill_stops_at_price = fill_stop_order_at_price
         if not debug:
             self._dbg = lambda message, **kwargs: None
 
@@ -96,12 +103,14 @@ class OrdersManagementEngine:
             # - processing stop orders
             for soid in list(self.stop_orders.keys()):
                 so = self.stop_orders[soid]
+                _emulate_price_exec = self._fill_stops_at_price or so.options.get(OPTION_FILL_AT_SIGNAL_PRICE, False)
+
                 if so.side == "BUY" and quote.ask >= so.price:
-                    _exec_price = quote.ask if not so.options.get(OPTION_FILL_AT_SIGNAL_PRICE, False) else so.price
+                    _exec_price = quote.ask if not _emulate_price_exec else so.price
                     self.stop_orders.pop(soid)
                     rep.append(self._execute_order(timestamp, _exec_price, so, True))
                 elif so.side == "SELL" and quote.bid <= so.price:
-                    _exec_price = quote.bid if not so.options.get(OPTION_FILL_AT_SIGNAL_PRICE, False) else so.price
+                    _exec_price = quote.bid if not _emulate_price_exec else so.price
                     self.stop_orders.pop(soid)
                     rep.append(self._execute_order(timestamp, _exec_price, so, True))
 
