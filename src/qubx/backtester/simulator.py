@@ -142,8 +142,8 @@ class SimulatedTrading(ITradingServiceProvider):
     First implementation of a simulated broker.
     TODO:
         1. Add margin control
-        2. Need to solve problem with _get_ohlcv_data_sync (actually this method must be removed from here)
-        3. Add support for stop orders (not urgent)
+        2. Need to solve problem with _get_ohlcv_data_sync (actually this method must be removed from here) [DONE]
+        3. Add support for stop orders (not urgent) [DONE]
     """
 
     _current_time: dt_64
@@ -152,13 +152,40 @@ class SimulatedTrading(ITradingServiceProvider):
     _fees_calculator: TransactionCostsCalculator | None
     _order_to_symbol: Dict[str, str]
     _half_tick_size: Dict[str, float]
+    _fill_stop_order_at_price: bool
 
     def __init__(
         self,
         name: str,
         commissions: str | None = None,
         simulation_initial_time: dt_64 | str = np.datetime64(0, "ns"),
+        accurate_stop_orders_execution: bool = False,
     ) -> None:
+        """
+        This function sets up a simulated trading environment with following parameters.
+
+        Parameters:
+        -----------
+        name : str
+            The name of the simulated trading environment.
+        commissions : str | None, optional
+            The commission structure to be used. If None, no commissions will be applied.
+            Default is None.
+        simulation_initial_time : dt_64 | str, optional
+            The initial time for the simulation. Can be a dt_64 object or a string.
+            Default is np.datetime64(0, "ns").
+        accurate_stop_orders_execution : bool, optional
+            If True, stop orders will be executed at the exact stop order's price.
+            If False, they may be executed at the next quote that could lead to
+            significant slippage especially if simuation run on OHLC data.
+            Default is False.
+
+        Raises:
+        -------
+        ValueError
+            If the fees configuration is not found for the given name.
+
+        """
         self._current_time = (
             np.datetime64(simulation_initial_time, "ns")
             if isinstance(simulation_initial_time, str)
@@ -168,6 +195,7 @@ class SimulatedTrading(ITradingServiceProvider):
         self._ome = {}
         self._fees_calculator = lookup.fees.find(name.lower(), commissions)
         self._half_tick_size = {}
+        self._fill_stop_order_at_price = accurate_stop_orders_execution
 
         self._order_to_symbol = {}
         if self._fees_calculator is None:
@@ -177,6 +205,8 @@ class SimulatedTrading(ITradingServiceProvider):
 
         # - we want to see simulate time in log messages
         QubxLogConfig.setup_logger(QubxLogConfig.get_log_level(), _SimulatedLogFormatter(self).formatter)
+        if self._fill_stop_order_at_price:
+            logger.info(f"SimulatedExchangeService emulates stop orders executions at exact price")
 
     def send_order(
         self,
@@ -195,8 +225,8 @@ class SimulatedTrading(ITradingServiceProvider):
 
         # - try to place order in OME
         report = ome.place_order(
-            order_side.upper(),
-            order_type.upper(),
+            order_side.upper(),  # type: ignore
+            order_type.upper(),  # type: ignore
             amount,
             price,
             client_id,
@@ -254,7 +284,12 @@ class SimulatedTrading(ITradingServiceProvider):
 
         if symbol not in self.acc._positions:
             # - initiolize OME for this instrument
-            self._ome[instrument.symbol] = OrdersManagementEngine(instrument=instrument, time_provider=self, tcc=self._fees_calculator)  # type: ignore
+            self._ome[instrument.symbol] = OrdersManagementEngine(
+                instrument=instrument,
+                time_provider=self,
+                tcc=self._fees_calculator,  # type: ignore
+                fill_stop_order_at_price=self._fill_stop_order_at_price,
+            )
 
             # - initiolize empty position
             position = Position(instrument)  # type: ignore
@@ -693,8 +728,57 @@ def simulate(
     n_jobs: int = 1,
     silent: bool = False,
     enable_event_batching: bool = True,
+    accurate_stop_orders_execution: bool = False,
     debug: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None = "WARNING",
 ) -> list[TradingSessionResult]:
+    """
+    Backtest utility for trading strategies or signals using historical data.
+
+    Parameters:
+    ----------
+
+    config (StrategyOrSignals | Dict | List[StrategyOrSignals | PositionsTracker]):
+        Trading strategy or signals configuration.
+    data (Dict[str, pd.DataFrame] | DataReader):
+        Historical data for simulation, either as a dictionary of DataFrames or a DataReader object.
+    capital (float):
+        Initial capital for the simulation.
+    instruments (List[str] | Dict[str, List[str]] | None):
+        List of trading instruments or a dictionary mapping exchanges to instrument lists.
+    subscription (Dict[str, Any]):
+        Subscription details for market data.
+    trigger (str | list[str]):
+        Trigger specification for strategy execution.
+    commissions (str):
+        Commission structure for trades.
+    start (str | pd.Timestamp):
+        Start time of the simulation.
+    stop (str | pd.Timestamp | None):
+        End time of the simulation. If None, simulates until the last accessible data.
+    fit (str | None):
+        Specification for strategy fitting, if applicable.
+    exchange (str | None):
+        Exchange name if not specified in the instruments list.
+    base_currency (str):
+        Base currency for the simulation, default is "USDT".
+    leverage (float):
+        Leverage factor for trading, default is 1.0.
+    n_jobs (int):
+        Number of parallel jobs for simulation, default is 1.
+    silent (bool):
+        If True, suppresses output during simulation.
+    enable_event_batching (bool):
+        If True, enables event batching for optimization.
+    accurate_stop_orders_execution (bool):
+        If True, enables more accurate stop order execution simulation.
+    debug (Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None):
+        Logging level for debugging.
+
+    Returns:
+    --------
+    list[TradingSessionResult]:
+        A list of TradingSessionResult objects containing the results of each simulation setup.
+    """
 
     # - setup logging
     QubxLogConfig.set_log_level(debug.upper() if debug else "WARNING")
@@ -755,6 +839,7 @@ def simulate(
         n_jobs=n_jobs,
         silent=silent,
         enable_event_batching=enable_event_batching,
+        accurate_stop_orders_execution=accurate_stop_orders_execution,
     )
 
 
@@ -818,6 +903,7 @@ def _run_setups(
     n_jobs: int = -1,
     silent: bool = False,
     enable_event_batching: bool = True,
+    accurate_stop_orders_execution: bool = False,
 ) -> List[TradingSessionResult]:
     # loggers don't work well with joblib and multiprocessing in general because they contain
     # open file handlers that cannot be pickled. I found a solution which requires the usage of enqueue=True
@@ -839,6 +925,7 @@ def _run_setups(
             fit=fit,
             silent=silent,
             enable_event_batching=enable_event_batching,
+            accurate_stop_orders_execution=accurate_stop_orders_execution,
         )
         for id, s in enumerate(setups)
     )
@@ -856,13 +943,19 @@ def _run_setup(
     fit: str | None,
     silent: bool = False,
     enable_event_batching: bool = True,
+    accurate_stop_orders_execution: bool = False,
 ) -> TradingSessionResult:
     _trigger = trigger
     _stop = stop
     logger.debug(
         f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {setup.exchange} for {setup.capital} x {setup.leverage} in {setup.base_currency}..."
     )
-    broker = SimulatedTrading(setup.exchange, setup.commissions, np.datetime64(start, "ns"))
+    broker = SimulatedTrading(
+        setup.exchange,
+        setup.commissions,
+        np.datetime64(start, "ns"),
+        accurate_stop_orders_execution=accurate_stop_orders_execution,
+    )
     exchange = SimulatedExchange(setup.exchange, broker, data_reader)
 
     # - it will store simulation results into memory
