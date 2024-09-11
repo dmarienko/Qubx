@@ -4,12 +4,16 @@ from typing import Any, Tuple
 import pandas as pd
 
 class Bar:
+    time: int
     open: float
     high: float
     low: float
     close: float
     volume: float
+    bought_volume: float
     def __init__(self, time, open, high, low, close, volume, bought_volume=0): ...
+    def update(self, price: float, volume: float, bought_volume: float = 0) -> Bar: ...
+    def to_dict(self, skip_time: bool = False) -> dict: ...
 
 class Quote:
     time: int
