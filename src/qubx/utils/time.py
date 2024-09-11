@@ -113,7 +113,7 @@ def infer_series_frequency(series: Union[List, pd.DataFrame, pd.Series, pd.Datet
             [
                 (
                     x
-                    if isinstance(x, (np.timedelta64, int))
+                    if isinstance(x, (np.timedelta64, int, np.int64))
                     else int(x) if isinstance(x, float) else int(1e9 * x.total_seconds())
                 )
                 for x in np.abs(np.diff(times_index))

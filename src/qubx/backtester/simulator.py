@@ -521,7 +521,7 @@ class SimulatedExchange(IBrokerServiceProvider):
             # we have to schedule possible crons before sending the data event itself
             if self._scheduler.check_and_run_tasks():
                 # - push nothing - it will force to process last event
-                cc.send((None, "time", None))
+                cc.send((None, "service_time", None))
 
         cc.send((symbol, data_type, data))
 
