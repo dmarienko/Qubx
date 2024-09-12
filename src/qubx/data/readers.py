@@ -1027,7 +1027,6 @@ class QuestDBSqlOrderBookBuilder(QuestDBSqlCandlesBuilder):
     Sql builder for snapshot data
     """
 
-    MAX_TIME_DELTA = pd.Timedelta("5h")
     SNAPSHOT_DELTA = pd.Timedelta("1h")
     MIN_DELTA = pd.Timedelta("1s")
 
@@ -1043,8 +1042,6 @@ class QuestDBSqlOrderBookBuilder(QuestDBSqlCandlesBuilder):
             raise ValueError("Start and end dates must be provided for orderbook data!")
         start_dt, end_dt = pd.Timestamp(start), pd.Timestamp(end)
         delta = end_dt - start_dt
-        if delta > self.MAX_TIME_DELTA:
-            raise ValueError(f"Time range is too big for orderbook data: {delta}, max allowed: {self.MAX_TIME_DELTA}")
 
         raw_start_dt = start_dt.floor(self.SNAPSHOT_DELTA) - self.MIN_DELTA
 
