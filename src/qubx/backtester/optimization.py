@@ -90,7 +90,41 @@ def permutate_params(
     return _wrap_single_list(result) if wrap_as_list else result
 
 
-def variate(clz: Type[Any] | List[Type[Any]], *args, conditions=None, **kwargs) -> Dict[str, Any]:
+def dicts_product(d1: dict, d2: dict) -> dict:
+    """
+    Product of two dictionaries.
+
+    Example:
+    -------
+
+    dicts_product({
+        'A': 1,
+        'B': 2,
+    }, {
+        'C': 3,
+        'D': 4,
+    })
+
+    Output:
+    ------
+    {
+        'A + C': [1, 3],
+        'A + D': [1, 4],
+        'B + C': [2, 3],
+        'B + D': [2, 4]
+    }
+
+    """
+    flatten = lambda l: [item for sublist in l for item in (sublist if isinstance(sublist, list) else [sublist])]
+    return {(a + " + " + b): flatten([d1[a], d2[b]]) for a, b in product(d1.keys(), d2.keys())}
+
+
+class _dict(dict):
+    def __add__(self, other: dict) -> dict:
+        return _dict(dicts_product(self, other))
+
+
+def variate(clz: Type[Any] | List[Type[Any]], *args, conditions=None, **kwargs) -> _dict:
     """
     Make variations of parameters for simulations (micro optimizer)
 
@@ -149,7 +183,9 @@ def variate(clz: Type[Any] | List[Type[Any]], *args, conditions=None, **kwargs) 
     to_excl = [s for s, v in kwargs.items() if not isinstance(v, (list, set, tuple, range))]
     dic2str = lambda ds: [_cmprss(k) + "=" + str(v) for k, v in ds.items() if k not in to_excl]
 
-    return {
-        f"{sfx}_({ ','.join(dic2str(z)) })": _mk(clz, *args, **z)
-        for z in permutate_params(kwargs, conditions=conditions)
-    }
+    return _dict(
+        {
+            f"{sfx}_({ ','.join(dic2str(z)) })": _mk(clz, *args, **z)
+            for z in permutate_params(kwargs, conditions=conditions)
+        }
+    )
