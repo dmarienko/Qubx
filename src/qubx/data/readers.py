@@ -945,6 +945,23 @@ class QuestDBConnector(DataReader):
             return pd.Series()
         return vol_stats.set_index("symbol")["quote_volume"]
 
+    def get_fundamental_data(
+        self, exchange: str, start: str | pd.Timestamp | None = None, stop: str | pd.Timestamp | None = None
+    ) -> pd.DataFrame:
+        table_name = {"BINANCE.UM": "binance.umfutures.fundamental"}[exchange]
+        query = f"select * from {table_name}"
+        if start or stop:
+            conditions = []
+            if start:
+                conditions.append(f"timestamp >= '{start}'")
+            if stop:
+                conditions.append(f"timestamp < '{stop}'")
+            query += " where " + " and ".join(conditions)
+        df = self.execute(query)
+        if df.empty:
+            return pd.DataFrame()
+        return df.set_index(["timestamp", "symbol", "metric"]).value.unstack("metric")
+
     def get_names(self) -> List[str]:
         return self._get_names(self._builder)
 
