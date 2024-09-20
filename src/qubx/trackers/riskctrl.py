@@ -5,7 +5,7 @@ from typing import Dict, List, Literal
 import numpy as np
 
 from qubx import logger
-from qubx.core.basics import Deal, Instrument, Signal, TargetPosition
+from qubx.core.basics import Deal, Instrument, OrderStatus, Signal, TargetPosition
 from qubx.core.series import Bar, Quote, Trade
 from qubx.core.strategy import IPositionSizer, PositionsTracker, StrategyContext
 from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
@@ -270,6 +270,15 @@ class BrokerSideRiskController(RiskController):
                         )
                         order = ctx.trade(instrument, -pos, c_w.target.take)
                         c_w.take_order_id = order.id
+
+                        # - if order was executed immediately we don't need to send stop order
+                        if order.status == "CLOSED":
+                            c_w.status = State.RISK_TRIGGERED
+                            logger.debug(
+                                f"<yellow>{self.__class__.__name__}</yellow> <g>TAKE PROFIT</g> was exected immediately for <green>{instrument.symbol}</green> at {c_w.target.take}"
+                            )
+                            return
+
                     except Exception as e:
                         logger.error(
                             f"<yellow>{self.__class__.__name__}</yellow> couldn't send take limit order for <green>{instrument.symbol}</green>: {str(e)}"
