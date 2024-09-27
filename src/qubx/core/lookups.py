@@ -152,8 +152,8 @@ class InstrumentsLookup:
                     v["base"],
                     v["quote"],
                     v["settle"],
-                    min_tick=float(info["tickSize"]),
-                    min_size_step=float(v["precision"]["price"]),
+                    min_tick=float(v["precision"]["price"]),
+                    min_size_step=float(v["precision"]["amount"]),
                     min_size=v["precision"]["amount"],
                     futures_info=FuturesInfo(
                         contract_type=info["type"],
