@@ -589,6 +589,8 @@ class SimulatedExchange(IBrokerServiceProvider):
         records = self._reader.read(
             data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()  # type: ignore
         )
+        if not records:
+            return []
         return [
             Bar(np.datetime64(r["timestamp_ns"], "ns").item(), r["open"], r["high"], r["low"], r["close"], r["volume"])
             for r in records
