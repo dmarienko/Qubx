@@ -903,7 +903,7 @@ class QuestDBConnector(DataReader):
         where = f"where symbol in ({', '.join(quoted_symbols)}) and timestamp >= '{start}' and timestamp < '{stop}'"
         table_name = QuestDBSqlCandlesBuilder().get_table_name(f"{exchange}:{symbols[0]}")
 
-        _rsmpl = f"sample by {timeframe}"
+        _rsmpl = f"sample by {QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(timeframe)}"
 
         query = f"""
         select timestamp, 
@@ -934,7 +934,7 @@ class QuestDBConnector(DataReader):
             select timestamp, symbol, sum(quote_volume) as qvolume 
             from "{table_name}"
             where timestamp >= '{start}' and timestamp < '{stop}'
-            SAMPLE BY {timeframe}
+            SAMPLE BY {QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(timeframe)}
         )
         select symbol, avg(qvolume) as quote_volume from sampled
         group by symbol

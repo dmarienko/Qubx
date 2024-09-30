@@ -357,4 +357,4 @@ def set_parameters_to_object(strategy: Any, **kwargs):
             _log_info += f"\n\tset <green>{k}</green> <- <red>{v_str}</red>"
 
     if _log_info:
-        logger.info(f"<yellow>{strategy.__class__.__name__}</yellow> new parameters:" + _log_info)
+        logger.debug(f"<yellow>{strategy.__class__.__name__}</yellow> new parameters:" + _log_info)

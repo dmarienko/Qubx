@@ -33,6 +33,9 @@ MINUTELY = HOURLY * 60
 HOURLY_FX = DAILY * 24
 MINUTELY_FX = HOURLY_FX * 60
 
+_D1 = pd.Timedelta("1D")
+_W1 = pd.Timedelta("1W")
+
 
 def absmaxdd(data: List | Tuple | pd.Series | np.ndarray) -> Tuple[float, int, int, int, pd.Series]:
     """
@@ -113,7 +116,7 @@ def max_drawdown_pct(returns):
     return np.nanmin((cumrets - max_return) / max_return)
 
 
-def portfolio_returns(portfolio_log: pd.DataFrame, method="pct", init_cash=0) -> pd.Series:
+def portfolio_returns(portfolio_log: pd.DataFrame, method="pct", init_cash: float = 0.0) -> pd.Series:
     """
     Calculates returns based on specified method.
 
@@ -323,7 +326,7 @@ def omega_ratio(returns, risk_free=0.0, required_return=0.0, periods=DAILY):
     return (numer / denom) if denom > 0.0 else np.nan
 
 
-def aggregate_returns(returns, convert_to):
+def aggregate_returns(returns: pd.Series, convert_to: str) -> pd.DataFrame | pd.Series:
     """
     Aggregates returns by specified time period
     :param returns: pd.Series or np.ndarray periodic returns of the strategy, noncumulative
@@ -583,17 +586,21 @@ def monthly_returns(
     return pd.concat((100 * r_month, acc_balance), axis=1, keys=["Returns", "Balance"])
 
 
-def portfolio_symbols(df: pd.DataFrame) -> List[str]:
+def portfolio_symbols(src: pd.DataFrame | TradingSessionResult) -> List[str]:
     """
     Get list of symbols from portfolio log
     """
+    df = src.portfolio_log if isinstance(src, TradingSessionResult) else src
     return list(df.columns[::5].str.split("_").str.get(0).values)
 
 
-def pnl(x: pd.DataFrame, c=1, cum=False, total=False, resample=None):
+def pnl(
+    src: pd.DataFrame | TradingSessionResult, c=1, cum=False, total=False, resample=None
+) -> pd.Series | pd.DataFrame:
     """
     Extract PnL from portfolio log
     """
+    x = src.portfolio_log if isinstance(src, TradingSessionResult) else src
     pl = x.filter(regex=".*_PnL").rename(lambda x: x.split("_")[0], axis=1)
     comms = x.filter(regex=".*_Commissions").rename(lambda x: x.split("_")[0], axis=1)
     r = pl - c * comms
@@ -603,18 +610,21 @@ def pnl(x: pd.DataFrame, c=1, cum=False, total=False, resample=None):
     return r.sum(axis=1) if total else r
 
 
-def drop_symbols(df: pd.DataFrame, *args, quoted="USDT"):
+def drop_symbols(src: pd.DataFrame | TradingSessionResult, *args, quoted="USDT") -> pd.DataFrame:
     """
     Drop symbols (is quoted currency) from portfolio log
     """
     s = "|".join([f"{a}{quoted}" if not a.endswith(quoted) else a for a in args])
+    df = src.portfolio_log if isinstance(src, TradingSessionResult) else src
     return df.filter(filter(lambda si: not re.match(f"^{s}_.*", si), df.columns))
 
 
-def pick_symbols(df: pd.DataFrame, *args, quoted="USDT"):
+def pick_symbols(src: pd.DataFrame | TradingSessionResult, *args, quoted="USDT") -> pd.DataFrame:
     """
     Select symbols (is quoted currency) from portfolio log
     """
+    df = src.portfolio_log if isinstance(src, TradingSessionResult) else src
+
     # - pick up from execution report
     if "instrument" in df.columns and "quantity" in df.columns:
         rx = "|".join([f"{a}.*" for a in args])
@@ -663,11 +673,19 @@ def portfolio_metrics(
         returns = returns[:end]
         returns_on_init_bp = returns_on_init_bp[:end]
 
-    # aggregate them to daily (if we have intraday portfolio)
+    # - aggregate returns to higher timeframe
     try:
-        if infer_series_frequency(returns) < pd.Timedelta("1D").to_timedelta64():
-            returns_daily = aggregate_returns(returns, "daily")
-            returns_on_init_bp = aggregate_returns(returns_on_init_bp, "daily")
+        _conversion = "daily"
+        match (_s_freq := infer_series_frequency(returns)):
+            case _ if _s_freq <= _D1.to_timedelta64():
+                _conversion = "daily"
+            case _ if _s_freq > _D1.to_timedelta64() and _s_freq <= _W1.to_timedelta64():
+                _conversion = "weekly"
+            case _:
+                _conversion = "monthly"
+
+        returns_daily = aggregate_returns(returns, _conversion)
+        returns_on_init_bp = aggregate_returns(returns_on_init_bp, _conversion)
     except:
         returns_daily = returns
 
@@ -792,7 +810,7 @@ def get_equity(
     sessions: TradingSessionResult | list[TradingSessionResult],
     account_transactions: bool = True,
     timeframe: str | None = None,
-) -> pd.DataFrame:
+) -> pd.DataFrame | pd.Series:
     if timeframe is None:
         timeframe = _estimate_timeframe(sessions)
 
