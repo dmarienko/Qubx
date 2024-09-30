@@ -71,6 +71,10 @@ if runtime_env() in ["notebook", "shell"]:
         __manager = None
 
         @line_magic
+        def qubx(self, line: str):
+            self.qubx_setup("dark" + " " + line)
+
+        @line_magic
         def qubxd(self, line: str):
             self.qubx_setup("dark" + " " + line)
 
