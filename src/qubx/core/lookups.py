@@ -410,7 +410,7 @@ class GlobalLookup:
     instruments: InstrumentsLookup
     fees: FeesLookup
 
-    def find_fees(self, exchange: str, spec: str) -> Optional[TransactionCostsCalculator]:
+    def find_fees(self, exchange: str, spec: str | None) -> Optional[TransactionCostsCalculator]:
         return self.fees.find(exchange, spec)
 
     def find_aux_instrument_for(self, instrument: Instrument, base_currency: str) -> Optional[Instrument]:

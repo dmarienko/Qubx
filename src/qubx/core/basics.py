@@ -417,8 +417,12 @@ class Position:
 
             # - extract realized part of PnL
             if qty_closing != 0:
+                _abs_qty_close = abs(qty_closing)
                 deal_pnl = qty_closing * (self.position_avg_price - exec_price)
+
                 quantity += qty_closing
+                self.__pos_incr_qty -= _abs_qty_close
+
                 # - reset average price to 0 if smaller than minimal price change to avoid cumulative error
                 if abs(quantity) < self.instrument.min_size_step:
                     quantity = 0.0
@@ -480,6 +484,7 @@ class Position:
         return self.pnl
 
     def total_pnl(self) -> float:
+        # TODO: account for commissions
         pnl = self.r_pnl
         if not np.isnan(self.last_update_price):  # type: ignore
             pnl += self.quantity * (self.last_update_price - self.position_avg_price) / self.last_update_conversion_rate  # type: ignore

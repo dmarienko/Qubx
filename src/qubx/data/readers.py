@@ -919,7 +919,10 @@ class QuestDBConnector(DataReader):
         sum(taker_buy_quote_volume) as taker_buy_quote_volume
         from "{table_name}" {where} {_rsmpl};
         """
-        return self.execute(query).set_index(["timestamp", "symbol"])
+        res = self.execute(query)
+        if res.empty:
+            return res
+        return res.set_index(["timestamp", "symbol"])
 
     def get_average_quote_volume(
         self,
