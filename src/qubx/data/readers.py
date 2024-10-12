@@ -907,7 +907,7 @@ class QuestDBConnector(DataReader):
 
         query = f"""
         select timestamp, 
-        symbol,
+        upper(symbol) as symbol,
         first(open) as open, 
         max(high) as high,
         min(low) as low,
@@ -939,7 +939,7 @@ class QuestDBConnector(DataReader):
             where timestamp >= '{start}' and timestamp < '{stop}'
             SAMPLE BY {QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(timeframe)}
         )
-        select symbol, avg(qvolume) as quote_volume from sampled
+        select upper(symbol) as symbol, avg(qvolume) as quote_volume from sampled
         group by symbol
         order by quote_volume desc;
         """
