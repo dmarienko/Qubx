@@ -1,4 +1,8 @@
 import numpy as np
+import pandas as pd
+import statsmodels.api as sm
+from statsmodels.tsa.stattools import coint
+
 from qubx.utils import sbp
 
 
@@ -57,3 +61,46 @@ def kde(array, cut_down=True, bw_method="scott"):
             array = array[np.bitwise_and(bounds[0] < array, array < bounds[1])]
 
     return gaussian_kde(array, bw_method=bw_method)
+
+
+def hurst(series: np.array, max_lag: int = 20):
+    """
+    Simplest Hurst exponent helps test whether the time series is:
+    (1) A Random Walk (H ~ 0.5)
+    (2) Trending (H > 0.5)
+    (3) Mean reverting (H < 0.5)
+    """
+    tau, lagvec = [], []
+
+    # Step through the different lags
+    for lag in range(2, max_lag):
+        # Produce price different with lag
+        pp = np.subtract(series[lag:], series[:-lag])
+
+        # Write the different lags into a vector
+        lagvec.append(lag)
+
+        # Calculate the variance of the difference
+        tau.append(np.sqrt(np.std(pp)))
+
+    # Linear fit to a double-log graph to get power
+    m = np.polyfit(np.log10(lagvec), np.log10(tau), 1)
+
+    # Calculate hurst
+    return m[0] * 2
+
+
+def half_life(price: pd.Series) -> int:
+    """
+    Half-life is the period of time it takes for the price to revert back to the mean.
+    """
+    xs_lag = price.shift(1).bfill()
+    xs_ret = price.diff().bfill()
+    res = sm.OLS(xs_ret, sm.add_constant(xs_lag)).fit()
+    return int(-np.log(2) / res.params.iloc[1])
+
+
+def cointegration_test(p1: pd.Series, p2: pd.Series, alpha: float = 0.05) -> tuple[bool, float]:
+    p1, p2 = p1.dropna().align(p2.dropna(), join="inner")
+    _, pvalue, _ = coint(p1, p2)
+    return bool(pvalue < alpha), float(pvalue)
