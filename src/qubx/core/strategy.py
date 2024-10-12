@@ -154,6 +154,7 @@ class StrategyContext(ITimeProvider):
     instruments: List[Instrument]  # list of instruments this strategy trades
     positions: Dict[str, Position]  # positions of the strategy (instrument -> position)
     acc: AccountProcessor
+    broker_provider: IBrokerServiceProvider  # market data provider
 
     def process_data(self, symbol: str, d_type: str, data: Any) -> bool: ...
 
