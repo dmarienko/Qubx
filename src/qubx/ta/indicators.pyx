@@ -218,20 +218,67 @@ def lowest(series:TimeSeries, period:int):
     return Lowest.wrap(series, period)
 
 
-# - - - - TODO !!!!!!!
 cdef class Std(Indicator):
+    """
+    Streaming Standard Deviation indicator
+    """
 
     def __init__(self, str name, TimeSeries series, int period):
         self.period = period
+        self.rolling_sum = RollingSum(period)
+        self.variance_sum = RollingSum(period)
         super().__init__(name, series)
 
     cpdef double calculate(self, long long time, double value, short new_item_started):
-        pass
+        # Update the rolling sum with the new value
+        cdef double _sum = self.rolling_sum.update(value, new_item_started)
+
+        # If we're still in the initialization stage, return NaN
+        if self.rolling_sum.is_init_stage:
+            return np.nan
+
+        # Calculate the mean from the rolling sum
+        cdef double _mean = _sum / self.period
+
+        # Update the variance sum with the squared deviation from the mean
+        cdef double _var_sum = self.variance_sum.update((value - _mean) ** 2, new_item_started)
+
+        # If the variance sum is still in the initialization stage, return NaN
+        if self.variance_sum.is_init_stage:
+            return np.nan
+
+        # Return the square root of the variance (standard deviation)
+        return np.sqrt(_var_sum / self.period)
 
 
-def std(series:TimeSeries, period:int, mean=0):
+def std(series: TimeSeries, period: int, mean=0):
     return Std.wrap(series, period)
-# - - - - TODO !!!!!!!
+
+
+cdef class Zscore(Indicator):
+    """
+    Z-score normalization using rolling SMA and Std
+    """
+
+    def __init__(self, str name, TimeSeries series, int period):
+        self.sma = Sma(name + "_sma", series, period)  # Simple Moving Average
+        self.std = Std(name + "_std", series, period)  # Standard Deviation
+        super().__init__(name, series)
+
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        cdef double _mean = self.sma.calculate(time, value, new_item_started)
+        cdef double _std = self.std.calculate(time, value, new_item_started)
+
+        # Check if SMA or Std is not fully initialized or if std is 0 (avoid division by zero)
+        if np.isnan(_mean) or np.isnan(_std) or _std == 0:
+            return np.nan
+
+        # Calculate Z-score
+        return (value - _mean) / _std
+
+
+def zscore(series: TimeSeries, period: int = 20):
+    return Zscore.wrap(series, period)
 
 
 cdef double norm_pdf(double x):

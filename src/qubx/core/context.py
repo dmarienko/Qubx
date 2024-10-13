@@ -694,6 +694,9 @@ class StrategyContextImpl(StrategyContext):
     def time(self) -> dt_64:
         return self.trading_service.time()
 
+    def get_instrument(self, symbol: str) -> Instrument | None:
+        return self._symb_to_instr.get(symbol)
+
     def _generate_order_client_id(self, symbol: str) -> str:
         self.__order_id += 1
         return self.__strategy_id + symbol + "_" + str(self.__order_id)
