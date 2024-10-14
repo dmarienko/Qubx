@@ -255,32 +255,6 @@ def std(series: TimeSeries, period: int, mean=0):
     return Std.wrap(series, period)
 
 
-cdef class Zscore(Indicator):
-    """
-    Z-score normalization using rolling SMA and Std
-    """
-
-    def __init__(self, str name, TimeSeries series, int period):
-        self.sma = Sma(name + "_sma", series, period)  # Simple Moving Average
-        self.std = Std(name + "_std", series, period)  # Standard Deviation
-        super().__init__(name, series)
-
-    cpdef double calculate(self, long long time, double value, short new_item_started):
-        cdef double _mean = self.sma.calculate(time, value, new_item_started)
-        cdef double _std = self.std.calculate(time, value, new_item_started)
-
-        # Check if SMA or Std is not fully initialized or if std is 0 (avoid division by zero)
-        if np.isnan(_mean) or np.isnan(_std) or _std == 0:
-            return np.nan
-
-        # Calculate Z-score
-        return (value - _mean) / _std
-
-
-def zscore(series: TimeSeries, period: int = 20):
-    return Zscore.wrap(series, period)
-
-
 cdef double norm_pdf(double x):
     return np.exp(-x ** 2 / 2) / np.sqrt(2 * np.pi)
 
@@ -646,6 +620,28 @@ def atr(series: OHLCV, period: int = 14, smoother="sma", percentage: bool = Fals
     if not isinstance(series, OHLCV):
         raise ValueError("Series must be OHLCV !")
     return Atr.wrap(series, period, smoother, percentage)
+
+
+cdef class Zscore(Indicator):
+    """
+    Z-score normalization using rolling SMA and Std
+    """
+
+    def __init__(self, str name, TimeSeries series, int period, str smoother):
+        self.tr = TimeSeries("tr", series.timeframe, series.max_series_length)
+        self.ma = smooth(self.tr, smoother, period)
+        self.std = std(self.tr, period)
+        super().__init__(name, series)
+
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        self.tr.update(time, value)
+        if len(self.ma) < 1 or len(self.std) < 1 or np.isnan(self.ma[0]) or np.isnan(self.std[0]) or self.std[0] == 0:
+            return np.nan
+        return (value - self.ma[0]) / self.std[0]
+
+
+def zscore(series: TimeSeries, period: int = 20, smoother="sma"):
+    return Zscore.wrap(series, period, smoother)
 
 
 cdef class Swings(IndicatorOHLC):

@@ -64,7 +64,8 @@ cdef class Std(Indicator):
 
 
 cdef class Zscore(Indicator):
-    cdef Indicator sma, std
+    cdef TimeSeries tr
+    cdef Indicator ma, std
     cpdef double calculate(self, long long time, double value, short new_item_started)
 
 cdef class Pewma(Indicator):
