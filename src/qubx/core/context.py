@@ -694,9 +694,6 @@ class StrategyContextImpl(StrategyContext):
     def time(self) -> dt_64:
         return self.trading_service.time()
 
-    def get_instrument(self, symbol: str) -> Instrument | None:
-        return self._symb_to_instr.get(symbol)
-
     def _generate_order_client_id(self, symbol: str) -> str:
         self.__order_id += 1
         return self.__strategy_id + symbol + "_" + str(self.__order_id)
@@ -754,35 +751,11 @@ class StrategyContextImpl(StrategyContext):
         if order_id:
             self.trading_service.cancel_order(order_id)
 
-    def quote(self, symbol: str) -> Quote | None:
-        return self.broker_provider.get_quote(symbol)
-
     def get_capital(self) -> float:
         return self.trading_service.get_capital()
 
     def get_reserved(self, instrument: Instrument) -> float:
         return self.trading_service.get_account().get_reserved(instrument)
-
-    @_SW.watch("StrategyContext")
-    def get_historical_ohlcs(self, instrument: Instrument | str, timeframe: str, length: int) -> OHLCV | None:
-        """
-        Helper for historical ohlc data
-        """
-        instr = self._symb_to_instr.get(instrument) if isinstance(instrument, str) else instrument
-
-        if instr is None:
-            logger.warning(f"Can't find instrument for {instrument} symbol !")
-            return None
-
-        # - first check if we can use cached series
-        rc = self.ohlc(instr, timeframe)
-        if len(rc) >= length:
-            return rc
-
-        # - send request for historical data
-        bars = self.broker_provider.get_historical_ohlcs(instr.symbol, timeframe, length)
-        r = self._cache.update_by_bars(instr.symbol, timeframe, bars)
-        return r
 
     @_SW.watch("StrategyContext")
     def set_universe(self, instruments: list[Instrument]) -> None:
@@ -904,3 +877,44 @@ class StrategyContextImpl(StrategyContext):
             if self.__pool is None:
                 self.__pool = ThreadPool(2)
             self.__pool.apply_async(func, args)
+
+    # - IMarketDataProvider methods implementation -
+
+    @_SW.watch("StrategyContext")
+    def get_historical_ohlcs(self, instrument: Instrument | str, timeframe: str, length: int) -> OHLCV | None:
+        """
+        Helper for historical ohlc data
+        """
+        instr = self._symb_to_instr.get(instrument) if isinstance(instrument, str) else instrument
+
+        if instr is None:
+            logger.warning(f"Can't find instrument for {instrument} symbol !")
+            return None
+
+        # - first check if we can use cached series
+        rc = self.ohlc(instr, timeframe)
+        if len(rc) >= length:
+            return rc
+
+        # - send request for historical data
+        bars = self.broker_provider.get_historical_ohlcs(instr.symbol, timeframe, length)
+        r = self._cache.update_by_bars(instr.symbol, timeframe, bars)
+        return r
+
+    def get_aux_data(
+        self,
+        data_id: str,
+        symbols: List[str] | None,
+        timeframe: str,
+        start: str | pd.Timestamp,
+        stop: str | pd.Timestamp | None = None,  # max(stop, current_time) or current_time if stop is None
+    ) -> pd.DataFrame: ...
+
+    def get_instruments(self) -> List[Instrument]:
+        return self.instruments
+
+    def quote(self, symbol: str) -> Quote | None:
+        return self.broker_provider.get_quote(symbol)
+
+    def get_instrument(self, symbol: str) -> Instrument | None:
+        return self._symb_to_instr.get(symbol)

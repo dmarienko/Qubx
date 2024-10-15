@@ -6,8 +6,10 @@ from qubx.data.readers import (
     STOCK_DAILY_SESSION,
     AsPandasFrame,
     CsvStorageDataReader,
+    InMemoryDataFrameReader,
     AsQuotes,
     AsOhlcvSeries,
+    QuestDBConnector,
     RestoreTicksFromOHLC,
 )
 from pytest import approx
@@ -91,3 +93,15 @@ class TestDataReaders:
 
         assert d1[0].time == T("2000-01-03T09:30:00.100000000").item()
         assert d1[3].time == T("2000-01-03T15:59:59.900000000").item()
+
+    def test_supported_data_id(self):
+        r0 = CsvStorageDataReader("tests/data/csv/")
+        assert not r0.get_aux_data_ids()
+
+        r1 = InMemoryDataFrameReader({"TEST1": pd.DataFrame(), "TEST2": pd.DataFrame()})
+        assert r1.get_aux_data_ids()
+        assert set(r1.get_aux_data("symbols")) == {"TEST1", "TEST2"}
+        try:
+            r1.get_aux_data("some_arbitrary_data_id")
+        except:
+            assert True

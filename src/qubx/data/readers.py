@@ -1,5 +1,5 @@
 import re, os
-from typing import Callable, Dict, List, Union, Optional, Iterator, Iterable, Any
+from typing import Dict, List, Set, Union, Optional, Iterator, Iterable, Any
 from os.path import exists, join
 import numpy as np
 import pandas as pd
@@ -97,6 +97,33 @@ class DataReader:
         **kwargs,
     ) -> Iterator | List:
         raise NotImplemented()
+
+    def get_aux_data_ids(self) -> Set[str]:
+        """
+        Returns list of all auxiliary data IDs available for this data reader
+        """
+
+        def _list_methods(cls):
+            _meth = []
+            for k, s in cls.__dict__.items():
+                if k.startswith("get_") and k not in ["get_names", "get_aux_data_ids", "get_aux_data"] and callable(s):
+                    _meth.append(k[4:])
+            return _meth
+
+        _d_ids = _list_methods(self.__class__)
+        for bc in self.__class__.__bases__:
+            _d_ids.extend(_list_methods(bc))
+        return set(_d_ids)
+
+    def get_aux_data(self, data_id: str, **kwargs) -> Any:
+        """
+        Returns auxiliary data for the specified data ID
+        """
+        if hasattr(self, f"get_{data_id}"):
+            return getattr(self, f"get_{data_id}")(**kwargs)
+        raise ValueError(
+            f"{self.__class__.__name__} doesn't have getter for '{data_id}' auxiliary data. Available data: {self.get_aux_data_ids()}"
+        )
 
 
 class CsvStorageDataReader(DataReader):
@@ -228,7 +255,10 @@ class InMemoryDataFrameReader(DataReader):
     Data reader for pandas DataFrames
     """
 
-    def __init__(self, data: Dict[str, pd.DataFrame], exchange: str | None = None) -> None:
+    exchange: str | None
+    _data: Dict[str, pd.DataFrame | pd.Series]
+
+    def __init__(self, data: Dict[str, pd.DataFrame | pd.Series], exchange: str | None = None) -> None:
         if not isinstance(data, dict):
             raise ValueError("data must be a dictionary of pandas DataFrames")
         self._data = data
@@ -295,6 +325,9 @@ class InMemoryDataFrameReader(DataReader):
 
             return __iterable()
         return res
+
+    def get_symbols(self, **kwargs) -> List[str]:
+        return self.get_names()
 
 
 class AsPandasFrame(DataTransformer):
