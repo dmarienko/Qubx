@@ -84,16 +84,59 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         **kwargs,
     ) -> Iterable | List:
         _s_path = data_id
-
         if not data_id.startswith(self.exchange):
             _s_path = f"{self.exchange}:{data_id}"
         _, symb = _s_path.split(":")
 
-        if symb not in self._data:
-            logger.debug(f"Loading data for {_s_path}")
-            self._data[symb] = self._reader.read(_s_path, transform=AsPandasFrame(), timeframe=self._data_timeframe)
+        _start = str(self._start) if start is None else start
+        _stop = str(self._stop) if stop is None else stop
+        self._get_smbs_at([symb], _start, _stop)
 
         return super().read(_s_path, start, stop, transform, chunksize, **kwargs)
+
+    def __getitem__(self, keys):
+        """
+        This helper mostly for using in research notebooks
+        """
+        _start: str | None = None
+        _stop: str | None = None
+        _instruments: List[str] = []
+        _as_dict = False
+
+        if isinstance(keys, (tuple)):
+            for k in keys:
+                if isinstance(k, slice):
+                    _start, _stop = k.start, k.stop
+                if isinstance(k, (list, tuple)):
+                    _instruments = k
+                    _as_dict = True
+                if isinstance(k, str):
+                    _instruments.append(k)
+        else:
+            if isinstance(keys, (list, tuple)):
+                _instruments.extend(keys)
+                _as_dict = True
+            elif isinstance(keys, slice):
+                _start, _stop = keys.start, keys.stop
+            else:
+                _instruments.append(keys)
+        _as_dict |= len(_instruments) > 1
+
+        if not _instruments:
+            _instruments = list(self._data.keys())
+
+        if not _instruments:
+            raise ValueError("No symbols provided")
+
+        if (_start is None and self._start is None) or (_stop is None and self._stop is None):
+            raise ValueError("Start and stop date must be provided")
+
+        _start = str(self._start) if _start is None else _start
+        _stop = str(self._stop) if _stop is None else _stop
+        r = self._get_smbs_at(_instruments, _start, _stop)
+        if not _as_dict and len(_instruments) == 1:
+            return r.get(_instruments[0])
+        return r
 
     # def get_candles(
     #     self,
