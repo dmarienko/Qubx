@@ -1,11 +1,13 @@
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Set
 from concurrent.futures import ThreadPoolExecutor
 
 from joblib import delayed
+import numpy as np
 import pandas as pd
 from collections import defaultdict
 
 from qubx import logger
+from qubx.core.basics import ITimeProvider
 from qubx.data.readers import (
     AsPandasFrame,
     DataReader,
@@ -13,7 +15,7 @@ from qubx.data.readers import (
     MultiQdbConnector,
     DataTransformer,
 )
-from qubx.pandaz.utils import generate_equal_date_ranges, srows
+from qubx.pandaz.utils import generate_equal_date_ranges, ohlc_resample, srows
 from qubx.utils.misc import ProgressParallel
 from qubx.utils.time import convert_seconds_to_str, handle_start_stop, infer_series_frequency
 
@@ -42,35 +44,54 @@ def load_data(
 
 class InMemoryCachedReader(InMemoryDataFrameReader):
     """
-    TODO: ...
+    A class for caching and reading financial data from memory.
+
+    This class extends InMemoryDataFrameReader to provide efficient data caching and retrieval
+    for financial data from a specific exchange and timeframe.
     """
 
+    exchange: str
     _data_timeframe: str
     _reader: DataReader
     _n_jobs: int
-    exchange: str
     _start: pd.Timestamp | None = None
     _stop: pd.Timestamp | None = None
 
-    # _fundamental: pd.DataFrame
+    # - external data
+    _external: Dict[str, pd.DataFrame | pd.Series]
+
+    # - currently 'known' time, can be used for limiting data
+    _current_time_provider: ITimeProvider
 
     def __init__(
         self,
         exchange: str,
         reader: DataReader,
         base_timeframe: str,
+        time_provider: ITimeProvider | None = None,
         n_jobs: int = -1,
+        **kwargs,
     ) -> None:
         self._reader = reader
         self._n_jobs = n_jobs
         self._data_timeframe = base_timeframe
         self.exchange = exchange
-        super().__init__({}, exchange)
+        self._external = {}
 
-    # def get_fundamental_data(
-    #     self, exchange: str, start: str | pd.Timestamp | None = None, stop: str | pd.Timestamp | None = None
-    # ) -> pd.DataFrame:
-    #     return self._fundamental.loc[slice(start, stop)]
+        # - copy external data
+        for k, v in kwargs.items():
+            if isinstance(v, (pd.DataFrame, pd.Series)):
+                self._external[k] = v
+
+        # - if no time provider is provided, use current time
+        _df = pd.Timedelta(self._data_timeframe).asm8
+
+        class _CurrentTimeProvider(ITimeProvider):
+            def time(self) -> np.datetime64:
+                return np.datetime64("now") + _df
+
+        self._current_time_provider = time_provider if time_provider is not None else _CurrentTimeProvider()
+        super().__init__({}, exchange)
 
     def read(
         self,
@@ -92,7 +113,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         if _start is None or _stop is None:
             raise ValueError("Start and stop date must be provided")
         self._get_smbs_at([symb], _start, _stop)
-        return super().read(_s_path, start, stop, transform, chunksize, **kwargs)
+        return self._cut_at_current_time(super().read(_s_path, start, stop, transform, chunksize, **kwargs), prev_bar=True)  # type: ignore
 
     def __getitem__(self, keys):
         """
@@ -133,7 +154,8 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
 
         _start = str(self._start) if _start is None else _start
         _stop = str(self._stop) if _stop is None else _stop
-        r = self._get_smbs_at(_instruments, _start, _stop)
+
+        r = self._cut_at_current_time(self._get_smbs_at(_instruments, _start, _stop), prev_bar=True)
         if not _as_dict and len(_instruments) == 1:
             return r.get(_instruments[0])
         return r
@@ -203,41 +225,53 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         self._stop = max(_stop, self._stop if self._stop else _stop)
         return {s: self._data[s].loc[_start:_stop] for s in symbols if s in self._data}
 
+    def get_aux_data_ids(self) -> Set[str]:
+        return self._reader.get_aux_data_ids() | set(self._external.keys())
+
+    def get_aux_data(self, data_id: str, **kwargs) -> Any:
+        _s = kwargs.pop("start") if "start" in kwargs else None
+        _e = kwargs.pop("stop") if "stop" in kwargs else None
+        _exch = kwargs.pop("exchange") if "exchange" in kwargs else None
+        if _exch and _exch != self.exchange:
+            raise ValueError(f"Exchange mismatch: expected {self.exchange}, got {_exch}")
+        if data_id not in self._external:
+            self._external[data_id] = self._reader.get_aux_data(data_id, exchange=self.exchange, **kwargs)
+
+        _ext_data = self._external.get(data_id)
+        if _ext_data is not None:
+            _ext_data = _ext_data[:_e] if _e else _ext_data
+            _ext_data = _ext_data[_s:] if _s else _ext_data
+        return self._cut_at_current_time(_ext_data)  # type: ignore
+
+    def _cut_at_current_time(
+        self, data: pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series], prev_bar: bool = False
+    ) -> pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series]:
+        _c_time = self._current_time_provider.time()
+        if prev_bar:
+            _c_time = _c_time - pd.Timedelta(self._data_timeframe)
+        if isinstance(data, dict):
+            return {s: v.loc[:_c_time] for s, v in data.items()}
+        return data.loc[:_c_time]
+
     def __str__(self) -> str:
-        return f"InMemoryCachedReader(exchange={self.exchange})"
+        return f"InMemoryCachedReader(exchange={self.exchange},timeframe={self._data_timeframe})"
 
-    # def get_candles(
-    #     self,
-    #     exchange: str,
-    #     symbols: list[str],
-    #     start: str | pd.Timestamp,
-    #     stop: str | pd.Timestamp,
-    #     timeframe: str = "1d",
-    # ) -> pd.DataFrame:
-    #     if exchange != self.exchange:
-    #         raise ValueError(f"Exchange mismatch: {exchange}!= {self.exchange}")
-    #     _r = []
-    #     start, stop = handle_start_stop(start, stop)
-    #     for s in sorted(symbols, reverse=True):
-    #         if s not in self._data:
-    #             logger.debug(f">>> LOADING DATA for {s} ...")
-    #             try:
-    #                 _d = self._reader.get_aux_data(
-    #                     "candles", exchange, [s], start, stop, timeframe=self._data_timeframe
-    #                 )
-    #                 self._data[s] = _d.droplevel(1)
-    #             except Exception as e:
-    #                 continue
-
-    #         _d = self._data[s]
-    #         _d = _d[(_d.index >= start) & (_d.index < stop)].copy()
-    #         _d = ohlc_resample(_d, timeframe) if timeframe else _d
-    #         _r.append(_d.assign(symbol=s.upper(), timestamp=_d.index))
-    #     return srows(*_r).set_index(["timestamp", "symbol"])
+    def get_candles(
+        self,
+        symbols: List[str],
+        start: str | pd.Timestamp,
+        stop: str | pd.Timestamp,
+        timeframe: str = "1d",
+    ) -> pd.DataFrame:
+        _xd: Dict[str, pd.DataFrame] = self[symbols, start:stop]
+        _xd = ohlc_resample(_xd, timeframe) if timeframe else _xd
+        _r = [x.assign(symbol=s.upper(), timestamp=x.index) for s, x in _xd.items()]
+        return srows(*_r).set_index(["timestamp", "symbol"])
+        # return srows(*_r).set_index(["timestamp", "symbol"])
 
 
 def loader(
-    exchange: str, timeframe: str, *symbols: List[str], reader: DataReader = MultiQdbConnector("xlydian-data")
+    exchange: str, timeframe: str, *symbols: List[str], reader: DataReader = MultiQdbConnector("xlydian-data"), **kwargs
 ) -> InMemoryCachedReader:
     """
     Create and initialize an InMemoryCachedReader for a specific exchange and timeframe.
@@ -254,7 +288,7 @@ def loader(
     Returns:
         InMemoryCachedReader: An initialized InMemoryCachedReader object, potentially pre-loaded with data.
     """
-    inmcr = InMemoryCachedReader(exchange, reader, timeframe)
+    inmcr = InMemoryCachedReader(exchange, reader, timeframe, **kwargs)
     if symbols:
         inmcr[list(symbols), slice("1970-01-01", str(pd.Timestamp("now")))]
     return inmcr
