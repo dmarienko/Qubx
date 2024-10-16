@@ -70,7 +70,6 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
     # def get_fundamental_data(
     #     self, exchange: str, start: str | pd.Timestamp | None = None, stop: str | pd.Timestamp | None = None
     # ) -> pd.DataFrame:
-    #     stop = (pd.Timestamp(stop) - pd.Timedelta("1d")) if stop else stop
     #     return self._fundamental.loc[slice(start, stop)]
 
     def read(
@@ -90,8 +89,9 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
 
         _start = str(self._start) if start is None else start
         _stop = str(self._stop) if stop is None else stop
+        if _start is None or _stop is None:
+            raise ValueError("Start and stop date must be provided")
         self._get_smbs_at([symb], _start, _stop)
-
         return super().read(_s_path, start, stop, transform, chunksize, **kwargs)
 
     def __getitem__(self, keys):
@@ -138,35 +138,6 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
             return r.get(_instruments[0])
         return r
 
-    # def get_candles(
-    #     self,
-    #     exchange: str,
-    #     symbols: list[str],
-    #     start: str | pd.Timestamp,
-    #     stop: str | pd.Timestamp,
-    #     timeframe: str = "1d",
-    # ) -> pd.DataFrame:
-    #     if exchange != self.exchange:
-    #         raise ValueError(f"Exchange mismatch: {exchange}!= {self.exchange}")
-    #     _r = []
-    #     start, stop = handle_start_stop(start, stop)
-    #     for s in sorted(symbols, reverse=True):
-    #         if s not in self._data:
-    #             logger.debug(f">>> LOADING DATA for {s} ...")
-    #             try:
-    #                 _d = self._reader.get_aux_data(
-    #                     "candles", exchange, [s], start, stop, timeframe=self._data_timeframe
-    #                 )
-    #                 self._data[s] = _d.droplevel(1)
-    #             except Exception as e:
-    #                 continue
-
-    #         _d = self._data[s]
-    #         _d = _d[(_d.index >= start) & (_d.index < stop)].copy()
-    #         _d = ohlc_resample(_d, timeframe) if timeframe else _d
-    #         _r.append(_d.assign(symbol=s.upper(), timestamp=_d.index))
-    #     return srows(*_r).set_index(["timestamp", "symbol"])
-
     def _load_data(
         self, symbols: List[str], start: str | pd.Timestamp, stop: str | pd.Timestamp, timeframe: str
     ) -> Dict[str, pd.DataFrame | pd.Series]:
@@ -199,31 +170,32 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         return ohlc
 
     def _get_smbs_at(self, symbols: List[str], start: str, stop: str) -> Dict[str, pd.DataFrame | pd.Series]:
+        _dtf = pd.Timedelta(self._data_timeframe)
         T = lambda x: pd.Timestamp(x)
         _start, _stop = map(T, handle_start_stop(start, stop))
 
         # - full interval
         _new_symbols = list(set([s for s in symbols if s not in self._data]))
         if _new_symbols:
-            logger.debug(f"loading full interval {_new_symbols}")
-            _new_data = self._load_data(_new_symbols, _start, _stop, self._data_timeframe)
+            _s_req = min(_start, self._start if self._start else _start)
+            _e_req = max(_stop, self._stop if self._stop else _stop)
+            logger.debug(f"Loading all data {_s_req} - {_e_req} for { ','.join(_new_symbols)} ")
+            _new_data = self._load_data(_new_symbols, _s_req, _e_req + _dtf, self._data_timeframe)
             self._data |= _new_data
 
         # - part intervals
         if self._start and _start < self._start:
-            logger.debug(f"Updating before interval {_start} : {self._start}")
-            _before = self._load_data(
-                list(self._data.keys()), _start, self._start + pd.Timedelta(self._data_timeframe), self._data_timeframe
-            )
+            _smbs = list(self._data.keys())
+            logger.debug(f"Updating {len(_smbs)} symbols before interval {_start} : {self._start}")
+            _before = self._load_data(_smbs, _start, self._start + _dtf, self._data_timeframe)
             for k, c in _before.items():
                 self._data[k] = srows(c, self._data[k], keep="first")
 
         # - part intervals
         if self._stop and _stop > self._stop:
-            logger.debug(f"Updating after interval {self._stop} : {_stop}")
-            _after = self._load_data(
-                list(self._data.keys()), self._stop - pd.Timedelta(self._data_timeframe), _stop, self._data_timeframe
-            )
+            _smbs = list(self._data.keys())
+            logger.debug(f"Updating {len(_smbs)} symbols after interval {self._stop} : {_stop}")
+            _after = self._load_data(_smbs, self._stop - _dtf, _stop, self._data_timeframe)
             for k, c in _after.items():
                 self._data[k] = srows(self._data[k], c, keep="last")
 
@@ -233,3 +205,56 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
 
     def __str__(self) -> str:
         return f"InMemoryCachedReader(exchange={self.exchange})"
+
+    # def get_candles(
+    #     self,
+    #     exchange: str,
+    #     symbols: list[str],
+    #     start: str | pd.Timestamp,
+    #     stop: str | pd.Timestamp,
+    #     timeframe: str = "1d",
+    # ) -> pd.DataFrame:
+    #     if exchange != self.exchange:
+    #         raise ValueError(f"Exchange mismatch: {exchange}!= {self.exchange}")
+    #     _r = []
+    #     start, stop = handle_start_stop(start, stop)
+    #     for s in sorted(symbols, reverse=True):
+    #         if s not in self._data:
+    #             logger.debug(f">>> LOADING DATA for {s} ...")
+    #             try:
+    #                 _d = self._reader.get_aux_data(
+    #                     "candles", exchange, [s], start, stop, timeframe=self._data_timeframe
+    #                 )
+    #                 self._data[s] = _d.droplevel(1)
+    #             except Exception as e:
+    #                 continue
+
+    #         _d = self._data[s]
+    #         _d = _d[(_d.index >= start) & (_d.index < stop)].copy()
+    #         _d = ohlc_resample(_d, timeframe) if timeframe else _d
+    #         _r.append(_d.assign(symbol=s.upper(), timestamp=_d.index))
+    #     return srows(*_r).set_index(["timestamp", "symbol"])
+
+
+def loader(
+    exchange: str, timeframe: str, *symbols: List[str], reader: DataReader = MultiQdbConnector("xlydian-data")
+) -> InMemoryCachedReader:
+    """
+    Create and initialize an InMemoryCachedReader for a specific exchange and timeframe.
+
+    This function sets up a cached reader for financial data, optionally pre-loading
+    data for specified symbols from the beginning of time until now.
+
+    Args:
+        exchange (str): The name of the exchange to load data from.
+        timeframe (str): The time interval for the data (e.g., '1d' for daily, '1h' for hourly).
+        *symbols (List[str]): Variable number of symbol names to pre-load data for.
+        reader (DataReader, optional): The data reader to use. Defaults to MultiQdbConnector("xlydian-data").
+
+    Returns:
+        InMemoryCachedReader: An initialized InMemoryCachedReader object, potentially pre-loaded with data.
+    """
+    inmcr = InMemoryCachedReader(exchange, reader, timeframe)
+    if symbols:
+        inmcr[list(symbols), slice("1970-01-01", str(pd.Timestamp("now")))]
+    return inmcr

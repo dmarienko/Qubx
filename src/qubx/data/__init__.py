@@ -9,3 +9,5 @@ from .readers import (
     AsTimestampedRecords,
     RestoreTicksFromOHLC,
 )
+
+from .helpers import loader
