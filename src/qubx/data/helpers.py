@@ -1,4 +1,4 @@
-from typing import Any, Dict, Iterable, List, Set
+from typing import Any, Dict, Iterable, List, Set, Type
 from concurrent.futures import ThreadPoolExecutor
 
 from joblib import delayed
@@ -10,10 +10,12 @@ from qubx import logger
 from qubx.core.basics import ITimeProvider
 from qubx.data.readers import (
     AsPandasFrame,
+    CsvStorageDataReader,
     DataReader,
     InMemoryDataFrameReader,
     MultiQdbConnector,
     DataTransformer,
+    QuestDBConnector,
 )
 from qubx.pandaz.utils import generate_equal_date_ranges, ohlc_resample, srows
 from qubx.utils.misc import ProgressParallel
@@ -229,34 +231,47 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         return self._reader.get_aux_data_ids() | set(self._external.keys())
 
     def get_aux_data(self, data_id: str, **kwargs) -> Any:
-        _s = kwargs.pop("start") if "start" in kwargs else None
-        _e = kwargs.pop("stop") if "stop" in kwargs else None
         _exch = kwargs.pop("exchange") if "exchange" in kwargs else None
         if _exch and _exch != self.exchange:
             raise ValueError(f"Exchange mismatch: expected {self.exchange}, got {_exch}")
+
+        match data_id:
+            # - special case for candles - it builds them from loaded ohlc data
+            case "candles":
+                return self._get_candles(**kwargs)
+
+            # - only symbols in cache
+            case "symbols":
+                return list(self._data.keys())
+
         if data_id not in self._external:
-            self._external[data_id] = self._reader.get_aux_data(data_id, exchange=self.exchange, **kwargs)
+            self._external[data_id] = self._reader.get_aux_data(data_id, exchange=self.exchange)
 
         _ext_data = self._external.get(data_id)
         if _ext_data is not None:
+            _s = kwargs.pop("start") if "start" in kwargs else None
+            _e = kwargs.pop("stop") if "stop" in kwargs else None
             _ext_data = _ext_data[:_e] if _e else _ext_data
             _ext_data = _ext_data[_s:] if _s else _ext_data
         return self._cut_at_current_time(_ext_data)  # type: ignore
 
     def _cut_at_current_time(
         self, data: pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series], prev_bar: bool = False
-    ) -> pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series]:
+    ) -> pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | List:
         _c_time = self._current_time_provider.time()
+
         if prev_bar:
             _c_time = _c_time - pd.Timedelta(self._data_timeframe)
+
         if isinstance(data, dict):
             return {s: v.loc[:_c_time] for s, v in data.items()}
+
+        if isinstance(data, list):
+            return list(filter(lambda x: x[0] <= _c_time, data))
+
         return data.loc[:_c_time]
 
-    def __str__(self) -> str:
-        return f"InMemoryCachedReader(exchange={self.exchange},timeframe={self._data_timeframe})"
-
-    def get_candles(
+    def _get_candles(
         self,
         symbols: List[str],
         start: str | pd.Timestamp,
@@ -267,11 +282,22 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         _xd = ohlc_resample(_xd, timeframe) if timeframe else _xd
         _r = [x.assign(symbol=s.upper(), timestamp=x.index) for s, x in _xd.items()]
         return srows(*_r).set_index(["timestamp", "symbol"])
-        # return srows(*_r).set_index(["timestamp", "symbol"])
+
+    def __str__(self) -> str:
+        return f"InMemoryCachedReader(exchange={self.exchange},timeframe={self._data_timeframe})"
+
+
+__KNOWN_READERS = {
+    "mqdb": MultiQdbConnector,  # mqdb::xlydian-data
+    "multi": MultiQdbConnector,
+    "qdb": QuestDBConnector,  # questdb::localhost
+    "questdb": MultiQdbConnector,  # questdb::localhost
+    "csv": CsvStorageDataReader,  # csv::path_to_storage, csv::c:/ssss/
+}
 
 
 def loader(
-    exchange: str, timeframe: str, *symbols: List[str], reader: DataReader = MultiQdbConnector("xlydian-data"), **kwargs
+    exchange: str, timeframe: str, *symbols: List[str], source: str = "mqdb::localhost", **kwargs
 ) -> InMemoryCachedReader:
     """
     Create and initialize an InMemoryCachedReader for a specific exchange and timeframe.
@@ -283,12 +309,24 @@ def loader(
         exchange (str): The name of the exchange to load data from.
         timeframe (str): The time interval for the data (e.g., '1d' for daily, '1h' for hourly).
         *symbols (List[str]): Variable number of symbol names to pre-load data for.
-        reader (DataReader, optional): The data reader to use. Defaults to MultiQdbConnector("xlydian-data").
+        reader (str): The data reader and it's parameter to use. Defaults to mqdb::localhost.
 
     Returns:
         InMemoryCachedReader: An initialized InMemoryCachedReader object, potentially pre-loaded with data.
     """
-    inmcr = InMemoryCachedReader(exchange, reader, timeframe, **kwargs)
+    if not source:
+        raise ValueError("Source parameter must be provided")
+
+    _rcls_par = source.split("::")
+    _c: Type[DataReader] | None = __KNOWN_READERS.get(_rcls_par[0])
+    if _c is None:
+        raise ValueError(
+            f"Unsupported data reader type: {_rcls_par[0]}. Supported names: {', '.join(__known_readers.keys())}."
+        )
+
+    reader_object: DataReader = _c(_rcls_par[1]) if len(_rcls_par) else _c()
+    inmcr = InMemoryCachedReader(exchange, reader_object, timeframe, **kwargs)
     if symbols:
+        # by default slicing from 1970-01-01 until now
         inmcr[list(symbols), slice("1970-01-01", str(pd.Timestamp("now")))]
     return inmcr
