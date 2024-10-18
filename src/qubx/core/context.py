@@ -36,6 +36,7 @@ from qubx.core.strategy import (
     SubscriptionType,
 )
 from qubx.core.series import Trade, Quote, Bar, OHLCV
+from qubx.data.readers import DataReader
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.trackers.sizers import FixedSizer
 from qubx.utils.misc import Stopwatch
@@ -73,6 +74,9 @@ class StrategyContextImpl(StrategyContext):
     # - cached marked data anb scheduler
     _cache: CachedMarketDataHolder  # market data cache
     _scheduler: BasicScheduler
+
+    # - aux data provider
+    _aux_data_provider: DataReader | None  # auxiliary data provider
 
     # - configuration
     _market_data_subcription_type: str = "unknown"
@@ -126,6 +130,9 @@ class StrategyContextImpl(StrategyContext):
         # - - - - - - - - - - - - - - - - - - - - -
         # - signals executor configuration - - - -
         position_gathering: IPositionGathering | None = None,
+        # - - - - - - - - - - - - - - - - - - - - -
+        # - aux data provider - - - - - - - - - - -
+        aux_data_provider: DataReader | None = None,
     ) -> None:
         # - initialization
         self.broker_provider = broker_connector
@@ -146,6 +153,7 @@ class StrategyContextImpl(StrategyContext):
         self.__init_fit_was_called = False
         self.__pool = None
         self.__fails_counter = 0
+        self._aux_data_provider = aux_data_provider
 
         # - for fast access to instrument by it's symbol
         self._symb_to_instr = {i.symbol: i for i in instruments}
@@ -901,14 +909,10 @@ class StrategyContextImpl(StrategyContext):
         r = self._cache.update_by_bars(instr.symbol, timeframe, bars)
         return r
 
-    def get_aux_data(
-        self,
-        data_id: str,
-        symbols: List[str] | None,
-        timeframe: str,
-        start: str | pd.Timestamp,
-        stop: str | pd.Timestamp | None = None,  # max(stop, current_time) or current_time if stop is None
-    ) -> pd.DataFrame: ...
+    def get_aux_data(self, data_id: str, **parameters) -> pd.DataFrame | None:
+        if self._aux_data_provider:
+            return self._aux_data_provider.get_aux_data(data_id, **parameters)
+        return None
 
     def get_instruments(self) -> List[Instrument]:
         return self.instruments

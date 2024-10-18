@@ -245,14 +245,7 @@ class IMarketDataProvider:
 
     def get_historical_ohlcs(self, instrument: Instrument | str, timeframe: str, length: int) -> OHLCV | None: ...
 
-    def get_aux_data(
-        self,
-        data_id: str,
-        symbols: List[str] | None,
-        timeframe: str,
-        start: str | pd.Timestamp,
-        stop: str | pd.Timestamp | None = None,  # max(stop, current_time) or current_time if stop is None
-    ) -> pd.DataFrame: ...
+    def get_aux_data(self, data_id: str, **parametes) -> pd.DataFrame | None: ...
 
     def get_instruments(self) -> List[Instrument]: ...
 

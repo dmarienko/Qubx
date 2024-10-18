@@ -3,7 +3,7 @@ import pandas as pd
 
 from qubx.core.basics import ITimeProvider
 from qubx.core.series import OHLCV, Quote, Trade
-from qubx.data.helpers import TimeGuardedReader, loader
+from qubx.data.helpers import TimeGuardedWrapper, loader
 from qubx.data.readers import (
     STOCK_DAILY_SESSION,
     AsPandasFrame,
@@ -108,7 +108,7 @@ class TestDataReaders:
         except:
             assert True
 
-    def test_loader(self):
+    def test_aux_wrapped_loader(self):
         class _FixTimeProvider(ITimeProvider):
             def __init__(self, time: str):
                 self._t_g = np.datetime64(time)
@@ -121,7 +121,7 @@ class TestDataReaders:
             (aux_all["stateDescription"] == "U.S. Total") & (aux_all["sectorName"] == "all sectors")
         ].set_index("datetime", drop=True)
 
-        ldr = TimeGuardedReader(
+        ldr = TimeGuardedWrapper(
             loader(
                 "BINANCE.UM",
                 "1h",

@@ -276,7 +276,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         return f"InMemoryCachedReader(exchange={self.exchange},timeframe={self._data_timeframe})"
 
 
-class TimeGuardedReader(InMemoryDataFrameReader):
+class TimeGuardedWrapper(DataReader):
     # - currently 'known' time, can be used for limiting data
     _time_guard_provider: ITimeProvider
     _reader: InMemoryCachedReader
@@ -354,7 +354,7 @@ class TimeGuardedReader(InMemoryDataFrameReader):
         return data.loc[:_c_time]
 
     def __str__(self) -> str:
-        return f"InMemoryCachedReaderWithTimeGuard(exchange={self._reader.exchange},timeframe={self._reader._data_timeframe})"
+        return f"TimeGuarded @ {str(self._reader)}"
 
 
 __KNOWN_READERS = {
