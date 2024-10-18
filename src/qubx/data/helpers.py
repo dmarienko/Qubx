@@ -1,3 +1,4 @@
+from types import GeneratorType
 from typing import Any, Dict, Iterable, List, Set, Type
 from concurrent.futures import ThreadPoolExecutor
 
@@ -85,12 +86,10 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
             if isinstance(v, (pd.DataFrame, pd.Series)):
                 self._external[k] = v
 
-        # - if no time provider is provided, use current time
-        _df = pd.Timedelta(self._data_timeframe).asm8
-
+        # - if no time provider is provided, use stub
         class _CurrentTimeProvider(ITimeProvider):
-            def time(self) -> np.datetime64:
-                return np.datetime64("now") + _df
+            def time(self) -> np.datetime64 | None:
+                return None
 
         self._current_time_provider = time_provider if time_provider is not None else _CurrentTimeProvider()
         super().__init__({}, exchange)
@@ -114,8 +113,22 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         _stop = str(self._stop) if stop is None else stop
         if _start is None or _stop is None:
             raise ValueError("Start and stop date must be provided")
-        self._get_smbs_at([symb], _start, _stop)
-        return self._cut_at_current_time(super().read(_s_path, start, stop, transform, chunksize, **kwargs), prev_bar=True)  # type: ignore
+
+        # - refresh symbol's data
+        self._handle_symbols_data_from_to([symb], _start, _stop)
+
+        # - we don't use chunksize from InMemoryDataFrameReader because it returns generator
+        res = self._cut_at_current_time(super().read(_s_path, start, stop, transform, chunksize=0, **kwargs), prev_bar=True)  # type: ignore
+
+        # - when it's asked to have chunks, it returns generator (single chunk)
+        if chunksize > 0:
+
+            def __iterable():
+                yield res
+
+            return __iterable()
+
+        return res
 
     def __getitem__(self, keys):
         """
@@ -157,12 +170,12 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         _start = str(self._start) if _start is None else _start
         _stop = str(self._stop) if _stop is None else _stop
 
-        r = self._cut_at_current_time(self._get_smbs_at(_instruments, _start, _stop), prev_bar=True)
+        r = self._cut_at_current_time(self._handle_symbols_data_from_to(_instruments, _start, _stop), prev_bar=True)
         if not _as_dict and len(_instruments) == 1:
             return r.get(_instruments[0])
         return r
 
-    def _load_data(
+    def _load_candle_data(
         self, symbols: List[str], start: str | pd.Timestamp, stop: str | pd.Timestamp, timeframe: str
     ) -> Dict[str, pd.DataFrame | pd.Series]:
         _ohlcs = defaultdict(list)
@@ -193,7 +206,9 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         ohlc = {smb.upper(): srows(*vs, keep="first") for smb, vs in _ohlcs.items() if len(vs) > 0}
         return ohlc
 
-    def _get_smbs_at(self, symbols: List[str], start: str, stop: str) -> Dict[str, pd.DataFrame | pd.Series]:
+    def _handle_symbols_data_from_to(
+        self, symbols: List[str], start: str, stop: str
+    ) -> Dict[str, pd.DataFrame | pd.Series]:
         _dtf = pd.Timedelta(self._data_timeframe)
         T = lambda x: pd.Timestamp(x)
         _start, _stop = map(T, handle_start_stop(start, stop))
@@ -204,14 +219,14 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
             _s_req = min(_start, self._start if self._start else _start)
             _e_req = max(_stop, self._stop if self._stop else _stop)
             logger.debug(f"Loading all data {_s_req} - {_e_req} for { ','.join(_new_symbols)} ")
-            _new_data = self._load_data(_new_symbols, _s_req, _e_req + _dtf, self._data_timeframe)
+            _new_data = self._load_candle_data(_new_symbols, _s_req, _e_req + _dtf, self._data_timeframe)
             self._data |= _new_data
 
         # - part intervals
         if self._start and _start < self._start:
             _smbs = list(self._data.keys())
             logger.debug(f"Updating {len(_smbs)} symbols before interval {_start} : {self._start}")
-            _before = self._load_data(_smbs, _start, self._start + _dtf, self._data_timeframe)
+            _before = self._load_candle_data(_smbs, _start, self._start + _dtf, self._data_timeframe)
             for k, c in _before.items():
                 self._data[k] = srows(c, self._data[k], keep="first")
 
@@ -219,7 +234,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         if self._stop and _stop > self._stop:
             _smbs = list(self._data.keys())
             logger.debug(f"Updating {len(_smbs)} symbols after interval {self._stop} : {_stop}")
-            _after = self._load_data(_smbs, self._stop - _dtf, _stop, self._data_timeframe)
+            _after = self._load_candle_data(_smbs, self._stop - _dtf, _stop, self._data_timeframe)
             for k, c in _after.items():
                 self._data[k] = srows(self._data[k], c, keep="last")
 
@@ -256,18 +271,30 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         return self._cut_at_current_time(_ext_data)  # type: ignore
 
     def _cut_at_current_time(
-        self, data: pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series], prev_bar: bool = False
+        self, data: pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | List, prev_bar: bool = False
     ) -> pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | List:
-        _c_time = self._current_time_provider.time()
+
+        # - when no any limits - just returns it as is
+        if (_c_time := self._current_time_provider.time()) is None:
+            return data
+
+        _cut_dict = lambda xs, t: {s: v.loc[:t] for s, v in xs.items()}
+        _cut_list_of_timestamped = lambda xs, t: list(filter(lambda x: x.time <= t, xs))
+        _cut_list_raw = lambda xs, t: list(filter(lambda x: x[0] <= t, xs))
 
         if prev_bar:
             _c_time = _c_time - pd.Timedelta(self._data_timeframe)
 
+        # - input is Dict[str, pd.DataFrame]
         if isinstance(data, dict):
-            return {s: v.loc[:_c_time] for s, v in data.items()}
+            return _cut_dict(data, _c_time)
 
+        # - input is List[(time, *data)] or List[Quote | Trade | Bar]
         if isinstance(data, list):
-            return list(filter(lambda x: x[0] <= _c_time, data))
+            if isinstance(data[0], (list, tuple)):
+                return _cut_list_raw(data, _c_time)
+            else:
+                return _cut_list_of_timestamped(data, _c_time.asm8.item())
 
         return data.loc[:_c_time]
 
