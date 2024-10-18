@@ -3,7 +3,7 @@ import pandas as pd
 
 from qubx.core.basics import ITimeProvider
 from qubx.core.series import OHLCV, Quote, Trade
-from qubx.data.helpers import loader
+from qubx.data.helpers import TimeGuardedReader, loader
 from qubx.data.readers import (
     STOCK_DAILY_SESSION,
     AsPandasFrame,
@@ -109,23 +109,27 @@ class TestDataReaders:
             assert True
 
     def test_loader(self):
-
         class _FixTimeProvider(ITimeProvider):
+            def __init__(self, time: str):
+                self._t_g = np.datetime64(time)
+
             def time(self) -> np.datetime64:
-                return np.datetime64("2022-06-01 05:00")
+                return self._t_g
 
         aux_all = pd.read_csv("tests/data/csv/electricity_data.csv.gz", parse_dates=["datetime"])
         electro_aux = aux_all[
             (aux_all["stateDescription"] == "U.S. Total") & (aux_all["sectorName"] == "all sectors")
         ].set_index("datetime", drop=True)
 
-        ldr = loader(
-            "BINANCE.UM",
-            "1h",
-            electro=electro_aux,
-            source="csv::tests/data/csv/",
-            # source="mqdb::xlydian-data",
-            time_provider=_FixTimeProvider(),
+        ldr = TimeGuardedReader(
+            loader(
+                "BINANCE.UM",
+                "1h",
+                electro=electro_aux,
+                source="csv::tests/data/csv/",
+                # source="mqdb::xlydian-data",
+            ),
+            _FixTimeProvider("2022-06-01 05:00"),
         )
         data = ldr.get_aux_data("electro", start="2020-01-01")
         assert data is not None

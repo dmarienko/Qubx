@@ -45,6 +45,13 @@ def load_data(
     return data
 
 
+def _wrap_as_iterable(data: Any) -> Iterable:
+    def __iterable():
+        yield data
+
+    return __iterable()
+
+
 class InMemoryCachedReader(InMemoryDataFrameReader):
     """
     A class for caching and reading financial data from memory.
@@ -63,15 +70,11 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
     # - external data
     _external: Dict[str, pd.DataFrame | pd.Series]
 
-    # - currently 'known' time, can be used for limiting data
-    _current_time_provider: ITimeProvider
-
     def __init__(
         self,
         exchange: str,
         reader: DataReader,
         base_timeframe: str,
-        time_provider: ITimeProvider | None = None,
         n_jobs: int = -1,
         **kwargs,
     ) -> None:
@@ -86,12 +89,6 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
             if isinstance(v, (pd.DataFrame, pd.Series)):
                 self._external[k] = v
 
-        # - if no time provider is provided, use stub
-        class _CurrentTimeProvider(ITimeProvider):
-            def time(self) -> np.datetime64 | None:
-                return None
-
-        self._current_time_provider = time_provider if time_provider is not None else _CurrentTimeProvider()
         super().__init__({}, exchange)
 
     def read(
@@ -118,19 +115,12 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         self._handle_symbols_data_from_to([symb], _start, _stop)
 
         # - we don't use chunksize from InMemoryDataFrameReader because it returns generator
-        res = self._cut_at_current_time(super().read(_s_path, start, stop, transform, chunksize=0, **kwargs), prev_bar=True)  # type: ignore
+        res = super().read(_s_path, start, stop, transform, chunksize=0, **kwargs)
 
         # - when it's asked to have chunks, it returns generator (single chunk)
-        if chunksize > 0:
+        return _wrap_as_iterable(res) if chunksize > 0 else res
 
-            def __iterable():
-                yield res
-
-            return __iterable()
-
-        return res
-
-    def __getitem__(self, keys):
+    def __getitem__(self, keys) -> Dict[str, pd.DataFrame | pd.Series] | pd.DataFrame | pd.Series:
         """
         This helper mostly for using in research notebooks
         """
@@ -170,10 +160,10 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         _start = str(self._start) if _start is None else _start
         _stop = str(self._stop) if _stop is None else _stop
 
-        r = self._cut_at_current_time(self._handle_symbols_data_from_to(_instruments, _start, _stop), prev_bar=True)
+        _r = self._handle_symbols_data_from_to(_instruments, _start, _stop)
         if not _as_dict and len(_instruments) == 1:
-            return r.get(_instruments[0])
-        return r
+            return _r.get(_instruments[0], pd.DataFrame())
+        return _r
 
     def _load_candle_data(
         self, symbols: List[str], start: str | pd.Timestamp, stop: str | pd.Timestamp, timeframe: str
@@ -268,35 +258,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
             _e = kwargs.pop("stop") if "stop" in kwargs else None
             _ext_data = _ext_data[:_e] if _e else _ext_data
             _ext_data = _ext_data[_s:] if _s else _ext_data
-        return self._cut_at_current_time(_ext_data)  # type: ignore
-
-    def _cut_at_current_time(
-        self, data: pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | List, prev_bar: bool = False
-    ) -> pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | List:
-
-        # - when no any limits - just returns it as is
-        if (_c_time := self._current_time_provider.time()) is None:
-            return data
-
-        _cut_dict = lambda xs, t: {s: v.loc[:t] for s, v in xs.items()}
-        _cut_list_of_timestamped = lambda xs, t: list(filter(lambda x: x.time <= t, xs))
-        _cut_list_raw = lambda xs, t: list(filter(lambda x: x[0] <= t, xs))
-
-        if prev_bar:
-            _c_time = _c_time - pd.Timedelta(self._data_timeframe)
-
-        # - input is Dict[str, pd.DataFrame]
-        if isinstance(data, dict):
-            return _cut_dict(data, _c_time)
-
-        # - input is List[(time, *data)] or List[Quote | Trade | Bar]
-        if isinstance(data, list):
-            if isinstance(data[0], (list, tuple)):
-                return _cut_list_raw(data, _c_time)
-            else:
-                return _cut_list_of_timestamped(data, _c_time.asm8.item())
-
-        return data.loc[:_c_time]
+        return _ext_data
 
     def _get_candles(
         self,
@@ -312,6 +274,87 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
 
     def __str__(self) -> str:
         return f"InMemoryCachedReader(exchange={self.exchange},timeframe={self._data_timeframe})"
+
+
+class TimeGuardedReader(InMemoryDataFrameReader):
+    # - currently 'known' time, can be used for limiting data
+    _time_guard_provider: ITimeProvider
+    _reader: InMemoryCachedReader
+
+    def __init__(
+        self,
+        reader: InMemoryCachedReader,
+        time_guard: ITimeProvider | None = None,
+    ) -> None:
+        # - if no time provider is provided, use stub
+        class _NoTimeGuard(ITimeProvider):
+            def time(self) -> np.datetime64 | None:
+                return None
+
+        self._time_guard_provider = time_guard if time_guard is not None else _NoTimeGuard()
+        self._reader = reader
+
+    def read(
+        self,
+        data_id: str,
+        start: str | None = None,
+        stop: str | None = None,
+        transform: DataTransformer = DataTransformer(),
+        chunksize=0,
+        # timeframe: str | None = None,
+        **kwargs,
+    ) -> Iterable | List:
+        xs = self._time_guarded_data(
+            self._reader.read(data_id, start=start, stop=stop, transform=transform, chunksize=0, **kwargs),  # type: ignore
+            prev_bar=True,
+        )
+        return _wrap_as_iterable(xs) if chunksize > 0 else xs
+
+    def get_aux_data(self, data_id: str, **kwargs) -> Any:
+        return self._time_guarded_data(self._reader.get_aux_data(data_id, exchange=self._reader.exchange, **kwargs))
+
+    def __getitem__(self, keys):
+        return self._time_guarded_data(self._reader.__getitem__(keys), prev_bar=True)
+
+    def _time_guarded_data(
+        self, data: pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | List, prev_bar: bool = False
+    ) -> pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | List:
+        """
+        This function is responsible for limiting the data based on a given time guard.
+
+        Parameters:
+        - data (pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | List): The data to be limited.
+        - prev_bar (bool, optional): If True, the time guard is applied to the previous bar. Defaults to False.
+
+        Returns:
+        - pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | List: The limited data.
+        """
+        # - when no any limits - just returns it as is
+        if (_c_time := self._time_guard_provider.time()) is None:
+            return data
+
+        _cut_dict = lambda xs, t: {s: v.loc[:t] for s, v in xs.items()}
+        _cut_list_of_timestamped = lambda xs, t: list(filter(lambda x: x.time <= t, xs))
+        _cut_list_raw = lambda xs, t: list(filter(lambda x: x[0] <= t, xs))
+
+        if prev_bar:
+            _c_time = _c_time - pd.Timedelta(self._reader._data_timeframe)
+
+        # - input is Dict[str, pd.DataFrame]
+        if isinstance(data, dict):
+            return _cut_dict(data, _c_time)
+
+        # - input is List[(time, *data)] or List[Quote | Trade | Bar]
+        if isinstance(data, list):
+            if isinstance(data[0], (list, tuple, np.ndarray)):
+                return _cut_list_raw(data, _c_time)
+            else:
+                return _cut_list_of_timestamped(data, _c_time.asm8.item())
+
+        return data.loc[:_c_time]
+
+    def __str__(self) -> str:
+        return f"InMemoryCachedReaderWithTimeGuard(exchange={self._reader.exchange},timeframe={self._reader._data_timeframe})"
 
 
 __KNOWN_READERS = {
