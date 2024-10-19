@@ -340,7 +340,7 @@ def aggregate_returns(returns: pd.Series, convert_to: str) -> pd.DataFrame | pd.
     str_check = convert_to.lower()
     resample_mod = None
     if str_check in ["a", "annual", "y", "yearly"]:
-        resample_mod = "A"
+        resample_mod = "YE"
     elif str_check in ["m", "monthly", "mon"]:
         resample_mod = "ME"
     elif str_check in ["w", "weekly"]:
