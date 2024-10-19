@@ -775,6 +775,8 @@ def simulate(
         If True, enables event batching for optimization.
     accurate_stop_orders_execution (bool):
         If True, enables more accurate stop order execution simulation.
+    aux_data (DataReader | None):
+        Auxiliary data provider (default is None).
     debug (Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None):
         Logging level for debugging.
 

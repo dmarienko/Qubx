@@ -133,8 +133,8 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
             for k in keys:
                 if isinstance(k, slice):
                     _start, _stop = k.start, k.stop
-                if isinstance(k, (list, tuple)):
-                    _instruments = k
+                if isinstance(k, (list, tuple, set)):
+                    _instruments = list(k)
                     _as_dict = True
                 if isinstance(k, str):
                     _instruments.append(k)
