@@ -234,7 +234,7 @@ class SubscriptionType:
     OHLC = "ohlc"
 
 
-class IMarketDataProvider:
+class IMarketDataProvider(ITimeProvider):
     """
     Interface for market data providing class
     """
@@ -252,7 +252,7 @@ class IMarketDataProvider:
     def get_instrument(self, symbol: str) -> Instrument | None: ...
 
 
-class StrategyContext(ITimeProvider, IMarketDataProvider):
+class StrategyContext(IMarketDataProvider):
     """
     Strategy context interface
     """
@@ -267,8 +267,6 @@ class StrategyContext(ITimeProvider, IMarketDataProvider):
     def start(self, blocking: bool = False): ...
 
     def stop(self): ...
-
-    def time(self) -> dt_64: ...
 
     def trade(
         self,

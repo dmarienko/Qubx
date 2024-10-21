@@ -429,7 +429,9 @@ class SimulatedExchange(IBrokerServiceProvider):
         units = kwargs.get("timestamp_units", "ns")
 
         for instr in instruments:
-            logger.debug(f"SimulatedExchangeService :: subscribe :: {instr.symbol} :: {subscription_type}")
+            logger.debug(
+                f"SimulatedExchangeService :: subscribe :: {instr.symbol}({subscription_type}, {nback}, {timeframe})"
+            )
             self._symbol_to_instrument[instr.symbol] = instr
 
             _params: Dict[str, Any] = dict(
