@@ -10,6 +10,7 @@ from functools import wraps
 
 from qubx import logger
 from qubx.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
+from qubx.pandaz.utils import ohlc_resample, srows
 from qubx.utils.time import infer_series_frequency, handle_start_stop
 from psycopg.types.datetime import TimestampLoader
 
@@ -233,6 +234,28 @@ class CsvStorageDataReader(DataReader):
         raw_data = selected_table.to_pandas().to_numpy()
         transform.process_data(raw_data)
         return transform.collect()
+
+    def get_candles(
+        self,
+        exchange: str,
+        symbols: list[str],
+        start: str | pd.Timestamp,
+        stop: str | pd.Timestamp,
+        timeframe: str | None = None,
+    ) -> pd.DataFrame:
+        """
+        Returns pandas DataFrame of candles for given exchange and symbols within specified time range and timeframe
+        """
+        _r = []
+        for symbol in symbols:
+            x = self.read(
+                f"{exchange}:{symbol}", start=start, stop=stop, timeframe=timeframe, transform=AsPandasFrame()
+            )
+            if x is not None:
+                if timeframe is not None:
+                    x = ohlc_resample(x, timeframe)
+                _r.append(x.assign(symbol=symbol.upper(), timestamp=x.index))  # type: ignore
+        return srows(*_r).set_index(["timestamp", "symbol"])
 
     def get_names(self, **kwargs) -> List[str]:
         _n = []
