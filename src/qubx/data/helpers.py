@@ -18,7 +18,7 @@ from qubx.data.readers import (
     DataTransformer,
     QuestDBConnector,
 )
-from qubx.pandaz.utils import generate_equal_date_ranges, ohlc_resample, srows
+from qubx.pandaz.utils import OhlcDict, generate_equal_date_ranges, ohlc_resample, srows
 from qubx.utils.misc import ProgressParallel
 from qubx.utils.time import convert_seconds_to_str, handle_start_stop, infer_series_frequency
 
@@ -33,6 +33,10 @@ def load_data(
     transform: DataTransformer = AsPandasFrame(),
     max_workers: int = 16,
 ) -> dict[str, Any]:
+    """
+    DEPRECATED: Use `loader` method instead.
+    """
+    print("DEPRECATED: Use 'loader()' method instead !")
     if isinstance(symbols, str):
         symbols = [symbols]
     executor = ThreadPoolExecutor(max_workers=min(max_workers, len(symbols)))
@@ -230,7 +234,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
 
         self._start = min(_start, self._start if self._start else _start)
         self._stop = max(_stop, self._stop if self._stop else _stop)
-        return {s: self._data[s].loc[_start:_stop] for s in symbols if s in self._data}
+        return OhlcDict({s: self._data[s].loc[_start:_stop] for s in symbols if s in self._data})
 
     def get_aux_data_ids(self) -> Set[str]:
         return self._reader.get_aux_data_ids() | set(self._external.keys())
@@ -333,7 +337,7 @@ class TimeGuardedWrapper(DataReader):
         if (_c_time := self._time_guard_provider.time()) is None:
             return data
 
-        _cut_dict = lambda xs, t: {s: v.loc[:t] for s, v in xs.items()}
+        _cut_dict = lambda xs, t: OhlcDict({s: v.loc[:t] for s, v in xs.items()})
         _cut_list_of_timestamped = lambda xs, t: list(filter(lambda x: x.time <= t, xs))
         _cut_list_raw = lambda xs, t: list(filter(lambda x: x[0] <= t, xs))
 
@@ -391,7 +395,7 @@ def loader(
     _c: Type[DataReader] | None = __KNOWN_READERS.get(_rcls_par[0])
     if _c is None:
         raise ValueError(
-            f"Unsupported data reader type: {_rcls_par[0]}. Supported names: {', '.join(__known_readers.keys())}."
+            f"Unsupported data reader type: {_rcls_par[0]}. Supported names: {', '.join(__KNOWN_READERS.keys())}."
         )
 
     reader_object: DataReader = _c(_rcls_par[1]) if len(_rcls_par) else _c()
