@@ -23,32 +23,6 @@ from qubx.utils.misc import ProgressParallel
 from qubx.utils.time import convert_seconds_to_str, handle_start_stop, infer_series_frequency
 
 
-def load_data(
-    qdb: MultiQdbConnector,
-    exch: str,
-    symbols: list | str,
-    start: str,
-    stop: str = "now",
-    timeframe="1h",
-    transform: DataTransformer = AsPandasFrame(),
-    max_workers: int = 16,
-) -> dict[str, Any]:
-    """
-    DEPRECATED: Use `loader` method instead.
-    """
-    print("DEPRECATED: Use 'loader()' method instead !")
-    if isinstance(symbols, str):
-        symbols = [symbols]
-    executor = ThreadPoolExecutor(max_workers=min(max_workers, len(symbols)))
-    data = {}
-    res = {
-        s: executor.submit(qdb.read, f"{exch}:{s}", start, stop, transform=transform, timeframe=timeframe)
-        for s in symbols
-    }
-    data = {s: r.result() for s, r in res.items()}
-    return data
-
-
 def _wrap_as_iterable(data: Any) -> Iterable:
     def __iterable():
         yield data
