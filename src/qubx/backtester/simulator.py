@@ -37,6 +37,7 @@ from qubx.core.strategy import (
 from qubx.core.context import StrategyContextImpl
 from qubx.backtester.ome import OrdersManagementEngine, OmeReport
 
+from qubx.data.helpers import InMemoryCachedReader, TimeGuardedWrapper
 from qubx.data.readers import (
     AsTrades,
     DataReader,
@@ -428,7 +429,9 @@ class SimulatedExchange(IBrokerServiceProvider):
         units = kwargs.get("timestamp_units", "ns")
 
         for instr in instruments:
-            logger.debug(f"SimulatedExchangeService :: subscribe :: {instr.symbol} :: {subscription_type}")
+            logger.debug(
+                f"SimulatedExchangeService :: subscribe :: {instr.symbol}({subscription_type}, {nback}, {timeframe})"
+            )
             self._symbol_to_instrument[instr.symbol] = instr
 
             _params: Dict[str, Any] = dict(
@@ -731,6 +734,7 @@ def simulate(
     silent: bool = False,
     enable_event_batching: bool = True,
     accurate_stop_orders_execution: bool = False,
+    aux_data: DataReader | None = None,
     debug: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None = "WARNING",
 ) -> list[TradingSessionResult]:
     """
@@ -773,6 +777,8 @@ def simulate(
         If True, enables event batching for optimization.
     accurate_stop_orders_execution (bool):
         If True, enables more accurate stop order execution simulation.
+    aux_data (DataReader | None):
+        Auxiliary data provider (default is None).
     debug (Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None):
         Logging level for debugging.
 
@@ -842,6 +848,7 @@ def simulate(
         silent=silent,
         enable_event_batching=enable_event_batching,
         accurate_stop_orders_execution=accurate_stop_orders_execution,
+        aux_data=aux_data,
     )
 
 
@@ -906,6 +913,7 @@ def _run_setups(
     silent: bool = False,
     enable_event_batching: bool = True,
     accurate_stop_orders_execution: bool = False,
+    aux_data: DataReader | None = None,
 ) -> List[TradingSessionResult]:
     # loggers don't work well with joblib and multiprocessing in general because they contain
     # open file handlers that cannot be pickled. I found a solution which requires the usage of enqueue=True
@@ -928,6 +936,7 @@ def _run_setups(
             silent=silent,
             enable_event_batching=enable_event_batching,
             accurate_stop_orders_execution=accurate_stop_orders_execution,
+            aux_data_provider=aux_data,
         )
         for id, s in enumerate(setups)
     )
@@ -946,6 +955,7 @@ def _run_setup(
     silent: bool = False,
     enable_event_batching: bool = True,
     accurate_stop_orders_execution: bool = False,
+    aux_data_provider: InMemoryCachedReader | None = None,
 ) -> TradingSessionResult:
     _trigger = trigger
     _stop = stop
@@ -996,6 +1006,13 @@ def _run_setup(
         case _:
             raise ValueError(f"Unsupported setup type: {setup.setup_type} !")
 
+    # - check aux data provider
+    _aux_data = None
+    if aux_data_provider is not None:
+        if not isinstance(aux_data_provider, InMemoryCachedReader):
+            logger.error("Aux data provider should be an instance of InMemoryCachedReader! Skipping it.")
+        _aux_data = TimeGuardedWrapper(aux_data_provider, broker)
+
     ctx = StrategyContextImpl(
         strategy=strat,  # type: ignore
         config=None,  # TODO: need to think how we could pass altered parameters here (from variating etc)
@@ -1007,6 +1024,7 @@ def _run_setup(
         trigger_spec=_trigger,
         fit_spec=fit,
         logs_writer=logs_writer,
+        aux_data_provider=_aux_data,
     )
     ctx.start()
 

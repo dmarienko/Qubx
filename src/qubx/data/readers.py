@@ -1,5 +1,5 @@
 import re, os
-from typing import Callable, Dict, List, Union, Optional, Iterator, Iterable, Any
+from typing import Dict, List, Set, Union, Optional, Iterator, Iterable, Any
 from os.path import exists, join
 import numpy as np
 import pandas as pd
@@ -10,6 +10,7 @@ from functools import wraps
 
 from qubx import logger
 from qubx.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
+from qubx.pandaz.utils import ohlc_resample, srows
 from qubx.utils.time import infer_series_frequency, handle_start_stop
 from psycopg.types.datetime import TimestampLoader
 
@@ -97,6 +98,33 @@ class DataReader:
         **kwargs,
     ) -> Iterator | List:
         raise NotImplemented()
+
+    def get_aux_data_ids(self) -> Set[str]:
+        """
+        Returns list of all auxiliary data IDs available for this data reader
+        """
+
+        def _list_methods(cls):
+            _meth = []
+            for k, s in cls.__dict__.items():
+                if k.startswith("get_") and k not in ["get_names", "get_aux_data_ids", "get_aux_data"] and callable(s):
+                    _meth.append(k[4:])
+            return _meth
+
+        _d_ids = _list_methods(self.__class__)
+        for bc in self.__class__.__bases__:
+            _d_ids.extend(_list_methods(bc))
+        return set(_d_ids)
+
+    def get_aux_data(self, data_id: str, **kwargs) -> Any:
+        """
+        Returns auxiliary data for the specified data ID
+        """
+        if hasattr(self, f"get_{data_id}"):
+            return getattr(self, f"get_{data_id}")(**kwargs)
+        raise ValueError(
+            f"{self.__class__.__name__} doesn't have getter for '{data_id}' auxiliary data. Available data: {self.get_aux_data_ids()}"
+        )
 
 
 class CsvStorageDataReader(DataReader):
@@ -207,6 +235,28 @@ class CsvStorageDataReader(DataReader):
         transform.process_data(raw_data)
         return transform.collect()
 
+    def get_candles(
+        self,
+        exchange: str,
+        symbols: list[str],
+        start: str | pd.Timestamp,
+        stop: str | pd.Timestamp,
+        timeframe: str | None = None,
+    ) -> pd.DataFrame:
+        """
+        Returns pandas DataFrame of candles for given exchange and symbols within specified time range and timeframe
+        """
+        _r = []
+        for symbol in symbols:
+            x = self.read(
+                f"{exchange}:{symbol}", start=start, stop=stop, timeframe=timeframe, transform=AsPandasFrame()
+            )
+            if x is not None:
+                if timeframe is not None:
+                    x = ohlc_resample(x, timeframe)
+                _r.append(x.assign(symbol=symbol.upper(), timestamp=x.index))  # type: ignore
+        return srows(*_r).set_index(["timestamp", "symbol"])
+
     def get_names(self, **kwargs) -> List[str]:
         _n = []
         for root, _, files in os.walk(self.path):
@@ -228,7 +278,10 @@ class InMemoryDataFrameReader(DataReader):
     Data reader for pandas DataFrames
     """
 
-    def __init__(self, data: Dict[str, pd.DataFrame], exchange: str | None = None) -> None:
+    exchange: str | None
+    _data: Dict[str, pd.DataFrame | pd.Series]
+
+    def __init__(self, data: Dict[str, pd.DataFrame | pd.Series], exchange: str | None = None) -> None:
         if not isinstance(data, dict):
             raise ValueError("data must be a dictionary of pandas DataFrames")
         self._data = data
@@ -295,6 +348,9 @@ class InMemoryDataFrameReader(DataReader):
 
             return __iterable()
         return res
+
+    def get_symbols(self, **kwargs) -> List[str]:
+        return self.get_names()
 
 
 class AsPandasFrame(DataTransformer):

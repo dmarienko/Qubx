@@ -6,6 +6,8 @@ from loguru import logger
 import os, sys, stackprinter
 from qubx.core.lookups import FeesLookup, GlobalLookup, InstrumentsLookup
 
+# - TODO: import some main methods from packages
+
 
 def formatter(record):
     end = record["extra"].get("end", "\n")
@@ -63,7 +65,7 @@ lookup = GlobalLookup(InstrumentsLookup(), FeesLookup())
 # registering magic for jupyter notebook
 if runtime_env() in ["notebook", "shell"]:
     from IPython.core.magic import Magics, magics_class, line_magic, line_cell_magic
-    from IPython import get_ipython
+    from IPython.core.getipython import get_ipython
 
     @magics_class
     class QubxMagics(Magics):
@@ -195,4 +197,4 @@ if runtime_env() in ["notebook", "shell"]:
                     p.terminate()
 
     # - registering magic here
-    get_ipython().register_magics(QubxMagics)
+    get_ipython().register_magics(QubxMagics)  # type: ignore

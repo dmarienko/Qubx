@@ -26,7 +26,7 @@ class TestMetrics:
 
     # test pd series
     def test_pd(self):
-        rng = pd.date_range("1/1/2011", periods=6, freq="H")
+        rng = pd.date_range("1/1/2011", periods=6, freq="h")
         ts = pd.Series([1, 2, 3, 1, 8, 11], index=rng)
         res = absmaxdd(ts)
         assert res[0] == 2
@@ -66,7 +66,9 @@ class TestMetrics:
     def test_cagr(self):
         assert N(cagr(self.d_rets)) == 1.913593
 
-        year_returns = pd.Series(np.array([3.0, 3.0, 3.0]) / 100, index=pd.date_range("2000-1-30", periods=3, freq="A"))
+        year_returns = pd.Series(
+            np.array([3.0, 3.0, 3.0]) / 100, index=pd.date_range("2000-1-30", periods=3, freq="YE")
+        )
         assert N(cagr(year_returns, YEARLY)) == 0.03
 
     def test_aggregate(self):
