@@ -387,6 +387,14 @@ def loader(
 
     Returns:
         InMemoryCachedReader: An initialized InMemoryCachedReader object, potentially pre-loaded with data.
+
+    Examples:
+    --------
+    >>> ld = loader("BINANCE.UM", '1h', source="mqdb::xlydian-data")
+        d = ld["BTCUSDT", "ETHUSDT", "SOLUSDT" , "2020-01-01":"2024-12-01"]
+        d('1d').close.plot()
+        print(d('1d'))
+        d("4h").close.pct_change(fill_method=None).cov()
     """
     if not source:
         raise ValueError("Source parameter must be provided")
