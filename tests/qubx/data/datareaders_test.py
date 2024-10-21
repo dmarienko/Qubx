@@ -98,7 +98,7 @@ class TestDataReaders:
 
     def test_supported_data_id(self):
         r0 = CsvStorageDataReader("tests/data/csv/")
-        assert not r0.get_aux_data_ids()
+        assert set(r0.get_aux_data_ids()) == {"candles"}
 
         r1 = InMemoryDataFrameReader({"TEST1": pd.DataFrame(), "TEST2": pd.DataFrame()})
         assert r1.get_aux_data_ids()
