@@ -1,13 +1,17 @@
 import numpy as np
 import pandas as pd
 
+from qubx.core.basics import ITimeProvider
 from qubx.core.series import OHLCV, Quote, Trade
+from qubx.data.helpers import TimeGuardedWrapper, loader
 from qubx.data.readers import (
     STOCK_DAILY_SESSION,
     AsPandasFrame,
     CsvStorageDataReader,
+    InMemoryDataFrameReader,
     AsQuotes,
     AsOhlcvSeries,
+    QuestDBConnector,
     RestoreTicksFromOHLC,
 )
 from pytest import approx
@@ -91,3 +95,43 @@ class TestDataReaders:
 
         assert d1[0].time == T("2000-01-03T09:30:00.100000000").item()
         assert d1[3].time == T("2000-01-03T15:59:59.900000000").item()
+
+    def test_supported_data_id(self):
+        r0 = CsvStorageDataReader("tests/data/csv/")
+        assert set(r0.get_aux_data_ids()) == {"candles"}
+
+        r1 = InMemoryDataFrameReader({"TEST1": pd.DataFrame(), "TEST2": pd.DataFrame()})
+        assert r1.get_aux_data_ids()
+        assert set(r1.get_aux_data("symbols")) == {"TEST1", "TEST2"}
+        try:
+            r1.get_aux_data("some_arbitrary_data_id")
+        except:
+            assert True
+
+    def test_aux_wrapped_loader(self):
+        class _FixTimeProvider(ITimeProvider):
+            def __init__(self, time: str):
+                self._t_g = np.datetime64(time)
+
+            def time(self) -> np.datetime64:
+                return self._t_g
+
+        aux_all = pd.read_csv("tests/data/csv/electricity_data.csv.gz", parse_dates=["datetime"])
+        electro_aux = aux_all[
+            (aux_all["stateDescription"] == "U.S. Total") & (aux_all["sectorName"] == "all sectors")
+        ].set_index("datetime", drop=True)
+
+        ldr = TimeGuardedWrapper(
+            loader(
+                "BINANCE.UM",
+                "1h",
+                electro=electro_aux,
+                source="csv::tests/data/csv/",
+                # source="mqdb::xlydian-data",
+            ),
+            _FixTimeProvider("2022-06-01 05:00"),
+        )
+        data = ldr.get_aux_data("electro", start="2020-01-01")
+        assert data is not None
+        assert isinstance(data, pd.DataFrame)
+        assert data.index[-1] < pd.Timestamp("2022-06-01 05:00")

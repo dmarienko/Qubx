@@ -65,6 +65,7 @@ if runtime_env() in ["notebook", "shell"]:
         AsTimestampedRecords,
         RestoreTicksFromOHLC,
     )
+    from qubx.data.helpers import loader
 
     # - - - - Simulator stuff - - - -
     from qubx.backtester.simulator import simulate

@@ -3,11 +3,6 @@
 """
 
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-from types import FunctionType
-from collections import defaultdict
-from dataclasses import dataclass
-from threading import Thread
-from multiprocessing.pool import ThreadPool
 import traceback
 
 import pandas as pd
@@ -30,28 +25,58 @@ from qubx.core.basics import (
 )
 from qubx.core.series import Trade, Quote, Bar, OHLCV
 from qubx.utils.misc import Stopwatch
-from qubx.utils.time import convert_seconds_to_str
 
 
 _SW = Stopwatch()
 
 
 class ITradingServiceProvider(ITimeProvider, IComminucationManager):
+    """
+    Trading service provider interface that manages account operations, order placement, and position tracking.
+    """
+
     acc: AccountProcessor
 
     def set_account(self, account: AccountProcessor):
+        """
+        Set the account processor for the trading service provider.
+
+        :param account: The AccountProcessor object to be set.
+        """
         self.acc = account
 
     def get_account(self) -> AccountProcessor:
+        """
+        Retrieve the current account processor.
+
+        :return: The current AccountProcessor object.
+        """
         return self.acc
 
     def get_name(self) -> str:
+        """
+        Get the name of the trading service provider.
+
+        :return: The name of the trading service provider as a string.
+        :raises NotImplementedError: If the method is not implemented by the subclass.
+        """
         raise NotImplementedError("get_name is not implemented")
 
     def get_account_id(self) -> str:
+        """
+        Get the account ID associated with the trading service provider.
+
+        :return: The account ID as a string.
+        :raises NotImplementedError: If the method is not implemented by the subclass.
+        """
         raise NotImplementedError("get_account_id is not implemented")
 
     def get_capital(self) -> float:
+        """
+        Get the available capital in the account.
+
+        :return: The free capital as a float.
+        """
         return self.acc.get_free_capital()
 
     def send_order(
@@ -65,25 +90,81 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
         time_in_force: str = "gtc",
         **optional,
     ) -> Order:
+        """
+        Send an order to the trading service.
+
+        :param instrument: The instrument to trade.
+        :param order_side: The side of the order (e.g., "buy" or "sell").
+        :param order_type: The type of the order (e.g., "market" or "limit").
+        :param amount: The amount of the instrument to trade.
+        :param price: The price for limit orders (optional).
+        :param client_id: A client-specified ID for the order (optional).
+        :param time_in_force: The time in force for the order (default is "gtc" - good till cancelled).
+        :param optional: Additional optional parameters for the order.
+        :return: An Order object representing the sent order.
+        :raises NotImplementedError: If the method is not implemented by the subclass.
+        """
         raise NotImplementedError("send_order is not implemented")
 
     def cancel_order(self, order_id: str) -> Order | None:
+        """
+        Cancel an existing order.
+
+        :param order_id: The ID of the order to cancel.
+        :return: The cancelled Order object if successful, None otherwise.
+        :raises NotImplementedError: If the method is not implemented by the subclass.
+        """
         raise NotImplementedError("cancel_order is not implemented")
 
     def get_orders(self, symbol: str | None = None) -> List[Order]:
+        """
+        Get a list of current orders, optionally filtered by symbol.
+
+        :param symbol: The symbol to filter orders by (optional).
+        :return: A list of Order objects.
+        :raises NotImplementedError: If the method is not implemented by the subclass.
+        """
         raise NotImplementedError("get_orders is not implemented")
 
     def get_position(self, instrument: Instrument | str) -> Position:
+        """
+        Get the current position for a given instrument.
+
+        :param instrument: The instrument or symbol to get the position for.
+        :return: A Position object representing the current position.
+        :raises NotImplementedError: If the method is not implemented by the subclass.
+        """
         raise NotImplementedError("get_position is not implemented")
 
     def get_base_currency(self) -> str:
+        """
+        Get the base currency for the account.
+
+        :return: The base currency as a string.
+        :raises NotImplementedError: If the method is not implemented by the subclass.
+        """
         raise NotImplementedError("get_basic_currency is not implemented")
 
     def process_execution_report(self, symbol: str, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
+        """
+        Process an execution report for a given symbol.
+
+        :param symbol: The symbol the execution report is for.
+        :param report: A dictionary containing the execution report details.
+        :return: A tuple containing the updated Order and a list of Deal objects.
+        :raises NotImplementedError: If the method is not implemented by the subclass.
+        """
         raise NotImplementedError("process_execution_report is not implemented")
 
     @staticmethod
     def _extract_price(update: float | Quote | Trade | Bar) -> float:
+        """
+        Extract the price from various types of market data updates.
+
+        :param update: The market data update, which can be a float, Quote, Trade, or Bar.
+        :return: The extracted price as a float.
+        :raises ValueError: If the update type is unknown.
+        """
         if isinstance(update, float):
             return update
         elif isinstance(update, Quote):
@@ -96,6 +177,13 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
             raise ValueError(f"Unknown update type: {type(update)}")
 
     def update_position_price(self, symbol: str, timestamp: dt_64, update: float | Quote | Trade | Bar):
+        """
+        Update the price of a position for a given symbol.
+
+        :param symbol: The symbol of the position to update.
+        :param timestamp: The timestamp of the update.
+        :param update: The price update, which can be a float, Quote, Trade, or Bar.
+        """
         self.acc.update_position_price(timestamp, symbol, ITradingServiceProvider._extract_price(update))
 
 
@@ -146,7 +234,25 @@ class SubscriptionType:
     OHLC = "ohlc"
 
 
-class StrategyContext(ITimeProvider):
+class IMarketDataProvider(ITimeProvider):
+    """
+    Interface for market data providing class
+    """
+
+    def ohlc(self, instrument: Instrument | str, timeframe: str) -> OHLCV: ...
+
+    def quote(self, symbol: str) -> Quote | None: ...
+
+    def get_historical_ohlcs(self, instrument: Instrument | str, timeframe: str, length: int) -> OHLCV | None: ...
+
+    def get_aux_data(self, data_id: str, **parametes) -> pd.DataFrame | None: ...
+
+    def get_instruments(self) -> List[Instrument]: ...
+
+    def get_instrument(self, symbol: str) -> Instrument | None: ...
+
+
+class StrategyContext(IMarketDataProvider):
     """
     Strategy context interface
     """
@@ -156,17 +262,11 @@ class StrategyContext(ITimeProvider):
     acc: AccountProcessor
     broker_provider: IBrokerServiceProvider  # market data provider
 
-    def get_instrument(self, symbol: str) -> Instrument: ...
-
     def process_data(self, symbol: str, d_type: str, data: Any) -> bool: ...
-
-    def ohlc(self, instrument: str | Instrument, timeframe: str) -> OHLCV: ...
 
     def start(self, blocking: bool = False): ...
 
     def stop(self): ...
-
-    def time(self) -> dt_64: ...
 
     def trade(
         self,
@@ -181,13 +281,9 @@ class StrategyContext(ITimeProvider):
 
     def cancel_order(self, order_id: str): ...
 
-    def quote(self, symbol: str) -> Quote | None: ...
-
     def get_capital(self) -> float: ...
 
     def get_reserved(self, instrument: Instrument) -> float: ...
-
-    def get_historical_ohlcs(self, instrument: Instrument | str, timeframe: str, length: int) -> OHLCV | None: ...
 
     def set_universe(self, instruments: list[Instrument]): ...
 
