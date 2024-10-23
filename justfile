@@ -23,4 +23,4 @@ dev-install:
 	
 
 publish: build test
-	@if [ "$(git symbolic-ref --short -q HEAD)" = "master" ]; then rm -rf dist && rm -rf build && poetry build && twine upload dist/*; else echo ">>> Not in master branch !"; fi
+	@if [ "$(git symbolic-ref --short -q HEAD)" = "main" ]; then rm -rf dist && rm -rf build && poetry build && twine upload dist/*; else echo ">>> Not in master branch !"; fi
