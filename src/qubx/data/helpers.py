@@ -9,6 +9,7 @@ from collections import defaultdict
 
 from qubx import logger
 from qubx.core.basics import ITimeProvider
+from qubx.core.series import TimeSeries
 from qubx.data.readers import (
     AsPandasFrame,
     CsvStorageDataReader,
@@ -314,6 +315,7 @@ class TimeGuardedWrapper(DataReader):
         _cut_dict = lambda xs, t: OhlcDict({s: v.loc[:t] for s, v in xs.items()})
         _cut_list_of_timestamped = lambda xs, t: list(filter(lambda x: x.time <= t, xs))
         _cut_list_raw = lambda xs, t: list(filter(lambda x: x[0] <= t, xs))
+        _cut_time_series = lambda ts, t: ts.loc[: str(t)]
 
         if prev_bar:
             _c_time = _c_time - pd.Timedelta(self._reader._data_timeframe)
@@ -328,6 +330,10 @@ class TimeGuardedWrapper(DataReader):
                 return _cut_list_raw(data, _c_time)
             else:
                 return _cut_list_of_timestamped(data, _c_time.asm8.item())
+
+        # - input is TimeSeries
+        if isinstance(data, TimeSeries):
+            return _cut_time_series(data, _c_time)
 
         return data.loc[:_c_time]
 
