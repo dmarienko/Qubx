@@ -575,8 +575,8 @@ class OhlcDict(dict):
         if isinstance(orig, dict):
             _lst = []
             for k, o in orig.items():
-                if not k[0].isalpha():
-                    raise ValueError("Keys in the dictionary must start with an alphabet")
+                # if not k[0].isalpha():
+                # raise ValueError("Keys in the dictionary must start with an alphabet")
                 if not isinstance(o, (pd.DataFrame | pd.Series)):
                     raise ValueError("All values in the dictionary must be pandas Series or DataFrames")
                 _lst.extend(o.columns.values)
