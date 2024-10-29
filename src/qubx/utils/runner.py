@@ -6,9 +6,10 @@ from qubx import lookup, logger, formatter
 from qubx.core.context import StrategyContextImpl
 from qubx.impl.ccxt_connector import CCXTExchangesConnector
 from qubx.impl.ccxt_trading import CCXTTradingConnector
-from qubx.core.strategy import StrategyContext
+from qubx.core.strategy import StrategyContext, IStrategy
 from qubx.utils.misc import add_project_to_system_path, Struct, logo, version
 from qubx.core.loggers import LogsWriter
+from qubx.backtester.simulator import SimulatedTrading
 
 
 LOGFILE = "logs/"
@@ -31,6 +32,43 @@ def _instruments_for_exchange(exch: str, symbols: list) -> list:
         else:
             logger.warning(f"Can't find instrument for symbol {s} - try to refresh lookup first !")
     return instrs
+
+
+def run_ccxt_paper_trading(
+    strategy: IStrategy,
+    exchange: str,
+    symbols: list[str],
+    md_subscription: dict,
+    trigger_spec: str,
+    strategy_config: dict | None = None,
+    blocking: bool = True,
+) -> StrategyContext:
+    instruments = [lookup.find_symbol(exchange.upper(), s.upper()) for s in symbols]
+    instruments = [i for i in instruments if i is not None]
+    ctx = StrategyContextImpl(
+        strategy=strategy,
+        config=strategy_config,
+        broker_connector=CCXTExchangesConnector(
+            exchange.lower(),
+            SimulatedTrading("test"),
+            read_only=True,
+        ),
+        instruments=instruments,
+        md_subscription=md_subscription,
+        trigger_spec=trigger_spec,
+    )
+
+    if blocking:
+        try:
+            ctx.start(blocking=True)
+        except KeyboardInterrupt:
+            logger.info("Stopped by user")
+        finally:
+            ctx.stop()
+    else:
+        ctx.start()
+
+    return ctx
 
 
 def load_strategy_config(filename: str) -> Struct:

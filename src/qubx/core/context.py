@@ -221,6 +221,7 @@ class StrategyContextImpl(StrategyContext):
             case "trade" | "trades" | "tas":
                 timeframe = md_config.get("timeframe", "1Sec")
                 self._market_data_subcription_params = {
+                    "timeframe": timeframe,
                     "nback": md_config.get("nback", 1),
                 }
                 self._cache = CachedMarketDataHolder("1Sec")
@@ -354,7 +355,7 @@ class StrategyContextImpl(StrategyContext):
 
             # - if fit was not called - skip on_event call
             if not self.__init_fit_was_called:
-                logger.warning(
+                logger.debug(
                     f"[{self.time()}] {self.strategy.__class__.__name__}::on_event() is SKIPPED for now because on_fit() was not called yet !"
                 )
                 return False
