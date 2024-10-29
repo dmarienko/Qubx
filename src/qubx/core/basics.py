@@ -11,7 +11,7 @@ from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.core.utils import prec_ceil, prec_floor
 
 
-dt_64 = np.datetime64 | int
+dt_64 = np.datetime64
 td_64 = np.timedelta64
 
 OPTION_FILL_AT_SIGNAL_PRICE = "fill_at_signal_price"
