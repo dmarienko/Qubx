@@ -5,7 +5,7 @@ import numpy as np
 
 from numpy.lib.stride_tricks import as_strided as stride
 
-from qubx.utils.misc import Struct, blue
+from qubx.utils.misc import Struct
 
 
 def has_columns(x, *args):
@@ -572,16 +572,20 @@ class OhlcDict(dict):
     _fields: Set[str]
 
     def __init__(self, orig: dict):
+        _o_copy = {}
         if isinstance(orig, dict):
             _lst = []
             for k, o in orig.items():
-                if not k[0].isalpha():
-                    raise ValueError("Keys in the dictionary must start with an alphabet")
                 if not isinstance(o, (pd.DataFrame | pd.Series)):
-                    raise ValueError("All values in the dictionary must be pandas Series or DataFrames")
-                _lst.extend(o.columns.values)
+                    raise ValueError(
+                        f"All values in the dictionary must be pandas Series or DataFrames, but {k} is {type(o)}"
+                    )
+                # - skip empty data
+                if not o.empty:
+                    _o_copy[k] = o
+                    _lst.extend(o.columns.values)
         self._fields = set(_lst)
-        super().__init__(orig)
+        super().__init__(_o_copy)
 
     def __call__(self, *args: Any, **kwds: Any) -> Any:
         if args:
@@ -592,7 +596,6 @@ class OhlcDict(dict):
         return self
 
     def __getattribute__(self, name: str) -> Any:
-
         if name != "_fields":
             if name in self._fields:
                 return retain_columns_and_join(self, name)

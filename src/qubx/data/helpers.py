@@ -166,9 +166,11 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         for (s, e), data in zip(_ranges, _results):
             assert isinstance(data, pd.DataFrame)
             try:
-                data_symbols = data.index.get_level_values(1).unique()
-                for smb in data_symbols:
-                    _ohlcs[smb].append(data.loc[pd.IndexSlice[:, smb], :].droplevel(1))
+                # - some periods of data may be empty so just skipping it to avoid error log
+                if not data.empty:
+                    data_symbols = data.index.get_level_values(1).unique()
+                    for smb in data_symbols:
+                        _ohlcs[smb].append(data.loc[pd.IndexSlice[:, smb], :].droplevel(1))
             except Exception as exc:
                 logger.error(f"> Failed to load data for {s} - {e} : {str(exc)}")
 
