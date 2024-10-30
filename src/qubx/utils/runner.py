@@ -4,8 +4,8 @@ import yaml, configparser, socket
 
 from qubx import lookup, logger, formatter
 from qubx.core.context import StrategyContextImpl
-from qubx.impl.ccxt_connector import CCXTExchangesConnector
-from qubx.impl.ccxt_trading import CCXTTradingConnector
+from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
+from qubx.connectors.ccxt.ccxt_trading import CCXTTradingConnector
 from qubx.core.strategy import StrategyContext, IStrategy
 from qubx.utils.misc import add_project_to_system_path, Struct, logo, version
 from qubx.core.loggers import LogsWriter

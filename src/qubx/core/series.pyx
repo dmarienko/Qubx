@@ -747,6 +747,27 @@ cdef class Bar:
         return "{o:%f | h:%f | l:%f | c:%f | v:%f}" % (self.open, self.high, self.low, self.close, self.volume)
 
 
+cdef class OrderBook:
+
+    def __init__(self, long long time, top_bid: float, top_ask: float, tick_size: float, bids: np.ndarray, asks: np.ndarray):
+        self.time = time
+        self.top_bid = top_bid
+        self.top_ask = top_ask
+        self.tick_size = tick_size
+        self.bids = bids
+        self.asks = asks
+    
+    def __repr__(self):
+        return f"[{time_to_str(self.time, 'ns')}] {self.top_bid} ({self.bids[0]}) | {self.top_ask} ({self.asks[0]})"
+    
+    cpdef Quote to_quote(self):
+        return Quote(self.time, self.top_bid, self.top_ask, self.bids[0], self.asks[0])
+    
+    cpdef double mid_price(self):
+        return 0.5 * (self.top_ask + self.top_bid)
+
+
+
 cdef class OHLCV(TimeSeries):
 
     def __init__(self, str name, timeframe, max_series_length=INFINITY) -> None:
