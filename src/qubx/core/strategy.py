@@ -23,7 +23,7 @@ from qubx.core.basics import (
     ITimeProvider,
     IComminucationManager,
 )
-from qubx.core.series import Trade, Quote, Bar, OHLCV
+from qubx.core.series import OrderBook, Trade, Quote, Bar, OHLCV
 from qubx.utils.misc import Stopwatch
 
 
@@ -167,8 +167,8 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
         """
         if isinstance(update, float):
             return update
-        elif isinstance(update, Quote):
-            return 0.5 * (update.bid + update.ask)  # type: ignore
+        elif isinstance(update, Quote) or isinstance(update, OrderBook):
+            return update.mid_price()
         elif isinstance(update, Trade):
             return update.price  # type: ignore
         elif isinstance(update, Bar):
@@ -230,8 +230,10 @@ class SubscriptionType:
 
     QUOTE = "quote"
     TRADE = "trade"
-    AGG_TRADE = "agg_trade"
     OHLC = "ohlc"
+    ORDERBOOK = "orderbook"
+    # TODO: remove this
+    AGG_TRADE = "agg_trade"
 
 
 class IMarketDataProvider(ITimeProvider):

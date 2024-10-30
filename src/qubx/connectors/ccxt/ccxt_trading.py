@@ -5,8 +5,6 @@ import stackprinter
 import traceback
 
 import ccxt
-import ccxt.pro as cxp
-from ccxt.base.decimal_to_precision import ROUND_UP
 from ccxt.base.exchange import Exchange, ExchangeError
 
 import numpy as np

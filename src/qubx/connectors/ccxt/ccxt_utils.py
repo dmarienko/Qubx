@@ -122,7 +122,7 @@ def ccxt_convert_trade(trade: dict[str, Any]) -> Trade:
 
 
 def ccxt_convert_orderbook(
-    ob: dict, instr: Instrument, levels: int = 50, tick_size_pct: float = 0.01, size_in_quoted: bool = False
+    ob: dict, instr: Instrument, levels: int = 50, tick_size_pct: float = 0.01, sizes_in_quoted: bool = False
 ) -> OrderBook:
     """
     Convert a ccxt order book to an OrderBook object with a fixed tick size percentage.
@@ -131,7 +131,7 @@ def ccxt_convert_orderbook(
         instr (Instrument): The instrument object containing market-specific details.
         levels (int, optional): The number of levels to include in the order book. Default is 50.
         tick_size_pct (float, optional): The tick size percentage. Default is 0.01%.
-        size_in_quoted (bool, optional): Whether the size is in the quoted currency. Default is False.
+        sizes_in_quoted (bool, optional): Whether the size is in the quoted currency. Default is False.
     Returns:
         OrderBook: The converted OrderBook object.
     """
@@ -145,14 +145,18 @@ def ccxt_convert_orderbook(
     # add an artificial update to trigger the snapshot building
     updates.append((_dt, 0, 0, True))
 
-    snapshots = build_orderbook_snapshots(
-        updates,
-        levels=levels,
-        tick_size_pct=tick_size_pct,
-        min_tick_size=instr.min_tick,
-        min_size_step=instr.min_size_step,
-        size_in_quoted=size_in_quoted,
-    )
+    try:
+        snapshots = build_orderbook_snapshots(
+            updates,
+            levels=levels,
+            tick_size_pct=tick_size_pct,
+            min_tick_size=instr.min_tick,
+            min_size_step=instr.min_size_step,
+            sizes_in_quoted=sizes_in_quoted,
+        )
+    except Exception as e:
+        logger.error(f"Failed to build order book snapshots: {e}", exc_info=True)
+        snapshots = None
 
     if not snapshots:
         raise CcxtOrderBookParsingError("Failed to build order book snapshots")

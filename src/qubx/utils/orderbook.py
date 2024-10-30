@@ -32,6 +32,11 @@ def prec_floor(a: float, precision: int) -> float:
 
 
 @njit
+def prec_ceil(a: float, precision: int):
+    return np.sign(a) * np.true_divide(np.ceil(round(abs(a) * 10**precision, precision)), 10**precision)
+
+
+@njit
 def get_tick(price: float, is_bid: bool, tick_size: float):
     if is_bid:
         return int(np.floor(round(price / tick_size, 1)))
@@ -177,7 +182,7 @@ def __build_orderbook_snapshots(
 
             if len(bids) > 0 and len(asks) > 0:
                 # - find tick_size dynamically based on mid_price
-                tick_size = prec_floor(0.5 * (top_b + top_a) * tick_size_fraction, price_decimals)
+                tick_size = prec_ceil(0.5 * (top_b + top_a) * tick_size_fraction, price_decimals)
                 interp_bids, top_bid_price = _interpolate_levels(
                     bids,
                     True,

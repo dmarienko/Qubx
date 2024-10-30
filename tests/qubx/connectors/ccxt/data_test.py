@@ -9,13 +9,14 @@ from qubx.connectors.ccxt.ccxt_utils import ccxt_convert_orderbook
 class TestCcxtOrderbookRelatedStuff:
 
     def test_ccxt_orderbook_conversion(self):
+        i1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        assert i1 is not None
+
         orderbooks_path = "tests/data/BTCUSDT_ccxt_orderbooks.txt.gz"
+
         with gzip.open(orderbooks_path, "rt") as f:
             orderbooks = [json.loads(line) for line in f]
         print(f"Loaded {len(orderbooks)} orderbooks")
-
-        i1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
-        assert i1 is not None
 
         obs = [ccxt_convert_orderbook(ob, i1) for ob in orderbooks]
 

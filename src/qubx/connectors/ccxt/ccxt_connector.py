@@ -20,8 +20,8 @@ from qubx.core.basics import Instrument, Position, dt_64, Deal, CtrlChannel
 from qubx.core.helpers import BasicScheduler
 from qubx.core.strategy import IBrokerServiceProvider, ITradingServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
-from qubx.connectors.ccxt.ccxt_utils import DATA_PROVIDERS_ALIASES, ccxt_convert_trade
 from qubx.utils.ntp import time_now
+from .ccxt_utils import DATA_PROVIDERS_ALIASES, ccxt_convert_trade, ccxt_convert_orderbook
 
 # - register custom wrappers
 from .ccxt_customizations import BinanceQV, BinanceQVUSDM
@@ -33,8 +33,10 @@ cxp.exchanges.append("binanceqv_usdm")
 
 
 class CCXTExchangesConnector(IBrokerServiceProvider):
+    # TODO: implement multi symbol subscription from one channel
+
     _exchange: Exchange
-    _subscriptions: Dict[str, List[str]]
+    _subscriptions: Dict[str, List[Instrument]]
     _scheduler: BasicScheduler | None = None
 
     _last_quotes: Dict[str, Optional[Quote]]
@@ -95,6 +97,8 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             self._thread_event_loop = Thread(target=self._loop.run_forever, args=(), daemon=True)
             self._thread_event_loop.start()
 
+        to_process_symbols = [s.symbol for s in to_process]
+
         # - subscribe to market data updates
         match sbscr := subscription_type.lower():
             case "ohlc":
@@ -108,19 +112,30 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                     asyncio.run_coroutine_threadsafe(
                         self._listen_to_ohlcv(self.get_communication_channel(), s, tframe, nback), self._loop
                     )
-                    self._subscriptions[sbscr].append(s.lower())
-                logger.info(f"Subscribed on {sbscr} updates for {len(to_process)} symbols: \n\t\t{to_process}")
+                    self._subscriptions[sbscr].append(s)
+                logger.info(f"Subscribed on {sbscr} updates for {len(to_process)} symbols: \n\t\t{to_process_symbols}")
 
             case "trade":
                 if timeframe is None:
-                    raise ValueError("timeframe must not be None for trade data subscription")
+                    timeframe = "1Min"
                 tframe = self._get_exch_timeframe(timeframe)
                 for s in to_process:
                     asyncio.run_coroutine_threadsafe(
                         self._listen_to_trades(self.get_communication_channel(), s, tframe, nback), self._loop
                     )
-                    self._subscriptions[sbscr].append(s.lower())
-                logger.info(f"Subscribed on {sbscr} updates for {len(to_process)} symbols: \n\t\t{to_process}")
+                    self._subscriptions[sbscr].append(s)
+                logger.info(f"Subscribed on {sbscr} updates for {len(to_process)} symbols: \n\t\t{to_process_symbols}")
+
+            case "orderbook":
+                if timeframe is None:
+                    timeframe = "1Min"
+                tframe = self._get_exch_timeframe(timeframe)
+                for s in to_process:
+                    asyncio.run_coroutine_threadsafe(
+                        self._listen_to_orderbook(self.get_communication_channel(), s, timeframe, nback), self._loop
+                    )
+                    self._subscriptions[sbscr].append(s)
+                logger.info(f"Subscribed on {sbscr} updates for {len(to_process)} symbols: \n\t\t{to_process_symbols}")
 
             case "quote":
                 raise ValueError("TODO")
@@ -138,16 +153,15 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         return True
 
     def has_subscription(self, subscription_type: str, instrument: Instrument) -> bool:
-        symbol = instrument.symbol.lower()
         sub = subscription_type.lower()
-        return sub in self._subscriptions and symbol in self._subscriptions[sub]
+        return sub in self._subscriptions and instrument in self._subscriptions[sub]
 
-    def _check_existing_subscription(self, subscription_type, instruments: List[Instrument]) -> List[str]:
+    def _check_existing_subscription(self, subscription_type, instruments: List[Instrument]) -> List[Instrument]:
         subscribed = self._subscriptions[subscription_type]
         to_subscribe = []
         for s in instruments:
-            if s.symbol not in subscribed:
-                to_subscribe.append(s.symbol)
+            if s not in subscribed:
+                to_subscribe.append(s)
         return to_subscribe
 
     def _time_msec_nbars_back(self, timeframe: str, nbarsback: int) -> int:
@@ -190,7 +204,9 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
         await self._listen_to_stream(_watch_executions, self._exchange, channel, f"{symbol} execution reports")
 
-    async def _listen_to_ohlcv(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
+    async def _listen_to_ohlcv(self, channel: CtrlChannel, instrument: Instrument, timeframe: str, nbarsback: int):
+        symbol = instrument.symbol
+
         async def watch_ohlcv():
             ohlcv = await self._exchange.watch_ohlcv(symbol, timeframe)  # type: ignore
             # - update positions by actual close price
@@ -202,15 +218,17 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             for oh in ohlcv:
                 channel.send((symbol, "bar", Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
 
-        await self._stream_hist_bars(channel, timeframe, symbol, nbarsback)
+        await self._stream_hist_bars(channel, timeframe, instrument.symbol, nbarsback)
         await self._listen_to_stream(watch_ohlcv, self._exchange, channel, f"{symbol} {timeframe} OHLCV")
 
-    async def _listen_to_trades(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
+    async def _listen_to_trades(self, channel: CtrlChannel, instrument: Instrument, timeframe: str, nbarsback: int):
+        symbol = instrument.symbol
+
         async def _watch_trades():
             trades = await self._exchange.watch_trades(symbol)
             # - update positions by actual close price
             last_trade = ccxt_convert_trade(trades[-1])
-            self.trading_service.update_position_price(symbol, last_trade.time, last_trade)
+            self.trading_service.update_position_price(symbol, self.time(), last_trade)
             for trade in trades:
                 channel.send((symbol, "trade", ccxt_convert_trade(trade)))
 
@@ -218,18 +236,18 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         await self._stream_hist_bars(channel, timeframe, symbol, nbarsback)
         await self._listen_to_stream(_watch_trades, self._exchange, channel, f"{symbol} trades")
 
-    async def _listen_to_orderbook(self, channel: CtrlChannel, symbol: str, timeframe: str, nbarsback: int):
+    async def _listen_to_orderbook(self, channel: CtrlChannel, instrument: Instrument, timeframe: str, nbarsback: int):
+        symbol = instrument.symbol
+
         async def _watch_orderbook():
-            trades = await self._exchange.watch_order_book(symbol)
-            # - update positions by actual close price
-            last_trade = ccxt_convert_trade(trades[-1])
-            self.trading_service.update_position_price(symbol, last_trade.time, last_trade)
-            for trade in trades:
-                channel.send((symbol, "trade", ccxt_convert_trade(trade)))
+            ccxt_ob = await self._exchange.watch_order_book(symbol)
+            ob = ccxt_convert_orderbook(ccxt_ob, instrument)
+            self.trading_service.update_position_price(symbol, self.time(), ob.to_quote())
+            channel.send((symbol, "orderbook", ob))
 
-        # TODO: stream historical trades for some period
+        # TODO: stream historical orderbooks for some period
         await self._stream_hist_bars(channel, timeframe, symbol, nbarsback)
-        await self._listen_to_stream(_watch_trades, self._exchange, channel, f"{symbol} trades")
+        await self._listen_to_stream(_watch_orderbook, self._exchange, channel, f"{symbol} orderbook")
 
     async def _listen_to_stream(
         self, subscriber: Callable[[], Awaitable[None]], exchange: Exchange, channel: CtrlChannel, name: str
