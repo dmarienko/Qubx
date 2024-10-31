@@ -5,8 +5,6 @@ import stackprinter
 import traceback
 
 import ccxt
-import ccxt.pro as cxp
-from ccxt.base.decimal_to_precision import ROUND_UP
 from ccxt.base.exchange import Exchange, ExchangeError
 
 import numpy as np
@@ -17,7 +15,7 @@ from qubx.core.account import AccountProcessor
 from qubx.core.basics import Instrument, Position, Order, TransactionCostsCalculator, dt_64, Deal, CtrlChannel
 from qubx.core.strategy import IBrokerServiceProvider, ITradingServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
-from qubx.impl.ccxt_utils import (
+from qubx.connectors.ccxt.ccxt_utils import (
     EXCHANGE_ALIASES,
     ccxt_convert_order_info,
     ccxt_convert_deal_info,

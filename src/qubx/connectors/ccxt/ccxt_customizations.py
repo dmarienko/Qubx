@@ -53,7 +53,7 @@ class BinanceQV(cxp.binance):
 
     def handle_ohlcv(self, client: Client, message):
         event = self.safe_string(message, "e")
-        eventMap = {
+        eventMap: dict = {
             "indexPrice_kline": "indexPriceKline",
             "markPrice_kline": "markPriceKline",
         }
@@ -63,11 +63,9 @@ class BinanceQV(cxp.binance):
         if event == "indexPriceKline":
             # indexPriceKline doesn't have the _PERP suffix
             marketId = self.safe_string(message, "ps")
-        lowercaseMarketId = marketId.lower()
         interval = self.safe_string(kline, "i")
         # use a reverse lookup in a static map instead
-        timeframe = self.find_timeframe(interval)
-        messageHash = lowercaseMarketId + "@" + event + "_" + interval
+        unifiedTimeframe = self.find_timeframe(interval)
         parsed = [
             self.safe_integer(kline, "t"),
             self.safe_float(kline, "o"),
@@ -83,14 +81,16 @@ class BinanceQV(cxp.binance):
         isSpot = (client.url.find("/stream") > -1) or (client.url.find("/testnet.binance") > -1)
         marketType = "spot" if (isSpot) else "contract"
         symbol = self.safe_symbol(marketId, None, None, marketType)
+        messageHash = "ohlcv::" + symbol + "::" + unifiedTimeframe
         self.ohlcvs[symbol] = self.safe_value(self.ohlcvs, symbol, {})
-        stored = self.safe_value(self.ohlcvs[symbol], timeframe)
+        stored = self.safe_value(self.ohlcvs[symbol], unifiedTimeframe)
         if stored is None:
-            limit = self.safe_integer(self.options, "OHLCVLimit", 2)
+            limit = self.safe_integer(self.options, "OHLCVLimit", 1000)
             stored = ArrayCacheByTimestamp(limit)
-            # self.ohlcvs[symbol][timeframe] = stored
+            self.ohlcvs[symbol][unifiedTimeframe] = stored
         stored.append(parsed)
-        client.resolve(stored, messageHash)
+        resolveData = [symbol, unifiedTimeframe, stored]
+        client.resolve(resolveData, messageHash)
 
     def handle_trade(self, client: Client, message):
         """
@@ -109,9 +109,7 @@ class BinanceQV(cxp.binance):
         marketId = self.safe_string(message, "s")
         market = self.safe_market(marketId, None, None, marketType)
         symbol = market["symbol"]
-        lowerCaseId = self.safe_string_lower(message, "s")
-        event = self.safe_string(message, "e")
-        messageHash = lowerCaseId + "@" + event
+        messageHash = "trade::" + symbol
         executionType = self.safe_string(message, "X")
         if executionType == "INSURANCE_FUND":
             return

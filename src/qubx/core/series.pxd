@@ -108,6 +108,18 @@ cdef class Quote:
     cpdef double mid_price(Quote self)
 
 
+cdef class OrderBook:
+    cdef public long long time
+    cdef public double top_bid
+    cdef public double top_ask
+    cdef public double tick_size
+    cdef public np.ndarray bids
+    cdef public np.ndarray asks
+
+    cpdef Quote to_quote(OrderBook self)
+    cpdef double mid_price(OrderBook self)
+
+
 cdef class IndicatorOHLC(Indicator):
     pass
 

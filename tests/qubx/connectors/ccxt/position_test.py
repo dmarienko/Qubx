@@ -3,14 +3,16 @@ import pandas as pd
 from qubx import lookup
 from qubx.core.account import AccountProcessor
 from qubx.core.basics import Deal, Instrument, Position
-from qubx.impl.ccxt_utils import (
+from qubx.connectors.ccxt.ccxt_utils import (
     ccxt_convert_deal_info,
     ccxt_convert_order_info,
     ccxt_extract_deals_from_exec,
     ccxt_restore_position_from_deals,
 )
-from tests.qubx.core.data.ccxt_responses import *
-from tests.qubx.data.datareaders_test import N
+from pytest import approx
+from .data.ccxt_responses import *
+
+N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
 
 
 class TestStrats:

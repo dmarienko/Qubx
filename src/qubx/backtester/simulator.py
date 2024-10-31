@@ -124,7 +124,12 @@ class _SimulatedLogFormatter:
         if record["level"].name in {"WARNING", "SNAKY"}:
             fmt = "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - %s" % fmt
 
-        now = self.time_provider.time().astype("datetime64[us]").item().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        dt = self.time_provider.time()
+        if isinstance(dt, int):
+            now = pd.Timestamp(dt).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        else:
+            now = self.time_provider.time().astype("datetime64[us]").item().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
         # prefix = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [ <level>%s</level> ] " % record["level"].icon
         prefix = f"<lc>{now}</lc> [<level>{record['level'].icon}</level>] "
 

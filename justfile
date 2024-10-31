@@ -19,7 +19,7 @@ build:
 
 dev-install:
 	# - install in dev environment
-	pip install . --upgrade
+	pip install -e . --upgrade
 	
 
 publish: build test

@@ -128,7 +128,7 @@ class CachedMarketDataHolder:
             total_vol = trade.size
             bought_vol = total_vol if trade.taker >= 1 else 0.0
             for ser in series.values():
-                if len(ser) > 0 and ser[-1].time > trade.time:
+                if len(ser) > 0 and ser[0].time > trade.time:
                     continue
                 ser.update(trade.time, trade.price, total_vol, bought_vol)
 

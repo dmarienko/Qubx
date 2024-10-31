@@ -687,7 +687,7 @@ cdef class Trade:
         self.trade_id = trade_id
 
     def __repr__(self):
-        return "[%s]\t%.5f (%.1f) %s %s" % ( 
+        return "[%s]\t%.5f (%.2f) %s %s" % ( 
             time_to_str(self.time, 'ns'), self.price, self.size, 
             'take' if self.taker == 1 else 'make' if self.taker == 0 else '???',
             str(self.trade_id) if self.trade_id > 0 else ''
@@ -745,6 +745,27 @@ cdef class Bar:
 
     def __repr__(self):
         return "{o:%f | h:%f | l:%f | c:%f | v:%f}" % (self.open, self.high, self.low, self.close, self.volume)
+
+
+cdef class OrderBook:
+
+    def __init__(self, long long time, top_bid: float, top_ask: float, tick_size: float, bids: np.ndarray, asks: np.ndarray):
+        self.time = time
+        self.top_bid = top_bid
+        self.top_ask = top_ask
+        self.tick_size = tick_size
+        self.bids = bids
+        self.asks = asks
+    
+    def __repr__(self):
+        return f"[{time_to_str(self.time, 'ns')}] {self.top_bid} ({self.bids[0]}) | {self.top_ask} ({self.asks[0]})"
+    
+    cpdef Quote to_quote(self):
+        return Quote(self.time, self.top_bid, self.top_ask, self.bids[0], self.asks[0])
+    
+    cpdef double mid_price(self):
+        return 0.5 * (self.top_ask + self.top_bid)
+
 
 
 cdef class OHLCV(TimeSeries):

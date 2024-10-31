@@ -1,5 +1,7 @@
-import numpy as np
 from typing import Any, Tuple
+
+import numpy as np
+cimport numpy as np
 
 import pandas as pd
 
@@ -32,6 +34,19 @@ class Trade:
     taker: int
     trade_id: int
     def __init__(self, time, price, size, taker=-1, trade_id=0): ...
+
+class OrderBook:
+    time: int
+    top_bid: float
+    top_ask: float
+    tick_size: float
+    bids: np.ndarray
+    asks: np.ndarray
+
+    def __init__(self, time, top_bid, top_ask, tick_size, bids, asks): ...
+    def to_quote(self) -> Quote: ...
+    def mid_price(self) -> float: ...
+
 
 class Locator:
     def __getitem__(self, idx): ...
@@ -94,7 +109,7 @@ class IndicatorOHLC(Indicator):
     series: OHLCV
     def _copy_internal_series(self, start: int, stop: int, *origins): ...
 
-def time_as_nsec(time: Any) -> np.datetime64: ...
+def time_as_nsec(time: Any) -> int: ...
 
 class RollingSum:
     is_init_stage: bool
