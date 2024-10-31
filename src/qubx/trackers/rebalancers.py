@@ -75,7 +75,7 @@ class PortfolioRebalancerTracker(PositionsTracker):
         for t in targets:
             pos = ctx.positions.get(t.instrument.symbol)
             if pos is None:
-                logger.error(f"(PortfolioRebalancerTracker) No position for {t.instrument.symbol} instrument !")
+                logger.error(f"({self.__class__.__name__}) No position for {t.instrument.symbol} instrument !")
                 continue
 
             _pa, _ta = abs(pos.quantity), abs(t.target_position_size)
@@ -86,15 +86,15 @@ class PortfolioRebalancerTracker(PositionsTracker):
                 # - when we have some reserved amount we should check target position size
                 t.target_position_size = self._correct_target_position(pos.quantity, t.target_position_size, reserved)
                 _close_first.append(t)
-                logger.info(
-                    f"(PortfolioRebalancerTracker) Decreasing exposure for {t.instrument.symbol} from {pos.quantity} -> {t.target_position_size} (reserved: {reserved})"
+                logger.debug(
+                    f"({self.__class__.__name__}) Decreasing exposure for {t.instrument.symbol} from {pos.quantity} -> {t.target_position_size} (reserved: {reserved})"
                 )
 
             # - ones which increases exposure
             elif _ta > _pa:
                 _then_open.append(t)
-                logger.info(
-                    f"(PortfolioRebalancerTracker) Increasing exposure for {t.instrument.symbol} from {pos.quantity} -> {t.target_position_size})"
+                logger.debug(
+                    f"({self.__class__.__name__}) Increasing exposure for {t.instrument.symbol} from {pos.quantity} -> {t.target_position_size})"
                 )
 
         return _close_first + _then_open
@@ -109,12 +109,12 @@ class PortfolioRebalancerTracker(PositionsTracker):
                 to_close = self._max_size_can_be_closed(pos.quantity, reserved)
                 if to_close != 0:
                     try:
-                        logger.info(
-                            f"(PortfolioRebalancerTracker) {s} - closing {to_close} from {pos.quantity} amount (reserved: {reserved})"
+                        logger.debug(
+                            f"({self.__class__.__name__}) {s} - closing {to_close} from {pos.quantity} amount (reserved: {reserved})"
                         )
                         ctx.trade(s, -pos.quantity)
                     except Exception as err:
-                        logger.error(f"(PortfolioRebalancerTracker) {s} Error processing closing order: {str(err)}")
+                        logger.error(f"({self.__class__.__name__}) {s} Error processing closing order: {str(err)}")
 
     def _correct_target_position(self, start_position: float, new_position: float, reserved: float) -> float:
         """
