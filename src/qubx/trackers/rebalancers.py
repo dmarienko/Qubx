@@ -6,7 +6,7 @@ import pandas as pd
 from qubx import logger
 from qubx.core.basics import Position, Signal, TargetPosition
 from qubx.core.strategy import IPositionGathering, StrategyContext, PositionsTracker
-from qubx.trackers.sizers import WeightedPortfolioSizer
+from qubx.trackers.sizers import LongShortRatioPortfolioSizer
 
 
 @dataclass
@@ -24,7 +24,9 @@ class PortfolioRebalancerTracker(PositionsTracker):
     capital_invested: float
     tolerance: float
 
-    def __init__(self, capital_invested: float, tolerance: float, positions_sizer=WeightedPortfolioSizer()) -> None:
+    def __init__(
+        self, capital_invested: float, tolerance: float, positions_sizer=LongShortRatioPortfolioSizer()
+    ) -> None:
         self.capital_invested = capital_invested
         self.tolerance = tolerance
         self._positions_sizer = positions_sizer

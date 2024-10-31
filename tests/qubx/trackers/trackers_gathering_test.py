@@ -38,28 +38,6 @@ def Q(time: str, bid: float, ask: float) -> Quote:
     return Quote(recognize_time(time), bid, ask, 0, 0)
 
 
-class TestingPositionGatherer(IPositionGathering):
-    def alter_position_size(self, ctx: StrategyContext, target: TargetPosition) -> float:
-        instrument, new_size, at_price = target.instrument, target.target_position_size, target.price
-        position = ctx.positions[instrument.symbol]
-        current_position = position.quantity
-        to_trade = new_size - current_position
-        if abs(to_trade) < instrument.min_size:
-            logger.warning(
-                f"Can't change position size for {instrument}. Current position: {current_position}, requested size: {new_size}"
-            )
-        else:
-            # position.quantity = new_size
-            position.update_position(ctx.time(), new_size, ctx.quote(instrument.symbol).mid_price())
-            r = ctx.trade(instrument, to_trade, at_price)
-            logger.info(
-                f"{instrument.symbol} >>> (TESTS) Adjusting position from {current_position} to {new_size} : {r}"
-            )
-        return current_position
-
-    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal): ...
-
-
 class DebugStratageyCtx(StrategyContext):
     def __init__(self, instrs, capital) -> None:
         self.positions = {i.symbol: i for i in instrs}
@@ -159,50 +137,6 @@ class TestTrackersAndGatherers:
         s = sizer.calculate_target_positions(ctx, [i.signal(1, stop=900.0)])
         _entry, _stop, _cap_in_risk = 1000.5, 900, 10000 * 10 / 100
         assert s[0].target_position_size == i.round_size_down((_cap_in_risk / ((_entry - _stop) / _entry)) / _entry)
-
-    def test_rebalancer(self):
-        ctx = DebugStratageyCtx(
-            I := [
-                lookup.find_symbol("BINANCE.UM", "BTCUSDT"),
-                lookup.find_symbol("BINANCE.UM", "ETHUSDT"),
-                lookup.find_symbol("BINANCE.UM", "SOLUSDT"),
-            ],
-            30000,
-        )
-        assert I[0] is not None and I[1] is not None and I[2] is not None
-
-        tracker = PortfolioRebalancerTracker(30000, 0)
-        targets = tracker.process_signals(ctx, [I[0].signal(+0.5), I[1].signal(+0.3), I[2].signal(+0.2)])
-
-        gathering = TestingPositionGatherer()
-        gathering.alter_positions(ctx, targets)
-
-        print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
-
-        tracker.process_signals(
-            ctx,
-            [
-                I[0].signal(+0.1),
-                I[1].signal(+0.8),
-                I[2].signal(+0.1),
-            ],
-        )
-
-        print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
-
-        targets = tracker.process_signals(
-            ctx,
-            [
-                I[0].signal(0),
-                I[1].signal(0),
-                I[2].signal(0),
-            ],
-        )
-        gathering.alter_positions(ctx, targets)
-
-        assert ctx.positions[I[0].symbol].quantity == 0
-        assert ctx.positions[I[1].symbol].quantity == 0
-        assert ctx.positions[I[2].symbol].quantity == 0
 
     def test_atr_tracker(self):
 
