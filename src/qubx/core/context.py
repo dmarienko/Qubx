@@ -35,7 +35,7 @@ from qubx.core.strategy import (
     StrategyContext,
     SubscriptionType,
 )
-from qubx.core.series import Trade, Quote, Bar, OHLCV
+from qubx.core.series import Trade, Quote, Bar, OHLCV, OrderBook
 from qubx.data.readers import DataReader
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.trackers.sizers import FixedSizer
@@ -221,6 +221,7 @@ class StrategyContextImpl(StrategyContext):
             case "trade" | "trades" | "tas":
                 timeframe = md_config.get("timeframe", "1Sec")
                 self._market_data_subcription_params = {
+                    "timeframe": timeframe,
                     "nback": md_config.get("nback", 1),
                 }
                 self._cache = CachedMarketDataHolder("1Sec")
@@ -354,7 +355,7 @@ class StrategyContextImpl(StrategyContext):
 
             # - if fit was not called - skip on_event call
             if not self.__init_fit_was_called:
-                logger.warning(
+                logger.debug(
                     f"[{self.time()}] {self.strategy.__class__.__name__}::on_event() is SKIPPED for now because on_fit() was not called yet !"
                 )
                 return False
@@ -584,10 +585,19 @@ class StrategyContextImpl(StrategyContext):
             self.__process_and_log_target_positions(target_positions),
         )
 
-        if self._trig_on_trade:
-            event_type = "trade" if not is_batch_event else "batch:trade"
-            return TriggerEvent(self.time(), event_type, self._symb_to_instr.get(symbol), trade)
-        return None
+        event_type = "trade" if not is_batch_event else "batch:trade"
+        return TriggerEvent(self.time(), event_type, self._symb_to_instr.get(symbol), trade)
+
+    def _processing_orderbook(self, symbol: str, orderbook: OrderBook) -> TriggerEvent | None:
+        quote = orderbook.to_quote()
+        self._cache.update_by_quote(symbol, quote)
+        target_positions = self.positions_tracker.update(self, self._symb_to_instr[symbol], quote)
+        self.__process_signals_from_target_positions(target_positions)
+        self.positions_gathering.alter_positions(
+            self,
+            self.__process_and_log_target_positions(target_positions),
+        )
+        return TriggerEvent(self.time(), "orderbook", self._symb_to_instr.get(symbol), orderbook)
 
     def _processing_quote(self, symbol: str, quote: Quote) -> TriggerEvent | None:
         self._cache.update_by_quote(symbol, quote)
