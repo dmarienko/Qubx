@@ -77,6 +77,16 @@ class CachedMarketDataHolder:
 
         return self._ohlcvs[instrument][tf]
 
+    def update(self, instrument: Instrument, data: Any):
+        if isinstance(data, Bar):
+            self.update_by_bar(instrument, data)
+        elif isinstance(data, Quote):
+            self.update_by_quote(instrument, data)
+        elif isinstance(data, Trade):
+            self.update_by_trade(instrument, data)
+        else:
+            raise ValueError(f"Unsupported data type {type(data)}")
+
     @_SW.watch("CachedMarketDataHolder")
     def update_by_bars(self, instrument: Instrument, timeframe: str, bars: List[Bar]) -> OHLCV:
         """

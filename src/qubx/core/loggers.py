@@ -6,7 +6,7 @@ import csv, os
 import pandas as pd
 
 from qubx import logger
-from qubx.core.basics import Deal, Position, Signal, TargetPosition
+from qubx.core.basics import Deal, Position, Signal, TargetPosition, Instrument
 
 from qubx.core.metrics import split_cumulative_pnl
 from qubx.core.series import time_as_nsec
@@ -274,17 +274,17 @@ class ExecutionsLogger(_BaseIntervalDumper):
     """
 
     _writer: LogsWriter
-    _deals: List[Tuple[str, Deal]]
+    _deals: List[Tuple[Instrument, Deal]]
 
     def __init__(self, writer: LogsWriter, max_records=10) -> None:
         super().__init__(None)  # no intervals
         self._writer = writer
         self._max_records = max_records
-        self._deals: List[Tuple[str, Deal]] = []
+        self._deals: List[Tuple[Instrument, Deal]] = []
 
-    def record_deals(self, symbol: str, deals: List[Deal]):
+    def record_deals(self, instrument: Instrument, deals: List[Deal]):
         for d in deals:
-            self._deals.append((symbol, d))
+            self._deals.append((instrument, d))
             l_time = d.time
 
         if len(self._deals) >= self._max_records:
@@ -292,11 +292,11 @@ class ExecutionsLogger(_BaseIntervalDumper):
 
     def dump(self, interval_start_time: np.datetime64, actual_timestamp: np.datetime64):
         data = []
-        for s, d in self._deals:
+        for i, d in self._deals:
             data.append(
                 {
                     "timestamp": d.time,
-                    "instrument_id": s,
+                    "instrument_id": f"{i.exchange}:{i.symbol}",
                     "side": "buy" if d.amount > 0 else "sell",
                     "filled_qty": d.amount,
                     "price": d.price,
@@ -476,9 +476,9 @@ class StrategyLogging:
         if self.portfolio_logger:
             self.portfolio_logger.store(timestamp)
 
-    def save_deals(self, symbol: str, deals: List[Deal]):
+    def save_deals(self, instrument: Instrument, deals: List[Deal]):
         if self.executions_logger:
-            self.executions_logger.record_deals(symbol, deals)
+            self.executions_logger.record_deals(instrument, deals)
 
     def save_signals_targets(self, targets: List[TargetPosition]):
         if self.signals_logger and targets:

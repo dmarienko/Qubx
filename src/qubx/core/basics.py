@@ -227,7 +227,10 @@ class Instrument:
         return self.symbol == other.symbol and self.exchange == other.exchange and self.market_type == other.market_type
 
     def __str__(self) -> str:
-        return f"{self.exchange}:{self.symbol} [{self.market_type} {str(self.futures_info) if self.futures_info else 'SPOT ' + self.base + '/' + self.quote }]"
+        return f"{self.exchange}:{self.symbol} [{self.market_type}]"
+
+    def __repr__(self) -> str:
+        return self.__str__()
 
 
 @dataclass

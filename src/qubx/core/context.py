@@ -97,11 +97,14 @@ class StrategyContext(
         )
         ProcessingManager.__init__(
             self,
+            context=self,
             strategy=self.strategy,
             instruments=instruments,
             logging=self.__logging,
             broker=self.__broker,
             universe_manager=self,
+            market_data=self,
+            subscription_manager=self,
             time_provider=self,
             position_tracker=__position_tracker,
             position_gathering=__position_gathering,
@@ -175,8 +178,8 @@ class StrategyContext(
         while channel.control.is_set():
             with SW("StrategyContext._process_incoming_data"):
                 # - waiting for incoming market data
-                symbol, d_type, data = channel.receive()
-                if self.process_data(symbol, d_type, data):
+                instrument, d_type, data = channel.receive()
+                if self.process_data(instrument, d_type, data):
                     channel.stop()
                     break
         logger.info("(StrategyContext) Market data processing stopped")
