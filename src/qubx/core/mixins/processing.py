@@ -54,10 +54,7 @@ class ProcessingManager(IProcessingManager):
 
     __context: IStrategyContext
     __strategy: IStrategy
-    __initial_instruments: list[Instrument]
     __logging: StrategyLogging
-    __broker: IBrokerServiceProvider
-    __universe_manager: IUniverseManager
     __market_data: IMarketDataProvider
     __subscription_manager: ISubscriptionManager
     __time_provider: ITimeProvider
@@ -76,40 +73,31 @@ class ProcessingManager(IProcessingManager):
     __is_simulation: bool
     __pool: ThreadPool | None
 
-    # TODO: refactor
-    _trig_interval_in_bar_nsec: int
-    _trig_bar_freq_nsec: int
-    _current_bar_trigger_processed: bool = False
-
     def __init__(
         self,
         context: IStrategyContext,
         strategy: IStrategy,
-        instruments: list[Instrument],
         logging: StrategyLogging,
-        broker: IBrokerServiceProvider,
-        universe_manager: IUniverseManager,
         market_data: IMarketDataProvider,
         subscription_manager: ISubscriptionManager,
         time_provider: ITimeProvider,
         position_tracker: PositionsTracker,
         position_gathering: IPositionGathering,
         cache: CachedMarketDataHolder,
+        scheduler: BasicScheduler,
+        is_simulation: bool,
     ):
         self.__context = context
         self.__strategy = strategy
-        self.__initial_instruments = instruments
         self.__logging = logging
-        self.__broker = broker
-        self.__universe_manager = universe_manager
         self.__market_data = market_data
         self.__subscription_manager = subscription_manager
         self.__time_provider = time_provider
-        self.__is_simulation = broker.is_simulated_trading
+        self.__is_simulation = is_simulation
         self.__position_gathering = position_gathering
         self.__position_tracker = position_tracker
         self.__cache = cache
-        self.__scheduler = broker.get_scheduler()
+        self.__scheduler = scheduler
 
         self.__pool = ThreadPool(2) if not self.__is_simulation else None
         self.__handlers = {
@@ -267,13 +255,14 @@ class ProcessingManager(IProcessingManager):
         is_base_data = (
             (sub_type == SubscriptionType.OHLC and isinstance(data, Bar))
             or (sub_type == SubscriptionType.QUOTE and isinstance(data, Quote))
+            or (sub_type == SubscriptionType.ORDERBOOK and isinstance(data, OrderBook))
             or (sub_type == SubscriptionType.TRADE and isinstance(data, Trade))
         )
-        # TODO: continue here
         self.__cache.update(instrument, data, update_ohlc=is_base_data)
         if not is_historical and is_base_data:
+            _data = data if not isinstance(data, OrderBook) else data.to_quote()
             target_positions = self.__process_and_log_target_positions(
-                self.__position_tracker.update(self.__context, instrument, data)
+                self.__position_tracker.update(self.__context, instrument, _data)
             )
             self.__position_gathering.alter_positions(self.__context, target_positions)
 
@@ -319,7 +308,7 @@ class ProcessingManager(IProcessingManager):
         return TriggerEvent(self.__time_provider.time(), SubscriptionType.TRADE, instrument, trade)
 
     def __handle_orderbook(self, instrument: Instrument, orderbook: OrderBook) -> TriggerEvent:
-        self.__update_base_data(instrument, orderbook.to_quote())
+        self.__update_base_data(instrument, orderbook)
         return TriggerEvent(self.__time_provider.time(), SubscriptionType.ORDERBOOK, instrument, orderbook)
 
     def __handle_quote(self, instrument: Instrument, quote: Quote) -> TriggerEvent:

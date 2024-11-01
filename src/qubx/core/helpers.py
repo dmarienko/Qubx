@@ -2,18 +2,17 @@ from collections import defaultdict
 import re, sched, time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from croniter import croniter
+from collectinos import defaultdict
 import numpy as np
 import pandas as pd
 from threading import Thread
 
 from qubx import logger
-from qubx.core.basics import CtrlChannel, Instrument
+from qubx.core.basics import CtrlChannel, Instrument, SW
+from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV, OrderBook
 from qubx.utils.misc import Stopwatch
 from qubx.utils.time import convert_tf_str_td64, convert_seconds_to_str
-from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
-
-
-_SW = Stopwatch()
+from qubx.utils.collections import TimeLimitedDeque
 
 
 class CachedMarketDataHolder:
@@ -25,11 +24,17 @@ class CachedMarketDataHolder:
     _last_bar: dict[Instrument, Bar | None]
     _ohlcvs: dict[Instrument, dict[np.timedelta64, OHLCV]]
     _updates: dict[Instrument, Any]
+    _recent_trades: dict[Instrument, TimeLimitedDeque]
+    _recent_quotes: dict[Instrument, TimeLimitedDeque]
+    _recent_orderbooks: dict[Instrument, TimeLimitedDeque]
 
     def __init__(self, default_timeframe: str | None = None) -> None:
         self._ohlcvs = dict()
         self._last_bar = defaultdict(lambda: None)
         self._updates = dict()
+        self._recent_trades = defaultdict(lambda: TimeLimitedDeque(time_limit=pd.Timedelta("10Min")))
+        self._recent_quotes = defaultdict(lambda: TimeLimitedDeque(time_limit=pd.Timedelta("10Min")))
+        self._recent_orderbooks = defaultdict(lambda: TimeLimitedDeque(time_limit=pd.Timedelta("10Min")))
         if default_timeframe:
             self.default_timeframe = convert_tf_str_td64(default_timeframe)
 
@@ -43,6 +48,9 @@ class CachedMarketDataHolder:
         self._ohlcvs.pop(instrument, None)
         self._last_bar.pop(instrument, None)
         self._updates.pop(instrument, None)
+        self._recent_trades.pop(instrument, None)
+        self._recent_quotes.pop(instrument, None)
+        self._recent_orderbooks.pop(instrument, None)
 
     def is_data_ready(self) -> bool:
         """
@@ -53,7 +61,7 @@ class CachedMarketDataHolder:
                 return True
         return False
 
-    @_SW.watch("CachedMarketDataHolder")
+    @SW.watch("CachedMarketDataHolder")
     def get_ohlcv(self, instrument: Instrument, timeframe: str | None = None, max_size: float | int = np.inf) -> OHLCV:
         tf = convert_tf_str_td64(timeframe) if timeframe else self.default_timeframe
 
@@ -77,17 +85,19 @@ class CachedMarketDataHolder:
 
         return self._ohlcvs[instrument][tf]
 
-    def update(self, instrument: Instrument, data: Any):
+    def update(self, instrument: Instrument, data: Bar | Quote | Trade | OrderBook, update_ohlc: bool):
         if isinstance(data, Bar):
             self.update_by_bar(instrument, data)
         elif isinstance(data, Quote):
-            self.update_by_quote(instrument, data)
+            self.update_by_quote(instrument, data, update_ohlc)
         elif isinstance(data, Trade):
-            self.update_by_trade(instrument, data)
+            self.update_by_trade(instrument, data, update_ohlc)
+        elif isinstance(data, OrderBook):
+            self.update_by_orderbook(instrument, data, update_ohlc)
         else:
             raise ValueError(f"Unsupported data type {type(data)}")
 
-    @_SW.watch("CachedMarketDataHolder")
+    @SW.watch("CachedMarketDataHolder")
     def update_by_bars(self, instrument: Instrument, timeframe: str, bars: List[Bar]) -> OHLCV:
         """
         Substitute or create new series based on provided historical bars
@@ -104,7 +114,7 @@ class CachedMarketDataHolder:
         self._ohlcvs[instrument][tf] = new_ohlc
         return new_ohlc
 
-    @_SW.watch("CachedMarketDataHolder")
+    @SW.watch("CachedMarketDataHolder")
     def update_by_bar(self, instrument: Instrument, bar: Bar):
         self._updates[instrument] = bar
 
@@ -125,17 +135,22 @@ class CachedMarketDataHolder:
             for ser in self._ohlcvs[instrument].values():
                 ser.update_by_bar(bar.time, bar.open, bar.high, bar.low, bar.close, v_tot_inc, v_buy_inc)
 
-    @_SW.watch("CachedMarketDataHolder")
-    def update_by_quote(self, instrument: Instrument, quote: Quote):
+    @SW.watch("CachedMarketDataHolder")
+    def update_by_quote(self, instrument: Instrument, quote: Quote, update_ohlc: bool):
+        self._recent_quotes[instrument].append(quote)
+        if not update_ohlc:
+            return
         self._updates[instrument] = quote
-
         series = self._ohlcvs.get(instrument)
         if series:
             for ser in series.values():
                 ser.update(quote.time, quote.mid_price(), 0)
 
-    @_SW.watch("CachedMarketDataHolder")
-    def update_by_trade(self, instrument: Instrument, trade: Trade):
+    @SW.watch("CachedMarketDataHolder")
+    def update_by_trade(self, instrument: Instrument, trade: Trade, update_ohlc: bool):
+        self._recent_trades[instrument].append(trade)
+        if not update_ohlc:
+            return
         self._updates[instrument] = trade
         series = self._ohlcvs.get(instrument)
         if series:
@@ -145,6 +160,11 @@ class CachedMarketDataHolder:
                 if len(ser) > 0 and ser[0].time > trade.time:
                     continue
                 ser.update(trade.time, trade.price, total_vol, bought_vol)
+
+    @SW.watch("CachedMarketDataHolder")
+    def update_by_orderbook(self, instrument: Instrument, orderbook: OrderBook, update_ohlc: bool):
+        self._recent_orderbooks[instrument].append(orderbook)
+        self.update_by_quote(instrument, orderbook.to_quote(), update_ohlc)
 
 
 SPEC_REGEX = re.compile(

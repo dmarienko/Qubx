@@ -35,6 +35,7 @@ class StrategyContext(
     __broker: IBrokerServiceProvider  # market data provider
     __cache: CachedMarketDataHolder
     __scheduler: BasicScheduler
+    __initial_instruments: list[Instrument]
 
     __thread_data_loop: Thread | None = None  # market data loop
     __is_initialized: bool = False
@@ -58,6 +59,7 @@ class StrategyContext(
         self.__scheduler = broker.get_scheduler()
         self.__trading_service = broker.get_trading_service()
         self.__trading_service.set_account(self.account)
+        self.__initial_instruments = instruments
 
         self.__cache = CachedMarketDataHolder()
 
@@ -99,16 +101,15 @@ class StrategyContext(
             self,
             context=self,
             strategy=self.strategy,
-            instruments=instruments,
             logging=self.__logging,
-            broker=self.__broker,
-            universe_manager=self,
             market_data=self,
             subscription_manager=self,
             time_provider=self,
             position_tracker=__position_tracker,
             position_gathering=__position_gathering,
             cache=self.__cache,
+            scheduler=self.__broker.get_scheduler(),
+            is_simulation=self.__broker.is_simulated_trading,
         )
         # fmt: on
         self.__post_init__()
