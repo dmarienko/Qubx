@@ -93,19 +93,19 @@ class CCXTTradingConnector(ITradingServiceProvider):
             else:
                 raise ValueError("Can't get commissions level from account, but default commissions is not defined !")
 
-    def _get_open_orders_from_exchange(self, symbol: str, days_before: int = 60) -> Dict[str, Order]:
+    def _get_open_orders_from_exchange(self, instrument: Instrument, days_before: int = 60) -> Dict[str, Order]:
         """
         We need only open orders to restore list of active ones in connector
         method returns open orders sorted by creation time in ascending order
         """
         t_orders_start_ms = (self.time() - days_before * pd.Timedelta("1d")).asm8.item() // 1000000
-        orders_data = self.sync.fetch_open_orders(symbol, since=t_orders_start_ms)
+        orders_data = self.sync.fetch_open_orders(instrument.symbol, since=t_orders_start_ms)
         orders: Dict[str, Order] = {}
         for o in orders_data:
-            order = ccxt_convert_order_info(symbol, o)
+            order = ccxt_convert_order_info(instrument, o)
             orders[order.id] = order
         if orders:
-            logger.info(f"{symbol} - loaded {len(orders)} open orders")
+            logger.info(f"{instrument.symbol} - loaded {len(orders)} open orders")
         return dict(sorted(orders.items(), key=lambda x: x[1].time, reverse=False))
 
     def _get_deals_from_exchange(self, symbol: str, days_before: int = 60) -> List[Deal]:
@@ -127,7 +127,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
         vol_from_exch = total_amnts.get(asset, total_amnts.get(symbol, 0))
 
         # - get orders from exchange
-        orders = self._get_open_orders_from_exchange(position.instrument.symbol, ORDERS_HISTORY_LOOKBACK_DAYS)
+        orders = self._get_open_orders_from_exchange(position.instrument, ORDERS_HISTORY_LOOKBACK_DAYS)
         self.acc.add_active_orders(orders)
 
         # - get deals from exchange if position is not zero
@@ -201,8 +201,8 @@ class CCXTTradingConnector(ITradingServiceProvider):
             order = self.acc._active_orders[order_id]
             try:
                 logger.info(f"Canceling order {order_id} ...")
-                # r = self._task_s(self.exchange.cancel_order(order_id, symbol=order.symbol))
-                r = self.sync.cancel_order(order_id, symbol=order.symbol)
+                # r = self._task_s(self.exchange.cancel_order(order_id, symbol=order.instrument.symbol))
+                r = self.sync.cancel_order(order_id, symbol=order.instrument.symbol)
             except Exception as err:
                 logger.error(f"(CCXTSyncTradingConnector) canceling [{order}] exception : {err}")
                 logger.error(traceback.format_exc())
@@ -222,16 +222,16 @@ class CCXTTradingConnector(ITradingServiceProvider):
     def get_account_id(self) -> str:
         return self.account_id
 
-    def process_execution_report(self, symbol: str, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
-        order = ccxt_convert_order_info(symbol, report)
+    def process_execution_report(self, instrument: Instrument, report: dict[str, Any]) -> Tuple[Order, List[Deal]]:
+        order = ccxt_convert_order_info(instrument, report)
         deals = ccxt_extract_deals_from_exec(report)
-        self._fill_missing_fee_info(self._get_instrument(symbol), deals)
-        self.acc.process_deals(symbol, deals)
+        self._fill_missing_fee_info(instrument, deals)
+        self.acc.process_deals(instrument, deals)
         self.acc.process_order(order)
         return order, deals
 
-    def get_orders(self, symbol: str | None = None) -> List[Order]:
-        return self.acc.get_orders(symbol)
+    def get_orders(self, instrument: Instrument | None = None) -> list[Order]:
+        return self.acc.get_orders(instrument)
 
     def get_base_currency(self) -> str:
         return self.acc.base_currency

@@ -243,7 +243,7 @@ class SimulatedTrading(ITradingServiceProvider):
         self._order_to_symbol[order.id] = instrument.symbol
 
         if report.exec is not None:
-            self.process_execution_report(instrument.symbol, {"order": order, "deals": [report.exec]})
+            self.process_execution_report(instrument, {"order": order, "deals": [report.exec]})
         else:
             self.acc.add_active_orders({order.id: order})
 
@@ -316,10 +316,10 @@ class SimulatedTrading(ITradingServiceProvider):
     def get_account_id(self) -> str:
         return "Simulated0"
 
-    def process_execution_report(self, symbol: str, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
+    def process_execution_report(self, instrument: Instrument, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
         order = report["order"]
         deals = report.get("deals", [])
-        self.acc.process_deals(symbol, deals)
+        self.acc.process_deals(instrument, deals)
         self.acc.process_order(order)
         return order, deals
 

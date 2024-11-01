@@ -99,7 +99,7 @@ class DebugStratageyCtx(StrategyContext):
         if amount > 0: self._n_orders_buy += 1
         if amount < 0: self._n_orders_sell += 1
         return Order(
-            "test", "MARKET", instr_or_symbol.symbol if isinstance(instr_or_symbol, Instrument) else instr_or_symbol,
+            "test", "MARKET", instr_or_symbol,
             np.datetime64(0, "ns"), amount, price if price is not None else 0, "BUY" if amount > 0 else "SELL", "CLOSED", "gtc", "test1")
         # fmt: on
 

@@ -1,52 +1,34 @@
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-from types import FunctionType
-
-
-from threading import Thread
-from multiprocessing.pool import ThreadPool
 import traceback
 
-import pandas as pd
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from types import FunctionType
+from multiprocessing.pool import ThreadPool
 
-from qubx import lookup, logger
-from qubx.core.account import AccountProcessor
-from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, process_schedule_spec, set_parameters_to_object
-from qubx.core.loggers import LogsWriter, StrategyLogging
-from qubx.core.basics import (
-    TargetPosition,
-    TriggerEvent,
-    Deal,
-    Instrument,
-    Order,
-    Position,
-    Signal,
-    dt_64,
-    td_64,
-    CtrlChannel,
-    BatchEvent,
-    SW,
-)
+from qubx import logger
+from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, process_schedule_spec
 from qubx.core.loggers import StrategyLogging
+from qubx.core.series import Trade, Quote, Bar, OrderBook
+from qubx.core.basics import (
+    SW,
+    Deal,
+    Order,
+    dt_64,
+    Signal,
+    Instrument,
+    TriggerEvent,
+    TargetPosition,
+)
 from qubx.core.interfaces import (
-    IBrokerServiceProvider,
     IMarketDataProvider,
     IPositionGathering,
     IStrategy,
     ISubscriptionManager,
-    ITradingServiceProvider,
     PositionsTracker,
     IStrategyContext,
     SubscriptionType,
     IProcessingManager,
     ITimeProvider,
-    IUniverseManager,
 )
-from qubx.core.series import Trade, Quote, Bar, OHLCV, OrderBook
-from qubx.data.readers import DataReader
-from qubx.gathering.simplest import SimplePositionGatherer
-from qubx.trackers.sizers import FixedSizer
-from qubx.utils.misc import Stopwatch
-from qubx.utils.time import convert_seconds_to_str
 
 
 class ProcessingManager(IProcessingManager):
@@ -264,6 +246,7 @@ class ProcessingManager(IProcessingManager):
             target_positions = self.__process_and_log_target_positions(
                 self.__position_tracker.update(self.__context, instrument, _data)
             )
+            self.__process_signals_from_target_positions(target_positions)
             self.__position_gathering.alter_positions(self.__context, target_positions)
 
     ###########################################################################

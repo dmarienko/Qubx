@@ -15,7 +15,7 @@ EXCHANGE_ALIASES = {"binance.um": "binanceusdm", "binance.cm": "binancecoinm", "
 DATA_PROVIDERS_ALIASES = EXCHANGE_ALIASES | {"binance": "binanceqv", "binance.um": "binanceqv_usdm"}
 
 
-def ccxt_convert_order_info(symbol: str, raw: Dict[str, Any]) -> Order:
+def ccxt_convert_order_info(instrument: Instrument, raw: dict[str, Any]) -> Order:
     """
     Convert CCXT excution record to Order object
     """
@@ -31,7 +31,7 @@ def ccxt_convert_order_info(symbol: str, raw: Dict[str, Any]) -> Order:
     return Order(
         id=raw["id"],
         type=_type,
-        symbol=symbol,
+        instrument=instrument,
         time=pd.Timestamp(raw["timestamp"], unit="ms"),  # type: ignore
         quantity=amnt,
         price=float(price) if price is not None else 0.0,

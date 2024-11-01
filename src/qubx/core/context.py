@@ -6,9 +6,12 @@ from threading import Thread
 from qubx import logger
 from qubx.core.account import AccountProcessor
 from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, set_parameters_to_object
-from qubx.core.loggers import LogsWriter, StrategyLogging
+from qubx.core.loggers import StrategyLogging
 from qubx.core.basics import Instrument, dt_64, SW, CtrlChannel
 from qubx.core.loggers import StrategyLogging
+from qubx.data.readers import DataReader
+from qubx.gathering.simplest import SimplePositionGatherer
+from qubx.trackers.sizers import FixedSizer
 from qubx.core.interfaces import (
     IBrokerServiceProvider,
     IPositionGathering,
@@ -17,9 +20,6 @@ from qubx.core.interfaces import (
     PositionsTracker,
     IStrategyContext,
 )
-from qubx.data.readers import DataReader
-from qubx.gathering.simplest import SimplePositionGatherer
-from qubx.trackers.sizers import FixedSizer
 from .mixins import ProcessingManager, SubscriptionManager, TradingManager, UniverseManager, MarketDataProvider
 
 
@@ -173,6 +173,10 @@ class StrategyContext(
 
         # - close logging
         self.__logging.close()
+
+    @property
+    def is_simulation(self) -> bool:
+        return self.__broker.is_simulated_trading
 
     def __process_incoming_data_loop(self, channel: CtrlChannel):
         logger.info("(StrategyContext) Start processing market data")

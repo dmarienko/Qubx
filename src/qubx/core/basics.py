@@ -316,7 +316,7 @@ OrderStatus = Literal["OPEN", "CLOSED", "CANCELED", "NEW"]
 class Order:
     id: str
     type: OrderType
-    symbol: str
+    instrument: Instrument
     time: dt_64
     quantity: float
     price: float

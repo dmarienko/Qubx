@@ -121,7 +121,7 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
         """
         raise NotImplementedError("cancel_order is not implemented")
 
-    def get_orders(self, symbol: str | None = None) -> List[Order]:
+    def get_orders(self, instrument: Instrument | None = None) -> List[Order]:
         """Get a list of current orders, optionally filtered by symbol.
 
         Args:
@@ -132,7 +132,7 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
         """
         raise NotImplementedError("get_orders is not implemented")
 
-    def get_position(self, instrument: Instrument | str) -> Position:
+    def get_position(self, instrument: Instrument) -> Position:
         """Get the current position for a given instrument.
 
         Args:
@@ -151,7 +151,7 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
         """
         raise NotImplementedError("get_basic_currency is not implemented")
 
-    def process_execution_report(self, symbol: str, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
+    def process_execution_report(self, instrument: Instrument, report: dict[str, Any]) -> Tuple[Order, List[Deal]]:
         """Process an execution report for a given symbol.
 
         Args:
@@ -187,7 +187,7 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
         else:
             raise ValueError(f"Unknown update type: {type(update)}")
 
-    def update_position_price(self, symbol: str, timestamp: dt_64, update: float | Quote | Trade | Bar):
+    def update_position_price(self, instrument: Instrument, timestamp: dt_64, update: float | Quote | Trade | Bar):
         """Updates the price of a position.
 
         Args:
@@ -195,7 +195,7 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
             timestamp: Timestamp of the update.
             update: Price update (float, Quote, Trade, or Bar).
         """
-        self.acc.update_position_price(timestamp, symbol, ITradingServiceProvider._extract_price(update))
+        self.acc.update_position_price(timestamp, instrument, ITradingServiceProvider._extract_price(update))
 
 
 class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
@@ -549,6 +549,13 @@ class IStrategyContext(
         Check if the strategy is running in simulation mode.
         """
         ...
+
+    @property
+    def positions(self) -> dict[Instrument, Position]:
+        """
+        Get the current positions.
+        """
+        return self.account.positions
 
     @staticmethod
     def latency_report() -> pd.DataFrame:
