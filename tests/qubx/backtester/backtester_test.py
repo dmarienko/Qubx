@@ -5,7 +5,7 @@ from qubx.pandaz.utils import *
 
 from qubx.core.series import Quote
 from qubx.core.utils import recognize_time
-from qubx.core.strategy import IStrategy, StrategyContext, TriggerEvent
+from qubx.core.interfaces import IStrategy, StrategyContext, TriggerEvent
 from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsTimestampedRecords, AsQuotes, RestoreTicksFromOHLC
 from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider
 

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from threading import Event, Lock
 from queue import Queue
 
+from qubx.utils.misc import Stopwatch
 from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.core.utils import prec_ceil, prec_floor
 
@@ -16,6 +17,8 @@ td_64 = np.timedelta64
 ns_to_dt_64 = lambda ns: np.datetime64(ns, "ns")
 
 OPTION_FILL_AT_SIGNAL_PRICE = "fill_at_signal_price"
+
+SW = Stopwatch()
 
 
 @dataclass
@@ -602,7 +605,7 @@ class ITimeProvider:
         """
         Returns current time
         """
-        raise NotImplementedError("Subclasses must implement this method")
+        ...
 
 
 class TradingSessionResult:

@@ -7,7 +7,7 @@ import numpy as np
 from qubx import logger
 from qubx.core.basics import Deal, Instrument, OrderStatus, Signal, TargetPosition
 from qubx.core.series import Bar, Quote, Trade
-from qubx.core.strategy import IPositionSizer, PositionsTracker, StrategyContext
+from qubx.core.interfaces import IPositionSizer, PositionsTracker, StrategyContext
 from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
 
 from qubx.ta.indicators import atr

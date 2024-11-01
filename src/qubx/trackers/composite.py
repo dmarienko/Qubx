@@ -2,7 +2,7 @@ from collections import defaultdict
 from typing import Callable
 from qubx.core.series import Bar, Quote, Trade
 from qubx.core.basics import Deal, Instrument, Signal, TargetPosition
-from qubx.core.strategy import IPositionSizer, PositionsTracker, StrategyContext
+from qubx.core.interfaces import IPositionSizer, PositionsTracker, StrategyContext
 
 
 Targets = list[TargetPosition] | TargetPosition | None

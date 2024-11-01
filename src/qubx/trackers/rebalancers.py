@@ -5,7 +5,7 @@ import pandas as pd
 
 from qubx import logger
 from qubx.core.basics import Position, Signal, TargetPosition
-from qubx.core.strategy import IPositionGathering, StrategyContext, PositionsTracker
+from qubx.core.interfaces import IPositionGathering, StrategyContext, PositionsTracker
 from qubx.trackers.sizers import WeightedPortfolioSizer
 
 

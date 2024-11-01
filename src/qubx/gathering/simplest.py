@@ -1,6 +1,6 @@
 from qubx import logger
 from qubx.core.basics import Deal, Instrument, TargetPosition
-from qubx.core.strategy import IPositionGathering, StrategyContext
+from qubx.core.interfaces import IPositionGathering, StrategyContext
 
 
 class SimplePositionGatherer(IPositionGathering):

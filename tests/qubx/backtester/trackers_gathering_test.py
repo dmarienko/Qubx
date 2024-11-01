@@ -9,7 +9,7 @@ from qubx.pandaz.utils import *
 from qubx.core.utils import recognize_time, time_to_str
 
 from qubx.core.series import OHLCV, Quote
-from qubx.core.strategy import IPositionGathering, IStrategy, PositionsTracker, StrategyContext, TriggerEvent
+from qubx.core.interfaces import IPositionGathering, IStrategy, PositionsTracker, StrategyContext, TriggerEvent
 from qubx.data.readers import (
     AsOhlcvSeries,
     CsvStorageDataReader,

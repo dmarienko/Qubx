@@ -3,7 +3,7 @@ import numpy as np
 
 from qubx import logger
 from qubx.core.basics import Position, Signal, TargetPosition
-from qubx.core.strategy import IPositionSizer, StrategyContext
+from qubx.core.interfaces import IPositionSizer, StrategyContext
 
 
 class FixedSizer(IPositionSizer):

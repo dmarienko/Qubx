@@ -38,6 +38,10 @@ class AccountProcessor:
         self._balances = dict()
         self._balances[self.base_currency] = (initial_capital, 0)
 
+    @property
+    def positions(self) -> dict[str, Position]:
+        return self._positions
+
     def update_balance(self, currency: str, total_capital: float, locked_capital: float):
         if currency == self.base_currency:
             current_balance = self._balances[currency][0]

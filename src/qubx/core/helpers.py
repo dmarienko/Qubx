@@ -7,7 +7,7 @@ import pandas as pd
 from threading import Thread
 
 from qubx import logger
-from qubx.core.basics import CtrlChannel
+from qubx.core.basics import CtrlChannel, Instrument
 from qubx.utils.misc import Stopwatch
 from qubx.utils.time import convert_tf_str_td64, convert_seconds_to_str
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
@@ -22,23 +22,27 @@ class CachedMarketDataHolder:
     """
 
     default_timeframe: np.timedelta64
-    _last_bar: Dict[str, Bar | None]
-    _ohlcvs: Dict[str, Dict[np.timedelta64, OHLCV]]
-    _updates: Dict[str, Any]
+    _last_bar: dict[Instrument, Bar | None]
+    _ohlcvs: dict[Instrument, dict[np.timedelta64, OHLCV]]
+    _updates: dict[Instrument, Any]
 
-    def __init__(self, default_timeframe: str) -> None:
-        self.default_timeframe = convert_tf_str_td64(default_timeframe)
+    def __init__(self, default_timeframe: str | None = None) -> None:
         self._ohlcvs = dict()
         self._last_bar = defaultdict(lambda: None)
         self._updates = dict()
+        if default_timeframe:
+            self.default_timeframe = convert_tf_str_td64(default_timeframe)
 
-    def init_ohlcv(self, symbol: str, max_size=np.inf):
-        self._ohlcvs[symbol] = {self.default_timeframe: OHLCV(symbol, self.default_timeframe, max_size)}
+    def update_default_timeframe(self, default_timeframe: str):
+        self.default_timeframe = convert_tf_str_td64(default_timeframe)
 
-    def remove(self, symbol: str) -> None:
-        self._ohlcvs.pop(symbol, None)
-        self._last_bar.pop(symbol, None)
-        self._updates.pop(symbol, None)
+    def init_ohlcv(self, instrument: Instrument, max_size=np.inf):
+        self._ohlcvs[instrument] = {self.default_timeframe: OHLCV(instrument.symbol, self.default_timeframe, max_size)}
+
+    def remove(self, instrument: Instrument) -> None:
+        self._ohlcvs.pop(instrument, None)
+        self._last_bar.pop(instrument, None)
+        self._updates.pop(instrument, None)
 
     def is_data_ready(self) -> bool:
         """
@@ -50,51 +54,51 @@ class CachedMarketDataHolder:
         return False
 
     @_SW.watch("CachedMarketDataHolder")
-    def get_ohlcv(self, symbol: str, timeframe: str | None = None, max_size=np.inf) -> OHLCV:
+    def get_ohlcv(self, instrument: Instrument, timeframe: str | None = None, max_size: float | int = np.inf) -> OHLCV:
         tf = convert_tf_str_td64(timeframe) if timeframe else self.default_timeframe
 
-        if symbol not in self._ohlcvs:
-            self._ohlcvs[symbol] = {}
+        if instrument not in self._ohlcvs:
+            self._ohlcvs[instrument] = {}
 
-        if tf not in self._ohlcvs[symbol]:
+        if tf not in self._ohlcvs[instrument]:
             # - check requested timeframe
-            new_ohlc = OHLCV(symbol, tf, max_size)
+            new_ohlc = OHLCV(instrument.symbol, tf, max_size)
             if tf < self.default_timeframe:
                 logger.warning(
-                    f"[{symbol}] Request for timeframe {timeframe} that is smaller then minimal {self.default_timeframe}"
+                    f"[{instrument.symbol}] Request for timeframe {timeframe} that is smaller then minimal {self.default_timeframe}"
                 )
             else:
                 # - first try to resample from smaller frame
-                if basis := self._ohlcvs[symbol].get(self.default_timeframe):
+                if basis := self._ohlcvs[instrument].get(self.default_timeframe):
                     for b in basis[::-1]:
                         new_ohlc.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume, b.bought_volume)
 
-            self._ohlcvs[symbol][tf] = new_ohlc
+            self._ohlcvs[instrument][tf] = new_ohlc
 
-        return self._ohlcvs[symbol][tf]
+        return self._ohlcvs[instrument][tf]
 
     @_SW.watch("CachedMarketDataHolder")
-    def update_by_bars(self, symbol: str, timeframe: str, bars: List[Bar]) -> OHLCV:
+    def update_by_bars(self, instrument: Instrument, timeframe: str, bars: List[Bar]) -> OHLCV:
         """
         Substitute or create new series based on provided historical bars
         """
-        if symbol not in self._ohlcvs:
-            self._ohlcvs[symbol] = {}
+        if instrument not in self._ohlcvs:
+            self._ohlcvs[instrument] = {}
 
         tf = convert_tf_str_td64(timeframe)
-        new_ohlc = OHLCV(symbol, tf)
+        new_ohlc = OHLCV(instrument.symbol, tf)
         for b in bars:
             new_ohlc.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume, b.bought_volume)
-            self._updates[symbol] = b
+            self._updates[instrument] = b
 
-        self._ohlcvs[symbol][tf] = new_ohlc
+        self._ohlcvs[instrument][tf] = new_ohlc
         return new_ohlc
 
     @_SW.watch("CachedMarketDataHolder")
-    def update_by_bar(self, symbol: str, bar: Bar):
-        self._updates[symbol] = bar
+    def update_by_bar(self, instrument: Instrument, bar: Bar):
+        self._updates[instrument] = bar
 
-        _last_bar = self._last_bar[symbol]
+        _last_bar = self._last_bar[instrument]
         v_tot_inc = bar.volume
         v_buy_inc = bar.bought_volume
 
@@ -106,24 +110,24 @@ class CachedMarketDataHolder:
             if _last_bar.time > bar.time:  # update is too late - skip it
                 return
 
-        if symbol in self._ohlcvs:
-            self._last_bar[symbol] = bar
-            for ser in self._ohlcvs[symbol].values():
+        if instrument in self._ohlcvs:
+            self._last_bar[instrument] = bar
+            for ser in self._ohlcvs[instrument].values():
                 ser.update_by_bar(bar.time, bar.open, bar.high, bar.low, bar.close, v_tot_inc, v_buy_inc)
 
     @_SW.watch("CachedMarketDataHolder")
-    def update_by_quote(self, symbol: str, quote: Quote):
-        self._updates[symbol] = quote
+    def update_by_quote(self, instrument: Instrument, quote: Quote):
+        self._updates[instrument] = quote
 
-        series = self._ohlcvs.get(symbol)
+        series = self._ohlcvs.get(instrument)
         if series:
             for ser in series.values():
                 ser.update(quote.time, quote.mid_price(), 0)
 
     @_SW.watch("CachedMarketDataHolder")
-    def update_by_trade(self, symbol: str, trade: Trade):
-        self._updates[symbol] = trade
-        series = self._ohlcvs.get(symbol)
+    def update_by_trade(self, instrument: Instrument, trade: Trade):
+        self._updates[instrument] = trade
+        series = self._ohlcvs.get(instrument)
         if series:
             total_vol = trade.size
             bought_vol = total_vol if trade.taker >= 1 else 0.0

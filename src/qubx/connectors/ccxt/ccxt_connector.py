@@ -18,7 +18,7 @@ import pandas as pd
 from qubx import logger
 from qubx.core.basics import Instrument, Position, dt_64, Deal, CtrlChannel
 from qubx.core.helpers import BasicScheduler
-from qubx.core.strategy import IBrokerServiceProvider, ITradingServiceProvider
+from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.utils.ntp import time_now
 from .ccxt_utils import DATA_PROVIDERS_ALIASES, ccxt_convert_trade, ccxt_convert_orderbook
@@ -77,6 +77,10 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         self._subscriptions = defaultdict(list)
 
         logger.info(f"{exchange_id} initialized - current time {self.trading_service.time()}")
+
+    @property
+    def is_simulated_trading(self) -> bool:
+        return False
 
     def get_scheduler(self) -> BasicScheduler:
         # - standard scheduler
@@ -167,8 +171,9 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     def _time_msec_nbars_back(self, timeframe: str, nbarsback: int) -> int:
         return (self.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
 
-    def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
+    def get_historical_ohlcs(self, instrument: Instrument, timeframe: str, nbarsback: int) -> List[Bar]:
         assert nbarsback >= 1
+        symbol = instrument.symbol
         since = self._time_msec_nbars_back(timeframe, nbarsback)
 
         # - retrieve OHLC data
@@ -291,8 +296,8 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         )
         logger.info(f"{symbol}: loaded {len(ohlcv)} {timeframe} bars")
 
-    def get_quote(self, symbol: str) -> Optional[Quote]:
-        return self._last_quotes[symbol]
+    def get_quote(self, instrument: Instrument) -> Quote | None:
+        return self._last_quotes[instrument.symbol]
 
     def _get_exch_timeframe(self, timeframe: str) -> str:
         if timeframe is not None:

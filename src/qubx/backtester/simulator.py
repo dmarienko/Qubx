@@ -24,7 +24,7 @@ from qubx.core.basics import (
     dt_64,
 )
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
-from qubx.core.strategy import (
+from qubx.core.interfaces import (
     IStrategy,
     IBrokerServiceProvider,
     ITradingServiceProvider,
@@ -574,8 +574,8 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         return cc.control.is_set()
 
-    def get_quote(self, symbol: str) -> Optional[Quote]:
-        return self._last_quotes[symbol]
+    def get_quote(self, instrument: Instrument) -> Quote | None:
+        return self._last_quotes[instrument.symbol]
 
     def close(self):
         pass
@@ -589,10 +589,9 @@ class SimulatedExchange(IBrokerServiceProvider):
     def is_simulated_trading(self) -> bool:
         return True
 
-    def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
+    def get_historical_ohlcs(self, instrument: Instrument, timeframe: str, nbarsback: int) -> list[Bar]:
         start = pd.Timestamp(self.time())
         end = start - nbarsback * pd.Timedelta(timeframe)
-        instrument = self._symbol_to_instrument[symbol]
         _spec = f"{instrument.exchange}:{instrument.symbol}"
         records = self._reader.read(
             data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()  # type: ignore

@@ -1,6 +1,6 @@
 from qubx.pandaz.utils import *
 
-from qubx.core.strategy import IStrategy, StrategyContext
+from qubx.core.interfaces import IStrategy, StrategyContext
 from qubx.core.context import StrategyContextImpl
 from qubx.core.loggers import InMemoryLogsWriter
 from qubx.data.readers import CsvStorageDataReader, DataReader

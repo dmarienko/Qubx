@@ -4,7 +4,7 @@ import numpy as np
 from tabulate import tabulate
 
 from qubx import logger
-from qubx.core.strategy import IStrategy, PositionsTracker, TriggerEvent, StrategyContext
+from qubx.core.interfaces import IStrategy, PositionsTracker, TriggerEvent, StrategyContext
 from qubx.core.basics import Instrument, Position, Signal
 from qubx.pandaz import srows, scols, ohlc_resample, retain_columns_and_join
 from qubx.trackers import Capital, PortfolioRebalancerTracker
