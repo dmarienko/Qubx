@@ -80,7 +80,7 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
         Returns:
             float: The free capital.
         """
-        return self.acc.get_free_capital()
+        return self.acc.get_capital()
 
     def send_order(
         self,
@@ -402,13 +402,18 @@ class ITradingManager:
 class IUniverseManager:
     """Manages universe updates."""
 
-    instruments: list[Instrument]
-
     def set_universe(self, instruments: list[Instrument]):
         """Set the trading universe.
 
         Args:
             instruments: List of instruments in the universe
+        """
+        ...
+
+    @property
+    def instruments(self) -> list[Instrument]:
+        """
+        Get the list of instruments in the universe.
         """
         ...
 

@@ -33,9 +33,20 @@ class CachedMarketDataHolder:
         self._ohlcvs = dict()
         self._last_bar = defaultdict(lambda: None)
         self._updates = dict()
-        self._recent_trades = defaultdict(lambda: TimeLimitedDeque(time_limit=pd.Timedelta("10Min")))
-        self._recent_quotes = defaultdict(lambda: TimeLimitedDeque(time_limit=pd.Timedelta("10Min")))
-        self._recent_orderbooks = defaultdict(lambda: TimeLimitedDeque(time_limit=pd.Timedelta("10Min")))
+        # TODO: use appropriate time limits from warmup
+        # TODO: add accessors to get recent data
+        self._recent_trades = defaultdict(
+            lambda: TimeLimitedDeque(time_limit=pd.Timedelta("10Min"), time_key=lambda x: x.time)
+        )
+        self._recent_trades = defaultdict(
+            lambda: TimeLimitedDeque(time_limit=pd.Timedelta("10Min"), time_key=lambda x: x.time)
+        )
+        self._recent_quotes = defaultdict(
+            lambda: TimeLimitedDeque(time_limit=pd.Timedelta("10Min"), time_key=lambda x: x.time)
+        )
+        self._recent_orderbooks = defaultdict(
+            lambda: TimeLimitedDeque(time_limit=pd.Timedelta("10Min"), time_key=lambda x: x.time)
+        )
         if default_timeframe:
             self.default_timeframe = convert_tf_str_td64(default_timeframe)
 

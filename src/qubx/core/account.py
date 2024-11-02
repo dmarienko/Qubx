@@ -65,7 +65,7 @@ class AccountProcessor:
         p = self._positions[instrument]
         p.update_market_price(time, price, 1)
 
-    def get_free_capital(self) -> float:
+    def get_capital(self) -> float:
         """
         Get free capital in base currency.
         """

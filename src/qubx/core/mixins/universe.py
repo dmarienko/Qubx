@@ -27,7 +27,7 @@ class UniverseManager(IUniverseManager):
     __subscription_manager: ISubscriptionManager
     __trading_manager: ITradingManager
     __time_provider: ITimeProvider
-    __positions: dict[str, Position]
+    __positions: dict[Instrument, Position]
     __position_gathering: IPositionGathering
 
     def __init__(
@@ -55,11 +55,11 @@ class UniverseManager(IUniverseManager):
         self.__time_provider = time_provider
         self.__positions = account_processor.positions
         self.__position_gathering = position_gathering
-        self.instruments = []
+        self._instruments = []
 
     def set_universe(self, instruments: list[Instrument]) -> None:
         new_set = set(instruments)
-        prev_set = set(self.instruments)
+        prev_set = set(self._instruments)
         rm_instr = list(prev_set - new_set)
         add_instr = list(new_set - prev_set)
 
@@ -70,8 +70,12 @@ class UniverseManager(IUniverseManager):
             self.__strategy.on_universe_change(self.__context, add_instr, rm_instr)
 
         # set new instruments
-        self.instruments.clear()
-        self.instruments.extend(instruments)
+        self._instruments.clear()
+        self._instruments.extend(instruments)
+
+    @property
+    def instruments(self) -> list[Instrument]:
+        return self._instruments
 
     def __remove_instruments(self, instruments: list[Instrument]) -> None:
         """
@@ -92,7 +96,7 @@ class UniverseManager(IUniverseManager):
 
         # - if still open positions close them manually
         for instr in instruments:
-            pos = self.__positions.get(instr.symbol)
+            pos = self.__positions.get(instr)
             if pos and abs(pos.quantity) > instr.min_size:
                 self.__trading_manager.trade(instr, -pos.quantity)
 

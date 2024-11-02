@@ -62,7 +62,7 @@ class TestAccountProcessorStuff:
         # 1. Check account in the beginning
         assert 0 == ctx.account.get_net_leverage()
         assert 0 == ctx.account.get_gross_leverage()
-        assert initial_capital == ctx.account.get_free_capital()
+        assert initial_capital == ctx.account.get_capital()
         assert initial_capital == ctx.account.get_total_capital()
 
         # 2. Execute a trade and check account
@@ -81,7 +81,7 @@ class TestAccountProcessorStuff:
         assert np.isclose(leverage_adj, ctx.account.get_gross_leverage())
         assert np.isclose(
             initial_capital - amount * quote.ask,
-            ctx.account.get_free_capital(),
+            ctx.account.get_capital(),
         )
         assert np.isclose(initial_capital, ctx.account.get_total_capital())
 
@@ -95,8 +95,8 @@ class TestAccountProcessorStuff:
 
         assert 0 == ctx.account.get_net_leverage()
         assert 0 == ctx.account.get_gross_leverage()
-        assert np.isclose(new_capital, ctx.account.get_free_capital())
-        assert ctx.account.get_free_capital() == ctx.account.get_total_capital()
+        assert np.isclose(new_capital, ctx.account.get_capital())
+        assert ctx.account.get_capital() == ctx.account.get_total_capital()
 
     def test_commissions(self):
         initial_capital = 10_000

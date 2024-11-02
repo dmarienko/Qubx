@@ -9,7 +9,14 @@ from qubx.pandaz.utils import *
 from qubx.core.utils import recognize_time, time_to_str
 
 from qubx.core.series import OHLCV, Quote
-from qubx.core.interfaces import IPositionGathering, IStrategy, PositionsTracker, IStrategyContext, TriggerEvent
+from qubx.core.interfaces import (
+    IPositionGathering,
+    IStrategy,
+    PositionsTracker,
+    IStrategyContext,
+    TriggerEvent,
+    SubscriptionType,
+)
 from qubx.data.readers import (
     AsOhlcvSeries,
     CsvStorageDataReader,
@@ -50,7 +57,9 @@ class TestingPositionGatherer(IPositionGathering):
             )
         else:
             # position.quantity = new_size
-            position.update_position(ctx.time(), new_size, ctx.quote(instrument.symbol).mid_price())
+            q = ctx.quote(instrument)
+            assert q is not None
+            position.update_position(ctx.time(), new_size, q.mid_price())
             r = ctx.trade(instrument, to_trade, at_price)
             logger.info(
                 f"{instrument.symbol} >>> (TESTS) Adjusting position from {current_position} to {new_size} : {r}"
@@ -62,7 +71,7 @@ class TestingPositionGatherer(IPositionGathering):
 
 class DebugStratageyCtx(IStrategyContext):
     def __init__(self, instrs, capital) -> None:
-        self.instruments = instrs
+        self._instruments = instrs
         self.capital = capital
 
         positions = {i: Position(i) for i in instrs}
@@ -73,6 +82,10 @@ class DebugStratageyCtx(IStrategyContext):
         self._n_orders_buy = 0
         self._n_orders_sell = 0
         self._orders_size = 0
+
+    @property
+    def instruments(self) -> list[Instrument]:
+        return self._instruments
 
     def quote(self, symbol: str) -> Quote | None:
         return Q("2020-01-01", 1000.0, 1000.5)
@@ -213,6 +226,9 @@ class TestTrackersAndGatherers:
             fast_period = 5
             slow_period = 12
 
+            def on_init(self, ctx: IStrategyContext) -> None:
+                ctx.set_base_subscription(SubscriptionType.OHLC, timeframe=self.timeframe)
+
             def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
                 signals = []
                 for i in ctx.instruments:
@@ -233,7 +249,7 @@ class TestTrackersAndGatherers:
                 return PositionsTracker(FixedRiskSizer(1, 10_000, reinvest_profit=True))
 
         rep = simulate(
-            {
+            config={
                 "Strategy ST client": [
                     StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
                     t0 := StopTakePositionTracker(
@@ -271,14 +287,12 @@ class TestTrackersAndGatherers:
                     ),
                 ],
             },
-            r,
-            10000,
-            ["BINANCE.UM:BTCUSDT"],
-            dict(type="ohlc", timeframe="15Min", nback=0),
-            "-1Sec",
-            "vip0_usdt",
-            "2024-01-01",
-            "2024-01-03 13:00",
+            data=r,
+            capital=10000,
+            instruments=["BINANCE.UM:BTCUSDT"],
+            commissions="vip0_usdt",
+            start="2024-01-01",
+            stop="2024-01-03 13:00",
         )
 
         assert rep[2].executions_log.iloc[-1].price < rep[3].executions_log.iloc[-1].price

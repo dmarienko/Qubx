@@ -443,7 +443,7 @@ class StrategyLogging:
             logger.warning("Log writer is not defined - strategy activity will not be saved !")
 
     def initialize(
-        self, timestamp: np.datetime64, positions: Dict[str, Position], balances: Dict[str, Tuple[float, float]]
+        self, timestamp: np.datetime64, positions: Dict[Instrument, Position], balances: Dict[str, Tuple[float, float]]
     ) -> None:
         # - attach positions to loggers
         if self.positions_dumper:

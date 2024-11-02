@@ -14,21 +14,30 @@ from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.trackers.sizers import FixedSizer
 from qubx.core.interfaces import (
     IBrokerServiceProvider,
+    IMarketDataProvider,
     IPositionGathering,
     IStrategy,
     ITradingServiceProvider,
-    PositionsTracker,
     IStrategyContext,
+    IUniverseManager,
+    ISubscriptionManager,
+    ITradingManager,
+    IProcessingManager,
+    PositionsTracker,
 )
 from .mixins import ProcessingManager, SubscriptionManager, TradingManager, UniverseManager, MarketDataProvider
 
 
-class StrategyContext(
-    IStrategyContext, MarketDataProvider, ProcessingManager, SubscriptionManager, TradingManager, UniverseManager
-):
+class StrategyContext(IStrategyContext):
     DEFAULT_POSITION_TRACKER: Callable[[], PositionsTracker] = lambda: PositionsTracker(
         FixedSizer(1.0, amount_in_quote=False)
     )
+
+    __market_data_provider: IMarketDataProvider
+    __universe_manager: IUniverseManager
+    __subscription_manager: ISubscriptionManager
+    __trading_manager: ITradingManager
+    __processing_manager: IProcessingManager
 
     __trading_service: ITradingServiceProvider  # service for exchange API: orders managemewnt
     __logging: StrategyLogging  # recording all activities for the strat: execs, positions, portfolio
@@ -63,18 +72,19 @@ class StrategyContext(
 
         self.__cache = CachedMarketDataHolder()
 
-        # fmt: off
-        __position_tracker = self.strategy.tracker(self) or self.DEFAULT_POSITION_TRACKER()
-        __position_gathering = position_gathering or SimplePositionGatherer()
-        MarketDataProvider.__init__(
-            self,
+        __position_tracker = self.strategy.tracker(self)
+        if __position_tracker is None:
+            __position_tracker = self.DEFAULT_POSITION_TRACKER()
+
+        __position_gathering = position_gathering if position_gathering is not None else SimplePositionGatherer()
+
+        self.__market_data_provider = MarketDataProvider(
             cache=self.__cache,
             broker=self.__broker,
             universe_manager=self,
             aux_data_provider=aux_data_provider,
         )
-        UniverseManager.__init__(
-            self,
+        self.__universe_manager = UniverseManager(
             context=self,
             strategy=self.strategy,
             broker=self.__broker,
@@ -87,18 +97,13 @@ class StrategyContext(
             account_processor=self.account,
             position_gathering=__position_gathering,
         )
-        SubscriptionManager.__init__(
-            self,
-            broker=self.__broker
-        )
-        TradingManager.__init__(
-            self,
+        self.__subscription_manager = SubscriptionManager(broker=self.__broker)
+        self.__trading_manager = TradingManager(
             time_provider=self,
             trading_service=self.__trading_service,
             strategy_name=self.strategy.__class__.__name__,
         )
-        ProcessingManager.__init__(
-            self,
+        self.__processing_manager = ProcessingManager(
             context=self,
             strategy=self.strategy,
             logging=self.__logging,
@@ -111,10 +116,9 @@ class StrategyContext(
             scheduler=self.__broker.get_scheduler(),
             is_simulation=self.__broker.is_simulated_trading,
         )
-        # fmt: on
         self.__post_init__()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.strategy.on_init(self)
         # - update cache default timeframe
         _, __sub_params = self.get_base_subscription()
@@ -178,16 +182,87 @@ class StrategyContext(
     def is_simulation(self) -> bool:
         return self.__broker.is_simulated_trading
 
+    # IAccountViewer delegation
     @property
     def positions(self):
         return self.account.positions
 
     def get_capital(self) -> float:
-        return self.account.get_free_capital()
+        return self.account.get_capital()
 
     def get_total_capital(self) -> float:
         return self.account.get_total_capital()
 
+    # IMarketDataProvider delegation
+    def ohlc(self, instrument: Instrument, timeframe: str):
+        return self.__market_data_provider.ohlc(instrument, timeframe)
+
+    def quote(self, instrument: Instrument):
+        return self.__market_data_provider.quote(instrument)
+
+    def get_historical_ohlcs(self, instrument: Instrument, timeframe: str, length: int):
+        return self.__market_data_provider.get_historical_ohlcs(instrument, timeframe, length)
+
+    def get_aux_data(self, data_id: str, **parameters):
+        return self.__market_data_provider.get_aux_data(data_id, **parameters)
+
+    def get_instruments(self):
+        return self.__market_data_provider.get_instruments()
+
+    def get_instrument(self, symbol: str, exchange: str):
+        return self.__market_data_provider.get_instrument(symbol, exchange)
+
+    # ITradingManager delegation
+    def trade(self, instrument: Instrument, amount: float, price: float | None = None, time_in_force="gtc", **options):
+        return self.__trading_manager.trade(instrument, amount, price, time_in_force, **options)
+
+    def cancel(self, instrument: Instrument):
+        return self.__trading_manager.cancel(instrument)
+
+    def cancel_order(self, order_id: str):
+        return self.__trading_manager.cancel_order(order_id)
+
+    # IUniverseManager delegation
+    def set_universe(self, instruments: list[Instrument]):
+        return self.__universe_manager.set_universe(instruments)
+
+    @property
+    def instruments(self):
+        return self.__universe_manager.instruments
+
+    # ISubscriptionManager delegation
+    def subscribe(self, instrument: Instrument, subscription_type: str, **kwargs):
+        return self.__subscription_manager.subscribe(instrument, subscription_type, **kwargs)
+
+    def unsubscribe(self, instrument: Instrument, subscription_type: str | None = None):
+        return self.__subscription_manager.unsubscribe(instrument, subscription_type)
+
+    def has_subscription(self, instrument: Instrument, subscription_type: str):
+        return self.__subscription_manager.has_subscription(instrument, subscription_type)
+
+    def get_base_subscription(self):
+        return self.__subscription_manager.get_base_subscription()
+
+    def set_base_subscription(self, subscription_type, **kwargs):
+        return self.__subscription_manager.set_base_subscription(subscription_type, **kwargs)
+
+    def get_warmup(self, subscription_type: str):
+        return self.__subscription_manager.get_warmup(subscription_type)
+
+    def set_warmup(self, subscription_type: str, period: str):
+        return self.__subscription_manager.set_warmup(subscription_type, period)
+
+    # IProcessingManager delegation
+    def process_data(self, symbol: str, d_type: str, data: Any):
+        return self.__processing_manager.process_data(symbol, d_type, data)
+
+    def set_fit_schedule(self, schedule: str):
+        return self.__processing_manager.set_fit_schedule(schedule)
+
+    def set_event_schedule(self, schedule: str):
+        return self.__processing_manager.set_event_schedule(schedule)
+
+    # private methods
     def __process_incoming_data_loop(self, channel: CtrlChannel):
         logger.info("(StrategyContext) Start processing market data")
         while channel.control.is_set():

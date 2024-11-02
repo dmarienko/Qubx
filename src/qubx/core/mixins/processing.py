@@ -83,9 +83,9 @@ class ProcessingManager(IProcessingManager):
 
         self.__pool = ThreadPool(2) if not self.__is_simulation else None
         self.__handlers = {
-            n.split("__handle_")[1]: f
+            n.split("_handle_")[1]: f
             for n, f in self.__class__.__dict__.items()
-            if type(f) == FunctionType and n.startswith("__handle_")
+            if type(f) == FunctionType and n.startswith("_handle_")
         }
         self.__strategy_name = strategy.__class__.__name__
         self.__init_fit_args = (None, self.__time_provider.time())
@@ -110,11 +110,11 @@ class ProcessingManager(IProcessingManager):
             if handler:
                 trigger_event = handler(self, instrument, data)
             else:
-                trigger_event = self.__handle_event(instrument, d_type, data)
+                trigger_event = self._handle_event(instrument, d_type, data)
 
         # - check if it still didn't call on_fit() for first time
         if not self.__init_fit_was_called:
-            self.__handle_fit(None, self.__init_fit_args)
+            self._handle_fit(None, self.__init_fit_args)
 
         if not trigger_event:
             return False
@@ -252,7 +252,7 @@ class ProcessingManager(IProcessingManager):
     ###########################################################################
     # - Handlers for different types of incoming data
     ###########################################################################
-    def __handle_fit(self, _: Instrument | None, data: Any) -> None:
+    def _handle_fit(self, _: Instrument | None, data: Any) -> None:
         """
         When scheduled fit event is happened - we need to invoke strategy on_fit method
         """
@@ -269,40 +269,40 @@ class ProcessingManager(IProcessingManager):
             (dt_64(now_fit_time, "s"), dt_64(prev_fit_time, "s") if prev_fit_time else None),
         )
 
-    def __handle_hist_bars(self, instrument: Instrument, bars: list[Bar]) -> None:
+    def _handle_hist_bars(self, instrument: Instrument, bars: list[Bar]) -> None:
         for b in bars:
-            self.__handle_hist_bar(instrument, b)
+            self._handle_hist_bar(instrument, b)
 
-    def __handle_hist_bar(self, instrument: Instrument, bar: Bar) -> None:
+    def _handle_hist_bar(self, instrument: Instrument, bar: Bar) -> None:
         self.__update_base_data(instrument, bar, is_historical=True)
 
-    def __handle_hist_quote(self, instrument: Instrument, quote: Quote) -> None:
+    def _handle_hist_quote(self, instrument: Instrument, quote: Quote) -> None:
         self.__update_base_data(instrument, quote, is_historical=True)
 
-    def __handle_hist_trade(self, instrument: Instrument, trade: Trade) -> None:
+    def _handle_hist_trade(self, instrument: Instrument, trade: Trade) -> None:
         self.__update_base_data(instrument, trade, is_historical=True)
 
-    def __handle_bar(self, instrument: Instrument, bar: Bar) -> TriggerEvent:
+    def _handle_bar(self, instrument: Instrument, bar: Bar) -> TriggerEvent:
         self.__update_base_data(instrument, bar)
         return TriggerEvent(self.__time_provider.time(), SubscriptionType.OHLC, instrument, bar)
 
-    def __handle_trade(self, instrument: Instrument, trade: Trade) -> TriggerEvent:
+    def _handle_trade(self, instrument: Instrument, trade: Trade) -> TriggerEvent:
         self.__update_base_data(instrument, trade)
         return TriggerEvent(self.__time_provider.time(), SubscriptionType.TRADE, instrument, trade)
 
-    def __handle_orderbook(self, instrument: Instrument, orderbook: OrderBook) -> TriggerEvent:
+    def _handle_orderbook(self, instrument: Instrument, orderbook: OrderBook) -> TriggerEvent:
         self.__update_base_data(instrument, orderbook)
         return TriggerEvent(self.__time_provider.time(), SubscriptionType.ORDERBOOK, instrument, orderbook)
 
-    def __handle_quote(self, instrument: Instrument, quote: Quote) -> TriggerEvent:
+    def _handle_quote(self, instrument: Instrument, quote: Quote) -> TriggerEvent:
         self.__update_base_data(instrument, quote)
         return TriggerEvent(self.__time_provider.time(), SubscriptionType.QUOTE, instrument, quote)
 
-    def __handle_event(self, instrument: Instrument, event_type: str, event_data: Any) -> TriggerEvent:
+    def _handle_event(self, instrument: Instrument, event_type: str, event_data: Any) -> TriggerEvent:
         return TriggerEvent(self.__time_provider.time(), event_type, instrument, event_data)
 
     @SW.watch("StrategyContext.order")
-    def __handle_order(self, instrument: Instrument, order: Order) -> TriggerEvent | None:
+    def _handle_order(self, instrument: Instrument, order: Order) -> TriggerEvent | None:
         logger.debug(
             f"[<red>{order.id}</red> / {order.client_id}] : {order.type} {order.side} {order.quantity} "
             f"of {instrument.symbol} { (' @ ' + str(order.price)) if order.price else '' } -> [{order.status}]"
@@ -311,7 +311,7 @@ class ProcessingManager(IProcessingManager):
         return None
 
     @SW.watch("StrategyContext")
-    def __handle_deals(self, instrument: Instrument, deals: list[Deal]) -> TriggerEvent | None:
+    def _handle_deals(self, instrument: Instrument, deals: list[Deal]) -> TriggerEvent | None:
         # - log deals in storage
         self.__logging.save_deals(instrument, deals)
         if instrument is None:

@@ -50,7 +50,7 @@ class FixedLeverageSizer(IPositionSizer):
         total_capital = ctx.account.get_total_capital()
         positions = []
         for signal in signals:
-            q = ctx.quote(signal.instrument.symbol)
+            q = ctx.quote(signal.instrument)
             if q is None:
                 logger.error(
                     f"{self.__class__.__name__}: Can't get actual market quote for {signal.instrument.symbol} !"
@@ -88,11 +88,12 @@ class FixedRiskSizer(IPositionSizer):
                 if signal.stop and signal.stop > 0:
                     _pos = ctx.positions[signal.instrument]
                     _q = ctx.quote(signal.instrument)
+                    assert _q is not None
 
                     _direction = np.sign(signal.signal)
                     # - hey, we can't trade using negative balance ;)
                     _cap = max(
-                        ctx.account.get_total_capital() if self.reinvest_profit else ctx.account.get_free_capital(), 0
+                        ctx.account.get_total_capital() if self.reinvest_profit else ctx.account.get_capital(), 0
                     )
                     _entry = _q.ask if _direction > 0 else _q.bid
                     # fmt: off

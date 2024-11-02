@@ -218,7 +218,8 @@ class Instrument:
 
     @property
     def id(self) -> str:
-        return f"{self.exchange}:{self.symbol}"
+        # TODO: maybe change this later to include exchange and market type
+        return self.symbol
 
     def __hash__(self) -> int:
         return hash((self.symbol, self.exchange, self.market_type))
@@ -231,7 +232,7 @@ class Instrument:
         return self.symbol == other.symbol and self.exchange == other.exchange and self.market_type == other.market_type
 
     def __str__(self) -> str:
-        return f"{self.exchange}:{self.symbol} [{self.market_type}]"
+        return f"{self.exchange}:{self.market_type}:{self.symbol}"
 
     def __repr__(self) -> str:
         return self.__str__()

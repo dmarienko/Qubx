@@ -149,7 +149,7 @@ class TestStrats:
         print("- " * 50)
         print(pd.DataFrame.from_dict(acc.positions_report()).T)
         print("- " * 50)
-        print(f"Capital: {acc.get_free_capital()}")
+        print(f"Capital: {acc.get_capital()}")
         print(f"Margin Capital: {acc.get_total_capital()}")
         print(f"Net leverage: {acc.get_net_leverage()}")
         print(f"Gross leverage: {acc.get_gross_leverage()}")
