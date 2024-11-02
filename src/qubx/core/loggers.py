@@ -202,7 +202,7 @@ class PositionsDumper(_BaseIntervalDumper):
     so we could check current situation.
     """
 
-    positions: Dict[str, Position]
+    positions: Dict[Instrument, Position]
     _writer: LogsWriter
 
     def __init__(
@@ -216,16 +216,16 @@ class PositionsDumper(_BaseIntervalDumper):
 
     def attach_positions(self, *positions: Position) -> "PositionsDumper":
         for p in positions:
-            self.positions[p.instrument.symbol] = p
+            self.positions[p.instrument] = p
         return self
 
     def dump(self, interval_start_time: np.datetime64, actual_timestamp: np.datetime64):
         data = []
-        for s, p in self.positions.items():
+        for i, p in self.positions.items():
             data.append(
                 {
                     "timestamp": str(actual_timestamp),
-                    "instrument_id": s,
+                    "instrument_id": i.id,
                     "pnl_quoted": p.total_pnl(),
                     "quantity": p.quantity,
                     "realized_pnl_quoted": p.r_pnl,
@@ -247,11 +247,11 @@ class PortfolioLogger(PositionsDumper):
 
     def dump(self, interval_start_time: np.datetime64, actual_timestamp: np.datetime64):
         data = []
-        for s, p in self.positions.items():
+        for i, p in self.positions.items():
             data.append(
                 {
                     "timestamp": str(interval_start_time),
-                    "instrument_id": s,
+                    "instrument_id": i.id,
                     "pnl_quoted": p.total_pnl(),
                     "quantity": p.quantity,
                     "realized_pnl_quoted": p.r_pnl,
@@ -296,7 +296,7 @@ class ExecutionsLogger(_BaseIntervalDumper):
             data.append(
                 {
                     "timestamp": d.time,
-                    "instrument_id": f"{i.exchange}:{i.symbol}",
+                    "instrument_id": i.id,
                     "side": "buy" if d.amount > 0 else "sell",
                     "filled_qty": d.amount,
                     "price": d.price,
@@ -343,7 +343,7 @@ class SignalsLogger(_BaseIntervalDumper):
             data.append(
                 {
                     "timestamp": s.time,
-                    "instrument_id": s.instrument.symbol,
+                    "instrument_id": s.instrument.id,
                     "exchange_id": s.instrument.exchange,
                     "signal": s.signal.signal,
                     "target_position": s.target_position_size,

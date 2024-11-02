@@ -57,7 +57,7 @@ class TradingManager(ITradingManager):
         return order
 
     def cancel(self, instrument: Instrument) -> None:
-        for o in self.__trading_service.get_orders(instrument.symbol):
+        for o in self.__trading_service.get_orders(instrument):
             self.__trading_service.cancel_order(o.id)
 
     def cancel_order(self, order_id: str) -> None:

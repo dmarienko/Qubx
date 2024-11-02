@@ -18,29 +18,33 @@ N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
 class TestStrats:
 
     def test_ccxt_exec_report_conversion(self):
+        instrument = lookup.find_symbol("BINANCE", "ACAUSDT")
+        assert instrument is not None
         # - execution reports
         for o in [
-            ccxt_convert_order_info("ACAUSDT", C1),
-            ccxt_convert_order_info("ACAUSDT", C2),
-            ccxt_convert_order_info("ACAUSDT", C3),
-            ccxt_convert_order_info("ACAUSDT", C4),
-            ccxt_convert_order_info("ACAUSDT", C5new),
-            ccxt_convert_order_info("ACAUSDT", C6ex),
-            ccxt_convert_order_info("ACAUSDT", C7cancel),
+            ccxt_convert_order_info(instrument, C1),
+            ccxt_convert_order_info(instrument, C2),
+            ccxt_convert_order_info(instrument, C3),
+            ccxt_convert_order_info(instrument, C4),
+            ccxt_convert_order_info(instrument, C5new),
+            ccxt_convert_order_info(instrument, C6ex),
+            ccxt_convert_order_info(instrument, C7cancel),
         ]:
             print(o)
         print("-" * 50)
 
-        print(ccxt_convert_order_info("ACAUSDT", C5new))
-        print(ccxt_convert_order_info("ACAUSDT", C6ex))
-        print(ccxt_convert_order_info("ACAUSDT", C7cancel))
+        print(ccxt_convert_order_info(instrument, C5new))
+        print(ccxt_convert_order_info(instrument, C6ex))
+        print(ccxt_convert_order_info(instrument, C7cancel))
 
         print("#" * 50)
 
         # - historical records
         for h in HIST:
-            o = ccxt_convert_order_info(h["info"]["symbol"], h)
-            print(o)
+            i = lookup.find_symbol("BINANCE.UM", h["info"]["symbol"])
+            if i is not None:
+                o = ccxt_convert_order_info(i, h)
+                print(o)
 
     def test_ccxt_hist_trades_conversion(self):
         raw = {

@@ -5,7 +5,7 @@ from qubx.pandaz.utils import *
 
 from qubx.core.series import Quote
 from qubx.core.utils import recognize_time
-from qubx.core.interfaces import IStrategy, StrategyContext, TriggerEvent
+from qubx.core.interfaces import IStrategy, IStrategyContext, TriggerEvent
 from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsTimestampedRecords, AsQuotes, RestoreTicksFromOHLC
 from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider
 
@@ -151,12 +151,12 @@ class TestBacktesterStuff:
             fast_period = 5
             slow_period = 12
 
-            def on_event(self, ctx: StrategyContext, event: TriggerEvent):
+            def on_event(self, ctx: IStrategyContext, event: TriggerEvent):
                 for i in ctx.instruments:
                     ohlc = ctx.ohlc(i, self.timeframe)
                     fast = ema(ohlc.close, self.fast_period)
                     slow = ema(ohlc.close, self.slow_period)
-                    pos = ctx.positions[i.symbol].quantity
+                    pos = ctx.positions[i].quantity
                     if pos <= 0:
                         if (fast[0] > slow[0]) and (fast[1] < slow[1]):
                             ctx.trade(i, abs(pos) + i.min_size * 10)

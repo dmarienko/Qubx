@@ -524,8 +524,29 @@ class IProcessingManager:
         ...
 
 
+class IAccountViewer:
+    @property
+    def positions(self) -> dict[Instrument, Position]:
+        """
+        Get the current positions.
+        """
+        ...
+
+    def get_capital(self) -> float:
+        """
+        Get the available free capital in the account.
+        """
+        ...
+
+    def get_total_capital(self) -> float:
+        """
+        Get the total capital in the account.
+        """
+        ...
+
+
 class IStrategyContext(
-    IMarketDataProvider, ITradingManager, IUniverseManager, ISubscriptionManager, IProcessingManager
+    IMarketDataProvider, ITradingManager, IUniverseManager, ISubscriptionManager, IProcessingManager, IAccountViewer
 ):
     account: AccountProcessor
     strategy: "IStrategy"

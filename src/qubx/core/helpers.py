@@ -1,10 +1,11 @@
-from collections import defaultdict
-import re, sched, time
-from typing import Any, Callable, Dict, List, Optional, Tuple
-from croniter import croniter
-from collectinos import defaultdict
 import numpy as np
 import pandas as pd
+import re, sched, time
+
+from collections import defaultdict
+from typing import Any, Callable, Dict, List, Optional, Tuple
+from croniter import croniter
+from collections import defaultdict
 from threading import Thread
 
 from qubx import logger

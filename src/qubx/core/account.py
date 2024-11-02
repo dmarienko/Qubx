@@ -25,8 +25,8 @@ class AccountProcessor:
         self,
         account_id: str,
         base_currency: str,
-        reserves: Dict[str, float] | None,
-        initial_capital: float = 0,
+        reserves: Dict[str, float] | None = None,
+        initial_capital: float = 100_000,
     ) -> None:
         self.account_id = account_id
         self.base_currency = base_currency.upper()

@@ -9,7 +9,7 @@ from qubx.pandaz.utils import *
 from qubx.core.utils import recognize_time, time_to_str
 
 from qubx.core.series import OHLCV, Quote
-from qubx.core.interfaces import IPositionGathering, IStrategy, PositionsTracker, StrategyContext, TriggerEvent
+from qubx.core.interfaces import IPositionGathering, IStrategy, PositionsTracker, IStrategyContext, TriggerEvent
 from qubx.data.readers import (
     AsOhlcvSeries,
     CsvStorageDataReader,
@@ -39,9 +39,9 @@ def Q(time: str, bid: float, ask: float) -> Quote:
 
 
 class TestingPositionGatherer(IPositionGathering):
-    def alter_position_size(self, ctx: StrategyContext, target: TargetPosition) -> float:
+    def alter_position_size(self, ctx: IStrategyContext, target: TargetPosition) -> float:
         instrument, new_size, at_price = target.instrument, target.target_position_size, target.price
-        position = ctx.positions[instrument.symbol]
+        position = ctx.positions[instrument]
         current_position = position.quantity
         to_trade = new_size - current_position
         if abs(to_trade) < instrument.min_size:
@@ -57,20 +57,18 @@ class TestingPositionGatherer(IPositionGathering):
             )
         return current_position
 
-    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal): ...
+    def on_execution_report(self, ctx: IStrategyContext, instrument: Instrument, deal: Deal): ...
 
 
-class DebugStratageyCtx(StrategyContext):
+class DebugStratageyCtx(IStrategyContext):
     def __init__(self, instrs, capital) -> None:
-        self.positions = {i.symbol: i for i in instrs}
-
         self.instruments = instrs
-        self.positions = {i.symbol: Position(i) for i in instrs}
         self.capital = capital
 
-        self.acc = AccountProcessor("test", "USDT", reserves={})  # , initial_capital=10000.0)
-        self.acc.update_balance("USDT", capital, 0)
-        self.acc.attach_positions(*self.positions.values())
+        positions = {i: Position(i) for i in instrs}
+        self.account = AccountProcessor("test", "USDT", reserves={})  # , initial_capital=10000.0)
+        self.account.update_balance("USDT", capital, 0)
+        self.account.attach_positions(*positions.values())
         self._n_orders = 0
         self._n_orders_buy = 0
         self._n_orders_sell = 0
@@ -87,7 +85,7 @@ class DebugStratageyCtx(StrategyContext):
 
     def trade(
         self,
-        instr_or_symbol: Instrument | str,
+        instrument: Instrument,
         amount: float,
         price: float | None = None,
         time_in_force="gtc",
@@ -99,19 +97,16 @@ class DebugStratageyCtx(StrategyContext):
         if amount > 0: self._n_orders_buy += 1
         if amount < 0: self._n_orders_sell += 1
         return Order(
-            "test", "MARKET", instr_or_symbol,
+            "test", "MARKET", instrument,
             np.datetime64(0, "ns"), amount, price if price is not None else 0, "BUY" if amount > 0 else "SELL", "CLOSED", "gtc", "test1")
         # fmt: on
-
-    def get_reserved(self, instrument: Instrument) -> float:
-        return 0.0
 
 
 class ZeroTracker(PositionsTracker):
     def __init__(self) -> None:
         pass
 
-    def process_signals(self, ctx: StrategyContext, signals: list[Signal]) -> list[TargetPosition]:
+    def process_signals(self, ctx: IStrategyContext, signals: list[Signal]) -> list[TargetPosition]:
         return [TargetPosition.create(ctx, s, target_size=0) for s in signals]
 
 
@@ -122,10 +117,12 @@ class GuineaPig(IStrategy):
 
     tests = {}
 
-    def on_fit(self, ctx: StrategyContext, fit_time: str | Timestamp, previous_fit_time: str | Timestamp | None = None):
+    def on_fit(
+        self, ctx: IStrategyContext, fit_time: str | Timestamp, previous_fit_time: str | Timestamp | None = None
+    ):
         self.tests = {recognize_time(k): v for k, v in self.tests.items()}
 
-    def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
         r = []
         for k in list(self.tests.keys()):
             if event.time >= k:
@@ -200,9 +197,9 @@ class TestTrackersAndGatherers:
         )
         gathering.alter_positions(ctx, targets)
 
-        assert ctx.positions[I[0].symbol].quantity == 0
-        assert ctx.positions[I[1].symbol].quantity == 0
-        assert ctx.positions[I[2].symbol].quantity == 0
+        assert ctx.positions[I[0]].quantity == 0
+        assert ctx.positions[I[1]].quantity == 0
+        assert ctx.positions[I[2]].quantity == 0
 
     def test_atr_tracker(self):
 
@@ -216,13 +213,13 @@ class TestTrackersAndGatherers:
             fast_period = 5
             slow_period = 12
 
-            def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
+            def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
                 signals = []
                 for i in ctx.instruments:
                     ohlc = ctx.ohlc(i, self.timeframe)
                     fast = sma(ohlc.close, self.fast_period)
                     slow = sma(ohlc.close, self.slow_period)
-                    pos = ctx.positions[i.symbol].quantity
+                    pos = ctx.positions[i].quantity
 
                     if pos <= 0 and (fast[0] > slow[0]) and (fast[1] < slow[1]):
                         signals.append(i.signal(+1, stop=min(ohlc[0].low, ohlc[1].low)))
@@ -232,7 +229,7 @@ class TestTrackersAndGatherers:
 
                 return signals
 
-            def tracker(self, ctx: StrategyContext) -> PositionsTracker:
+            def tracker(self, ctx: IStrategyContext) -> PositionsTracker:
                 return PositionsTracker(FixedRiskSizer(1, 10_000, reinvest_profit=True))
 
         rep = simulate(
@@ -337,7 +334,7 @@ class TestTrackersAndGatherers:
         _ = tracker.process_signals(ctx, [I[0].signal(+0.5)])
 
         # - now tracker works only by execution reports, so we 'emulate' it here
-        ctx.positions[I[0].symbol].quantity = +0.5
+        ctx.positions[I[0]].quantity = +0.5
         tracker.on_execution_report(ctx, I[0], Deal(0, "0", np.datetime64(10000, "ns"), +0.5, 1.0, True))
 
         targets = tracker.process_signals(ctx, [I[0].signal(-0.5)])

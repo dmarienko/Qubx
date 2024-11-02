@@ -63,7 +63,7 @@ class RiskController(PositionsTracker):
     def process_signals(self, ctx: IStrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         targets = []
         for s in signals:
-            quote = ctx.quote(s.instrument.symbol)
+            quote = ctx.quote(s.instrument)
             if quote is None:
                 logger.warning(f"Quote not available for {s.instrument.symbol}. Skipping signal {s}")
                 continue
@@ -163,7 +163,7 @@ class ClientSideRiskController(RiskController):
         return []
 
     def on_execution_report(self, ctx: IStrategyContext, instrument: Instrument, deal: Deal):
-        pos = ctx.positions[instrument.symbol].quantity
+        pos = ctx.positions[instrument].quantity
 
         # - check what is in the waiting list
         if (c_w := self._waiting.get(instrument)) is not None:
@@ -250,7 +250,7 @@ class BrokerSideRiskController(RiskController):
             ctrl.take_order_id = None
 
     def on_execution_report(self, ctx: IStrategyContext, instrument: Instrument, deal: Deal):
-        pos = ctx.positions[instrument.symbol].quantity
+        pos = ctx.positions[instrument].quantity
 
         if (c_w := self._waiting.get(instrument)) is not None:
             if abs(pos - c_w.target.target_position_size) <= instrument.min_size:
@@ -472,7 +472,7 @@ class MinAtrExitDistanceTracker(PositionsTracker):
     Allow exit only if price has moved away from entry by the specified distance in ATR units.
     """
 
-    _signals: dict[str, Signal]
+    _signals: dict[Instrument, Signal]
 
     def __init__(
         self,
@@ -503,11 +503,11 @@ class MinAtrExitDistanceTracker(PositionsTracker):
             if len(volatility) < 2:
                 continue
             last_volatility = volatility[1]
-            quote = ctx.quote(s.instrument.symbol)
+            quote = ctx.quote(s.instrument)
             if last_volatility is None or not np.isfinite(last_volatility) or quote is None:
                 continue
 
-            self._signals[s.instrument.symbol] = s
+            self._signals[s.instrument] = s
 
             if s.signal != 0:
                 # if signal is not 0, atr thresholds don't apply
@@ -533,7 +533,7 @@ class MinAtrExitDistanceTracker(PositionsTracker):
     def update(
         self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar
     ) -> List[TargetPosition] | TargetPosition:
-        signal = self._signals.get(instrument.symbol)
+        signal = self._signals.get(instrument)
         if signal is None or signal.signal != 0:
             return []
         if not self.__check_exit(ctx, instrument):

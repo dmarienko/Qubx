@@ -89,7 +89,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         return self._scheduler
 
     def subscribe(
-        self, subscription_type: str, instruments: List[Instrument], timeframe: Optional[str] = None, nback: int = 0
+        self, instruments: List[Instrument], subscription_type: str, timeframe: Optional[str] = None, nback: int = 0
     ) -> bool:
         to_process = self._check_existing_subscription(subscription_type.lower(), instruments)
         if not to_process:

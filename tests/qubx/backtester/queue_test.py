@@ -31,7 +31,7 @@ class DummyDataLoader(DataLoader):
         yield from self._events
 
     @property
-    def symbol(self):
+    def instrument(self):
         return self._symbol
 
     @property

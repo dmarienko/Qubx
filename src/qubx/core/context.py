@@ -178,6 +178,16 @@ class StrategyContext(
     def is_simulation(self) -> bool:
         return self.__broker.is_simulated_trading
 
+    @property
+    def positions(self):
+        return self.account.positions
+
+    def get_capital(self) -> float:
+        return self.account.get_free_capital()
+
+    def get_total_capital(self) -> float:
+        return self.account.get_total_capital()
+
     def __process_incoming_data_loop(self, channel: CtrlChannel):
         logger.info("(StrategyContext) Start processing market data")
         while channel.control.is_set():

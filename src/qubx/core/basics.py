@@ -206,7 +206,7 @@ class Instrument:
         **kwargs,
     ) -> Signal:
         return Signal(
-            self,
+            instrument=self,
             signal=signal,
             price=price,
             stop=stop,
@@ -215,6 +215,10 @@ class Instrument:
             comment=comment,
             options=(options or {}) | kwargs,
         )
+
+    @property
+    def id(self) -> str:
+        return f"{self.exchange}:{self.symbol}"
 
     def __hash__(self) -> int:
         return hash((self.symbol, self.exchange, self.market_type))
@@ -328,7 +332,7 @@ class Order:
     options: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
-        return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
+        return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.instrument.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
 
 
 class Position:

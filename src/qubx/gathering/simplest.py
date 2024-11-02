@@ -1,6 +1,6 @@
 from qubx import logger
 from qubx.core.basics import Deal, Instrument, TargetPosition
-from qubx.core.interfaces import IPositionGathering, StrategyContext
+from qubx.core.interfaces import IPositionGathering, IStrategyContext
 
 
 class SimplePositionGatherer(IPositionGathering):
@@ -10,7 +10,7 @@ class SimplePositionGatherer(IPositionGathering):
 
     entry_order_id: str | None = None
 
-    def _cncl_order(self, ctx: StrategyContext, instrument: Instrument) -> None:
+    def _cncl_order(self, ctx: IStrategyContext, instrument: Instrument) -> None:
         if self.entry_order_id:
             logger.debug(
                 f"<green>{instrument.symbol}</green>: Cancelling previous entry order <red>{self.entry_order_id}</red>"
@@ -21,12 +21,12 @@ class SimplePositionGatherer(IPositionGathering):
                 logger.error(f"Cancelling entry order failed: {str(e)}")
             self.entry_order_id = None
 
-    def alter_position_size(self, ctx: StrategyContext, target: TargetPosition) -> float:
+    def alter_position_size(self, ctx: IStrategyContext, target: TargetPosition) -> float:
         #  Here is default inplementation:
         #  just trade it through the strategy context by using market (or limit) orders.
         #  but in general it may have complex logic for position adjustment
         instrument, new_size, at_price = target.instrument, target.target_position_size, target.price
-        current_position = ctx.positions[instrument.symbol].quantity
+        current_position = ctx.positions[instrument].quantity
         to_trade = new_size - current_position
 
         # - first cancel previous entry order if exists
@@ -49,7 +49,8 @@ class SimplePositionGatherer(IPositionGathering):
                         f"<green>{instrument.symbol}</green>: Attempt to change current position {current_position} to {new_size} at {at_price} !"
                     )
 
-                quote = ctx.quote(instrument.symbol)
+                quote = ctx.quote(instrument)
+                assert quote is not None
                 if (to_trade > 0 and at_price > quote.ask) or (to_trade < 0 and at_price < quote.bid):
                     opts["stop_type"] = "market"
                     _is_stop_or_limit = True
@@ -71,11 +72,11 @@ class SimplePositionGatherer(IPositionGathering):
 
             current_position = new_size
             # - TODO: need to check how fast position is being updated on live
-            # current_position = ctx.positions[instrument.symbol].quantity
+            # current_position = ctx.positions[instrument].quantity
 
         return current_position
 
-    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal):
+    def on_execution_report(self, ctx: IStrategyContext, instrument: Instrument, deal: Deal):
         if deal.order_id == self.entry_order_id:
             self.entry_order_id = None
 
