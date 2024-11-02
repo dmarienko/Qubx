@@ -158,6 +158,7 @@ class SimulatedDataQueue:
 
         loader = self._index_to_loader[loader_index]
         data_type = loader.data_type
+        # TODO: return an additional flag to indicate if the event is historical
         if dt < self._current_time:  # type: ignore
             data_type = f"hist_{data_type}"
         else:

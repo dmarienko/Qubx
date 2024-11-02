@@ -1,4 +1,5 @@
 import traceback
+import pandas as pd
 
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from types import FunctionType
@@ -54,6 +55,8 @@ class ProcessingManager(IProcessingManager):
     __fails_counter: int = 0
     __is_simulation: bool
     __pool: ThreadPool | None
+    _trig_bar_freq_nsec: int | None = None
+    _TIME_EPSILON_NS = 1_000_000
 
     def __init__(
         self,
@@ -89,6 +92,7 @@ class ProcessingManager(IProcessingManager):
         }
         self.__strategy_name = strategy.__class__.__name__
         self.__init_fit_args = (None, self.__time_provider.time())
+        self._trig_bar_freq_nsec = None
 
     def set_fit_schedule(self, schedule: str) -> None:
         rule = process_schedule_spec(schedule)
@@ -232,14 +236,7 @@ class ProcessingManager(IProcessingManager):
         """
         Updates the base data cache with the provided data.
         """
-        sub_type, _ = self.__subscription_manager.get_base_subscription()
-        # TODO: handle batched events
-        is_base_data = (
-            (sub_type == SubscriptionType.OHLC and isinstance(data, Bar))
-            or (sub_type == SubscriptionType.QUOTE and isinstance(data, Quote))
-            or (sub_type == SubscriptionType.ORDERBOOK and isinstance(data, OrderBook))
-            or (sub_type == SubscriptionType.TRADE and isinstance(data, Trade))
-        )
+        is_base_data = self.__is_base_data(data)
         self.__cache.update(instrument, data, update_ohlc=is_base_data)
         if not is_historical and is_base_data:
             _data = data if not isinstance(data, OrderBook) else data.to_quote()
@@ -248,6 +245,27 @@ class ProcessingManager(IProcessingManager):
             )
             self.__process_signals_from_target_positions(target_positions)
             self.__position_gathering.alter_positions(self.__context, target_positions)
+
+    def __is_base_data(self, data: Any) -> bool:
+        sub_type, sub_params = self.__subscription_manager.get_base_subscription()
+        timeframe = sub_params.get("timeframe")
+        if self.__is_simulation and SubscriptionType.OHLC == sub_type and timeframe:
+            # in simulate we transform OHLC into quotes, so we need to check
+            # if this is the final quote of a bar which should be considered as base data
+            if self._trig_bar_freq_nsec is None:
+                self._trig_bar_freq_nsec = pd.Timedelta(timeframe).as_unit("ns").asm8.item()
+            t = self.__time_provider.time().item()
+            remainder = t % self._trig_bar_freq_nsec
+            # TODO: add flag to trigger on close instead of open
+            return remainder <= self._TIME_EPSILON_NS
+
+        # TODO: handle batched events
+        return (
+            (sub_type == SubscriptionType.OHLC and isinstance(data, Bar))
+            or (sub_type == SubscriptionType.QUOTE and isinstance(data, Quote))
+            or (sub_type == SubscriptionType.ORDERBOOK and isinstance(data, OrderBook))
+            or (sub_type == SubscriptionType.TRADE and isinstance(data, Trade))
+        )
 
     ###########################################################################
     # - Handlers for different types of incoming data

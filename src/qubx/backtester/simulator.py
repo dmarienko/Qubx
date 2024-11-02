@@ -635,7 +635,7 @@ def _recognize_simulation_setups(
     basic_currency: str,
     commissions: str,
 ):
-    name_in_list = lambda n: any([n == i.symbol for i in instruments])
+    name_in_list = lambda n: any([n == i for i in instruments])
 
     def _check_signals_structure(s: pd.Series | pd.DataFrame) -> pd.Series | pd.DataFrame:
         if isinstance(s, pd.Series):

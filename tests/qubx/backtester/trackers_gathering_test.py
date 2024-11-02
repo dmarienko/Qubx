@@ -130,6 +130,9 @@ class GuineaPig(IStrategy):
 
     tests = {}
 
+    def on_init(self, ctx: IStrategyContext) -> None:
+        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1Min")
+
     def on_fit(
         self, ctx: IStrategyContext, fit_time: str | Timestamp, previous_fit_time: str | Timestamp | None = None
     ):
@@ -407,8 +410,6 @@ class TestTrackersAndGatherers:
             {f"BINANCE.UM:BTCUSDT": ohlc},
             10000,
             instruments=[f"BINANCE.UM:BTCUSDT"],
-            subscription=dict(type="ohlc", timeframe="1Min"),
-            trigger="-1Sec",
             silent=True,
             debug="DEBUG",
             commissions="vip0_usdt",
@@ -427,10 +428,12 @@ class TestTrackersAndGatherers:
         reader = CsvStorageDataReader("tests/data/csv")
         ohlc = reader.read("BTCUSDT_ohlcv_M1", transform=AsPandasFrame())
         assert isinstance(ohlc, pd.DataFrame)
+        i1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        assert i1 is not None
 
         S = pd.DataFrame(
             {
-                "BTCUSDT": {
+                i1: {
                     pd.Timestamp("2024-01-10 15:08:59.716000"): 1,
                     pd.Timestamp("2024-01-10 15:10:52.679000"): 1,
                     pd.Timestamp("2024-01-10 15:32:44.798000"): 1,
@@ -452,8 +455,6 @@ class TestTrackersAndGatherers:
             {f"BINANCE.UM:BTCUSDT": ohlc},
             10000,
             ["BINANCE.UM:BTCUSDT"],
-            dict(type="ohlc", timeframe="1Min"),
-            "1Min -1Sec",
             "vip9_usdt",
             S.index[0],
             S.index[-1] + pd.Timedelta("5Min"),
