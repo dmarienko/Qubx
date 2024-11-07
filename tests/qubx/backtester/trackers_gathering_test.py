@@ -456,7 +456,7 @@ class TestTrackersAndGatherers:
             10000,
             ["BINANCE.UM:BTCUSDT"],
             "vip9_usdt",
-            S.index[0],
+            S.index[0] - pd.Timedelta("5Min"),
             S.index[-1] + pd.Timedelta("5Min"),
             debug="DEBUG",
         )

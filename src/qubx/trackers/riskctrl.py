@@ -400,6 +400,11 @@ class StopTakePositionTracker(GenericRiskControllerDecorator):
             if self._stop_risk_fraction:
                 signal.stop = entry * (1 + self._stop_risk_fraction)
 
+        if signal.stop is not None:
+            signal.stop = signal.instrument.round_price_down(signal.stop)
+        if signal.take is not None:
+            signal.take = signal.instrument.round_price_down(signal.take)
+
         return signal
 
 

@@ -392,7 +392,7 @@ class SimulatedExchange(IBrokerServiceProvider):
     _current_time: dt_64
     _hist_data_type: str
     _loaders: dict[str, dict[str, DataLoader]]
-    _pregenerated_signals: Dict[str, pd.Series]
+    _pregenerated_signals: Dict[Instrument, pd.Series]
 
     def __init__(
         self,
@@ -546,7 +546,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         # match event type
         cc.send((instrument, data_type, data))
         sigs = self._to_process[instrument]
-        if sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
+        while sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
             cc.send((instrument, "event", {"order": sigs[0][1]}))
             sigs.pop(0)
 
@@ -611,7 +611,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         signals.index = pd.DatetimeIndex(signals.index)
 
         if isinstance(signals, pd.Series):
-            self._pregenerated_signals[str(signals.name)] = signals
+            self._pregenerated_signals[signals.name] = signals
 
         elif isinstance(signals, pd.DataFrame):
             for col in signals.columns:
@@ -648,17 +648,17 @@ def _recognize_simulation_setups(
                     raise ValueError(f"Can't find instrument for signal's name: '{col}'")
         return s
 
-    def _pick_instruments(s: pd.Series | pd.DataFrame) -> List[Instrument]:
+    def _pick_instruments(s: pd.Series | pd.DataFrame) -> list[Instrument]:
         if isinstance(s, pd.Series):
-            _instrs = [i for i in instruments if s.name == i.symbol]
+            _instrs = [i for i in instruments if s.name == i]
 
         elif isinstance(s, pd.DataFrame):
-            _instrs = [i for i in instruments if i.symbol in list(s.columns)]
+            _instrs = [i for i in instruments if i in list(s.columns)]
 
         else:
             raise ValueError("Invalid signals or strategy configuration")
 
-        return _instrs
+        return list(_instrs)
 
     r = list()
     # fmt: off
@@ -887,6 +887,10 @@ def find_instruments_and_exchanges(
 
 
 class SignalsProxy(IStrategy):
+    timeframe: str = "1m"
+
+    def on_init(self, ctx: IStrategyContext):
+        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe=self.timeframe)
 
     def on_fit(
         self, ctx: IStrategyContext, fit_time: str | pd.Timestamp, previous_fit_time: str | pd.Timestamp | None = None

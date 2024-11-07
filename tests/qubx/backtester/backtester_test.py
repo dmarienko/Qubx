@@ -5,7 +5,7 @@ from qubx.pandaz.utils import *
 
 from qubx.core.series import Quote
 from qubx.core.utils import recognize_time
-from qubx.core.interfaces import IStrategy, IStrategyContext, TriggerEvent
+from qubx.core.interfaces import IStrategy, IStrategyContext, TriggerEvent, SubscriptionType
 from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsTimestampedRecords, AsQuotes, RestoreTicksFromOHLC
 from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider
 
@@ -151,6 +151,9 @@ class TestBacktesterStuff:
             fast_period = 5
             slow_period = 12
 
+            def on_init(self, ctx: IStrategyContext):
+                ctx.set_base_subscription(SubscriptionType.OHLC, timeframe=self.timeframe)
+
             def on_event(self, ctx: IStrategyContext, event: TriggerEvent):
                 for i in ctx.instruments:
                     ohlc = ctx.ohlc(i, self.timeframe)
@@ -177,7 +180,9 @@ class TestBacktesterStuff:
         )
         sigs = sigs.pd()
         sigs = sigs[sigs != 0]
-        s2 = shift_series(sigs, "4Min59Sec").rename("BTCUSDT") / 100  # type: ignore
+        i1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        assert i1 is not None
+        s2 = shift_series(sigs, "4Min59Sec").rename(i1) / 100  # type: ignore
         rep1 = simulate(
             {
                 # - generated signals as series
@@ -187,8 +192,6 @@ class TestBacktesterStuff:
             r,
             10000,
             ["BINANCE.UM:BTCUSDT"],
-            dict(type="ohlc", timeframe="5Min", nback=0),
-            "5Min -1Sec",
             "vip0_usdt",
             "2024-01-01",
             "2024-01-02",

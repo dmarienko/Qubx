@@ -56,7 +56,7 @@ class ProcessingManager(IProcessingManager):
     __is_simulation: bool
     __pool: ThreadPool | None
     _trig_bar_freq_nsec: int | None = None
-    _TIME_EPSILON_NS = 1_000_000
+    _cur_sim_step: int | None = None
 
     def __init__(
         self,
@@ -114,7 +114,7 @@ class ProcessingManager(IProcessingManager):
             if handler:
                 trigger_event = handler(self, instrument, data)
             else:
-                trigger_event = self._handle_event(instrument, d_type, data)
+                trigger_event = self._process_event(instrument, d_type, data)
 
         # - check if it still didn't call on_fit() for first time
         if not self.__init_fit_was_called:
@@ -232,19 +232,21 @@ class ProcessingManager(IProcessingManager):
             assert self.__pool
             self.__pool.apply_async(func, args)
 
-    def __update_base_data(self, instrument: Instrument, data: Any, is_historical: bool = False) -> None:
+    def __update_base_data(self, instrument: Instrument, data: Any, is_historical: bool = False) -> bool:
         """
         Updates the base data cache with the provided data.
         """
         is_base_data = self.__is_base_data(data)
         self.__cache.update(instrument, data, update_ohlc=is_base_data)
-        if not is_historical and is_base_data:
+        # update trackers, gatherers on base data and on Quote (always)
+        if not is_historical and is_base_data or isinstance(data, Quote):
             _data = data if not isinstance(data, OrderBook) else data.to_quote()
             target_positions = self.__process_and_log_target_positions(
                 self.__position_tracker.update(self.__context, instrument, _data)
             )
             self.__process_signals_from_target_positions(target_positions)
             self.__position_gathering.alter_positions(self.__context, target_positions)
+        return is_base_data
 
     def __is_base_data(self, data: Any) -> bool:
         sub_type, sub_params = self.__subscription_manager.get_base_subscription()
@@ -255,9 +257,16 @@ class ProcessingManager(IProcessingManager):
             if self._trig_bar_freq_nsec is None:
                 self._trig_bar_freq_nsec = pd.Timedelta(timeframe).as_unit("ns").asm8.item()
             t = self.__time_provider.time().item()
-            remainder = t % self._trig_bar_freq_nsec
-            # TODO: add flag to trigger on close instead of open
-            return remainder <= self._TIME_EPSILON_NS
+            assert self._trig_bar_freq_nsec is not None
+            # shifting by 1sec in ns
+            _sim_step = (t + 1e9) // self._trig_bar_freq_nsec
+            if self._cur_sim_step is None:
+                self._cur_sim_step = _sim_step
+                return False
+            if _sim_step > self._cur_sim_step:
+                self._cur_sim_step = _sim_step
+                return True
+            return False
 
         # TODO: handle batched events
         return (
@@ -287,6 +296,10 @@ class ProcessingManager(IProcessingManager):
             (dt_64(now_fit_time, "s"), dt_64(prev_fit_time, "s") if prev_fit_time else None),
         )
 
+    # it's important that we call it with _process to not include in the handlers map
+    def _process_event(self, instrument: Instrument, event_type: str, event_data: Any) -> TriggerEvent:
+        return TriggerEvent(self.__time_provider.time(), event_type, instrument, event_data)
+
     def _handle_hist_bars(self, instrument: Instrument, bars: list[Bar]) -> None:
         for b in bars:
             self._handle_hist_bar(instrument, b)
@@ -312,12 +325,15 @@ class ProcessingManager(IProcessingManager):
         self.__update_base_data(instrument, orderbook)
         return TriggerEvent(self.__time_provider.time(), SubscriptionType.ORDERBOOK, instrument, orderbook)
 
-    def _handle_quote(self, instrument: Instrument, quote: Quote) -> TriggerEvent:
-        self.__update_base_data(instrument, quote)
+    def _handle_quote(self, instrument: Instrument, quote: Quote) -> TriggerEvent | None:
+        is_base_update = self.__update_base_data(instrument, quote)
+        if (
+            self.__is_simulation
+            and not is_base_update
+            and not self.__subscription_manager.has_subscription(instrument, SubscriptionType.QUOTE)
+        ):
+            return None
         return TriggerEvent(self.__time_provider.time(), SubscriptionType.QUOTE, instrument, quote)
-
-    def _handle_event(self, instrument: Instrument, event_type: str, event_data: Any) -> TriggerEvent:
-        return TriggerEvent(self.__time_provider.time(), event_type, instrument, event_data)
 
     @SW.watch("StrategyContext.order")
     def _handle_order(self, instrument: Instrument, order: Order) -> TriggerEvent | None:

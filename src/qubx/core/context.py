@@ -74,7 +74,7 @@ class StrategyContext(IStrategyContext):
 
         __position_tracker = self.strategy.tracker(self)
         if __position_tracker is None:
-            __position_tracker = self.DEFAULT_POSITION_TRACKER()
+            __position_tracker = StrategyContext.DEFAULT_POSITION_TRACKER()
 
         __position_gathering = position_gathering if position_gathering is not None else SimplePositionGatherer()
 
