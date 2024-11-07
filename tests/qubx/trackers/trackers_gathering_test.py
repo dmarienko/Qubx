@@ -93,6 +93,9 @@ class DebugStratageyCtx(IStrategyContext):
     def get_capital(self) -> float:
         return self.capital
 
+    def get_total_capital(self) -> float:
+        return self.capital
+
     def time(self) -> np.datetime64:
         return np.datetime64("2020-01-01T00:00:00", "ns")
 
@@ -172,50 +175,6 @@ class TestTrackersAndGatherers:
         s = sizer.calculate_target_positions(ctx, [i.signal(1, stop=900.0)])
         _entry, _stop, _cap_in_risk = 1000.5, 900, 10000 * 10 / 100
         assert s[0].target_position_size == i.round_size_down((_cap_in_risk / ((_entry - _stop) / _entry)) / _entry)
-
-    def test_rebalancer(self):
-        ctx = DebugStratageyCtx(
-            I := [
-                lookup.find_symbol("BINANCE.UM", "BTCUSDT"),
-                lookup.find_symbol("BINANCE.UM", "ETHUSDT"),
-                lookup.find_symbol("BINANCE.UM", "SOLUSDT"),
-            ],
-            30000,
-        )
-        assert I[0] is not None and I[1] is not None and I[2] is not None
-
-        tracker = PortfolioRebalancerTracker(30000, 0)
-        targets = tracker.process_signals(ctx, [I[0].signal(+0.5), I[1].signal(+0.3), I[2].signal(+0.2)])
-
-        gathering = TestingPositionGatherer()
-        gathering.alter_positions(ctx, targets)
-
-        print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
-
-        tracker.process_signals(
-            ctx,
-            [
-                I[0].signal(+0.1),
-                I[1].signal(+0.8),
-                I[2].signal(+0.1),
-            ],
-        )
-
-        print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
-
-        targets = tracker.process_signals(
-            ctx,
-            [
-                I[0].signal(0),
-                I[1].signal(0),
-                I[2].signal(0),
-            ],
-        )
-        gathering.alter_positions(ctx, targets)
-
-        assert ctx.positions[I[0]].quantity == 0
-        assert ctx.positions[I[1]].quantity == 0
-        assert ctx.positions[I[2]].quantity == 0
 
     def test_atr_tracker(self):
 

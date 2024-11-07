@@ -193,6 +193,9 @@ class StrategyContext(IStrategyContext):
     def get_total_capital(self) -> float:
         return self.account.get_total_capital()
 
+    def get_reserved(self, instrument: Instrument) -> float:
+        return self.account.get_reserved(instrument)
+
     # IMarketDataProvider delegation
     def ohlc(self, instrument: Instrument, timeframe: str):
         return self.__market_data_provider.ohlc(instrument, timeframe)

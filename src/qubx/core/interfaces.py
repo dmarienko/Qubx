@@ -549,6 +549,12 @@ class IAccountViewer:
         """
         ...
 
+    def get_reserved(self, instrument: Instrument) -> float:
+        """
+        Get the reserved amount for an instrument.
+        """
+        ...
+
 
 class IStrategyContext(
     IMarketDataProvider, ITradingManager, IUniverseManager, ISubscriptionManager, IProcessingManager, IAccountViewer
