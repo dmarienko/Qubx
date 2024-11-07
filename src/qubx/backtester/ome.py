@@ -140,7 +140,7 @@ class OrdersManagementEngine:
         order = Order(
             self._generate_order_id(),
             order_type,
-            self.instrument.symbol,
+            self.instrument,
             timestamp,
             amount,
             price if price is not None else 0,

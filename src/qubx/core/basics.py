@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from threading import Event, Lock
 from queue import Queue
 
+from qubx.utils.misc import Stopwatch
 from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.core.utils import prec_ceil, prec_floor
 
@@ -16,6 +17,8 @@ td_64 = np.timedelta64
 ns_to_dt_64 = lambda ns: np.datetime64(ns, "ns")
 
 OPTION_FILL_AT_SIGNAL_PRICE = "fill_at_signal_price"
+
+SW = Stopwatch()
 
 
 @dataclass
@@ -203,7 +206,7 @@ class Instrument:
         **kwargs,
     ) -> Signal:
         return Signal(
-            self,
+            instrument=self,
             signal=signal,
             price=price,
             stop=stop,
@@ -212,6 +215,11 @@ class Instrument:
             comment=comment,
             options=(options or {}) | kwargs,
         )
+
+    @property
+    def id(self) -> str:
+        # TODO: maybe change this later to include exchange and market type
+        return self.symbol
 
     def __hash__(self) -> int:
         return hash((self.symbol, self.exchange, self.market_type))
@@ -224,7 +232,10 @@ class Instrument:
         return self.symbol == other.symbol and self.exchange == other.exchange and self.market_type == other.market_type
 
     def __str__(self) -> str:
-        return f"{self.exchange}:{self.symbol} [{self.market_type} {str(self.futures_info) if self.futures_info else 'SPOT ' + self.base + '/' + self.quote }]"
+        return f"{self.exchange}:{self.market_type}:{self.symbol}"
+
+    def __repr__(self) -> str:
+        return self.__str__()
 
 
 @dataclass
@@ -310,7 +321,7 @@ OrderStatus = Literal["OPEN", "CLOSED", "CANCELED", "NEW"]
 class Order:
     id: str
     type: OrderType
-    symbol: str
+    instrument: Instrument
     time: dt_64
     quantity: float
     price: float
@@ -322,7 +333,7 @@ class Order:
     options: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
-        return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
+        return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.instrument.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
 
 
 class Position:
@@ -602,7 +613,7 @@ class ITimeProvider:
         """
         Returns current time
         """
-        raise NotImplementedError("Subclasses must implement this method")
+        ...
 
 
 class TradingSessionResult:

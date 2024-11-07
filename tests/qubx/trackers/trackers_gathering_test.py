@@ -9,7 +9,14 @@ from qubx.pandaz.utils import *
 from qubx.core.utils import recognize_time, time_to_str
 
 from qubx.core.series import OHLCV, Quote
-from qubx.core.strategy import IPositionGathering, IStrategy, PositionsTracker, StrategyContext, TriggerEvent
+from qubx.core.interfaces import (
+    IPositionGathering,
+    IStrategy,
+    PositionsTracker,
+    IStrategyContext,
+    TriggerEvent,
+    SubscriptionType,
+)
 from qubx.data.readers import (
     AsOhlcvSeries,
     CsvStorageDataReader,
@@ -38,21 +45,47 @@ def Q(time: str, bid: float, ask: float) -> Quote:
     return Quote(recognize_time(time), bid, ask, 0, 0)
 
 
-class DebugStratageyCtx(StrategyContext):
-    def __init__(self, instrs, capital) -> None:
-        self.positions = {i.symbol: i for i in instrs}
+class TestingPositionGatherer(IPositionGathering):
+    def alter_position_size(self, ctx: IStrategyContext, target: TargetPosition) -> float:
+        instrument, new_size, at_price = target.instrument, target.target_position_size, target.price
+        position = ctx.positions[instrument]
+        current_position = position.quantity
+        to_trade = new_size - current_position
+        if abs(to_trade) < instrument.min_size:
+            logger.warning(
+                f"Can't change position size for {instrument}. Current position: {current_position}, requested size: {new_size}"
+            )
+        else:
+            # position.quantity = new_size
+            q = ctx.quote(instrument)
+            assert q is not None
+            position.update_position(ctx.time(), new_size, q.mid_price())
+            r = ctx.trade(instrument, to_trade, at_price)
+            logger.info(
+                f"{instrument.symbol} >>> (TESTS) Adjusting position from {current_position} to {new_size} : {r}"
+            )
+        return current_position
 
-        self.instruments = instrs
-        self.positions = {i.symbol: Position(i) for i in instrs}
+    def on_execution_report(self, ctx: IStrategyContext, instrument: Instrument, deal: Deal): ...
+
+
+class DebugStratageyCtx(IStrategyContext):
+    def __init__(self, instrs, capital) -> None:
+        self._instruments = instrs
         self.capital = capital
 
-        self.acc = AccountProcessor("test", "USDT", reserves={})  # , initial_capital=10000.0)
-        self.acc.update_balance("USDT", capital, 0)
-        self.acc.attach_positions(*self.positions.values())
+        positions = {i: Position(i) for i in instrs}
+        self.account = AccountProcessor("test", "USDT", reserves={})  # , initial_capital=10000.0)
+        self.account.update_balance("USDT", capital, 0)
+        self.account.attach_positions(*positions.values())
         self._n_orders = 0
         self._n_orders_buy = 0
         self._n_orders_sell = 0
         self._orders_size = 0
+
+    @property
+    def instruments(self) -> list[Instrument]:
+        return self._instruments
 
     def quote(self, symbol: str) -> Quote | None:
         return Q("2020-01-01", 1000.0, 1000.5)
@@ -60,12 +93,15 @@ class DebugStratageyCtx(StrategyContext):
     def get_capital(self) -> float:
         return self.capital
 
+    def get_total_capital(self) -> float:
+        return self.capital
+
     def time(self) -> np.datetime64:
         return np.datetime64("2020-01-01T00:00:00", "ns")
 
     def trade(
         self,
-        instr_or_symbol: Instrument | str,
+        instrument: Instrument,
         amount: float,
         price: float | None = None,
         time_in_force="gtc",
@@ -77,19 +113,16 @@ class DebugStratageyCtx(StrategyContext):
         if amount > 0: self._n_orders_buy += 1
         if amount < 0: self._n_orders_sell += 1
         return Order(
-            "test", "MARKET", instr_or_symbol.symbol if isinstance(instr_or_symbol, Instrument) else instr_or_symbol,
+            "test", "MARKET", instrument,
             np.datetime64(0, "ns"), amount, price if price is not None else 0, "BUY" if amount > 0 else "SELL", "CLOSED", "gtc", "test1")
         # fmt: on
-
-    def get_reserved(self, instrument: Instrument) -> float:
-        return 0.0
 
 
 class ZeroTracker(PositionsTracker):
     def __init__(self) -> None:
         pass
 
-    def process_signals(self, ctx: StrategyContext, signals: list[Signal]) -> list[TargetPosition]:
+    def process_signals(self, ctx: IStrategyContext, signals: list[Signal]) -> list[TargetPosition]:
         return [TargetPosition.create(ctx, s, target_size=0) for s in signals]
 
 
@@ -100,10 +133,15 @@ class GuineaPig(IStrategy):
 
     tests = {}
 
-    def on_fit(self, ctx: StrategyContext, fit_time: str | Timestamp, previous_fit_time: str | Timestamp | None = None):
+    def on_init(self, ctx: IStrategyContext) -> None:
+        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1Min")
+
+    def on_fit(
+        self, ctx: IStrategyContext, fit_time: str | Timestamp, previous_fit_time: str | Timestamp | None = None
+    ):
         self.tests = {recognize_time(k): v for k, v in self.tests.items()}
 
-    def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
         r = []
         for k in list(self.tests.keys()):
             if event.time >= k:
@@ -150,13 +188,16 @@ class TestTrackersAndGatherers:
             fast_period = 5
             slow_period = 12
 
-            def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
+            def on_init(self, ctx: IStrategyContext) -> None:
+                ctx.set_base_subscription(SubscriptionType.OHLC, timeframe=self.timeframe)
+
+            def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
                 signals = []
                 for i in ctx.instruments:
                     ohlc = ctx.ohlc(i, self.timeframe)
                     fast = sma(ohlc.close, self.fast_period)
                     slow = sma(ohlc.close, self.slow_period)
-                    pos = ctx.positions[i.symbol].quantity
+                    pos = ctx.positions[i].quantity
 
                     if pos <= 0 and (fast[0] > slow[0]) and (fast[1] < slow[1]):
                         signals.append(i.signal(+1, stop=min(ohlc[0].low, ohlc[1].low)))
@@ -166,11 +207,11 @@ class TestTrackersAndGatherers:
 
                 return signals
 
-            def tracker(self, ctx: StrategyContext) -> PositionsTracker:
+            def tracker(self, ctx: IStrategyContext) -> PositionsTracker:
                 return PositionsTracker(FixedRiskSizer(1, 10_000, reinvest_profit=True))
 
         rep = simulate(
-            {
+            config={
                 "Strategy ST client": [
                     StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
                     t0 := StopTakePositionTracker(
@@ -208,14 +249,12 @@ class TestTrackersAndGatherers:
                     ),
                 ],
             },
-            r,
-            10000,
-            ["BINANCE.UM:BTCUSDT"],
-            dict(type="ohlc", timeframe="15Min", nback=0),
-            "-1Sec",
-            "vip0_usdt",
-            "2024-01-01",
-            "2024-01-03 13:00",
+            data=r,
+            capital=10000,
+            instruments=["BINANCE.UM:BTCUSDT"],
+            commissions="vip0_usdt",
+            start="2024-01-01",
+            stop="2024-01-03 13:00",
         )
 
         assert rep[2].executions_log.iloc[-1].price < rep[3].executions_log.iloc[-1].price
@@ -271,7 +310,7 @@ class TestTrackersAndGatherers:
         _ = tracker.process_signals(ctx, [I[0].signal(+0.5)])
 
         # - now tracker works only by execution reports, so we 'emulate' it here
-        ctx.positions[I[0].symbol].quantity = +0.5
+        ctx.positions[I[0]].quantity = +0.5
         tracker.on_execution_report(ctx, I[0], Deal(0, "0", np.datetime64(10000, "ns"), +0.5, 1.0, True))
 
         targets = tracker.process_signals(ctx, [I[0].signal(-0.5)])
@@ -330,8 +369,6 @@ class TestTrackersAndGatherers:
             {f"BINANCE.UM:BTCUSDT": ohlc},
             10000,
             instruments=[f"BINANCE.UM:BTCUSDT"],
-            subscription=dict(type="ohlc", timeframe="1Min"),
-            trigger="-1Sec",
             silent=True,
             debug="DEBUG",
             commissions="vip0_usdt",
@@ -350,10 +387,12 @@ class TestTrackersAndGatherers:
         reader = CsvStorageDataReader("tests/data/csv")
         ohlc = reader.read("BTCUSDT_ohlcv_M1", transform=AsPandasFrame())
         assert isinstance(ohlc, pd.DataFrame)
+        i1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        assert i1 is not None
 
         S = pd.DataFrame(
             {
-                "BTCUSDT": {
+                i1: {
                     pd.Timestamp("2024-01-10 15:08:59.716000"): 1,
                     pd.Timestamp("2024-01-10 15:10:52.679000"): 1,
                     pd.Timestamp("2024-01-10 15:32:44.798000"): 1,
@@ -375,10 +414,8 @@ class TestTrackersAndGatherers:
             {f"BINANCE.UM:BTCUSDT": ohlc},
             10000,
             ["BINANCE.UM:BTCUSDT"],
-            dict(type="ohlc", timeframe="1Min"),
-            "1Min -1Sec",
             "vip9_usdt",
-            S.index[0],
+            S.index[0] - pd.Timedelta("5Min"),
             S.index[-1] + pd.Timedelta("5Min"),
             debug="DEBUG",
         )

@@ -3,8 +3,8 @@ from collections import defaultdict
 
 import numpy as np
 
-from qubx import lookup, logger
-from qubx.core.basics import Instrument, Position, TransactionCostsCalculator, dt_64, Deal, Order
+from qubx import logger
+from qubx.core.basics import Instrument, Position, dt_64, Deal, Order
 
 
 class AccountProcessor:
@@ -18,15 +18,15 @@ class AccountProcessor:
     _balances: Dict[str, Tuple[float, float]]
     _active_orders: Dict[str | int, Order]  # active orders
     _processed_trades: Dict[str | int, List[str | int]]
-    _positions: Dict[str, Position]
+    _positions: Dict[Instrument, Position]
     _locked_capital_by_order: Dict[str | int, float]
 
     def __init__(
         self,
         account_id: str,
         base_currency: str,
-        reserves: Dict[str, float] | None,
-        initial_capital: float = 0,
+        reserves: Dict[str, float] | None = None,
+        initial_capital: float = 100_000,
     ) -> None:
         self.account_id = account_id
         self.base_currency = base_currency.upper()
@@ -37,6 +37,10 @@ class AccountProcessor:
         self._locked_capital_by_order = dict()
         self._balances = dict()
         self._balances[self.base_currency] = (initial_capital, 0)
+
+    @property
+    def positions(self) -> dict[Instrument, Position]:
+        return self._positions
 
     def update_balance(self, currency: str, total_capital: float, locked_capital: float):
         if currency == self.base_currency:
@@ -54,14 +58,14 @@ class AccountProcessor:
 
     def attach_positions(self, *position: Position) -> "AccountProcessor":
         for p in position:
-            self._positions[p.instrument.symbol] = p
+            self._positions[p.instrument] = p
         return self
 
-    def update_position_price(self, time: dt_64, symbol: str, price: float):
-        p = self._positions[symbol]
+    def update_position_price(self, time: dt_64, instrument: Instrument, price: float):
+        p = self._positions[instrument]
         p.update_market_price(time, price, 1)
 
-    def get_free_capital(self) -> float:
+    def get_capital(self) -> float:
         """
         Get free capital in base currency.
         """
@@ -75,14 +79,13 @@ class AccountProcessor:
         positions_value_in_base = sum([p.market_value_funds for p in self._positions.values()])
         return self.base_currency_balance + positions_value_in_base - self.get_reserved_capital()
 
-    def get_leverage(self, inst: str | Instrument) -> float:
-        inst = inst if isinstance(inst, str) else inst.symbol
-        pos = self._positions.get(inst)
+    def get_leverage(self, instrument: Instrument) -> float:
+        pos = self._positions.get(instrument)
         if pos is not None:
             return pos.market_value_funds / self.get_total_capital()
         return 0.0
 
-    def get_leverages(self) -> dict[str, float]:
+    def get_leverages(self) -> dict[Instrument, float]:
         return {s: self.get_leverage(s) for s in self._positions.keys()}
 
     def get_net_leverage(self) -> float:
@@ -95,7 +98,7 @@ class AccountProcessor:
         """
         Check how much were reserved for this instrument
         """
-        return self.reserved.get(instrument.symbol, self.reserved.get(instrument.base, 0))
+        return self.reserved.get(instrument.base, 0.0)
 
     def get_reserved_capital(self) -> float:
         """
@@ -104,13 +107,13 @@ class AccountProcessor:
         if not self.reserved:
             return 0.0
         reserved_capital = 0.0
-        # TODO: fix this to work with reserved currency keys instead of symbols
-        for symbol, amount in self.reserved.items():
-            reserved_capital += amount * self._positions[symbol].last_update_price
+        for currency, amount in self.reserved.items():
+            instrument = self._find_instrument_for_currency(currency)
+            reserved_capital += amount * self._positions[instrument].last_update_price
         return reserved_capital
 
-    def process_deals(self, symbol: str, deals: List[Deal]):
-        pos = self._positions.get(symbol)
+    def process_deals(self, instrument: Instrument, deals: list[Deal]):
+        pos = self._positions.get(instrument)
 
         if pos is not None:
             conversion_rate = 1
@@ -120,12 +123,12 @@ class AccountProcessor:
             # - check if we need conversion rate for this instrument
             # - TODO - need test on it !
             if instr._aux_instrument is not None:
-                aux_pos = self._positions.get(instr._aux_instrument.symbol)
+                aux_pos = self._positions.get(instr._aux_instrument)
                 if aux_pos:
                     conversion_rate = aux_pos.last_update_price
                 else:
                     logger.error(
-                        f"Can't find additional instrument {instr._aux_instrument} for estimating {symbol} position value !!!"
+                        f"Can't find additional instrument {instr._aux_instrument} for estimating {instrument.symbol} position value !!!"
                     )
 
             # - process deals
@@ -136,11 +139,11 @@ class AccountProcessor:
                     realized_pnl += r_pnl
                     deal_cost += d.amount * d.price / conversion_rate
                     traded_amnt += d.amount
-                    logger.debug(f"  ::  traded {d.amount} for {symbol} @ {d.price} -> {realized_pnl:.2f}")
+                    logger.debug(f"  ::  traded {d.amount} for {instrument} @ {d.price} -> {realized_pnl:.2f}")
                     self.base_currency_balance -= deal_cost + fee_in_base
 
     def _lock_limit_order_value(self, order: Order) -> float:
-        pos = self._positions.get(order.symbol)
+        pos = self._positions.get(order.instrument)
         excess = 0.0
         # - we handle only instruments it;s subscribed to
         if pos:
@@ -188,16 +191,18 @@ class AccountProcessor:
         if _cancel and order.type == "LIMIT":
             self._unlock_limit_order_value(order)
 
-        logger.debug(f"Order {order.id} {order.type} {order.side} {order.quantity} of {order.symbol} -> {order.status}")
+        logger.debug(
+            f"Order {order.id} {order.type} {order.side} {order.quantity} of {order.instrument} -> {order.status}"
+        )
 
     def add_active_orders(self, orders: Dict[str, Order]):
         for oid, od in orders.items():
             self._active_orders[oid] = od
 
-    def get_orders(self, symbol: str | None = None) -> List[Order]:
+    def get_orders(self, instrument: Instrument | None = None) -> List[Order]:
         ols = list(self._active_orders.values())
-        if symbol is not None:
-            ols = list(filter(lambda x: x.symbol == symbol, ols))
+        if instrument is not None:
+            ols = list(filter(lambda x: x.instrument == instrument, ols))
         return ols
 
     def positions_report(self) -> dict:
@@ -208,7 +213,7 @@ class AccountProcessor:
                 "Price": p.position_avg_price_funds,
                 "PnL": p.pnl,
                 "MktValue": p.market_value_funds,
-                "Leverage": self.get_leverage(p.instrument.symbol),
+                "Leverage": self.get_leverage(p.instrument),
             }
         return rep
 
@@ -227,3 +232,9 @@ class AccountProcessor:
     @base_currency_locked_balance.setter
     def base_currency_locked_balance(self, value: float):
         self._balances[self.base_currency] = (self._balances[self.base_currency][0], value)
+
+    def _find_instrument_for_currency(self, currency: str) -> Instrument:
+        for instr in self._positions.keys():
+            if instr.base == currency and instr.quote == self.base_currency:
+                return instr
+        raise ValueError(f"Can't find instrument for currency {currency}")

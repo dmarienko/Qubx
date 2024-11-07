@@ -1,7 +1,7 @@
 import pandas as pd
 from typing import Any, Iterator
 from qubx.core.basics import BatchEvent
-from qubx.backtester.queue import SimulatedDataQueue, DataLoader, EventBatcher, SimulatedDataQueueWithThreads
+from qubx.backtester.queue import SimulatedDataQueue, DataLoader, EventBatcher
 
 
 class DummyEvent:
@@ -31,7 +31,7 @@ class DummyDataLoader(DataLoader):
         yield from self._events
 
     @property
-    def symbol(self):
+    def instrument(self):
         return self._symbol
 
     @property

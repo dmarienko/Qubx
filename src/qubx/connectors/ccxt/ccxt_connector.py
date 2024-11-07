@@ -18,7 +18,7 @@ import pandas as pd
 from qubx import logger
 from qubx.core.basics import Instrument, Position, dt_64, Deal, CtrlChannel
 from qubx.core.helpers import BasicScheduler
-from qubx.core.strategy import IBrokerServiceProvider, ITradingServiceProvider
+from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.utils.ntp import time_now
 from .ccxt_utils import DATA_PROVIDERS_ALIASES, ccxt_convert_trade, ccxt_convert_orderbook
@@ -78,6 +78,10 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
         logger.info(f"{exchange_id} initialized - current time {self.trading_service.time()}")
 
+    @property
+    def is_simulated_trading(self) -> bool:
+        return False
+
     def get_scheduler(self) -> BasicScheduler:
         # - standard scheduler
         if self._scheduler is None:
@@ -85,7 +89,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         return self._scheduler
 
     def subscribe(
-        self, subscription_type: str, instruments: List[Instrument], timeframe: Optional[str] = None, nback: int = 0
+        self, instruments: List[Instrument], subscription_type: str, timeframe: Optional[str] = None, nback: int = 0
     ) -> bool:
         to_process = self._check_existing_subscription(subscription_type.lower(), instruments)
         if not to_process:
@@ -167,8 +171,9 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     def _time_msec_nbars_back(self, timeframe: str, nbarsback: int) -> int:
         return (self.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
 
-    def get_historical_ohlcs(self, symbol: str, timeframe: str, nbarsback: int) -> List[Bar]:
+    def get_historical_ohlcs(self, instrument: Instrument, timeframe: str, nbarsback: int) -> List[Bar]:
         assert nbarsback >= 1
+        symbol = instrument.symbol
         since = self._time_msec_nbars_back(timeframe, nbarsback)
 
         # - retrieve OHLC data
@@ -189,20 +194,22 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             )
         return _arr
 
-    async def _listen_to_execution_reports(self, channel: CtrlChannel, symbol: str):
+    async def _listen_to_execution_reports(self, channel: CtrlChannel, instrument: Instrument):
         async def _watch_executions():
-            exec = await self._exchange.watch_orders(symbol)  # type: ignore
-            _msg = f"\nexecs_{symbol} = [\n"
+            exec = await self._exchange.watch_orders(instrument.symbol)  # type: ignore
+            _msg = f"\nexecs_{instrument.symbol} = [\n"
             for report in exec:
                 _msg += "\t" + str(report) + ",\n"
-                order, deals = self.trading_service.process_execution_report(symbol, report)
+                order, deals = self.trading_service.process_execution_report(instrument, report)
                 # - send update to client
-                channel.send((symbol, "order", order))
+                channel.send((instrument, "order", order))
                 if deals:
-                    channel.send((symbol, "deals", deals))
+                    channel.send((instrument, "deals", deals))
             logger.debug(_msg + "]\n")
 
-        await self._listen_to_stream(_watch_executions, self._exchange, channel, f"{symbol} execution reports")
+        await self._listen_to_stream(
+            _watch_executions, self._exchange, channel, f"{instrument.symbol} execution reports"
+        )
 
     async def _listen_to_ohlcv(self, channel: CtrlChannel, instrument: Instrument, timeframe: str, nbarsback: int):
         symbol = instrument.symbol
@@ -214,7 +221,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             # - there is no single method to get OHLC update's event time for every broker
             # - for instance it's possible to do for Binance but for example Bitmex doesn't provide such info
             # - so we will use ntp adjusted time here
-            self.trading_service.update_position_price(symbol, self.time(), last_close)
+            self.trading_service.update_position_price(instrument, self.time(), last_close)
             for oh in ohlcv:
                 channel.send((symbol, "bar", Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
 
@@ -228,7 +235,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             trades = await self._exchange.watch_trades(symbol)
             # - update positions by actual close price
             last_trade = ccxt_convert_trade(trades[-1])
-            self.trading_service.update_position_price(symbol, self.time(), last_trade)
+            self.trading_service.update_position_price(instrument, self.time(), last_trade)
             for trade in trades:
                 channel.send((symbol, "trade", ccxt_convert_trade(trade)))
 
@@ -242,7 +249,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         async def _watch_orderbook():
             ccxt_ob = await self._exchange.watch_order_book(symbol)
             ob = ccxt_convert_orderbook(ccxt_ob, instrument)
-            self.trading_service.update_position_price(symbol, self.time(), ob.to_quote())
+            self.trading_service.update_position_price(instrument, self.time(), ob.to_quote())
             channel.send((symbol, "orderbook", ob))
 
         # TODO: stream historical orderbooks for some period
@@ -291,8 +298,8 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         )
         logger.info(f"{symbol}: loaded {len(ohlcv)} {timeframe} bars")
 
-    def get_quote(self, symbol: str) -> Optional[Quote]:
-        return self._last_quotes[symbol]
+    def get_quote(self, instrument: Instrument) -> Quote | None:
+        return self._last_quotes[instrument.symbol]
 
     def _get_exch_timeframe(self, timeframe: str) -> str:
         if timeframe is not None:

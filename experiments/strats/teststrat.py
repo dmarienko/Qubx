@@ -4,14 +4,14 @@ import numpy as np
 from tabulate import tabulate
 
 from qubx import logger
-from qubx.core.strategy import IStrategy, PositionsTracker, TriggerEvent, StrategyContext
+from qubx.core.interfaces import IStrategy, PositionsTracker, TriggerEvent, IStrategyContext
 from qubx.core.basics import Instrument, Position, Signal
 from qubx.pandaz import srows, scols, ohlc_resample, retain_columns_and_join
 from qubx.trackers import Capital, PortfolioRebalancerTracker
 from qubx.utils.misc import quotify, dequotify
 
 
-def priceframe(ctx: StrategyContext, field: str, timeframe: str) -> pd.DataFrame:
+def priceframe(ctx: IStrategyContext, field: str, timeframe: str) -> pd.DataFrame:
     data = []
     for i in ctx.instruments:
         d = ctx.ohlc(i.symbol, timeframe)
@@ -28,7 +28,7 @@ class FlipFlopStrat(IStrategy):
     trading_allowed: bool = False
     _tracker: PortfolioRebalancerTracker
 
-    def on_start(self, ctx: StrategyContext):
+    def on_start(self, ctx: IStrategyContext):
         logger.info(f"> Started with capital {self.capital_invested}")
         self._tracker = self.tracker(ctx)
 
@@ -39,7 +39,7 @@ class FlipFlopStrat(IStrategy):
         logger.info(f"> Fit is called | fit_time: {fit_time} / prev: {previous_fit_time}")
         logger.info(f"{str(closes)}")
 
-    def on_event(self, ctx: StrategyContext, event: TriggerEvent) -> List[Signal] | None:
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
         logger.info(f"{event.time} -> {event}")
         ohlcs = self.ohlcs("15Min")
 
@@ -78,10 +78,10 @@ class FlipFlopStrat(IStrategy):
     def ohlcs(self, timeframe: str) -> Dict[str, pd.DataFrame]:
         return {s.symbol: self.ctx.ohlc(s, timeframe).pd() for s in self.ctx.instruments}
 
-    def on_stop(self, ctx: StrategyContext):
+    def on_stop(self, ctx: IStrategyContext):
         logger.info(f"> test is stopped")
 
-    def tracker(self, ctx: StrategyContext) -> PositionsTracker:
+    def tracker(self, ctx: IStrategyContext) -> PositionsTracker:
         return PortfolioRebalancerTracker(self.capital_invested, 0)
 
     def reporting(self, signals: pd.DataFrame, wealth: Capital):

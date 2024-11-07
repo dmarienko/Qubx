@@ -5,7 +5,7 @@ import pandas as pd
 
 from qubx import logger
 from qubx.core.basics import Position, Signal, TargetPosition
-from qubx.core.strategy import IPositionGathering, StrategyContext, PositionsTracker
+from qubx.core.interfaces import IPositionGathering, IStrategyContext, PositionsTracker
 from qubx.trackers.sizers import LongShortRatioPortfolioSizer
 
 
@@ -32,7 +32,7 @@ class PortfolioRebalancerTracker(PositionsTracker):
         self._positions_sizer = positions_sizer
 
     def calculate_released_capital(
-        self, ctx: StrategyContext, symbols_to_close: List[str] | None = None
+        self, ctx: IStrategyContext, symbols_to_close: List[str] | None = None
     ) -> Tuple[float, List[str]]:
         """
         Calculate capital that would be released if close positions for provided symbols_to_close list
@@ -49,7 +49,7 @@ class PortfolioRebalancerTracker(PositionsTracker):
                     closed_symbols.append(symbol)
         return released_capital_after_close, closed_symbols
 
-    def estimate_capital_to_trade(self, ctx: StrategyContext, symbols_to_close: List[str] | None = None) -> Capital:
+    def estimate_capital_to_trade(self, ctx: IStrategyContext, symbols_to_close: List[str] | None = None) -> Capital:
         released_capital = 0.0
         closed_positions = None
 
@@ -62,7 +62,7 @@ class PortfolioRebalancerTracker(PositionsTracker):
 
         return Capital(cap_to_invest, released_capital, closed_positions)
 
-    def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
+    def process_signals(self, ctx: IStrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         """
         Portfolio rebalancer - makes rebalancing portfolio based on provided signals.
         It checks how much funds can be released first and then reallocate it into positions need to be opened.
@@ -73,9 +73,9 @@ class PortfolioRebalancerTracker(PositionsTracker):
         _close_first = []
         _then_open = []
         for t in targets:
-            pos = ctx.positions.get(t.instrument.symbol)
+            pos = ctx.positions.get(t.instrument)
             if pos is None:
-                logger.error(f"({self.__class__.__name__}) No position for {t.instrument.symbol} instrument !")
+                logger.error(f"({self.__class__.__name__}) No position for {t.instrument} instrument !")
                 continue
 
             _pa, _ta = abs(pos.quantity), abs(t.target_position_size)
@@ -87,19 +87,19 @@ class PortfolioRebalancerTracker(PositionsTracker):
                 t.target_position_size = self._correct_target_position(pos.quantity, t.target_position_size, reserved)
                 _close_first.append(t)
                 logger.debug(
-                    f"({self.__class__.__name__}) Decreasing exposure for {t.instrument.symbol} from {pos.quantity} -> {t.target_position_size} (reserved: {reserved})"
+                    f"({self.__class__.__name__}) Decreasing exposure for {t.instrument} from {pos.quantity} -> {t.target_position_size} (reserved: {reserved})"
                 )
 
             # - ones which increases exposure
             elif _ta > _pa:
                 _then_open.append(t)
                 logger.debug(
-                    f"({self.__class__.__name__}) Increasing exposure for {t.instrument.symbol} from {pos.quantity} -> {t.target_position_size})"
+                    f"({self.__class__.__name__}) Increasing exposure for {t.instrument} from {pos.quantity} -> {t.target_position_size})"
                 )
 
         return _close_first + _then_open
 
-    def close_all(self, ctx: StrategyContext) -> None:
+    def close_all(self, ctx: IStrategyContext) -> None:
         """
         Emergency close all positions
         """

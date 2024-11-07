@@ -279,9 +279,9 @@ class InMemoryDataFrameReader(DataReader):
     """
 
     exchange: str | None
-    _data: Dict[str, pd.DataFrame | pd.Series]
+    _data: dict[str, pd.DataFrame | pd.Series]
 
-    def __init__(self, data: Dict[str, pd.DataFrame | pd.Series], exchange: str | None = None) -> None:
+    def __init__(self, data: dict[str, pd.DataFrame | pd.Series], exchange: str | None = None) -> None:
         if not isinstance(data, dict):
             raise ValueError("data must be a dictionary of pandas DataFrames")
         self._data = data
