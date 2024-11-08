@@ -25,7 +25,7 @@ class DataLoader:
         reader: DataReader,
         instrument: Instrument,
         timeframe: str | None,
-        preload_bars: int = 0,
+        warmup_period: str | None = None,
         data_type: str = "ohlc",
         output_type: str | None = None,  # transfomer can somtimes map to a different output type
         chunksize: int = 5_000,
@@ -34,7 +34,7 @@ class DataLoader:
         self._spec = f"{instrument.exchange}:{instrument.symbol}"
         self._reader = reader
         self._transformer = transformer
-        self._init_bars_required = preload_bars
+        self._warmup_period = warmup_period
         self._timeframe = timeframe
         self._data_type = data_type
         self._output_type = output_type
@@ -43,8 +43,8 @@ class DataLoader:
 
     def load(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> Iterator:
         if self._first_load:
-            if self._init_bars_required > 0 and self._timeframe:
-                start = pd.Timestamp(start) - self._init_bars_required * pd.Timedelta(self._timeframe)
+            if self._warmup_period:
+                start = pd.Timestamp(start) - pd.Timedelta(self._warmup_period)
             self._first_load = False
 
         args = dict(

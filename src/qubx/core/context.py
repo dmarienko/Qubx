@@ -1,6 +1,6 @@
 import traceback
 
-from typing import Any, Callable
+from typing import Any, Callable, List
 from threading import Thread
 
 from qubx import logger
@@ -235,11 +235,11 @@ class StrategyContext(IStrategyContext):
         return self.__universe_manager.instruments
 
     # ISubscriptionManager delegation
-    def subscribe(self, instrument: Instrument, subscription_type: str, **kwargs):
-        return self.__subscription_manager.subscribe(instrument, subscription_type, **kwargs)
+    def subscribe(self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None, **kwargs):
+        return self.__subscription_manager.subscribe(instruments, subscription_type, **kwargs)
 
-    def unsubscribe(self, instrument: Instrument, subscription_type: str | None = None):
-        return self.__subscription_manager.unsubscribe(instrument, subscription_type)
+    def unsubscribe(self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None):
+        return self.__subscription_manager.unsubscribe(instruments, subscription_type)
 
     def has_subscription(self, instrument: Instrument, subscription_type: str):
         return self.__subscription_manager.has_subscription(instrument, subscription_type)

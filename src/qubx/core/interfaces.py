@@ -207,7 +207,7 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
 
     def subscribe(
         self,
-        instruments: list[Instrument],
+        instruments: List[Instrument],
         subscription_type: str,
         warmup_period: str | None = None,
         ohlc_warmup_period: str | None = None,
@@ -225,7 +225,7 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
         """
         ...
 
-    def unsubscribe(self, instruments: list[Instrument], subscription_type: str | None) -> None:
+    def unsubscribe(self, instruments: List[Instrument], subscription_type: str | None) -> None:
         """
         Unsubscribe from market data for a list of instruments.
 
@@ -415,21 +415,23 @@ class IUniverseManager:
 class ISubscriptionManager:
     """Manages subscriptions."""
 
-    def subscribe(self, instrument: Instrument, subscription_type: str, **kwargs) -> bool:
+    def subscribe(
+        self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None, **kwargs
+    ) -> bool:
         """Subscribe to market data for an instrument.
 
         Args:
-            instrument: Instrument to subscribe to
-            subscription_type: Type of subscription
+            instruments: A list of instrument of instrument to subscribe to
+            subscription_type: Type of subscription. If None, the base subscription type is used.
             **kwargs: Additional subscription parameters
         """
         ...
 
-    def unsubscribe(self, instrument: Instrument, subscription_type: str | None = None) -> bool:
+    def unsubscribe(self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None) -> bool:
         """Unsubscribe from market data for an instrument.
 
         Args:
-            instrument: Instrument to unsubscribe from
+            instruments: A list of instrument of instrument to unsubscribe from
             subscription_type: Type of subscription to unsubscribe from (optional)
         """
         ...
@@ -690,16 +692,9 @@ class IStrategy:
         """
         pass
 
-    def on_fit(self, ctx: IStrategyContext, fit_time: dt_64, previous_fit_time: dt_64 | None = None):
-        """Called when it's time to fit the model.
-
-        Args:
-            ctx: Strategy context.
-            fit_time: Last time of fit data to use.
-            previous_fit_time: Last time of fit data used in previous fit.
-
-        Returns:
-            None
+    def on_fit(self, ctx: IStrategyContext):
+        """
+        Called when it's time to fit the model.
         """
         return None
 
