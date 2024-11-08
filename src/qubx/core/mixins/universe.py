@@ -69,6 +69,9 @@ class UniverseManager(IUniverseManager):
         if add_instr or rm_instr:
             self.__strategy.on_universe_change(self.__context, add_instr, rm_instr)
 
+        # apply all the pending changes
+        self.__broker.commit()
+
         # set new instruments
         self._instruments.clear()
         self._instruments.extend(instruments)

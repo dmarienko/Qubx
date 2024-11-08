@@ -9,7 +9,7 @@ from qubx.pandaz.utils import *
 from qubx.core.utils import recognize_time, time_to_str
 
 from qubx.core.series import OHLCV, Quote
-from qubx.core.strategy import IPositionGathering, IStrategy, PositionsTracker, StrategyContext, TriggerEvent
+from qubx.core.interfaces import IPositionGathering, IStrategy, PositionsTracker, IStrategyContext, TriggerEvent
 from qubx.data.readers import (
     AsOhlcvSeries,
     CsvStorageDataReader,
@@ -43,9 +43,9 @@ def S(ctx, sdict: dict):
 
 
 class TestingPositionGatherer(IPositionGathering):
-    def alter_position_size(self, ctx: StrategyContext, target: TargetPosition) -> float:
+    def alter_position_size(self, ctx: IStrategyContext, target: TargetPosition) -> float:
         instrument, new_size, at_price = target.instrument, target.target_position_size, target.price
-        position = ctx.positions[instrument.symbol]
+        position = ctx.positions[instrument]
         current_position = position.quantity
         to_trade = new_size - current_position
         if abs(to_trade) < instrument.min_size:
@@ -54,34 +54,49 @@ class TestingPositionGatherer(IPositionGathering):
             )
         else:
             # position.quantity = new_size
-            position.update_position(ctx.time(), new_size, ctx.quote(instrument.symbol).mid_price())
+            q = ctx.quote(instrument)
+            assert q is not None
+            position.update_position(ctx.time(), new_size, q.mid_price())
             r = ctx.trade(instrument, to_trade, at_price)
             logger.info(
                 f"{instrument.symbol} >>> (TESTS) Adjusting position from {current_position} to {new_size} : {r}"
             )
         return current_position
 
-    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal): ...
+    def on_execution_report(self, ctx: IStrategyContext, instrument: Instrument, deal: Deal): ...
 
 
-class DebugStratageyCtx(StrategyContext):
-    _d_qts: Dict[str, Quote]
+class DebugStratageyCtx(IStrategyContext):
+    _exchange: str = "BINANCE.UM"
+    _d_qts: Dict[Instrument, Quote]
     _c_time: int = 0
     _o_id: int = 10000
 
     def __init__(self, symbols: List[str], capital) -> None:
-        self.instruments = [x for s in symbols if (x := lookup.find_symbol("BINANCE.UM", s)) is not None]
-        self._d_qts = {i.symbol: None for i in self.instruments}
-        self.positions = {i.symbol: Position(i) for i in self.instruments}
+        self._instruments = [x for s in symbols if (x := lookup.find_symbol(self._exchange, s)) is not None]
+        self._symbol_to_instrument = {i.symbol: i for i in self._instruments}
+        self._d_qts = {i: None for i in self._instruments}  # type: ignore
+        self._positions = {i: Position(i) for i in self.instruments}
         self.capital = capital
         self.acc = AccountProcessor("test", "USDT", reserves={})
         self.acc.update_balance("USDT", capital, 0)
         self.acc.attach_positions(*self.positions.values())
 
-    def quote(self, symbol: str) -> Quote | None:
-        return self._d_qts.get(symbol)
+    @property
+    def instruments(self) -> List[Instrument]:
+        return self._instruments
+
+    @property
+    def positions(self) -> Dict[Instrument, Position]:
+        return self._positions
+
+    def quote(self, instrument: Instrument) -> Quote | None:
+        return self._d_qts.get(instrument)
 
     def get_capital(self) -> float:
+        return self.capital
+
+    def get_total_capital(self) -> float:
         return self.capital
 
     def time(self) -> np.datetime64:
@@ -90,13 +105,13 @@ class DebugStratageyCtx(StrategyContext):
     def get_reserved(self, instrument: Instrument) -> float:
         return 0.0
 
-    def get_instrument(self, symbol: str) -> Instrument | None:
-        return self.positions.get(symbol).instrument
+    def get_instrument(self, instrument: str) -> Instrument:
+        return self._symbol_to_instrument[instrument]
 
     def push(self, quotes: Dict[str, Quote]) -> None:
         for s, q in quotes.items():
-            self._d_qts[s] = q
-            self.positions[s].update_market_price_by_tick(q)
+            self._d_qts[self.get_instrument(s)] = q
+            self.positions[self.get_instrument(s)].update_market_price_by_tick(q)
             self._c_time = max(q.time, self._c_time)
 
     def reset(self):
@@ -104,20 +119,19 @@ class DebugStratageyCtx(StrategyContext):
 
     def trade(
         self,
-        instr_or_symbol: Instrument | str,
+        instrument: Instrument,
         amount: float,
         price: float | None = None,
         time_in_force="gtc",
         **optional,
     ) -> Order:
         side = "BUY" if amount > 0 else "SELL"
-        key = instr_or_symbol.symbol if isinstance(instr_or_symbol, Instrument) else instr_or_symbol
-        print(" >>> ", side, key, amount)
+        print(" >>> ", side, instrument, amount)
 
         order = Order(
             f"test_{self._o_id}",
             "MARKET",
-            key,
+            instrument,
             np.datetime64(0, "ns"),
             amount,
             price if price is not None else 0,
@@ -128,8 +142,10 @@ class DebugStratageyCtx(StrategyContext):
         )
 
         self._o_id += 1
-        d = Deal(str(self.time()), order.id, self.time(), amount, self.quote(key).mid_price(), True)
-        self.acc.process_deals(key, [d])
+        q = self.quote(instrument)
+        assert q is not None
+        d = Deal(str(self.time()), order.id, self.time(), amount, q.mid_price(), True)
+        self.acc.process_deals(instrument, [d])
         return order
 
     def pos_board(self):
@@ -180,9 +196,9 @@ class TestPortfolioRelatedStuff:
         )
         gathering.alter_positions(ctx, targets)
 
-        assert ctx.positions[I[0].symbol].quantity == 0
-        assert ctx.positions[I[1].symbol].quantity == 0
-        assert ctx.positions[I[2].symbol].quantity == 0
+        assert ctx.positions[I[0]].quantity == 0
+        assert ctx.positions[I[1]].quantity == 0
+        assert ctx.positions[I[2]].quantity == 0
 
     def test_LongShortRatioPortfolioSizer(self):
         ctx = DebugStratageyCtx(["MATICUSDT", "CRVUSDT", "NEARUSDT", "ETHUSDT", "XRPUSDT", "LTCUSDT"], 100000.0)
