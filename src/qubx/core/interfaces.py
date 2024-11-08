@@ -417,7 +417,7 @@ class ISubscriptionManager:
 
     def subscribe(
         self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None, **kwargs
-    ) -> bool:
+    ) -> None:
         """Subscribe to market data for an instrument.
 
         Args:
@@ -427,7 +427,7 @@ class ISubscriptionManager:
         """
         ...
 
-    def unsubscribe(self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None) -> bool:
+    def unsubscribe(self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None) -> None:
         """Unsubscribe from market data for an instrument.
 
         Args:
