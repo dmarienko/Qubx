@@ -10,7 +10,7 @@ from qubx.connectors.ccxt.ccxt_utils import (
     ccxt_restore_position_from_deals,
 )
 from pytest import approx
-from .data.ccxt_responses import *
+from data.ccxt_responses import *
 
 N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
 

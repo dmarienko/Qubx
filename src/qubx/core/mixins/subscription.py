@@ -34,10 +34,10 @@ class SubscriptionManager(ISubscriptionManager):
             kwargs["ohlc_warmup_period"] = kwargs.get(
                 "ohlc_warmup_period", __subscription_to_warmup.get(subscription_type)
             )
-        return self.__broker.subscribe([instrument], subscription_type, **kwargs)
+        self.__broker.subscribe([instrument], subscription_type, **kwargs)
 
     def unsubscribe(self, instrument: Instrument, subscription_type: str | None = None) -> bool:
-        return self.__broker.unsubscribe([instrument], subscription_type)
+        self.__broker.unsubscribe([instrument], subscription_type)
 
     def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
         return self.__broker.has_subscription(instrument, subscription_type)

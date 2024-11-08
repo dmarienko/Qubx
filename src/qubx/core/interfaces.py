@@ -212,7 +212,7 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
         warmup_period: str | None = None,
         ohlc_warmup_period: str | None = None,
         **kwargs,
-    ) -> bool:
+    ) -> None:
         """
         Subscribe to market data for a list of instruments.
 
@@ -222,22 +222,16 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
             warmup_period: Warmup period for the subscription
             ohlc_warmup_period: Warmup period for OHLC data
             **kwargs: Additional subscription parameters
-
-        Returns:
-            bool: True if subscription was successful
         """
         ...
 
-    def unsubscribe(self, instruments: list[Instrument], subscription_type: str | None) -> bool:
+    def unsubscribe(self, instruments: list[Instrument], subscription_type: str | None) -> None:
         """
         Unsubscribe from market data for a list of instruments.
 
         Args:
             instruments: List of instruments to unsubscribe from
             subscription_type: Type of subscription to unsubscribe from (optional)
-
-        Returns:
-            bool: True if unsubscribe was successful
         """
         ...
 
@@ -428,9 +422,6 @@ class ISubscriptionManager:
             instrument: Instrument to subscribe to
             subscription_type: Type of subscription
             **kwargs: Additional subscription parameters
-
-        Returns:
-            bool: True if subscription successful
         """
         ...
 
@@ -440,9 +431,6 @@ class ISubscriptionManager:
         Args:
             instrument: Instrument to unsubscribe from
             subscription_type: Type of subscription to unsubscribe from (optional)
-
-        Returns:
-            bool: True if unsubscribe successful
         """
         ...
 

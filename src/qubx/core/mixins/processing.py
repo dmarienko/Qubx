@@ -23,6 +23,7 @@ from qubx.core.interfaces import (
     IMarketDataProvider,
     IPositionGathering,
     IStrategy,
+    IBrokerServiceProvider,
     ISubscriptionManager,
     PositionsTracker,
     IStrategyContext,
@@ -37,6 +38,7 @@ class ProcessingManager(IProcessingManager):
 
     __context: IStrategyContext
     __strategy: IStrategy
+    __broker: IBrokerServiceProvider
     __logging: StrategyLogging
     __market_data: IMarketDataProvider
     __subscription_manager: ISubscriptionManager
@@ -62,6 +64,7 @@ class ProcessingManager(IProcessingManager):
         self,
         context: IStrategyContext,
         strategy: IStrategy,
+        broker: IBrokerServiceProvider,
         logging: StrategyLogging,
         market_data: IMarketDataProvider,
         subscription_manager: ISubscriptionManager,
@@ -74,6 +77,7 @@ class ProcessingManager(IProcessingManager):
     ):
         self.__context = context
         self.__strategy = strategy
+        self.__broker = broker
         self.__logging = logging
         self.__market_data = market_data
         self.__subscription_manager = subscription_manager
@@ -137,6 +141,7 @@ class ProcessingManager(IProcessingManager):
         with SW("StrategyContext.on_event"):
             try:
                 signals = self.__strategy.on_event(self.__context, trigger_event)
+                self.__broker.commit()  # apply pending broker operations
                 self._fails_counter = 0
             except Exception as strat_error:
                 # - probably we need some cooldown interval after exception to prevent flooding
@@ -173,6 +178,7 @@ class ProcessingManager(IProcessingManager):
                 f"Invoking <green>{self.__strategy_name}</green> on_fit('{current_fit_time}', '{prev_fit_time}')"
             )
             self.__strategy.on_fit(self.__context, current_fit_time, prev_fit_time)
+            self.__broker.commit()  # apply pending broker operations
             logger.debug(f"<green>{self.__strategy_name}</green> is fitted")
         except Exception as strat_error:
             logger.error(

@@ -106,6 +106,7 @@ class StrategyContext(IStrategyContext):
         self.__processing_manager = ProcessingManager(
             context=self,
             strategy=self.strategy,
+            broker=self.__broker,
             logging=self.__logging,
             market_data=self,
             subscription_manager=self,

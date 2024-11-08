@@ -14,6 +14,7 @@ __CORRECT_INTERVAL = timedelta(seconds=30)
 __SLEEP_CORRECT_THREAD = 10
 
 _offset = None  # never use it explicitly but for tests! Always use get_offset()
+_controlling_thread = None
 
 
 def __correct_offset():
@@ -40,8 +41,12 @@ def __correct_offset_runnable():
         sleep(__SLEEP_CORRECT_THREAD)
 
 
-_controlling_thread = threading.Thread(target=__correct_offset_runnable, daemon=True)
-_controlling_thread.start()
+def start_ntp_thread():
+    global _controlling_thread
+    if _controlling_thread is not None:
+        return
+    _controlling_thread = threading.Thread(target=__correct_offset_runnable, daemon=True)
+    _controlling_thread.start()
 
 
 def time_now() -> np.datetime64:
