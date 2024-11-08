@@ -432,22 +432,22 @@ class SimulatedExchange(IBrokerServiceProvider):
         self,
         instruments: list[Instrument],
         subscription_type: str,
+        warmup_period: str | None = None,
         timeframe: str | None = None,
-        nback: int = 0,
         **kwargs,
     ) -> bool:
         units = kwargs.get("timestamp_units", "ns")
 
         for instr in instruments:
             logger.debug(
-                f"SimulatedExchangeService :: subscribe :: {instr.symbol}({subscription_type}, {nback}, {timeframe})"
+                f"SimulatedExchangeService :: subscribe :: {instr.symbol}({subscription_type}, {warmup_period}, {timeframe})"
             )
             self._symbol_to_instrument[instr.symbol] = instr
 
             _params: Dict[str, Any] = dict(
                 reader=self._reader,
                 instrument=instr,
-                preload_bars=nback,
+                warmup_period=warmup_period,
                 timeframe=timeframe,
             )
 
@@ -895,11 +895,6 @@ class SignalsProxy(IStrategy):
 
     def on_init(self, ctx: IStrategyContext):
         ctx.set_base_subscription(SubscriptionType.OHLC, timeframe=self.timeframe)
-
-    def on_fit(
-        self, ctx: IStrategyContext, fit_time: str | pd.Timestamp, previous_fit_time: str | pd.Timestamp | None = None
-    ):
-        return None
 
     def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
         if event.data and event.type == "event":

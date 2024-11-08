@@ -51,7 +51,6 @@ class ProcessingManager(IProcessingManager):
 
     __fit_is_running: bool = False
     __init_fit_was_called: bool = False
-    __init_fit_args: tuple[dt_64 | None, dt_64 | None]
     __fails_counter: int = 0
     __is_simulation: bool
     __pool: ThreadPool | None
@@ -91,7 +90,6 @@ class ProcessingManager(IProcessingManager):
             if type(f) == FunctionType and n.startswith("_handle_")
         }
         self.__strategy_name = strategy.__class__.__name__
-        self.__init_fit_args = (None, self.__time_provider.time())
         self._trig_bar_freq_nsec = None
 
     def set_fit_schedule(self, schedule: str) -> None:
@@ -118,7 +116,8 @@ class ProcessingManager(IProcessingManager):
 
         # - check if it still didn't call on_fit() for first time
         if not self.__init_fit_was_called:
-            self._handle_fit(None, self.__init_fit_args)
+            self._process_fit()
+            return False
 
         if not trigger_event:
             return False
@@ -167,18 +166,13 @@ class ProcessingManager(IProcessingManager):
         return False
 
     @SW.watch("StrategyContext.on_fit")
-    def __invoke_on_fit(self, current_fit_time: dt_64, prev_fit_time: dt_64 | None) -> None:
+    def __invoke_on_fit(self) -> None:
         try:
-            logger.debug(
-                f"Invoking <green>{self.__strategy_name}</green> on_fit('{current_fit_time}', '{prev_fit_time}')"
-            )
-            self.__strategy.on_fit(self.__context, current_fit_time, prev_fit_time)
+            logger.debug(f"Invoking <green>{self.__strategy_name}</green> on_fit")
+            self.__strategy.on_fit(self.__context)
             logger.debug(f"<green>{self.__strategy_name}</green> is fitted")
         except Exception as strat_error:
-            logger.error(
-                f"Strategy {self.__strategy_name} on_fit('{current_fit_time}', '{prev_fit_time}') "
-                f"raised an exception: {strat_error}"
-            )
+            logger.error(f"Strategy {self.__strategy_name} on_fit raised an exception: {strat_error}")
             logger.opt(colors=False).error(traceback.format_exc())
         finally:
             self.__fit_is_running = False
@@ -279,22 +273,14 @@ class ProcessingManager(IProcessingManager):
     ###########################################################################
     # - Handlers for different types of incoming data
     ###########################################################################
-    def _handle_fit(self, _: Instrument | None, data: Any) -> None:
+    def _process_fit(self) -> None:
         """
         When scheduled fit event is happened - we need to invoke strategy on_fit method
         """
         if not self.__cache.is_data_ready():
             return
-
-        # times are in seconds here
-        prev_fit_time, now_fit_time = data
-
-        # - we need to run this in separate thread
         self.__fit_is_running = True
-        self._run_in_thread_pool(
-            self.__invoke_on_fit,
-            (dt_64(now_fit_time, "s"), dt_64(prev_fit_time, "s") if prev_fit_time else None),
-        )
+        self._run_in_thread_pool(self.__invoke_on_fit)
 
     # it's important that we call it with _process to not include in the handlers map
     def _process_event(self, instrument: Instrument, event_type: str, event_data: Any) -> TriggerEvent:

@@ -120,10 +120,7 @@ class UniverseManager(IUniverseManager):
             self.__cache.init_ohlcv(instr)
 
         # - subscribe to market data
-        _symbols = [instr.symbol for instr in instruments]
-        _base_sub, _base_sub_params = self.__subscription_manager.get_base_subscription()
-        logger.debug(f"(StrategyContext) Subscribing to {_base_sub} updates using {_base_sub_params} for {_symbols}")
-        self.__broker.subscribe(instruments, _base_sub, **_base_sub_params)
+        self.__subscription_manager.subscribe(instruments)
 
         # - reinitialize strategy loggers
         self.__logging.initialize(
