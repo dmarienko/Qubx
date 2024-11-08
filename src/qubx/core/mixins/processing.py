@@ -117,6 +117,7 @@ class ProcessingManager(IProcessingManager):
         # - check if it still didn't call on_fit() for first time
         if not self.__init_fit_was_called:
             self._process_fit()
+            return False
 
         if not trigger_event:
             return False
