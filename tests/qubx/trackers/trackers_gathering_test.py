@@ -417,6 +417,7 @@ class TestTrackersAndGatherers:
             "vip9_usdt",
             S.index[0] - pd.Timedelta("5Min"),
             S.index[-1] + pd.Timedelta("5Min"),
+            signal_timeframe="1Min",
             debug="DEBUG",
         )
         assert len(rep[0].executions_log) == len(rep[1].executions_log)

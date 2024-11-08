@@ -563,7 +563,7 @@ class MinAtrExitDistanceTracker(PositionsTracker):
         if last_volatility is None or not np.isfinite(last_volatility) or quote is None:
             return False
 
-        pos = ctx.positions.get(instrument.symbol)
+        pos = ctx.positions.get(instrument)
         if pos is None:
             return False
 

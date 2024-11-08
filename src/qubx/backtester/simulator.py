@@ -732,6 +732,7 @@ def simulate(
     stop: str | pd.Timestamp | None = None,
     exchange: str | None = None,  # in case if exchange is not specified in symbols list
     base_currency: str = "USDT",
+    signal_timeframe: str = "1Min",
     leverage: float = 1.0,  # TODO: we need to add support for leverage
     n_jobs: int = 1,
     silent: bool = False,
@@ -770,6 +771,8 @@ def simulate(
         Exchange name if not specified in the instruments list.
     base_currency (str):
         Base currency for the simulation, default is "USDT".
+    signal_timeframe (str):
+        Timeframe for signals, default is "1Min".
     leverage (float):
         Leverage factor for trading, default is 1.0.
     n_jobs (int):
@@ -849,6 +852,7 @@ def simulate(
         enable_event_batching=enable_event_batching,
         accurate_stop_orders_execution=accurate_stop_orders_execution,
         aux_data=aux_data,
+        signal_timeframe=signal_timeframe,
     )
 
 
@@ -916,6 +920,7 @@ def _run_setups(
     enable_event_batching: bool = True,
     accurate_stop_orders_execution: bool = False,
     aux_data: DataReader | None = None,
+    **kwargs,
 ) -> List[TradingSessionResult]:
     # loggers don't work well with joblib and multiprocessing in general because they contain
     # open file handlers that cannot be pickled. I found a solution which requires the usage of enqueue=True
@@ -936,6 +941,7 @@ def _run_setups(
             enable_event_batching=enable_event_batching,
             accurate_stop_orders_execution=accurate_stop_orders_execution,
             aux_data_provider=aux_data,
+            **kwargs,
         )
         for id, s in enumerate(setups)
     )
@@ -952,6 +958,7 @@ def _run_setup(
     enable_event_batching: bool = True,
     accurate_stop_orders_execution: bool = False,
     aux_data_provider: InMemoryCachedReader | None = None,
+    signal_timeframe: str = "1Min",
 ) -> TradingSessionResult:
     _stop = stop
     logger.debug(
@@ -978,7 +985,7 @@ def _run_setup(
             strat.tracker = lambda ctx: setup.tracker  # type: ignore
 
         case _Types.SIGNAL:
-            strat = SignalsProxy()
+            strat = SignalsProxy(timeframe=signal_timeframe)
             broker.set_generated_signals(setup.generator)  # type: ignore
             # - we don't need any unexpected triggerings
             _stop = setup.generator.index[-1]  # type: ignore
@@ -987,7 +994,7 @@ def _run_setup(
             enable_event_batching = False
 
         case _Types.SIGNAL_AND_TRACKER:
-            strat = SignalsProxy()
+            strat = SignalsProxy(timeframe=signal_timeframe)
             strat.tracker = lambda ctx: setup.tracker
             broker.set_generated_signals(setup.generator)  # type: ignore
             # - we don't need any unexpected triggerings
