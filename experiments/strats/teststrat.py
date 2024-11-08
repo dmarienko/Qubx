@@ -32,11 +32,9 @@ class FlipFlopStrat(IStrategy):
         logger.info(f"> Started with capital {self.capital_invested}")
         self._tracker = self.tracker(ctx)
 
-    def on_fit(
-        self, ctx: "StrategyContext", fit_time: str | pd.Timestamp, previous_fit_time: str | pd.Timestamp | None = None
-    ):
+    def on_fit(self, ctx: IStrategyContext):
         closes = priceframe(ctx, "close", "5Min")
-        logger.info(f"> Fit is called | fit_time: {fit_time} / prev: {previous_fit_time}")
+        logger.info(f"> Fit is called | fit_time: {ctx.time()}")
         logger.info(f"{str(closes)}")
 
     def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:

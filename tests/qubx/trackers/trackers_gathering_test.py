@@ -136,9 +136,7 @@ class GuineaPig(IStrategy):
     def on_init(self, ctx: IStrategyContext) -> None:
         ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1Min")
 
-    def on_fit(
-        self, ctx: IStrategyContext, fit_time: str | Timestamp, previous_fit_time: str | Timestamp | None = None
-    ):
+    def on_fit(self, ctx: IStrategyContext):
         self.tests = {recognize_time(k): v for k, v in self.tests.items()}
 
     def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:

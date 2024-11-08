@@ -10,23 +10,22 @@ from qubx.backtester.simulator import simulate
 
 
 class Issue1(IStrategy):
-    _to_test: List[List[Instrument]] = []
+    exchange: str = "BINANCE.UM"
     _idx = 0
     _err = False
+    _to_test: List[List[Instrument]] = []
 
     def on_init(self, ctx: IStrategyContext) -> None:
         ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1h")
         ctx.set_fit_schedule("59 22 * */1 L7")  # Run at 22:59 every month on Sunday
         ctx.set_event_schedule("55 23 * * *")  # Run at 23:55 every day
-
-        self._idx = 0
         self._to_test = [
-            [lookup.find_symbol("BINANCE.UM", s) for s in ["BTCUSDT", "ETHUSDT"]],  # type: ignore
-            [lookup.find_symbol("BINANCE.UM", s) for s in ["BTCUSDT", "BCHUSDT", "LTCUSDT"]],  # type: ignore
-            [lookup.find_symbol("BINANCE.UM", s) for s in ["BTCUSDT", "AAVEUSDT", "ETHUSDT"]],  # type: ignore
+            [self.find_instrument(s) for s in ["BTCUSDT", "ETHUSDT"]],
+            [self.find_instrument(s) for s in ["BTCUSDT", "BCHUSDT", "LTCUSDT"]],
+            [self.find_instrument(s) for s in ["BTCUSDT", "AAVEUSDT", "ETHUSDT"]],
         ]
 
-    def on_fit(self, ctx: IStrategyContext, fit_time, previous_fit_time=None):
+    def on_fit(self, ctx: IStrategyContext):
         ctx.set_universe(self._to_test[self._idx])
         logger.info(f" -> SET NEW UNIVERSE {','.join(i.symbol for i in self._to_test[self._idx])}")
         self._idx += 1
@@ -43,6 +42,11 @@ class Issue1(IStrategy):
                 self._err = True
 
         return []
+
+    def find_instrument(self, symbol: str) -> Instrument:
+        i = lookup.find_symbol(self.exchange, symbol)
+        assert i is not None, f"Could not find {self.exchange}:{symbol}"
+        return i
 
 
 class TestSimulator:

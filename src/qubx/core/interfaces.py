@@ -702,16 +702,9 @@ class IStrategy:
         """
         pass
 
-    def on_fit(self, ctx: IStrategyContext, fit_time: dt_64, previous_fit_time: dt_64 | None = None):
-        """Called when it's time to fit the model.
-
-        Args:
-            ctx: Strategy context.
-            fit_time: Last time of fit data to use.
-            previous_fit_time: Last time of fit data used in previous fit.
-
-        Returns:
-            None
+    def on_fit(self, ctx: IStrategyContext):
+        """
+        Called when it's time to fit the model.
         """
         return None
 

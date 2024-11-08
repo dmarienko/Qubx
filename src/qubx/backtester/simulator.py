@@ -896,11 +896,6 @@ class SignalsProxy(IStrategy):
     def on_init(self, ctx: IStrategyContext):
         ctx.set_base_subscription(SubscriptionType.OHLC, timeframe=self.timeframe)
 
-    def on_fit(
-        self, ctx: IStrategyContext, fit_time: str | pd.Timestamp, previous_fit_time: str | pd.Timestamp | None = None
-    ):
-        return None
-
     def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
         if event.data and event.type == "event":
             signal = event.data.get("order")
