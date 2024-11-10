@@ -30,14 +30,19 @@ class SubscriptionManager(ISubscriptionManager):
     ) -> None:
         if subscription_type is None:
             subscription_type = self.__base_subscription
+
         __subscription_to_warmup = self.__subscription_to_warmup.copy()
+
         # - take default warmup period for current subscription if None is given
         kwargs["warmup_period"] = kwargs.get("warmup_period", __subscription_to_warmup.get(subscription_type))
+
         # - if this is the base subscription, we also need to fetch historical OHLC data for warmup
         if subscription_type == self.__base_subscription:
             kwargs["ohlc_warmup_period"] = kwargs.get(
                 "ohlc_warmup_period", __subscription_to_warmup.get(subscription_type)
             )
+            kwargs |= self.__base_subscription_params[subscription_type]
+
         instruments = [instruments] if isinstance(instruments, Instrument) else instruments
         self.__broker.subscribe(instruments, subscription_type, **kwargs)
 

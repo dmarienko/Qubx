@@ -30,7 +30,11 @@ cxp.exchanges.append("binanceqv")
 cxp.exchanges.append("binanceqv_usdm")
 
 
+EXCH_SYMBOL_PATTERN = re.compile(r"(?P<base>[^/]+)/(?P<quote>[^:]+)(?::(?P<margin>.+))?")
+
+
 class CCXTExchangesConnector(IBrokerServiceProvider):
+
     _exchange: Exchange
     _scheduler: BasicScheduler | None = None
 
@@ -172,7 +176,10 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
     def close(self):
         try:
-            del self._exchange
+            if hasattr(self._exchange, "close"):
+                self._exchange.close()  # type: ignore
+            else:
+                del self._exchange
         except Exception as e:
             logger.error(e)
 
@@ -206,8 +213,10 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         _channel = self.get_communication_channel()
 
         # - fetch historical ohlc for added instruments
-        if (ohlc_warmup_period := kwargs.get("ohlc_warmup_period")) is not None:
-            self._run_ohlc_warmup(_channel, _added_instruments, ohlc_warmup_period)
+        if (ohlc_warmup_period := kwargs.get("ohlc_warmup_period")) is not None and (
+            timeframe := kwargs.get("timeframe")
+        ) is not None:
+            self._run_ohlc_warmup(_channel, _added_instruments, timeframe, ohlc_warmup_period)
 
         self._resubscribe_stream(sub_type, _channel, _updated_instruments, **kwargs)
 
@@ -223,7 +232,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         _subscriber_params = set(_subscriber.__code__.co_varnames)
         # - get only parameters that are needed for subscriber
         kwargs = {k: v for k, v in kwargs.items() if k in _subscriber_params}
-        self._sub_to_coro[sub_type] = self._submit_coro(_subscriber(channel, instruments, **kwargs))
+        self._sub_to_coro[sub_type] = self._submit_coro(_subscriber(self, channel, instruments, **kwargs))
 
     def _check_event_loop_is_running(self) -> None:
         if self._loop.is_running():
@@ -240,14 +249,15 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     def _time_msec_nbars_back(self, timeframe: str, nbarsback: int) -> int:
         return (self.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
 
-    def _run_ohlc_warmup(self, channel: CtrlChannel, instruments: Set[Instrument], warmup_period: str) -> None:
+    def _run_ohlc_warmup(
+        self, channel: CtrlChannel, instruments: Set[Instrument], timeframe: str, warmup_period: str
+    ) -> None:
         logger.debug(f"Running OHLC warmup for {instruments} with period {warmup_period}")
         _warmup_futures = []
         for instr in instruments:
-            # TODO: fix
             _warmup_futures.append(
                 self._submit_coro(
-                    self._stream_historical_ohlc(channel, warmup_period, instr.symbol, 1000),
+                    self._stream_historical_ohlc(channel, instr, timeframe, warmup_period),
                 )
             )
         # - wait for all warmup futures
@@ -280,20 +290,22 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                     break
                 await asyncio.sleep(min(2**n_retry, 60))  # Exponential backoff with a cap at 60 seconds
 
-    async def _stream_historical_ohlc(self, channel: CtrlChannel, timeframe: str, symbol: str, nbarsback: int) -> None:
-        if nbarsback < 1:
-            return
+    async def _stream_historical_ohlc(
+        self, channel: CtrlChannel, instrument: Instrument, timeframe: str, warmup_period: str
+    ) -> None:
+        nbarsback = pd.Timedelta(warmup_period) // pd.Timedelta(timeframe)
+        exch_timeframe = self._get_exch_timeframe(timeframe)
         start = self._time_msec_nbars_back(timeframe, nbarsback)
-        ohlcv = await self._exchange.fetch_ohlcv(symbol, timeframe, since=start, limit=nbarsback + 1)  # type: ignore
+        ohlcv = await self._exchange.fetch_ohlcv(instrument.symbol, exch_timeframe, since=start, limit=nbarsback + 1)
         # - just send data as the list
         channel.send(
             (
-                symbol,
+                instrument,
                 "hist_bars",
                 [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in ohlcv],
             )
         )
-        logger.info(f"{symbol}: loaded {len(ohlcv)} {timeframe} bars")
+        logger.info(f"{instrument}: loaded {len(ohlcv)} {timeframe} bars")
 
     def _get_exch_timeframe(self, timeframe: str) -> str:
         if timeframe is not None:
@@ -306,6 +318,22 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
         return tframe
 
+    def _get_exch_symbol(self, instrument: Instrument) -> str:
+        return f"{instrument.base}/{instrument.quote}:{instrument.margin_symbol}"
+
+    def _find_instrument_for_exch_symbol(
+        self, exch_symbol: str, symbol_to_instrument: Dict[str, Instrument]
+    ) -> Instrument:
+        match = EXCH_SYMBOL_PATTERN.match(exch_symbol)
+        if not match:
+            raise ValueError(f"Invalid exchange symbol {exch_symbol}")
+        base = match.group("base")
+        quote = match.group("quote")
+        symbol = f"{base}{quote}"
+        if symbol not in symbol_to_instrument:
+            raise ValueError(f"Unknown symbol {symbol}")
+        return symbol_to_instrument[symbol]
+
     #############################
     # - Subscription methods
     #############################
@@ -316,25 +344,43 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         warmup_period: str | None = None,
         timeframe: str = "1m",
     ):
-        # TODO: continue here
-        symbol = instrument.symbol
+        symbols = [i.symbol for i in instruments]
+        _exchange_timeframe = self._get_exch_timeframe(timeframe)
+        _symbol_timeframe_pairs = [[symbol, _exchange_timeframe] for symbol in symbols]
+        _symbol_to_instrument = {i.symbol: i for i in instruments}
 
         async def watch_ohlcv():
-            ohlcv = await self._exchange.watch_ohlcv(symbol, timeframe)  # type: ignore
-            # - update positions by actual close price
-            last_close = ohlcv[-1][4]
-            # - there is no single method to get OHLC update's event time for every broker
-            # - for instance it's possible to do for Binance but for example Bitmex doesn't provide such info
-            # - so we will use ntp adjusted time here
-            self.trading_service.update_position_price(instrument, self.time(), last_close)
-            for oh in ohlcv:
-                channel.send((symbol, "bar", Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7])))
+            ohlcv = await self._exchange.watch_ohlcv_for_symbols(_symbol_timeframe_pairs)
+            _time = self.time()
+            # - ohlcv is symbol -> timeframe -> list[timestamp, open, high, low, close, volume]
+            for exch_symbol, _data in ohlcv.items():
+                try:
+                    instrument = self._find_instrument_for_exch_symbol(exch_symbol, _symbol_to_instrument)
+                    for _, ohlcvs in _data.items():
+                        for oh in ohlcvs:
+                            channel.send(
+                                (instrument, "bar", Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]))
+                            )
+                        last_close = ohlcvs[-1][4]
+                        self.trading_service.update_position_price(
+                            instrument,
+                            _time,
+                            last_close,
+                        )
+                except Exception as e:
+                    logger.error(f"Error in watch_ohlcv : {e}")
 
-        await self._listen_to_stream(watch_ohlcv, self._exchange, channel, f"{symbol} {timeframe} OHLCV")
+        if warmup_period is not None:
+            await self._run_ohlc_warmup(channel, instruments, timeframe, warmup_period)
 
-    async def _listen_to_execution_reports(self, channel: CtrlChannel, instrument: Instrument):
+        await self._listen_to_stream(watch_ohlcv, self._exchange, channel, f"{','.join(symbols)} {timeframe} OHLCV")
+
+    async def _subscribe_executions(self, channel: CtrlChannel, instruments: List[Instrument]):
+        # TODO: continue here
+        symbols = [i.symbol for i in instruments]
+
         async def _watch_executions():
-            exec = await self._exchange.watch_orders(instrument.symbol)  # type: ignore
+            exec = await self._exchange.watch_orders_for_symbols(symbols)
             _msg = f"\nexecs_{instrument.symbol} = [\n"
             for report in exec:
                 _msg += "\t" + str(report) + ",\n"
