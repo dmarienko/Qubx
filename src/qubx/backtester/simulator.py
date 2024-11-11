@@ -475,7 +475,7 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         return True
 
-    def unsubscribe(self, subscription_type: str, instruments: List[Instrument]) -> bool:
+    def unsubscribe(self, instruments: List[Instrument], subscription_type: str) -> bool:
         for instr in instruments:
             if instr.symbol in self._loaders:
                 logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol} :: {subscription_type}")
