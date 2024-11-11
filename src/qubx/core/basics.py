@@ -310,6 +310,7 @@ class MarketEvent:
     type: str
     instrument: Instrument
     data: Any
+    is_trigger: bool = False
 
 
 @dataclass

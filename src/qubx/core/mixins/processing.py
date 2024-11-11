@@ -138,10 +138,15 @@ class ProcessingManager(IProcessingManager):
         signals: list[Signal] | Signal | None = None
         with SW("StrategyContext.on_event"):
             try:
-                if isinstance(event, TriggerEvent):
-                    signals = self.__strategy.on_event(self.__context, event)
-                elif isinstance(event, MarketEvent):
-                    signals = self.__strategy.on_market_data(self.__context, event)
+                if isinstance(event, MarketEvent):
+                    signals = self._wrap_signal_list(self.__strategy.on_market_data(self.__context, event))
+
+                if signals is None:
+                    signals = []
+
+                if isinstance(event, TriggerEvent) or (isinstance(event, MarketEvent) and event.is_trigger):
+                    _signals = self._wrap_signal_list(self.__strategy.on_event(self.__context, event))
+                    signals.extend(_signals)
 
                 self._fails_counter = 0
             except Exception as strat_error:
@@ -233,6 +238,13 @@ class ProcessingManager(IProcessingManager):
             assert self.__pool
             self.__pool.apply_async(func, args)
 
+    def _wrap_signal_list(self, signals: List[Signal] | Signal | None) -> List[Signal]:
+        if signals is None:
+            signals = []
+        elif isinstance(signals, Signal):
+            signals = [signals]
+        return signals
+
     def __update_base_data(self, instrument: Instrument, data: Any, is_historical: bool = False) -> bool:
         """
         Updates the base data cache with the provided data.
@@ -316,23 +328,25 @@ class ProcessingManager(IProcessingManager):
 
     def _handle_bar(self, instrument: Instrument, bar: Bar) -> TriggerEvent | MarketEvent:
         base_update = self.__update_base_data(instrument, bar)
-        event_clazz = TriggerEvent if base_update else MarketEvent
-        return event_clazz(self.__time_provider.time(), SubscriptionType.OHLC, instrument, bar)
+        return MarketEvent(self.__time_provider.time(), SubscriptionType.OHLC, instrument, bar, is_trigger=base_update)
 
     def _handle_trade(self, instrument: Instrument, trade: Trade) -> TriggerEvent | MarketEvent:
         base_update = self.__update_base_data(instrument, trade)
-        event_clazz = TriggerEvent if base_update else MarketEvent
-        return event_clazz(self.__time_provider.time(), SubscriptionType.TRADE, instrument, trade)
+        return MarketEvent(
+            self.__time_provider.time(), SubscriptionType.TRADE, instrument, trade, is_trigger=base_update
+        )
 
     def _handle_orderbook(self, instrument: Instrument, orderbook: OrderBook) -> TriggerEvent | MarketEvent:
         base_update = self.__update_base_data(instrument, orderbook)
-        event_clazz = TriggerEvent if base_update else MarketEvent
-        return event_clazz(self.__time_provider.time(), SubscriptionType.ORDERBOOK, instrument, orderbook)
+        return MarketEvent(
+            self.__time_provider.time(), SubscriptionType.ORDERBOOK, instrument, orderbook, is_trigger=base_update
+        )
 
     def _handle_quote(self, instrument: Instrument, quote: Quote) -> TriggerEvent | MarketEvent:
         base_update = self.__update_base_data(instrument, quote)
-        event_clazz = TriggerEvent if base_update else MarketEvent
-        return event_clazz(self.__time_provider.time(), SubscriptionType.QUOTE, instrument, quote)
+        return MarketEvent(
+            self.__time_provider.time(), SubscriptionType.QUOTE, instrument, quote, is_trigger=base_update
+        )
 
     @SW.watch("StrategyContext.order")
     def _handle_order(self, instrument: Instrument, order: Order) -> TriggerEvent | None:
