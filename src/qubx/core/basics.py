@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from threading import Event, Lock
 from queue import Queue
 
+from qubx import logger
 from qubx.utils.misc import Stopwatch
 from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.core.utils import prec_ceil, prec_floor

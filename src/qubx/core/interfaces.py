@@ -505,12 +505,12 @@ class ISubscriptionManager:
 class IProcessingManager:
     """Manages event processing."""
 
-    def process_data(self, symbol: str, d_type: str, data: Any) -> bool:
+    def process_data(self, instrument: Instrument, d_type: str, data: Any) -> bool:
         """
         Process incoming data.
 
         Args:
-            symbol: Symbol of the data
+            instrument: Instrument the data is for
             d_type: Type of the data
             data: The data to process
 

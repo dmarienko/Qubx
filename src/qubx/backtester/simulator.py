@@ -287,22 +287,21 @@ class SimulatedTrading(ITradingServiceProvider):
         return [o for ome in self._ome.values() for o in ome.get_open_orders()]
 
     def get_position(self, instrument: Instrument) -> Position:
-        symbol = instrument.symbol
+        if instrument in self.acc.positions:
+            return self.acc.positions[instrument]
 
-        if symbol not in self.acc._positions:
-            # - initiolize OME for this instrument
-            self._ome[instrument] = OrdersManagementEngine(
-                instrument=instrument,
-                time_provider=self,
-                tcc=self._fees_calculator,  # type: ignore
-                fill_stop_order_at_price=self._fill_stop_order_at_price,
-            )
+        # - initiolize OME for this instrument
+        self._ome[instrument] = OrdersManagementEngine(
+            instrument=instrument,
+            time_provider=self,
+            tcc=self._fees_calculator,  # type: ignore
+            fill_stop_order_at_price=self._fill_stop_order_at_price,
+        )
 
-            # - initiolize empty position
-            position = Position(instrument)  # type: ignore
-            self._half_tick_size[instrument] = instrument.min_tick / 2  # type: ignore
-            self.acc.attach_positions(position)
-
+        # - initiolize empty position
+        position = Position(instrument)  # type: ignore
+        self._half_tick_size[instrument] = instrument.min_tick / 2  # type: ignore
+        self.acc.attach_positions(position)
         return self.acc._positions[instrument]
 
     def time(self) -> dt_64:
