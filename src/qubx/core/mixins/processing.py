@@ -12,6 +12,7 @@ from qubx.core.series import Trade, Quote, Bar, OrderBook
 from qubx.core.basics import (
     SW,
     Deal,
+    MarketEvent,
     Order,
     dt_64,
     Signal,
@@ -51,6 +52,7 @@ class ProcessingManager(IProcessingManager):
     __handlers: dict[str, Callable[["ProcessingManager", Instrument | str, Any], TriggerEvent | None]]
     __strategy_name: str
 
+    __trigger_on_time_event: bool = False
     __fit_is_running: bool = False
     __init_fit_was_called: bool = False
     __fails_counter: int = 0
@@ -107,6 +109,7 @@ class ProcessingManager(IProcessingManager):
         if rule["type"] != "cron":
             raise ValueError("Only cron type is supported for event schedule")
         self.__scheduler.schedule_event(rule["schedule"], "time")
+        self.__trigger_on_time_event = True
 
     def process_data(self, instrument: Instrument, d_type: str, data: Any) -> bool:
         self.__logging.notify(self.__time_provider.time())
@@ -114,16 +117,16 @@ class ProcessingManager(IProcessingManager):
         handler = self.__handlers.get(d_type)
         with SW("StrategyContext.handler"):
             if handler:
-                trigger_event = handler(self, instrument, data)
+                event = handler(self, instrument, data)
             else:
-                trigger_event = self._process_event(instrument, d_type, data)
+                event = self._process_event(instrument, d_type, data)
 
         # - check if it still didn't call on_fit() for first time
         if not self.__init_fit_was_called:
-            self._process_fit()
+            self._handle_fit(None, (None, self.__time_provider.time()))
             return False
 
-        if not trigger_event:
+        if not event:
             return False
 
         # - if fit was not called - skip on_event call
@@ -139,8 +142,18 @@ class ProcessingManager(IProcessingManager):
         signals: list[Signal] | Signal | None = None
         with SW("StrategyContext.on_event"):
             try:
-                signals = self.__strategy.on_event(self.__context, trigger_event)
+                if isinstance(event, MarketEvent):
+                    signals = self._wrap_signal_list(self.__strategy.on_market_data(self.__context, event))
+
+                if signals is None:
+                    signals = []
+
+                if isinstance(event, TriggerEvent) or (isinstance(event, MarketEvent) and event.is_trigger):
+                    _signals = self._wrap_signal_list(self.__strategy.on_event(self.__context, event))
+                    signals.extend(_signals)
+
                 self.__broker.commit()  # apply pending broker operations
+
                 self._fails_counter = 0
             except Exception as strat_error:
                 # - probably we need some cooldown interval after exception to prevent flooding
@@ -232,9 +245,19 @@ class ProcessingManager(IProcessingManager):
             assert self.__pool
             self.__pool.apply_async(func, args)
 
+    def _wrap_signal_list(self, signals: List[Signal] | Signal | None) -> List[Signal]:
+        if signals is None:
+            signals = []
+        elif isinstance(signals, Signal):
+            signals = [signals]
+        return signals
+
     def __update_base_data(self, instrument: Instrument, data: Any, is_historical: bool = False) -> bool:
         """
         Updates the base data cache with the provided data.
+
+        Returns:
+            bool: True if the data is base data and the strategy should be triggered, False otherwise.
         """
         is_base_data = self.__is_base_data(data)
         self.__cache.update(instrument, data, update_ohlc=is_base_data)
@@ -246,7 +269,7 @@ class ProcessingManager(IProcessingManager):
             )
             self.__process_signals_from_target_positions(target_positions)
             self.__position_gathering.alter_positions(self.__context, target_positions)
-        return is_base_data
+        return is_base_data and not self.__trigger_on_time_event
 
     def __is_base_data(self, data: Any) -> bool:
         sub_type, sub_params = self.__subscription_manager.get_base_subscription()
@@ -279,18 +302,14 @@ class ProcessingManager(IProcessingManager):
     ###########################################################################
     # - Handlers for different types of incoming data
     ###########################################################################
-    def _process_fit(self) -> None:
-        """
-        When scheduled fit event is happened - we need to invoke strategy on_fit method
-        """
-        if not self.__cache.is_data_ready():
-            return
-        self.__fit_is_running = True
-        self._run_in_thread_pool(self.__invoke_on_fit)
 
     # it's important that we call it with _process to not include in the handlers map
     def _process_event(self, instrument: Instrument, event_type: str, event_data: Any) -> TriggerEvent:
         return TriggerEvent(self.__time_provider.time(), event_type, instrument, event_data)
+
+    def _handle_service_time(self, instrument: str, data: dt_64) -> TriggerEvent | None:
+        """It is used by simulation as a dummy to trigger actual time events."""
+        pass
 
     def _handle_hist_bars(self, instrument: Instrument, bars: list[Bar]) -> None:
         for b in bars:
@@ -305,27 +324,36 @@ class ProcessingManager(IProcessingManager):
     def _handle_hist_trade(self, instrument: Instrument, trade: Trade) -> None:
         self.__update_base_data(instrument, trade, is_historical=True)
 
-    def _handle_bar(self, instrument: Instrument, bar: Bar) -> TriggerEvent:
-        self.__update_base_data(instrument, bar)
-        return TriggerEvent(self.__time_provider.time(), SubscriptionType.OHLC, instrument, bar)
+    def _handle_fit(self, instrument: Instrument | None, data: Tuple[dt_64 | None, dt_64]) -> None:
+        """
+        When scheduled fit event is happened - we need to invoke strategy on_fit method
+        """
+        if not self.__cache.is_data_ready():
+            return
+        self.__fit_is_running = True
+        self._run_in_thread_pool(self.__invoke_on_fit)
 
-    def _handle_trade(self, instrument: Instrument, trade: Trade) -> TriggerEvent:
-        self.__update_base_data(instrument, trade)
-        return TriggerEvent(self.__time_provider.time(), SubscriptionType.TRADE, instrument, trade)
+    def _handle_bar(self, instrument: Instrument, bar: Bar) -> TriggerEvent | MarketEvent:
+        base_update = self.__update_base_data(instrument, bar)
+        return MarketEvent(self.__time_provider.time(), SubscriptionType.OHLC, instrument, bar, is_trigger=base_update)
 
-    def _handle_orderbook(self, instrument: Instrument, orderbook: OrderBook) -> TriggerEvent:
-        self.__update_base_data(instrument, orderbook)
-        return TriggerEvent(self.__time_provider.time(), SubscriptionType.ORDERBOOK, instrument, orderbook)
+    def _handle_trade(self, instrument: Instrument, trade: Trade) -> TriggerEvent | MarketEvent:
+        base_update = self.__update_base_data(instrument, trade)
+        return MarketEvent(
+            self.__time_provider.time(), SubscriptionType.TRADE, instrument, trade, is_trigger=base_update
+        )
 
-    def _handle_quote(self, instrument: Instrument, quote: Quote) -> TriggerEvent | None:
-        is_base_update = self.__update_base_data(instrument, quote)
-        if (
-            self.__is_simulation
-            and not is_base_update
-            and not self.__subscription_manager.has_subscription(instrument, SubscriptionType.QUOTE)
-        ):
-            return None
-        return TriggerEvent(self.__time_provider.time(), SubscriptionType.QUOTE, instrument, quote)
+    def _handle_orderbook(self, instrument: Instrument, orderbook: OrderBook) -> TriggerEvent | MarketEvent:
+        base_update = self.__update_base_data(instrument, orderbook)
+        return MarketEvent(
+            self.__time_provider.time(), SubscriptionType.ORDERBOOK, instrument, orderbook, is_trigger=base_update
+        )
+
+    def _handle_quote(self, instrument: Instrument, quote: Quote) -> TriggerEvent | MarketEvent:
+        base_update = self.__update_base_data(instrument, quote)
+        return MarketEvent(
+            self.__time_provider.time(), SubscriptionType.QUOTE, instrument, quote, is_trigger=base_update
+        )
 
     @SW.watch("StrategyContext.order")
     def _handle_order(self, instrument: Instrument, order: Order) -> TriggerEvent | None:
