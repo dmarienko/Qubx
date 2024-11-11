@@ -3,11 +3,13 @@ import re
 import numpy as np
 import pandas as pd
 import ccxt.pro as cxp
+import concurrent.futures
 
 from threading import Thread
 from typing import Any, Dict, List, Optional, Callable, Awaitable, Tuple, Set
 from asyncio.tasks import Task
 from asyncio.events import AbstractEventLoop
+from asyncio.exceptions import CancelledError
 from collections import defaultdict
 from types import FunctionType
 from ccxt import NetworkError, ExchangeClosedByUser, ExchangeError, ExchangeNotAvailable
@@ -20,6 +22,7 @@ from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.utils.ntp import start_ntp_thread, time_now
 from .ccxt_utils import DATA_PROVIDERS_ALIASES, ccxt_convert_trade, ccxt_convert_orderbook
+from .ccxt_exceptions import CcxtSymbolNotRecognized
 
 # - register custom wrappers
 from .ccxt_customizations import BinanceQV, BinanceQVUSDM
@@ -43,7 +46,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     _pending_stream_subscriptions: Dict[Tuple[str, Tuple], Set[Instrument]]
     _pending_stream_unsubscriptions: Dict[str, Set[Instrument]]
     _pending_instrument_unsubscriptions: Set[Instrument]
-    _sub_to_coro: Dict[str, asyncio.Future]
+    _sub_to_coro: Dict[str, concurrent.futures.Future]
 
     _last_quotes: Dict[str, Optional[Quote]]
     _loop: AbstractEventLoop
@@ -216,9 +219,10 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         if (ohlc_warmup_period := kwargs.get("ohlc_warmup_period")) is not None and (
             timeframe := kwargs.get("timeframe")
         ) is not None:
-            self._run_ohlc_warmup(_channel, _added_instruments, timeframe, ohlc_warmup_period)
+            self._run_ohlc_warmup_sync(_channel, _added_instruments, timeframe, ohlc_warmup_period, timeout=60 * 10)
 
         self._resubscribe_stream(sub_type, _channel, _updated_instruments, **kwargs)
+        self._subscriptions[sub_type] = _updated_instruments
 
         return True
 
@@ -243,28 +247,34 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     def _parse_subscription_type(self, subscription_type: str) -> str:
         return subscription_type.lower()
 
-    def _submit_coro(self, coro: Awaitable[None]) -> asyncio.Future:
-        return asyncio.run_coroutine_threadsafe(coro, self._loop)  # type: ignore
+    def _submit_coro(self, coro: Awaitable[None]) -> concurrent.futures.Future:
+        return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
     def _time_msec_nbars_back(self, timeframe: str, nbarsback: int) -> int:
         return (self.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
 
-    def _run_ohlc_warmup(
+    def _run_ohlc_warmup_sync(
+        self, channel: CtrlChannel, instruments: Set[Instrument], timeframe: str, warmup_period: str, timeout: int
+    ) -> None:
+        self._loop.run_until_complete(self._run_ohlc_warmup(channel, instruments, timeframe, warmup_period))
+        future = self._submit_coro(self._run_ohlc_warmup(channel, instruments, timeframe, warmup_period))
+        future.result(timeout)
+
+    async def _run_ohlc_warmup(
         self, channel: CtrlChannel, instruments: Set[Instrument], timeframe: str, warmup_period: str
     ) -> None:
         logger.debug(f"Running OHLC warmup for {instruments} with period {warmup_period}")
-        _warmup_futures = []
-        for instr in instruments:
-            _warmup_futures.append(
-                self._submit_coro(
-                    self._stream_historical_ohlc(channel, instr, timeframe, warmup_period),
-                )
-            )
-        # - wait for all warmup futures
-        asyncio.gather(*_warmup_futures)
+        await asyncio.gather(
+            *[self._stream_historical_ohlc(channel, instr, timeframe, warmup_period) for instr in instruments]
+        )
 
     async def _listen_to_stream(
-        self, subscriber: Callable[[], Awaitable[None]], exchange: Exchange, channel: CtrlChannel, name: str
+        self,
+        subscriber: Callable[[], Awaitable[None]],
+        exchange: Exchange,
+        channel: CtrlChannel,
+        name: str,
+        unsubscriber: Callable[[], Awaitable[None]] | None = None,
     ):
         logger.debug(f"Listening to {name}")
         n_retry = 0
@@ -280,6 +290,15 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                 logger.error(f"Error in {name} : {e}")
                 await asyncio.sleep(1)
                 continue
+            except CancelledError:
+                if unsubscriber is not None:
+                    try:
+                        # - unsubscribe from stream, but ignore if there is an error
+                        # because we anyway close the connection
+                        await unsubscriber()
+                    except:
+                        pass
+                break
             except Exception as e:
                 logger.error(f"exception in {name} : {e}")
                 logger.exception(e)
@@ -326,12 +345,12 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     ) -> Instrument:
         match = EXCH_SYMBOL_PATTERN.match(exch_symbol)
         if not match:
-            raise ValueError(f"Invalid exchange symbol {exch_symbol}")
+            raise CcxtSymbolNotRecognized(f"Invalid exchange symbol {exch_symbol}")
         base = match.group("base")
         quote = match.group("quote")
         symbol = f"{base}{quote}"
         if symbol not in symbol_to_instrument:
-            raise ValueError(f"Unknown symbol {symbol}")
+            raise CcxtSymbolNotRecognized(f"Unknown symbol {symbol}")
         return symbol_to_instrument[symbol]
 
     #############################
@@ -359,7 +378,11 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                     for _, ohlcvs in _data.items():
                         for oh in ohlcvs:
                             channel.send(
-                                (instrument, "bar", Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]))
+                                (
+                                    instrument,
+                                    "bar",
+                                    Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]),
+                                )
                             )
                         last_close = ohlcvs[-1][4]
                         self.trading_service.update_position_price(
@@ -367,20 +390,26 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                             _time,
                             last_close,
                         )
-                except Exception as e:
-                    logger.error(f"Error in watch_ohlcv : {e}")
+                except CcxtSymbolNotRecognized as e:
+                    logger.warning(e)
+
+        async def un_watch_ohlcv():
+            unwatch = getattr(self._exchange, "un_watch_ohlcv_for_symbols", lambda _: None)(_symbol_timeframe_pairs)
+            if unwatch is not None:
+                await unwatch
 
         if warmup_period is not None:
             await self._run_ohlc_warmup(channel, instruments, timeframe, warmup_period)
 
-        await self._listen_to_stream(watch_ohlcv, self._exchange, channel, f"{','.join(symbols)} {timeframe} OHLCV")
+        await self._listen_to_stream(
+            watch_ohlcv, self._exchange, channel, f"{','.join(symbols)} {timeframe} OHLCV", unsubscriber=un_watch_ohlcv
+        )
 
     async def _subscribe_executions(self, channel: CtrlChannel, instruments: List[Instrument]):
-        # TODO: continue here
-        symbols = [i.symbol for i in instruments]
-
-        async def _watch_executions():
-            exec = await self._exchange.watch_orders_for_symbols(symbols)
+        # unfortunately binance and probably some others don't support watching orders for multiple symbols
+        # so we need to watch orders for each symbol separately
+        async def _watch_executions(instrument: Instrument):
+            exec = await self._exchange.watch_orders(instrument.symbol)
             _msg = f"\nexecs_{instrument.symbol} = [\n"
             for report in exec:
                 _msg += "\t" + str(report) + ",\n"
@@ -389,11 +418,19 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                 channel.send((instrument, "order", order))
                 if deals:
                     channel.send((instrument, "deals", deals))
-            logger.debug(_msg + "]\n")
+            # logger.debug(_msg + "]\n")
 
-        await self._listen_to_stream(
-            _watch_executions, self._exchange, channel, f"{instrument.symbol} execution reports"
-        )
+        # also I didn't find any unsubscribe method for watching orders
+        tasks = [
+            self._listen_to_stream(
+                lambda i=instrument: _watch_executions(i),
+                self._exchange,
+                channel,
+                f"{instrument.symbol} execution reports",
+            )
+            for instrument in instruments
+        ]
+        await asyncio.gather(*tasks)
 
     async def _listen_to_trades(self, channel: CtrlChannel, instrument: Instrument, timeframe: str, nbarsback: int):
         symbol = instrument.symbol

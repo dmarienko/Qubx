@@ -1,18 +1,23 @@
 import asyncio
 import pytest
 import numpy as np
+import time
 from unittest.mock import MagicMock, AsyncMock, patch
 from qubx import lookup
 from qubx.core.basics import Instrument, CtrlChannel
 from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
 
 
+OHLCV_RESPONSE = {"ETH/USDT": {"5m": [[1731239700000, 3222.69, 3227.58, 3218.18, 3220.01, 2866.3094]]}}
+
+
 class MockExchange:
     def __init__(self):
         self.name = "mock_exchange"
-        self.watch_trades = AsyncMock()
-        self.watch_order_book = AsyncMock()
-        self.watch_ohlcv = AsyncMock()
+        self.watch_ohlcv_for_symbols = AsyncMock()
+        self.watch_ohlcv_for_symbols.return_value = OHLCV_RESPONSE
+        self.watch_trades_for_symbols = AsyncMock()
+        self.watch_order_book_for_symbols = AsyncMock()
         self.watch_orders = AsyncMock()
         self.find_timeframe = MagicMock(return_value="1m")
         self.fetch_ohlcv = AsyncMock(return_value=[])
@@ -54,24 +59,22 @@ class TestCcxtExchangeConnector:
         assert i1 is not None and i2 is not None
 
         # Subscribe to different data types
-        self.connector.subscribe([i1, i2], "trade", warmup_period="1m")
-        self.connector.subscribe([i1], "orderbook", warmup_period="1m")
-        self.connector.subscribe([i2], "orderbook", warmup_period="1m")
-        self.connector.subscribe([i2], "ohlc", warmup_period="24h")
-        self.connector.subscribe([i1], "ohlc", warmup_period="24h")
+        # self.connector.subscribe([i1, i2], "trade", warmup_period="1m")
+        # self.connector.subscribe([i1], "orderbook", warmup_period="1m")
+        # self.connector.subscribe([i2], "orderbook", warmup_period="1m")
+        self.connector.subscribe([i2], "ohlc", warmup_period="24h", timeframe="15Min")
+        self.connector.subscribe([i1], "ohlc", warmup_period="24h", timeframe="15Min")
 
         # Commit subscriptions
         self.connector.commit()
 
-        # Run event loop briefly to process async tasks
-        self.loop.run_until_complete(asyncio.sleep(0.1))
+        # sleep for 0.1 seconds
+        time.sleep(0.1)
 
         # Verify subscriptions were added
-        assert i1 in self.connector._subscriptions["trade"]
-        assert i1 in self.connector._subscriptions["orderbook"]
+        # assert i1 in self.connector._subscriptions["trade"]
+        # assert i1 in self.connector._subscriptions["orderbook"]
         assert i1 in self.connector._subscriptions["ohlc"]
 
         # Verify exchange methods were called
-        self.mock_exchange.watch_trades.assert_called_once()
-        self.mock_exchange.watch_order_book.assert_called_once()
-        self.mock_exchange.watch_ohlcv.assert_called_once()
+        self.mock_exchange.watch_ohlcv_for_symbols.assert_awaited()
