@@ -233,7 +233,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             future.cancel()
 
         _subscriber = self._subscribers[sub_type]
-        _subscriber_params = set(_subscriber.__code__.co_varnames)
+        _subscriber_params = set(_subscriber.__code__.co_varnames[: _subscriber.__code__.co_argcount])
         # - get only parameters that are needed for subscriber
         kwargs = {k: v for k, v in kwargs.items() if k in _subscriber_params}
         self._sub_to_coro[sub_type] = self._submit_coro(_subscriber(self, channel, instruments, **kwargs))

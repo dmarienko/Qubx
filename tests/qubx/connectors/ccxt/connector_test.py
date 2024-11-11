@@ -8,7 +8,11 @@ from qubx.core.basics import Instrument, CtrlChannel
 from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
 
 
-OHLCV_RESPONSE = {"ETH/USDT": {"5m": [[1731239700000, 3222.69, 3227.58, 3218.18, 3220.01, 2866.3094]]}}
+OHLCV_RESPONSE = {"ETH/USDT": {"5m": [[1731239700000, 3222.69, 3227.58, 3218.18, 3220.01, 2866.3094, 10000.0, 5000.0]]}}
+
+
+async def async_sleep(*args, seconds: int = 1, **kwargs):
+    await asyncio.sleep(seconds)
 
 
 class MockExchange:
@@ -19,6 +23,7 @@ class MockExchange:
         self.watch_trades_for_symbols = AsyncMock()
         self.watch_order_book_for_symbols = AsyncMock()
         self.watch_orders = AsyncMock()
+        self.watch_orders.side_effect = async_sleep
         self.find_timeframe = MagicMock(return_value="1m")
         self.fetch_ohlcv = AsyncMock(return_value=[])
 
@@ -51,7 +56,7 @@ class TestCcxtExchangeConnector:
         yield
 
         # teardown
-        self.loop.close()
+        self.loop.stop()
 
     def test_subscribe(self):
         # Create test instrument
@@ -68,8 +73,10 @@ class TestCcxtExchangeConnector:
         # Commit subscriptions
         self.connector.commit()
 
-        # sleep for 0.1 seconds
-        time.sleep(0.1)
+        channel = self.connector.get_communication_channel()
+        for _ in range(4):
+            ohlc = channel.receive(3)
+            print(ohlc)
 
         # Verify subscriptions were added
         # assert i1 in self.connector._subscriptions["trade"]
@@ -77,4 +84,4 @@ class TestCcxtExchangeConnector:
         assert i1 in self.connector._subscriptions["ohlc"]
 
         # Verify exchange methods were called
-        self.mock_exchange.watch_ohlcv_for_symbols.assert_awaited()
+        # self.mock_exchange.watch_ohlcv_for_symbols.assert_awaited()

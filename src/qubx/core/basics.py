@@ -579,8 +579,8 @@ class CtrlChannel:
         if self.control.is_set():
             self._queue.put(data)
 
-    def receive(self) -> Any:
-        return self._queue.get()
+    def receive(self, timeout: int | None = None) -> Any:
+        return self._queue.get(timeout=timeout)
 
 
 class SimulatedCtrlChannel(CtrlChannel):
@@ -597,7 +597,7 @@ class SimulatedCtrlChannel(CtrlChannel):
         # - when data is sent, invoke callback
         return self._callback.process_data(*data)
 
-    def receive(self) -> Any:
+    def receive(self, timeout: int | None = None) -> Any:
         raise ValueError("This method should not be called in a simulated environment.")
 
     def stop(self):
