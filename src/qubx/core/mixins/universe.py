@@ -1,3 +1,4 @@
+import pandas as pd
 from qubx import lookup, logger
 from qubx.core.account import AccountProcessor
 from qubx.core.helpers import CachedMarketDataHolder

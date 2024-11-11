@@ -47,7 +47,7 @@ class SubscriptionManager(ISubscriptionManager):
         self.__broker.subscribe(instruments, subscription_type, **kwargs)
 
     def unsubscribe(self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None) -> None:
-        instruments = [instruments] if isinstance(instruments, Instrument) else instruments
+        instruments = instruments if isinstance(instruments, list) else [instruments]
         self.__broker.unsubscribe(instruments, subscription_type)
 
     def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
