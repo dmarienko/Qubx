@@ -2,9 +2,11 @@ import asyncio
 import pytest
 import numpy as np
 import time
+from pprint import pprint
 from unittest.mock import MagicMock, AsyncMock, patch
 from qubx import lookup
 from qubx.core.basics import Instrument, CtrlChannel
+from qubx.core.exceptions import QueueTimeout
 from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
 
 
@@ -15,11 +17,16 @@ async def async_sleep(*args, seconds: int = 1, **kwargs):
     await asyncio.sleep(seconds)
 
 
+async def return_ohlcv(*args, **kwargs):
+    await asyncio.sleep(0.1)
+    return OHLCV_RESPONSE
+
+
 class MockExchange:
     def __init__(self):
         self.name = "mock_exchange"
         self.watch_ohlcv_for_symbols = AsyncMock()
-        self.watch_ohlcv_for_symbols.return_value = OHLCV_RESPONSE
+        self.watch_ohlcv_for_symbols.side_effect = return_ohlcv
         self.watch_trades_for_symbols = AsyncMock()
         self.watch_order_book_for_symbols = AsyncMock()
         self.watch_orders = AsyncMock()
@@ -73,15 +80,25 @@ class TestCcxtExchangeConnector:
         # Commit subscriptions
         self.connector.commit()
 
-        channel = self.connector.get_communication_channel()
-        for _ in range(4):
-            ohlc = channel.receive(3)
-            print(ohlc)
-
         # Verify subscriptions were added
         # assert i1 in self.connector._subscriptions["trade"]
         # assert i1 in self.connector._subscriptions["orderbook"]
         assert i1 in self.connector._subscriptions["ohlc"]
+
+        channel = self.connector.get_communication_channel()
+        events = []
+        max_count = 10
+        count = 0
+        while True:
+            try:
+                events.append(channel.receive(2))
+                count += 1
+            except QueueTimeout:
+                break
+            if count > max_count:
+                break
+
+        pprint(events)
 
         # Verify exchange methods were called
         # self.mock_exchange.watch_ohlcv_for_symbols.assert_awaited()

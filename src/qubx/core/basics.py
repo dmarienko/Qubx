@@ -5,9 +5,10 @@ import pandas as pd
 from dataclasses import dataclass, field
 
 from threading import Event, Lock
-from queue import Queue
+from queue import Queue, Empty
 
 from qubx import logger
+from qubx.core.exceptions import QueueTimeout
 from qubx.utils.misc import Stopwatch
 from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.core.utils import prec_ceil, prec_floor
@@ -581,7 +582,10 @@ class CtrlChannel:
             self._queue.put(data)
 
     def receive(self, timeout: int | None = None) -> Any:
-        return self._queue.get(timeout=timeout)
+        try:
+            return self._queue.get(timeout=timeout)
+        except Empty:
+            raise QueueTimeout(f"Timeout waiting for data on {self.name} channel")
 
 
 class SimulatedCtrlChannel(CtrlChannel):

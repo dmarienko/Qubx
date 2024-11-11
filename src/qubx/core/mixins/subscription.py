@@ -41,7 +41,7 @@ class SubscriptionManager(ISubscriptionManager):
             kwargs["ohlc_warmup_period"] = kwargs.get(
                 "ohlc_warmup_period", __subscription_to_warmup.get(subscription_type)
             )
-            kwargs |= self.__base_subscription_params[subscription_type]
+            kwargs |= self.__base_subscription_params
 
         instruments = [instruments] if isinstance(instruments, Instrument) else instruments
         self.__broker.subscribe(instruments, subscription_type, **kwargs)

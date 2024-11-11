@@ -432,30 +432,67 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         ]
         await asyncio.gather(*tasks)
 
-    async def _listen_to_trades(self, channel: CtrlChannel, instrument: Instrument, timeframe: str, nbarsback: int):
-        symbol = instrument.symbol
+    async def _subscribe_trades(
+        self,
+        channel: CtrlChannel,
+        instruments: Set[Instrument],
+        warmup_period: str | None = None,
+    ):
+        symbols = [i.symbol for i in instruments]
+        _symbol_to_instrument = {i.symbol: i for i in instruments}
 
-        async def _watch_trades():
-            trades = await self._exchange.watch_trades(symbol)
-            # - update positions by actual close price
+        async def watch_trades():
+            trades = await self._exchange.watch_trades_for_symbols(symbols)
+            symbol = trades[0]["s"]
+            instrument = _symbol_to_instrument[symbol]
             last_trade = ccxt_convert_trade(trades[-1])
             self.trading_service.update_position_price(instrument, self.time(), last_trade)
             for trade in trades:
-                channel.send((symbol, "trade", ccxt_convert_trade(trade)))
+                channel.send((instrument, "trade", ccxt_convert_trade(trade)))
 
-        # TODO: stream historical trades for some period
-        await self._stream_historical_ohlc(channel, timeframe, symbol, nbarsback)
-        await self._listen_to_stream(_watch_trades, self._exchange, channel, f"{symbol} trades")
+        async def un_watch_trades():
+            unwatch = getattr(self._exchange, "un_watch_trades_for_symbols", lambda _: None)(symbols)
+            if unwatch is not None:
+                await unwatch
 
-    async def _listen_to_orderbook(self, channel: CtrlChannel, instrument: Instrument, timeframe: str, nbarsback: int):
-        symbol = instrument.symbol
+        # TODO: add historical trade fetching
+        await self._listen_to_stream(
+            watch_trades,
+            self._exchange,
+            channel,
+            f"{','.join(symbols)} trades",
+            unsubscriber=un_watch_trades,
+        )
 
-        async def _watch_orderbook():
-            ccxt_ob = await self._exchange.watch_order_book(symbol)
+    async def _subscribe_orderbook(
+        self,
+        channel: CtrlChannel,
+        instruments: Set[Instrument],
+        warmup_period: str | None = None,
+    ):
+        symbols = [i.symbol for i in instruments]
+        _symbol_to_instrument = {i.symbol: i for i in instruments}
+
+        async def watch_orderbook():
+            ccxt_ob = await self._exchange.watch_order_book_for_symbols(symbols)
+            exch_symbol = ob["symbol"]
+            instrument = self._find_instrument_for_exch_symbol(exch_symbol, _symbol_to_instrument)
             ob = ccxt_convert_orderbook(ccxt_ob, instrument)
-            self.trading_service.update_position_price(instrument, self.time(), ob.to_quote())
-            channel.send((symbol, "orderbook", ob))
+            quote = ob.to_quote()
+            self._last_quotes[instrument.symbol] = quote
+            self.trading_service.update_position_price(instrument, self.time(), quote)
+            channel.send((instrument, "orderbook", ob))
 
-        # TODO: stream historical orderbooks for some period
-        await self._stream_historical_ohlc(channel, timeframe, symbol, nbarsback)
-        await self._listen_to_stream(_watch_orderbook, self._exchange, channel, f"{symbol} orderbook")
+        async def un_watch_orderbook():
+            unwatch = getattr(self._exchange, "un_watch_order_book_for_symbols", lambda _: None)(symbols)
+            if unwatch is not None:
+                await unwatch
+
+        # TODO: add historical orderbook fetching
+        await self._listen_to_stream(
+            watch_orderbook,
+            self._exchange,
+            channel,
+            f"{','.join(symbols)} orderbook",
+            unsubscriber=un_watch_orderbook,
+        )
