@@ -391,7 +391,7 @@ class SimulatedExchange(IBrokerServiceProvider):
     _scheduler: BasicScheduler
     _current_time: dt_64
     _hist_data_type: str
-    _loaders: dict[str, dict[str, DataLoader]]
+    _loaders: dict[Instrument, dict[str, DataLoader]]
     _pregenerated_signals: Dict[Instrument, pd.Series]
 
     def __init__(
@@ -470,18 +470,24 @@ class SimulatedExchange(IBrokerServiceProvider):
 
             # - add loader for this instrument
             ldr = DataLoader(**_params)
-            self._loaders[instr.symbol][subscription_type] = ldr
+            self._loaders[instr][subscription_type] = ldr
             self._data_queue += ldr
 
         return True
 
-    def unsubscribe(self, subscription_type: str, instruments: List[Instrument]) -> bool:
+    def unsubscribe(self, instruments: List[Instrument], subscription_type: str | None) -> bool:
         for instr in instruments:
             if instr.symbol in self._loaders:
-                logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol} :: {subscription_type}")
-                self._data_queue -= self._loaders[instr.symbol].pop(subscription_type)
-                if not self._loaders[instr.symbol]:
-                    self._loaders.pop(instr.symbol)
+                if subscription_type:
+                    logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol} :: {subscription_type}")
+                    self._data_queue -= self._loaders[instr].pop(subscription_type)
+                    if not self._loaders[instr]:
+                        self._loaders.pop(instr)
+                else:
+                    logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol}")
+                    for ldr in self._loaders[instr].values():
+                        self._data_queue -= ldr
+                    self._loaders.pop(instr)
         return True
 
     def has_subscription(self, subscription_type: str, instrument: Instrument) -> bool:
