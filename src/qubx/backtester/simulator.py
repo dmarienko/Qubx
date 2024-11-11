@@ -481,12 +481,12 @@ class SimulatedExchange(IBrokerServiceProvider):
                 if subscription_type:
                     logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol} :: {subscription_type}")
                     self._data_queue -= self._loaders[instr].pop(subscription_type)
+                    if not self._loaders[instr]:
+                        self._loaders.pop(instr)
                 else:
                     logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol}")
                     for ldr in self._loaders[instr].values():
                         self._data_queue -= ldr
-
-                if not self._loaders[instr]:
                     self._loaders.pop(instr)
         return True
 
