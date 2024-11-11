@@ -49,6 +49,27 @@ class Issue1(IStrategy):
         return i
 
 
+class Issue2(IStrategy):
+    _fits_called = 0
+    _events_called = 0
+
+    def on_init(self, ctx: IStrategyContext) -> None:
+        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1h")
+        ctx.set_fit_schedule("59 22 * * *")  # Run at 22:59 every month on Sunday
+        ctx.set_event_schedule("55 23 * * *")  # Run at 23:55 every day
+        self._fits_called = 0
+        self._events_called = 0
+
+    def on_fit(self, ctx: IStrategyContext):
+        logger.info(f" > [{ctx.time()}] On Fit is called")
+        self._fits_called += 1
+
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
+        logger.info(f" > [{ctx.time()}] On event is called")
+        self._events_called += 1
+        return []
+
+
 class TestSimulator:
     def test_fit_event_quotes(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
@@ -69,3 +90,24 @@ class TestSimulator:
         )
 
         assert not stg._err, "Got Errors during the simulation"
+
+    def test_scheduled_events(self):
+        ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
+
+        test0 = simulate(
+            {
+                "fail2": (stg := Issue2()),
+            },
+            ld,
+            aux_data=ld,
+            capital=100_000,
+            instruments=["BINANCE.UM:BTCUSDT"],
+            commissions="vip0_usdt",
+            start="2023-06-01",
+            stop="2023-06-10",
+            debug="DEBUG",
+            n_jobs=1,
+        )
+
+        assert stg._fits_called >= 9, "Got Errors during the simulation"
+        assert stg._events_called >= 9, "Got Errors during the simulation"
