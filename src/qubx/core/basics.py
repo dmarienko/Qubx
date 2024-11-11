@@ -301,6 +301,18 @@ class TriggerEvent:
 
 
 @dataclass
+class MarketEvent:
+    """
+    Market data update.
+    """
+
+    time: dt_64
+    type: str
+    instrument: Instrument
+    data: Any
+
+
+@dataclass
 class Deal:
     id: str | int  # trade id
     order_id: str | int  # order's id
