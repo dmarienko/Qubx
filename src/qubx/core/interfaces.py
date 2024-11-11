@@ -17,6 +17,7 @@ from qubx import lookup, logger
 from qubx.core.account import AccountProcessor
 from qubx.core.helpers import BasicScheduler, set_parameters_to_object
 from qubx.core.basics import (
+    MarketEvent,
     TargetPosition,
     TriggerEvent,
     Deal,
@@ -724,6 +725,19 @@ class IStrategy:
         Args:
             ctx: Strategy context.
             event: Trigger event to process.
+
+        Returns:
+            List of signals, single signal, or None.
+        """
+        return None
+
+    def on_market_data(self, ctx: IStrategyContext, data: MarketEvent) -> List[Signal] | Signal | None:
+        """
+        Called when new market data is received.
+
+        Args:
+            ctx: Strategy context.
+            data: The market data received.
 
         Returns:
             List of signals, single signal, or None.
