@@ -19,6 +19,7 @@ from qubx import logger
 from qubx.core.basics import Instrument, Position, dt_64, Deal, CtrlChannel
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider, SubscriptionType
+from qubx.utils.threading import synchronized
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.utils.ntp import start_ntp_thread, time_now
 from .ccxt_utils import DATA_PROVIDERS_ALIASES, ccxt_convert_trade, ccxt_convert_orderbook
@@ -48,6 +49,8 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     _pending_stream_unsubscriptions: Dict[str, Set[Instrument]]
     _pending_instrument_unsubscriptions: Set[Instrument]
     _sub_to_coro: Dict[str, concurrent.futures.Future]
+    _sub_to_name: Dict[str, str]
+    _is_sub_name_enabled: Dict[str, bool]
 
     _last_quotes: Dict[str, Optional[Quote]]
     _loop: AbstractEventLoop
@@ -94,6 +97,8 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         self._pending_stream_unsubscriptions = defaultdict(set)
         self._pending_instrument_unsubscriptions = set()
         self._sub_to_coro = {}
+        self._sub_to_name = {}
+        self._is_sub_name_enabled = defaultdict(lambda: False)
 
         self._subscribers = {
             n.split("_subscribe_")[1]: f
@@ -142,6 +147,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         sub = subscription_type.lower()
         return sub in self._subscriptions and instrument in self._subscriptions[sub]
 
+    @synchronized
     def commit(self) -> None:
         _sub_to_params = self._get_updated_sub_to_params()
 
@@ -244,14 +250,25 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         self._subscriptions[sub_type] = instruments
         self._subscription_to_params[sub_type] = kwargs
 
+    def _stop_subscriber(self, sub_type: str) -> None:
+        if sub_type not in self._sub_to_coro:
+            return
+        sub_name = self._sub_to_name[sub_type]
+        self._is_sub_name_enabled[sub_name] = False  # stop the subscriber
+        future = self._sub_to_coro[sub_type]
+        future.result(10)  # wait for 10 seconds for the future to finish
+        if future.running():
+            future.cancel()
+        del self._sub_to_coro[sub_type]
+        del self._sub_to_name[sub_type]
+        del self._is_sub_name_enabled[sub_name]
+
     def _resubscribe_stream(self, sub_type: str, channel: CtrlChannel, instruments: Set[Instrument], **kwargs) -> None:
         if sub_type in self._sub_to_coro:
             logger.debug(f"Canceling existing {sub_type} subscription for {self._subscriptions[sub_type]}")
-            future = self._sub_to_coro[sub_type]
-            future.cancel()
+            self._stop_subscriber(sub_type)
 
         if not instruments:
-            del self._sub_to_coro[sub_type]
             return
 
         _subscriber = self._subscribers[sub_type]
@@ -306,15 +323,22 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         subscriber: Callable[[], Awaitable[None]],
         exchange: Exchange,
         channel: CtrlChannel,
+        subscription_type: str,
         name: str,
         unsubscriber: Callable[[], Awaitable[None]] | None = None,
     ):
         logger.debug(f"Listening to {name}")
+        self._sub_to_name[subscription_type] = name
+        self._is_sub_name_enabled[name] = True
         n_retry = 0
         while channel.control.is_set():
             try:
                 await subscriber()
                 n_retry = 0
+                if not self._is_sub_name_enabled[name]:
+                    if unsubscriber is not None:
+                        await unsubscriber()
+                    break
             except CancelledError:
                 if unsubscriber is not None:
                     try:
@@ -386,6 +410,18 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             raise CcxtSymbolNotRecognized(f"Unknown symbol {symbol}")
         return symbol_to_instrument[symbol]
 
+    def _get_subscription_name(
+        self, instruments: List[Instrument] | Set[Instrument] | Instrument, subscription: str, **kwargs
+    ) -> str:
+        if isinstance(instruments, Instrument):
+            instruments = [instruments]
+        _symbols = [i.symbol for i in instruments]
+        _name = f"{','.join(_symbols)} {subscription}"
+        if kwargs:
+            kwargs_str = ",".join(f"{k}={v}" for k, v in kwargs.items())
+            _name += f" ({kwargs_str})"
+        return _name
+
     #############################
     # - Subscription methods
     #############################
@@ -435,7 +471,12 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             await self._run_ohlc_warmup(channel, instruments, timeframe, warmup_period)
 
         await self._listen_to_stream(
-            watch_ohlcv, self._exchange, channel, f"{','.join(symbols)} {timeframe} OHLCV", unsubscriber=un_watch_ohlcv
+            subscriber=watch_ohlcv,
+            exchange=self._exchange,
+            channel=channel,
+            subscription_type=SubscriptionType.OHLC,
+            name=self._get_subscription_name(instruments, SubscriptionType.OHLC, timeframe=timeframe),
+            unsubscriber=un_watch_ohlcv,
         )
 
     async def _subscribe_trade(
@@ -463,10 +504,11 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
         # TODO: add historical trade fetching
         await self._listen_to_stream(
-            watch_trades,
-            self._exchange,
-            channel,
-            f"{','.join(symbols)} trades",
+            subscriber=watch_trades,
+            exchange=self._exchange,
+            channel=channel,
+            subscription_type=SubscriptionType.TRADE,
+            name=self._get_subscription_name(instruments, SubscriptionType.TRADE),
             unsubscriber=un_watch_trades,
         )
 
@@ -493,20 +535,21 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
         async def un_watch_orderbook():
             unwatch = getattr(self._exchange, "un_watch_order_book_for_symbols", lambda _: None)(symbols)
-            logger.debug(f"Unwatching orderbook for {symbols}")
             if unwatch is not None:
                 await unwatch
 
         # TODO: add historical orderbook fetching
         await self._listen_to_stream(
-            watch_orderbook,
-            self._exchange,
-            channel,
-            f"{','.join(symbols)} orderbook",
+            subscriber=watch_orderbook,
+            exchange=self._exchange,
+            channel=channel,
+            subscription_type=SubscriptionType.ORDERBOOK,
+            name=self._get_subscription_name(instruments, SubscriptionType.ORDERBOOK),
             unsubscriber=un_watch_orderbook,
         )
 
     async def _subscribe_executions(self, channel: CtrlChannel, instruments: List[Instrument]):
+        # TODO: rewrite executions
         # unfortunately binance and probably some others don't support watching orders for multiple symbols
         # so we need to watch orders for each symbol separately
         async def _watch_executions(instrument: Instrument):
@@ -524,10 +567,11 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         # also I didn't find any unsubscribe method for watching orders
         tasks = [
             self._listen_to_stream(
-                lambda i=instrument: _watch_executions(i),
-                self._exchange,
-                channel,
-                f"{instrument.symbol} execution reports",
+                subscriber=lambda i=instrument: _watch_executions(i),
+                exchange=self._exchange,
+                channel=channel,
+                subscription_type="executions",
+                name=self._get_subscription_name(instrument, "executions"),
             )
             for instrument in instruments
         ]

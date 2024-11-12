@@ -304,8 +304,8 @@ class ProcessingManager(IProcessingManager):
     ###########################################################################
 
     # it's important that we call it with _process to not include in the handlers map
-    def _process_event(self, instrument: Instrument, event_type: str, event_data: Any) -> TriggerEvent:
-        return TriggerEvent(self.__time_provider.time(), event_type, instrument, event_data)
+    def _process_event(self, instrument: Instrument, event_type: str, event_data: Any) -> MarketEvent:
+        return MarketEvent(self.__time_provider.time(), event_type, instrument, event_data)
 
     def _handle_service_time(self, instrument: str, data: dt_64) -> TriggerEvent | None:
         """It is used by simulation as a dummy to trigger actual time events."""
@@ -333,23 +333,23 @@ class ProcessingManager(IProcessingManager):
         self.__fit_is_running = True
         self._run_in_thread_pool(self.__invoke_on_fit)
 
-    def _handle_bar(self, instrument: Instrument, bar: Bar) -> TriggerEvent | MarketEvent:
+    def _handle_bar(self, instrument: Instrument, bar: Bar) -> MarketEvent:
         base_update = self.__update_base_data(instrument, bar)
         return MarketEvent(self.__time_provider.time(), SubscriptionType.OHLC, instrument, bar, is_trigger=base_update)
 
-    def _handle_trade(self, instrument: Instrument, trade: Trade) -> TriggerEvent | MarketEvent:
+    def _handle_trade(self, instrument: Instrument, trade: Trade) -> MarketEvent:
         base_update = self.__update_base_data(instrument, trade)
         return MarketEvent(
             self.__time_provider.time(), SubscriptionType.TRADE, instrument, trade, is_trigger=base_update
         )
 
-    def _handle_orderbook(self, instrument: Instrument, orderbook: OrderBook) -> TriggerEvent | MarketEvent:
+    def _handle_orderbook(self, instrument: Instrument, orderbook: OrderBook) -> MarketEvent:
         base_update = self.__update_base_data(instrument, orderbook)
         return MarketEvent(
             self.__time_provider.time(), SubscriptionType.ORDERBOOK, instrument, orderbook, is_trigger=base_update
         )
 
-    def _handle_quote(self, instrument: Instrument, quote: Quote) -> TriggerEvent | MarketEvent:
+    def _handle_quote(self, instrument: Instrument, quote: Quote) -> MarketEvent:
         base_update = self.__update_base_data(instrument, quote)
         return MarketEvent(
             self.__time_provider.time(), SubscriptionType.QUOTE, instrument, quote, is_trigger=base_update
