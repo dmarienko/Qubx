@@ -314,6 +314,9 @@ class MarketEvent:
     data: Any
     is_trigger: bool = False
 
+    def __repr__(self):
+        return f"MarketEvent(time={self.time}, type={self.type}, instrument={self.instrument}, data={self.data})"
+
 
 @dataclass
 class Deal:

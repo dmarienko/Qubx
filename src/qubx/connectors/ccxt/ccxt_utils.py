@@ -123,7 +123,7 @@ def ccxt_convert_trade(trade: dict[str, Any]) -> Trade:
 
 def ccxt_convert_orderbook(
     ob: dict, instr: Instrument, levels: int = 50, tick_size_pct: float = 0.01, sizes_in_quoted: bool = False
-) -> OrderBook:
+) -> OrderBook | None:
     """
     Convert a ccxt order book to an OrderBook object with a fixed tick size percentage.
     Parameters:
@@ -155,11 +155,11 @@ def ccxt_convert_orderbook(
             sizes_in_quoted=sizes_in_quoted,
         )
     except Exception as e:
-        logger.error(f"Failed to build order book snapshots: {e}", exc_info=True)
+        logger.error(f"Failed to build order book snapshots: {e}")
         snapshots = None
 
     if not snapshots:
-        raise CcxtOrderBookParsingError("Failed to build order book snapshots")
+        return None
 
     (dt, _bids, _asks, top_bid, top_ask, tick_size) = snapshots[-1]
     bids = np.array([s for _, s in _bids[::-1]])

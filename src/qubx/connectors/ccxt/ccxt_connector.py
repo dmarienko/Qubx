@@ -256,7 +256,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     def _run_ohlc_warmup_sync(
         self, channel: CtrlChannel, instruments: Set[Instrument], timeframe: str, warmup_period: str, timeout: int
     ) -> None:
-        self._loop.run_until_complete(self._run_ohlc_warmup(channel, instruments, timeframe, warmup_period))
         future = self._submit_coro(self._run_ohlc_warmup(channel, instruments, timeframe, warmup_period))
         future.result(timeout)
 
@@ -432,7 +431,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         ]
         await asyncio.gather(*tasks)
 
-    async def _subscribe_trades(
+    async def _subscribe_trade(
         self,
         channel: CtrlChannel,
         instruments: Set[Instrument],
@@ -443,8 +442,8 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
         async def watch_trades():
             trades = await self._exchange.watch_trades_for_symbols(symbols)
-            symbol = trades[0]["s"]
-            instrument = _symbol_to_instrument[symbol]
+            symbol = trades[0]["symbol"]
+            instrument = self._find_instrument_for_exch_symbol(symbol, _symbol_to_instrument)
             last_trade = ccxt_convert_trade(trades[-1])
             self.trading_service.update_position_price(instrument, self.time(), last_trade)
             for trade in trades:
@@ -475,9 +474,11 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
         async def watch_orderbook():
             ccxt_ob = await self._exchange.watch_order_book_for_symbols(symbols)
-            exch_symbol = ob["symbol"]
+            exch_symbol = ccxt_ob["symbol"]
             instrument = self._find_instrument_for_exch_symbol(exch_symbol, _symbol_to_instrument)
             ob = ccxt_convert_orderbook(ccxt_ob, instrument)
+            if ob is None:
+                return
             quote = ob.to_quote()
             self._last_quotes[instrument.symbol] = quote
             self.trading_service.update_position_price(instrument, self.time(), quote)

@@ -57,7 +57,7 @@ class StrategyContext(IStrategyContext):
         instruments: list[Instrument],
         logging: StrategyLogging,
         config: dict[str, Any] | None = None,
-        position_gathering: IPositionGathering | None = None,
+        position_gathering: IPositionGathering | None = None,  # TODO: make position gathering part of the strategy
         aux_data_provider: DataReader | None = None,
     ) -> None:
         self.account = account
@@ -140,6 +140,9 @@ class StrategyContext(IStrategyContext):
         databus = self.__broker.get_communication_channel()
         databus.register(self)
 
+        # - update universe with initial instruments after the strategy is initialized
+        self.set_universe(self.__initial_instruments, skip_callback=True)
+
         # - initialize strategy (should we do that after any first market data received ?)
         if not self.__is_initialized:
             try:
@@ -152,9 +155,6 @@ class StrategyContext(IStrategyContext):
                 logger.error(traceback.format_exc())
                 return
 
-        # - update universe with initial instruments after the strategy is initialized
-        self.set_universe(self.__initial_instruments)
-
         # - for live we run loop
         if not self.__broker.is_simulated_trading:
             self.__thread_data_loop = Thread(target=self.__process_incoming_data_loop, args=(databus,), daemon=True)
@@ -166,6 +166,7 @@ class StrategyContext(IStrategyContext):
     def stop(self):
         if self.__thread_data_loop:
             self.__broker.get_communication_channel().stop()
+            self.__broker.close()
             self.__thread_data_loop.join()
             try:
                 self.strategy.on_stop(self)
@@ -227,8 +228,8 @@ class StrategyContext(IStrategyContext):
         return self.__trading_manager.cancel_order(order_id)
 
     # IUniverseManager delegation
-    def set_universe(self, instruments: list[Instrument]):
-        return self.__universe_manager.set_universe(instruments)
+    def set_universe(self, instruments: list[Instrument], skip_callback: bool = False):
+        return self.__universe_manager.set_universe(instruments, skip_callback)
 
     @property
     def instruments(self):

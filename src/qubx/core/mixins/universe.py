@@ -58,7 +58,7 @@ class UniverseManager(IUniverseManager):
         self.__position_gathering = position_gathering
         self._instruments = []
 
-    def set_universe(self, instruments: list[Instrument]) -> None:
+    def set_universe(self, instruments: list[Instrument], skip_callback: bool = False) -> None:
         new_set = set(instruments)
         prev_set = set(self._instruments)
         rm_instr = list(prev_set - new_set)
@@ -67,8 +67,10 @@ class UniverseManager(IUniverseManager):
         self.__add_instruments(add_instr)
         self.__remove_instruments(rm_instr)
 
-        if add_instr or rm_instr:
+        if not skip_callback and (add_instr or rm_instr):
             self.__strategy.on_universe_change(self.__context, add_instr, rm_instr)
+
+        self.__broker.commit()  # apply pending changes
 
         # set new instruments
         self._instruments.clear()

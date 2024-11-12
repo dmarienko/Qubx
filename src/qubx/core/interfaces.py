@@ -278,6 +278,14 @@ class SubscriptionType(StrEnum):
     TRADE = "trade"
     OHLC = "ohlc"
     ORDERBOOK = "orderbook"
+    LIQUIDATION = "liquidation"
+    FUNDING_RATE = "funding_rate"
+
+    def __repr__(self) -> str:
+        return self.value
+
+    def __str__(self) -> str:
+        return self.value
 
 
 class IMarketDataProvider(ITimeProvider):
@@ -397,7 +405,7 @@ class ITradingManager:
 class IUniverseManager:
     """Manages universe updates."""
 
-    def set_universe(self, instruments: list[Instrument]):
+    def set_universe(self, instruments: list[Instrument], skip_callback: bool = False):
         """Set the trading universe.
 
         Args:

@@ -1,14 +1,16 @@
+import asyncio
 import click, sys, yaml, sys, time
-from os.path import exists, expanduser
 import yaml, configparser, socket
 
+from os.path import exists, expanduser
 from qubx import lookup, logger, formatter
-from qubx.core.context import StrategyContextImpl
+from qubx.core.interfaces import IStrategyContext, IStrategy
+from qubx.core.account import AccountProcessor
+from qubx.core.context import StrategyContext
+from qubx.core.loggers import LogsWriter, InMemoryLogsWriter, StrategyLogging
 from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
 from qubx.connectors.ccxt.ccxt_trading import CCXTTradingConnector
-from qubx.core.interfaces import IStrategyContext, IStrategy
 from qubx.utils.misc import add_project_to_system_path, Struct, logo, version
-from qubx.core.loggers import LogsWriter
 from qubx.backtester.simulator import SimulatedTrading
 
 
@@ -38,24 +40,33 @@ def run_ccxt_paper_trading(
     strategy: IStrategy,
     exchange: str,
     symbols: list[str],
-    md_subscription: dict,
-    trigger_spec: str,
     strategy_config: dict | None = None,
     blocking: bool = True,
-) -> StrategyContext:
+    base_currency: str = "USDT",
+    capital: float = 100_000,
+) -> IStrategyContext:
+    # TODO: setup proper loggers to write out to files
     instruments = [lookup.find_symbol(exchange.upper(), s.upper()) for s in symbols]
     instruments = [i for i in instruments if i is not None]
-    ctx = StrategyContextImpl(
+
+    logs_writer = InMemoryLogsWriter("test", "test", "0")
+
+    trading_service = SimulatedTrading("test")
+
+    account = AccountProcessor(
+        account_id=trading_service.get_account_id(),
+        base_currency=base_currency,
+        initial_capital=capital,
+    )
+    broker = CCXTExchangesConnector(exchange, trading_service, read_only=True, loop=asyncio.new_event_loop())
+
+    ctx = StrategyContext(
         strategy=strategy,
-        config=strategy_config,
-        broker_connector=CCXTExchangesConnector(
-            exchange.lower(),
-            SimulatedTrading("test"),
-            read_only=True,
-        ),
+        broker=broker,
+        account=account,
         instruments=instruments,
-        md_subscription=md_subscription,
-        trigger_spec=trigger_spec,
+        logging=StrategyLogging(logs_writer),
+        config=strategy_config,
     )
 
     if blocking:
