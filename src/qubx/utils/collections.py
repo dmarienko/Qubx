@@ -11,9 +11,9 @@ class TimeLimitedDeque(deque):
     Assumes that elements are inserted in increasing order of time.
     """
 
-    def __init__(self, time_limit: pd.Timedelta, time_key=lambda x: x[0], unit="ms", *args, **kwargs):
+    def __init__(self, time_limit: str, time_key=lambda x: x[0], unit="ms", *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.time_limit = time_limit.to_timedelta64()
+        self.time_limit = pd.Timedelta(time_limit).to_timedelta64()
         self.unit = unit
         self.time_key = lambda x: self._to_datetime64(time_key(x))
 

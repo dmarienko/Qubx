@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import Any, List, Dict
 from qubx.core.basics import Instrument
 from qubx.core.interfaces import IBrokerServiceProvider, ISubscriptionManager, SubscriptionType
 
@@ -52,6 +52,9 @@ class SubscriptionManager(ISubscriptionManager):
 
     def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
         return self.__broker.has_subscription(instrument, subscription_type)
+
+    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+        return self.__broker.get_subscriptions(instrument)
 
     def get_base_subscription(self) -> tuple[SubscriptionType, dict]:
         """

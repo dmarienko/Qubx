@@ -43,6 +43,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
     # - subscriptions
     _subscriptions: Dict[str, Set[Instrument]]
+    _subscription_to_params: Dict[str, Dict[str, Any]]
     _pending_stream_subscriptions: Dict[Tuple[str, Tuple], Set[Instrument]]
     _pending_stream_unsubscriptions: Dict[str, Set[Instrument]]
     _pending_instrument_unsubscriptions: Set[Instrument]
@@ -88,6 +89,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         self._exchange = getattr(cxp, exch)(exchange_auth | {"asyncio_loop": self._loop})
         self._last_quotes = defaultdict(lambda: None)
         self._subscriptions = defaultdict(set)
+        self._subscription_to_params = defaultdict(dict)
         self._pending_stream_subscriptions = defaultdict(set)
         self._pending_stream_unsubscriptions = defaultdict(set)
         self._pending_instrument_unsubscriptions = set()
@@ -129,19 +131,33 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         else:
             self._pending_stream_unsubscriptions[self._parse_subscription_type(subscription_type)].update(instruments)
 
+    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+        _sub_to_params = {}
+        for sub, instrs in self._subscriptions.items():
+            if instrument in instrs:
+                _sub_to_params[sub] = self._subscription_to_params[sub]
+        return _sub_to_params
+
     def has_subscription(self, subscription_type: str, instrument: Instrument) -> bool:
         sub = subscription_type.lower()
         return sub in self._subscriptions and instrument in self._subscriptions[sub]
 
     def commit(self) -> None:
-        _has_something_changed = False
-        for (sub, sub_args), instrs in self._pending_stream_subscriptions.items():
-            _has_something_changed |= self._subscribe(instrs, sub, **dict(sub_args))
+        _sub_to_params = self._get_updated_sub_to_params()
 
-        if _has_something_changed:
-            if not self.read_only:
-                # - subscribe to executions reports
-                self._resubscribe_stream("executions", self.get_communication_channel(), self.subscribed_instruments)
+        _has_something_changed = False
+        for sub, params in _sub_to_params.items():
+            _current_instruments = self._subscriptions[sub]
+            _removed_instruments = self._get_pending_unsub_instr(sub)
+            _added_instruments = self._get_pending_sub_instr(sub)
+            _updated_instruments = _current_instruments.union(_added_instruments).difference(_removed_instruments)
+            if _updated_instruments != _current_instruments:
+                _has_something_changed = True
+                self._subscribe(_updated_instruments, sub, **params)
+
+        if _has_something_changed and not self.read_only:
+            # - subscribe to executions reports
+            self._resubscribe_stream("executions", self.get_communication_channel(), self.subscribed_instruments)
 
         # - clean up pending subs and unsubs
         self._pending_stream_subscriptions.clear()
@@ -180,7 +196,9 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     def close(self):
         try:
             if hasattr(self._exchange, "close"):
-                self._exchange.close()  # type: ignore
+                future = self._submit_coro(self._exchange.close())  # type: ignore
+                # - wait for 5 seconds for connection to close
+                future.result(5)
             else:
                 del self._exchange
         except Exception as e:
@@ -190,15 +208,21 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     def subscribed_instruments(self) -> Set[Instrument]:
         return set.union(*self._subscriptions.values())
 
-    def _get_pending_unsubscriptions(self, sub: str) -> Set[Instrument]:
+    def _get_pending_unsub_instr(self, sub: str) -> Set[Instrument]:
         return self._pending_stream_unsubscriptions.get(sub, set()).union(self._pending_instrument_unsubscriptions)
+
+    def _get_pending_sub_instr(self, sub: str) -> Set[Instrument]:
+        for (sub_type, _), instrs in self._pending_stream_subscriptions.items():
+            if sub_type == sub:
+                return instrs
+        return set()
 
     def _subscribe(
         self,
         instruments: Set[Instrument],
         sub_type: str,
         **kwargs,
-    ) -> bool:
+    ) -> None:
         _subscriber = self._subscribers.get(sub_type)
         if _subscriber is None:
             raise ValueError(f"Subscription type {sub_type} is not supported")
@@ -206,12 +230,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         self._check_event_loop_is_running()
 
         _current_instruments = self._subscriptions[sub_type]
-        _removed_instruments = self._get_pending_unsubscriptions(sub_type)
-        _updated_instruments = instruments.union(_current_instruments).difference(_removed_instruments)
-        _added_instruments = _updated_instruments.difference(_current_instruments)
-
-        if _current_instruments == _updated_instruments:
-            return False
+        _added_instruments = instruments.difference(_current_instruments)
 
         _channel = self.get_communication_channel()
 
@@ -221,16 +240,19 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         ) is not None:
             self._run_ohlc_warmup_sync(_channel, _added_instruments, timeframe, ohlc_warmup_period, timeout=60 * 10)
 
-        self._resubscribe_stream(sub_type, _channel, _updated_instruments, **kwargs)
-        self._subscriptions[sub_type] = _updated_instruments
+        self._resubscribe_stream(sub_type, _channel, instruments, **kwargs)
+        self._subscriptions[sub_type] = instruments
+        self._subscription_to_params[sub_type] = kwargs
 
-        return True
-
-    def _resubscribe_stream(self, sub_type: str, channel: CtrlChannel, instruments: Set[Instrument], **kwargs):
+    def _resubscribe_stream(self, sub_type: str, channel: CtrlChannel, instruments: Set[Instrument], **kwargs) -> None:
         if sub_type in self._sub_to_coro:
-            logger.debug(f"Canceling previous subscription {sub_type}")
+            logger.debug(f"Canceling existing {sub_type} subscription for {self._subscriptions[sub_type]}")
             future = self._sub_to_coro[sub_type]
             future.cancel()
+
+        if not instruments:
+            del self._sub_to_coro[sub_type]
+            return
 
         _subscriber = self._subscribers[sub_type]
         _subscriber_params = set(_subscriber.__code__.co_varnames[: _subscriber.__code__.co_argcount])
@@ -246,6 +268,18 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
     def _parse_subscription_type(self, subscription_type: str) -> str:
         return subscription_type.lower()
+
+    def _get_updated_sub_to_params(self) -> Dict[str, Dict[str, Any]]:
+        _update_subs = set(self._pending_stream_unsubscriptions.keys())
+        if self._pending_instrument_unsubscriptions:
+            _update_subs |= set(self._subscriptions.keys())
+        _update_subs.update(sub for sub, _ in self._pending_stream_subscriptions)
+        _sub_to_params = {
+            **self._subscription_to_params,
+            **{sub: sub_args for sub, sub_args in self._pending_stream_subscriptions.keys()},
+        }
+        _sub_to_params = {sub: self._subscription_to_params.get(sub, {}) for sub in _update_subs}
+        return _sub_to_params
 
     def _submit_coro(self, coro: Awaitable[None]) -> concurrent.futures.Future:
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
@@ -281,14 +315,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             try:
                 await subscriber()
                 n_retry = 0
-            except ExchangeClosedByUser:
-                # - we closed connection so just stop it
-                logger.info(f"{name} listening has been stopped")
-                break
-            except (NetworkError, ExchangeError, ExchangeNotAvailable) as e:
-                logger.error(f"Error in {name} : {e}")
-                await asyncio.sleep(1)
-                continue
             except CancelledError:
                 if unsubscriber is not None:
                     try:
@@ -298,6 +324,14 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                     except:
                         pass
                 break
+            except ExchangeClosedByUser:
+                # - we closed connection so just stop it
+                logger.info(f"{name} listening has been stopped")
+                break
+            except (NetworkError, ExchangeError, ExchangeNotAvailable) as e:
+                logger.error(f"Error in {name} : {e}")
+                await asyncio.sleep(1)
+                continue
             except Exception as e:
                 logger.error(f"exception in {name} : {e}")
                 logger.exception(e)
@@ -404,33 +438,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             watch_ohlcv, self._exchange, channel, f"{','.join(symbols)} {timeframe} OHLCV", unsubscriber=un_watch_ohlcv
         )
 
-    async def _subscribe_executions(self, channel: CtrlChannel, instruments: List[Instrument]):
-        # unfortunately binance and probably some others don't support watching orders for multiple symbols
-        # so we need to watch orders for each symbol separately
-        async def _watch_executions(instrument: Instrument):
-            exec = await self._exchange.watch_orders(instrument.symbol)
-            _msg = f"\nexecs_{instrument.symbol} = [\n"
-            for report in exec:
-                _msg += "\t" + str(report) + ",\n"
-                order, deals = self.trading_service.process_execution_report(instrument, report)
-                # - send update to client
-                channel.send((instrument, "order", order))
-                if deals:
-                    channel.send((instrument, "deals", deals))
-            # logger.debug(_msg + "]\n")
-
-        # also I didn't find any unsubscribe method for watching orders
-        tasks = [
-            self._listen_to_stream(
-                lambda i=instrument: _watch_executions(i),
-                self._exchange,
-                channel,
-                f"{instrument.symbol} execution reports",
-            )
-            for instrument in instruments
-        ]
-        await asyncio.gather(*tasks)
-
     async def _subscribe_trade(
         self,
         channel: CtrlChannel,
@@ -486,6 +493,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
         async def un_watch_orderbook():
             unwatch = getattr(self._exchange, "un_watch_order_book_for_symbols", lambda _: None)(symbols)
+            logger.debug(f"Unwatching orderbook for {symbols}")
             if unwatch is not None:
                 await unwatch
 
@@ -497,3 +505,30 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             f"{','.join(symbols)} orderbook",
             unsubscriber=un_watch_orderbook,
         )
+
+    async def _subscribe_executions(self, channel: CtrlChannel, instruments: List[Instrument]):
+        # unfortunately binance and probably some others don't support watching orders for multiple symbols
+        # so we need to watch orders for each symbol separately
+        async def _watch_executions(instrument: Instrument):
+            exec = await self._exchange.watch_orders(instrument.symbol)
+            _msg = f"\nexecs_{instrument.symbol} = [\n"
+            for report in exec:
+                _msg += "\t" + str(report) + ",\n"
+                order, deals = self.trading_service.process_execution_report(instrument, report)
+                # - send update to client
+                channel.send((instrument, "order", order))
+                if deals:
+                    channel.send((instrument, "deals", deals))
+            # logger.debug(_msg + "]\n")
+
+        # also I didn't find any unsubscribe method for watching orders
+        tasks = [
+            self._listen_to_stream(
+                lambda i=instrument: _watch_executions(i),
+                self._exchange,
+                channel,
+                f"{instrument.symbol} execution reports",
+            )
+            for instrument in instruments
+        ]
+        await asyncio.gather(*tasks)

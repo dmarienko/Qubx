@@ -1,4 +1,5 @@
 import asyncio
+import pandas as pd
 import click, sys, yaml, sys, time
 import yaml, configparser, socket
 
@@ -44,6 +45,7 @@ def run_ccxt_paper_trading(
     blocking: bool = True,
     base_currency: str = "USDT",
     capital: float = 100_000,
+    commissions: str | None = None,
 ) -> IStrategyContext:
     # TODO: setup proper loggers to write out to files
     instruments = [lookup.find_symbol(exchange.upper(), s.upper()) for s in symbols]
@@ -51,14 +53,14 @@ def run_ccxt_paper_trading(
 
     logs_writer = InMemoryLogsWriter("test", "test", "0")
 
-    trading_service = SimulatedTrading("test")
+    trading_service = SimulatedTrading("test", commissions=commissions, simulation_initial_time=pd.Timestamp.now().asm8)
 
     account = AccountProcessor(
         account_id=trading_service.get_account_id(),
         base_currency=base_currency,
         initial_capital=capital,
     )
-    broker = CCXTExchangesConnector(exchange, trading_service, read_only=True, loop=asyncio.new_event_loop())
+    broker = CCXTExchangesConnector(exchange.lower(), trading_service, read_only=True, loop=asyncio.new_event_loop())
 
     ctx = StrategyContext(
         strategy=strategy,

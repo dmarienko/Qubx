@@ -31,7 +31,7 @@ def __correct_offset():
 
 
 def __correct_offset_runnable():
-    logger.info("NTP offset controller thread is started")
+    logger.debug("NTP offset controller thread is started")
     last_corrected_dt = None
     while True:
         # do correction every specified interval

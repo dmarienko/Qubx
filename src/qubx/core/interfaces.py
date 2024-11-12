@@ -249,6 +249,18 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
         """
         ...
 
+    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all subscriptions for an instrument.
+
+        Args:
+            instrument: Instrument to get subscriptions for
+
+        Returns:
+            dict[str, dict]: Dictionary of subscriptions (type -> parameters)
+        """
+        ...
+
     def commit(self) -> None:
         """
         Apply all pending subscription changes.
@@ -472,6 +484,18 @@ class ISubscriptionManager:
         Args:
             subscription_type: Type of subscription
             **kwargs: Additional subscription parameters (e.g. timeframe for OHLCV)
+        """
+        ...
+
+    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all subscriptions for an instrument.
+
+        Args:
+            instrument: Instrument to get subscriptions for
+
+        Returns:
+            dict[str, dict]: Dictionary of subscriptions (type -> parameters)
         """
         ...
 

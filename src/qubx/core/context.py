@@ -1,6 +1,6 @@
 import traceback
 
-from typing import Any, Callable, List
+from typing import Any, Callable, List, Dict
 from threading import Thread
 
 from qubx import logger
@@ -165,8 +165,8 @@ class StrategyContext(IStrategyContext):
 
     def stop(self):
         if self.__thread_data_loop:
-            self.__broker.get_communication_channel().stop()
             self.__broker.close()
+            self.__broker.get_communication_channel().stop()
             self.__thread_data_loop.join()
             try:
                 self.strategy.on_stop(self)
@@ -245,6 +245,9 @@ class StrategyContext(IStrategyContext):
     def has_subscription(self, instrument: Instrument, subscription_type: str):
         return self.__subscription_manager.has_subscription(instrument, subscription_type)
 
+    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+        return self.__subscription_manager.get_subscriptions(instrument)
+
     def get_base_subscription(self):
         return self.__subscription_manager.get_base_subscription()
 
@@ -258,8 +261,8 @@ class StrategyContext(IStrategyContext):
         return self.__subscription_manager.set_warmup(subscription_type, period)
 
     # IProcessingManager delegation
-    def process_data(self, symbol: str, d_type: str, data: Any):
-        return self.__processing_manager.process_data(symbol, d_type, data)
+    def process_data(self, instrument: Instrument, d_type: str, data: Any):
+        return self.__processing_manager.process_data(instrument, d_type, data)
 
     def set_fit_schedule(self, schedule: str):
         return self.__processing_manager.set_fit_schedule(schedule)
