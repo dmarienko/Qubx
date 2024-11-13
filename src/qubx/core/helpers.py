@@ -9,8 +9,7 @@ from collections import defaultdict
 from threading import Thread
 
 from qubx import logger
-from qubx.core.basics import CtrlChannel, Instrument, SW
-from qubx.core.interfaces import SubscriptionType
+from qubx.core.basics import CtrlChannel, Instrument, SW, SubscriptionType
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV, OrderBook
 from qubx.utils.misc import Stopwatch
 from qubx.utils.time import convert_tf_str_td64, convert_seconds_to_str
@@ -40,7 +39,7 @@ class CachedMarketDataHolder:
         self.default_timeframe = convert_tf_str_td64(default_timeframe)
 
     def init_ohlcv(self, instrument: Instrument, max_size=np.inf):
-        self._ohlcvs[instrument] = {selkf.default_timeframe: OHLCV(instrument.symbol, self.default_timeframe, max_size)}
+        self._ohlcvs[instrument] = {self.default_timeframe: OHLCV(instrument.symbol, self.default_timeframe, max_size)}
 
     def remove(self, instrument: Instrument) -> None:
         self._ohlcvs.pop(instrument, None)
@@ -81,23 +80,27 @@ class CachedMarketDataHolder:
 
         return self._ohlcvs[instrument][tf]
 
-    def get_data(self, instrument: Instrument, sub_type: str) -> List[Any]:
-        return list(self._instr_to_sub_to_buffer[instrument][sub_type])
+    def get_data(self, instrument: Instrument, event_type: str) -> List[Any]:
+        return list(self._instr_to_sub_to_buffer[instrument][event_type])
 
-    def update(self, instrument: Instrument, sub_type: str, data: Any, update_ohlc: bool = False) -> None:
+    def update(self, instrument: Instrument, event_type: str, data: Any, update_ohlc: bool = False) -> None:
         # - store data in buffer if it's not OHLC
-        if sub_type != SubscriptionType.OHLC:
-            self._instr_to_sub_to_buffer[instrument][sub_type].append(data)
+        if event_type != SubscriptionType.OHLC:
+            self._instr_to_sub_to_buffer[instrument][event_type].append(data)
 
-        match sub_type:
+        if not update_ohlc:
+            return
+
+        match event_type:
             case SubscriptionType.OHLC:
                 self.update_by_bar(instrument, data)
             case SubscriptionType.QUOTE:
-                self.update_by_quote(instrument, data, update_ohlc)
+                self.update_by_quote(instrument, data)
             case SubscriptionType.TRADE:
-                self.update_by_trade(instrument, data, update_ohlc)
+                self.update_by_trade(instrument, data)
             case SubscriptionType.ORDERBOOK:
-                self.update_by_orderbook(instrument, data, update_ohlc)
+                assert isinstance(data, OrderBook)
+                self.update_by_quote(instrument, data.to_quote())
             case _:
                 pass
 
@@ -140,10 +143,7 @@ class CachedMarketDataHolder:
                 ser.update_by_bar(bar.time, bar.open, bar.high, bar.low, bar.close, v_tot_inc, v_buy_inc)
 
     @SW.watch("CachedMarketDataHolder")
-    def update_by_quote(self, instrument: Instrument, quote: Quote, update_ohlc: bool):
-        self._recent_quotes[instrument].append(quote)
-        if not update_ohlc:
-            return
+    def update_by_quote(self, instrument: Instrument, quote: Quote):
         self._updates[instrument] = quote
         series = self._ohlcvs.get(instrument)
         if series:
@@ -151,10 +151,7 @@ class CachedMarketDataHolder:
                 ser.update(quote.time, quote.mid_price(), 0)
 
     @SW.watch("CachedMarketDataHolder")
-    def update_by_trade(self, instrument: Instrument, trade: Trade, update_ohlc: bool):
-        self._recent_trades[instrument].append(trade)
-        if not update_ohlc:
-            return
+    def update_by_trade(self, instrument: Instrument, trade: Trade):
         self._updates[instrument] = trade
         series = self._ohlcvs.get(instrument)
         if series:
@@ -164,11 +161,6 @@ class CachedMarketDataHolder:
                 if len(ser) > 0 and ser[0].time > trade.time:
                     continue
                 ser.update(trade.time, trade.price, total_vol, bought_vol)
-
-    @SW.watch("CachedMarketDataHolder")
-    def update_by_orderbook(self, instrument: Instrument, orderbook: OrderBook, update_ohlc: bool):
-        self._recent_orderbooks[instrument].append(orderbook)
-        self.update_by_quote(instrument, orderbook.to_quote(), update_ohlc)
 
 
 SPEC_REGEX = re.compile(

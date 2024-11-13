@@ -30,9 +30,9 @@ from qubx.core.basics import (
     ITimeProvider,
     IComminucationManager,
     SW,
+    SubscriptionType,
 )
 from qubx.core.series import OrderBook, Trade, Quote, Bar, OHLCV
-from enum import StrEnum
 
 
 class ITradingServiceProvider(ITimeProvider, IComminucationManager):
@@ -281,23 +281,6 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
 
     @property
     def is_simulated_trading(self) -> bool: ...
-
-
-class SubscriptionType(StrEnum):
-    """Subscription type constants."""
-
-    QUOTE = "quote"
-    TRADE = "trade"
-    OHLC = "ohlc"
-    ORDERBOOK = "orderbook"
-    LIQUIDATION = "liquidation"
-    FUNDING_RATE = "funding_rate"
-
-    def __repr__(self) -> str:
-        return self.value
-
-    def __str__(self) -> str:
-        return self.value
 
 
 class IMarketDataProvider(ITimeProvider):

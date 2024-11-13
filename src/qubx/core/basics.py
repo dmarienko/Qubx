@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from threading import Event, Lock
 from queue import Queue, Empty
+from enum import StrEnum
 
 from qubx import logger
 from qubx.core.exceptions import QueueTimeout
@@ -635,6 +636,23 @@ class ITimeProvider:
         Returns current time
         """
         ...
+
+
+class SubscriptionType(StrEnum):
+    """Subscription type constants."""
+
+    QUOTE = "quote"
+    TRADE = "trade"
+    OHLC = "ohlc"
+    ORDERBOOK = "orderbook"
+    LIQUIDATION = "liquidation"
+    FUNDING_RATE = "funding_rate"
+
+    def __repr__(self) -> str:
+        return self.value
+
+    def __str__(self) -> str:
+        return self.value
 
 
 class TradingSessionResult:

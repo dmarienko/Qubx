@@ -1,6 +1,6 @@
 from typing import Any, List, Dict
-from qubx.core.basics import Instrument
-from qubx.core.interfaces import IBrokerServiceProvider, ISubscriptionManager, SubscriptionType
+from qubx.core.basics import Instrument, SubscriptionType
+from qubx.core.interfaces import IBrokerServiceProvider, ISubscriptionManager
 
 
 class SubscriptionManager(ISubscriptionManager):

@@ -16,9 +16,9 @@ from ccxt import NetworkError, ExchangeClosedByUser, ExchangeError, ExchangeNotA
 from ccxt.base.exchange import Exchange
 
 from qubx import logger
-from qubx.core.basics import Instrument, Position, dt_64, Deal, CtrlChannel
+from qubx.core.basics import Instrument, Position, dt_64, Deal, CtrlChannel, SubscriptionType
 from qubx.core.helpers import BasicScheduler
-from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider, SubscriptionType, ITimeProvider
+from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider, ITimeProvider
 from qubx.utils.threading import synchronized
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.utils.ntp import start_ntp_thread, time_now

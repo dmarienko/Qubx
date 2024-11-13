@@ -15,7 +15,6 @@ from qubx.core.interfaces import (
     PositionsTracker,
     IStrategyContext,
     TriggerEvent,
-    SubscriptionType,
 )
 from qubx.data.readers import (
     AsOhlcvSeries,
@@ -25,7 +24,17 @@ from qubx.data.readers import (
     RestoreTicksFromOHLC,
     AsPandasFrame,
 )
-from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider, Position, Signal, TargetPosition
+from qubx.core.basics import (
+    ZERO_COSTS,
+    Deal,
+    Instrument,
+    Order,
+    ITimeProvider,
+    Position,
+    Signal,
+    TargetPosition,
+    SubscriptionType,
+)
 
 
 from qubx.core.metrics import portfolio_metrics

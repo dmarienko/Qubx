@@ -23,6 +23,7 @@ from qubx.core.basics import (
     TradingSessionResult,
     TransactionCostsCalculator,
     dt_64,
+    SubscriptionType,
 )
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
 from qubx.core.interfaces import (
@@ -32,7 +33,6 @@ from qubx.core.interfaces import (
     PositionsTracker,
     IStrategyContext,
     TriggerEvent,
-    SubscriptionType,
 )
 
 from qubx.core.context import StrategyContext
