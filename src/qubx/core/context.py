@@ -199,7 +199,7 @@ class StrategyContext(IStrategyContext):
         return self.account.get_reserved(instrument)
 
     # IMarketDataProvider delegation
-    def ohlc(self, instrument: Instrument, timeframe: str):
+    def ohlc(self, instrument: Instrument, timeframe: str | None = None):
         return self.__market_data_provider.ohlc(instrument, timeframe)
 
     def quote(self, instrument: Instrument):

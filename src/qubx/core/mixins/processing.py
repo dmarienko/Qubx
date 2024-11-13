@@ -126,7 +126,7 @@ class ProcessingManager(IProcessingManager):
             self._handle_fit(None, (None, self.__time_provider.time()))
             return False
 
-        if not event:
+        if not event or event.data is None:
             return False
 
         # - if fit was not called - skip on_event call
@@ -315,6 +315,10 @@ class ProcessingManager(IProcessingManager):
         for b in bars:
             self._handle_hist_bar(instrument, b)
 
+    def _handle_hist_trades(self, instrument: Instrument, trades: list[Trade]) -> None:
+        for t in trades:
+            self._handle_hist_trade(instrument, t)
+
     def _handle_hist_bar(self, instrument: Instrument, bar: Bar) -> None:
         self.__update_base_data(instrument, bar, is_historical=True)
 
@@ -323,6 +327,9 @@ class ProcessingManager(IProcessingManager):
 
     def _handle_hist_trade(self, instrument: Instrument, trade: Trade) -> None:
         self.__update_base_data(instrument, trade, is_historical=True)
+
+    def _handle_hist_orderbook(self, instrument: Instrument, orderbook: OrderBook) -> None:
+        self.__update_base_data(instrument, orderbook, is_historical=True)
 
     def _handle_fit(self, instrument: Instrument | None, data: Tuple[dt_64 | None, dt_64]) -> None:
         """

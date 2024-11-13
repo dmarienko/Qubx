@@ -25,7 +25,7 @@ class MarketDataProvider(IMarketDataProvider):
         self.__universe_manager = universe_manager
         self.__aux_data_provider = aux_data_provider
 
-    def ohlc(self, instrument: Instrument, timeframe: str) -> OHLCV:
+    def ohlc(self, instrument: Instrument, timeframe: str | None = None) -> OHLCV:
         return self.__cache.get_ohlcv(instrument, timeframe)
 
     def quote(self, instrument: Instrument) -> Quote | None:

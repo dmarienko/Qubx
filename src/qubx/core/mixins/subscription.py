@@ -15,11 +15,11 @@ class SubscriptionManager(ISubscriptionManager):
         self.__is_simulation = broker.is_simulated_trading
         self.__base_subscription = SubscriptionType.OHLC if self.__is_simulation else SubscriptionType.ORDERBOOK
         self.__base_subscription_params = {
-            SubscriptionType.OHLC: {"timeframe": "1h"},
+            SubscriptionType.OHLC: {"timeframe": "1m"},
             SubscriptionType.ORDERBOOK: {},
         }[self.__base_subscription]
         self.__subscription_to_warmup = {
-            SubscriptionType.OHLC: "7d",
+            SubscriptionType.OHLC: "1h",
             SubscriptionType.ORDERBOOK: "1m",
             SubscriptionType.QUOTE: "1m",
             SubscriptionType.TRADE: "1m",
@@ -37,7 +37,7 @@ class SubscriptionManager(ISubscriptionManager):
         kwargs["warmup_period"] = kwargs.get("warmup_period", __subscription_to_warmup.get(subscription_type))
 
         # - if this is the base subscription, we also need to fetch historical OHLC data for warmup
-        if subscription_type == self.__base_subscription:
+        if subscription_type == self.__base_subscription and subscription_type != SubscriptionType.OHLC:
             kwargs["ohlc_warmup_period"] = kwargs.get(
                 "ohlc_warmup_period", __subscription_to_warmup.get(subscription_type)
             )

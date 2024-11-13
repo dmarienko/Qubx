@@ -303,7 +303,7 @@ class SubscriptionType(StrEnum):
 class IMarketDataProvider(ITimeProvider):
     """Interface for market data providing class"""
 
-    def ohlc(self, instrument: Instrument, timeframe: str) -> OHLCV:
+    def ohlc(self, instrument: Instrument, timeframe: str | None = None) -> OHLCV:
         """Get OHLCV data for an instrument.
 
         Args:
