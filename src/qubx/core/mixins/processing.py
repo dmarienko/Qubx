@@ -335,7 +335,7 @@ class ProcessingManager(IProcessingManager):
         self.__fit_is_running = True
         self._run_in_thread_pool(self.__invoke_on_fit)
 
-    def _handle_bar(self, instrument: Instrument, event_type: str, bar: Bar) -> MarketEvent:
+    def _handle_ohlc(self, instrument: Instrument, event_type: str, bar: Bar) -> MarketEvent:
         base_update = self.__update_base_data(instrument, event_type, bar)
         return MarketEvent(self.__time_provider.time(), event_type, instrument, bar, is_trigger=base_update)
 

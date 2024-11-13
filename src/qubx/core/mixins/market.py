@@ -7,6 +7,7 @@ from qubx.core.helpers import CachedMarketDataHolder
 from qubx.core.series import Quote, OHLCV
 from qubx.core.basics import Instrument
 from qubx.data.readers import DataReader
+from qubx.utils import convert_seconds_to_str
 
 
 class MarketDataProvider(IMarketDataProvider):
@@ -27,7 +28,9 @@ class MarketDataProvider(IMarketDataProvider):
         self.__aux_data_provider = aux_data_provider
 
     def ohlc(self, instrument: Instrument, timeframe: str | None = None, length: int | None = None) -> OHLCV:
-        timeframe = timeframe or str(pd.Timedelta(self.__cache.default_timeframe))
+        timeframe = timeframe or convert_seconds_to_str(
+            int(pd.Timedelta(self.__cache.default_timeframe).total_seconds())
+        )
         rc = self.__cache.get_ohlcv(instrument, timeframe)
         if length is None or len(rc) >= length:
             return rc

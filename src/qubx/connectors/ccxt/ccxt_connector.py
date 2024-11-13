@@ -356,6 +356,8 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     async def _run_ohlc_warmup(
         self, channel: CtrlChannel, instruments: Set[Instrument], timeframe: str, warmup_period: str
     ) -> None:
+        if not instruments:
+            return
         logger.debug(f"Running OHLC warmup for {instruments} with period {warmup_period}")
         await asyncio.gather(
             *[self._fetch_and_send_ohlc(channel, instr, timeframe, warmup_period) for instr in instruments]
@@ -418,7 +420,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         channel.send(
             (
                 instrument,
-                "hist_bars",
+                self._get_hist_type(SubscriptionType.OHLC),
                 [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in ohlcv],
             )
         )
@@ -463,15 +465,34 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             _name += f" ({kwargs_str})"
         return _name
 
+    def _get_hist_type(self, sub_type: str) -> str:
+        return f"hist_{sub_type}"
+
     def _update_execution_subscriptions(self, added_instruments: Set[Instrument], removed_instruments: Set[Instrument]):
         channel = self._get_proxy_channel()
         _get_name = lambda instr: self._get_subscription_name(instr, "executions")
         # - subscribe to added instruments
         for instr in added_instruments:
-            self._submit_coro(self._subscribe_executions(_get_name(instr), "executions", channel, instr))
+            _name = _get_name(instr)
+            future = self._sub_to_coro.get(_name)
+            if future is not None and future.running():
+                logger.warning(f"Execution subscription for {instr} is already running")
+                continue
+            self._sub_to_coro[_name] = self._submit_coro(
+                self._subscribe_executions(_name, "executions", channel, instr)
+            )
         # - unsubscribe from removed instruments
         for instr in removed_instruments:
-            self._is_sub_name_enabled[_get_name(instr)] = False
+            _name = _get_name(instr)
+            self._is_sub_name_enabled[_name] = False
+            future = self._sub_to_coro[_name]
+            try:
+                # usually this will raise a timeout error because there will be no order updates
+                # so just cancel
+                future.result(0.1)
+            except TimeoutError:
+                if future.running():
+                    future.cancel()
 
     def _get_latest_instruments(self, sub_type: str, warmup_period: str) -> Set[Instrument]:
         """
@@ -512,7 +533,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                         channel.send(
                             (
                                 instrument,
-                                "bar",
+                                sub_type,
                                 Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]),
                             )
                         )
@@ -548,7 +569,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         instruments: Set[Instrument],
         warmup_period: str | None = None,
     ):
-        logger.debug(f"Subscribing to trades warmup period {warmup_period}")
         symbols = [i.symbol for i in instruments]
         _symbol_to_instrument = {i.symbol: i for i in instruments}
 
@@ -569,22 +589,23 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
         if warmup_period is not None:
             _new_instruments = instruments.difference(self._get_latest_instruments(sub_type, warmup_period))
-            logger.debug(f"New instruments for trade warmup: {_new_instruments}")
+            if _new_instruments:
+                logger.debug(f"New instruments for trade warmup: {_new_instruments}")
 
-            async def fetch_and_send_trades(instr: Instrument):
-                trades = await self._exchange.fetch_trades(
-                    instr.symbol, since=self._time_msec_nbars_back(warmup_period)
-                )
-                logger.debug(f"Loaded {len(trades)} trades for {instr}")
-                channel.send(
-                    (
-                        instr,
-                        "hist_trades",
-                        [ccxt_convert_trade(trade) for trade in trades],
+                async def fetch_and_send_trades(instr: Instrument):
+                    trades = await self._exchange.fetch_trades(
+                        instr.symbol, since=self._time_msec_nbars_back(warmup_period)
                     )
-                )
+                    logger.debug(f"Loaded {len(trades)} trades for {instr}")
+                    channel.send(
+                        (
+                            instr,
+                            self._get_hist_type(sub_type),
+                            [ccxt_convert_trade(trade) for trade in trades],
+                        )
+                    )
 
-            await asyncio.gather(*(fetch_and_send_trades(instr) for instr in _new_instruments))
+                await asyncio.gather(*(fetch_and_send_trades(instr) for instr in _new_instruments))
 
         await self._listen_to_stream(
             subscriber=watch_trades,

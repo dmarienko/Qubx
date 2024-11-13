@@ -84,6 +84,55 @@ def run_ccxt_paper_trading(
     return ctx
 
 
+def run_ccxt_trading(
+    strategy: IStrategy,
+    exchange: str,
+    symbols: list[str],
+    credentials: dict,
+    strategy_config: dict | None = None,
+    blocking: bool = True,
+    account_id: str = "main",
+    base_currency: str = "USDT",
+    capital: float = 100_000,
+    commissions: str | None = None,
+) -> IStrategyContext:
+    # TODO: setup proper loggers to write out to files
+    instruments = [lookup.find_symbol(exchange.upper(), s.upper()) for s in symbols]
+    instruments = [i for i in instruments if i is not None]
+
+    logs_writer = InMemoryLogsWriter("test", "test", "0")
+
+    trading_service = CCXTTradingConnector(exchange, account_id, commissions, **credentials)
+
+    account = AccountProcessor(
+        account_id=trading_service.get_account_id(),
+        base_currency=base_currency,
+        initial_capital=capital,
+    )
+    broker = CCXTExchangesConnector(exchange, trading_service, loop=asyncio.new_event_loop(), **credentials)
+
+    ctx = StrategyContext(
+        strategy=strategy,
+        broker=broker,
+        account=account,
+        instruments=instruments,
+        logging=StrategyLogging(logs_writer),
+        config=strategy_config,
+    )
+
+    if blocking:
+        try:
+            ctx.start(blocking=True)
+        except KeyboardInterrupt:
+            logger.info("Stopped by user")
+        finally:
+            ctx.stop()
+    else:
+        ctx.start()
+
+    return ctx
+
+
 def load_strategy_config(filename: str) -> Struct:
     with open(filename, "r") as f:
         content = yaml.safe_load(f)
