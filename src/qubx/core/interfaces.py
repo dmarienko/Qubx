@@ -303,12 +303,13 @@ class SubscriptionType(StrEnum):
 class IMarketDataProvider(ITimeProvider):
     """Interface for market data providing class"""
 
-    def ohlc(self, instrument: Instrument, timeframe: str | None = None) -> OHLCV:
-        """Get OHLCV data for an instrument.
+    def ohlc(self, instrument: Instrument, timeframe: str | None = None, length: int | None = None) -> OHLCV:
+        """Get OHLCV data for an instrument. If length is larger then available cached data, it will be requested from the broker.
 
         Args:
             instrument: The instrument to get data for
-            timeframe: The timeframe of the OHLCV data
+            timeframe (optional): The timeframe of the data. If None, the default timeframe is used.
+            length (optional): Number of bars to retrieve. If None, full cached data is returned.
 
         Returns:
             OHLCV: The OHLCV data series
@@ -326,16 +327,16 @@ class IMarketDataProvider(ITimeProvider):
         """
         ...
 
-    def get_historical_ohlcs(self, instrument: Instrument, timeframe: str, length: int) -> OHLCV:
-        """Get historical OHLCV data for an instrument.
+    def get_data(self, instrument: Instrument, sub_type: str) -> List[Any]:
+        """Get data for an instrument. This method is used for getting data for custom subscription types.
+        Could be used for orderbook, trades, liquidations, funding rates, etc.
 
         Args:
             instrument: The instrument to get data for
-            timeframe: The timeframe of the data
-            length: Number of bars to retrieve
+            sub_type: The subscription type of data to get
 
         Returns:
-            OHLCV: Historical OHLCV data series
+            List[Any]: The data
         """
         ...
 

@@ -199,14 +199,14 @@ class StrategyContext(IStrategyContext):
         return self.account.get_reserved(instrument)
 
     # IMarketDataProvider delegation
-    def ohlc(self, instrument: Instrument, timeframe: str | None = None):
-        return self.__market_data_provider.ohlc(instrument, timeframe)
+    def ohlc(self, instrument: Instrument, timeframe: str | None = None, length: int | None = None):
+        return self.__market_data_provider.ohlc(instrument, timeframe, length)
 
     def quote(self, instrument: Instrument):
         return self.__market_data_provider.quote(instrument)
 
-    def get_historical_ohlcs(self, instrument: Instrument, timeframe: str, length: int):
-        return self.__market_data_provider.get_historical_ohlcs(instrument, timeframe, length)
+    def get_data(self, instrument: Instrument, sub_type: str) -> List[Any]:
+        return self.__market_data_provider.get_data(instrument, sub_type)
 
     def get_aux_data(self, data_id: str, **parameters):
         return self.__market_data_provider.get_aux_data(data_id, **parameters)

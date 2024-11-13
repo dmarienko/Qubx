@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import re, sched, time
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from croniter import croniter
 from collections import defaultdict
@@ -10,10 +10,10 @@ from threading import Thread
 
 from qubx import logger
 from qubx.core.basics import CtrlChannel, Instrument, SW
+from qubx.core.interfaces import SubscriptionType
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV, OrderBook
 from qubx.utils.misc import Stopwatch
 from qubx.utils.time import convert_tf_str_td64, convert_seconds_to_str
-from qubx.utils.collections import TimeLimitedDeque
 
 
 class CachedMarketDataHolder:
@@ -25,36 +25,28 @@ class CachedMarketDataHolder:
     _last_bar: dict[Instrument, Bar | None]
     _ohlcvs: dict[Instrument, dict[np.timedelta64, OHLCV]]
     _updates: dict[Instrument, Any]
-    _recent_trades: dict[Instrument, TimeLimitedDeque]
-    _recent_quotes: dict[Instrument, TimeLimitedDeque]
-    _recent_orderbooks: dict[Instrument, TimeLimitedDeque]
 
-    def __init__(self, default_timeframe: str | None = None) -> None:
+    _instr_to_sub_to_buffer: Dict[Instrument, Dict[str, deque]]
+
+    def __init__(self, default_timeframe: str | None = None, max_buffer_size: int = 10_000) -> None:
         self._ohlcvs = dict()
         self._last_bar = defaultdict(lambda: None)
         self._updates = dict()
-        # TODO: use appropriate time limits from warmup
-        # TODO: add accessors to get recent data
-        self._recent_trades = defaultdict(lambda: TimeLimitedDeque(time_limit="10Min", time_key=lambda x: x.time))
-        self._recent_trades = defaultdict(lambda: TimeLimitedDeque(time_limit="10Min", time_key=lambda x: x.time))
-        self._recent_quotes = defaultdict(lambda: TimeLimitedDeque(time_limit="10Min", time_key=lambda x: x.time))
-        self._recent_orderbooks = defaultdict(lambda: TimeLimitedDeque(time_limit="10Min", time_key=lambda x: x.time))
+        self._instr_to_sub_to_buffer = defaultdict(lambda: defaultdict(lambda: deque(maxlen=max_buffer_size)))
         if default_timeframe:
-            self.default_timeframe = convert_tf_str_td64(default_timeframe)
+            self.update_default_timeframe(default_timeframe)
 
     def update_default_timeframe(self, default_timeframe: str):
         self.default_timeframe = convert_tf_str_td64(default_timeframe)
 
     def init_ohlcv(self, instrument: Instrument, max_size=np.inf):
-        self._ohlcvs[instrument] = {self.default_timeframe: OHLCV(instrument.symbol, self.default_timeframe, max_size)}
+        self._ohlcvs[instrument] = {selkf.default_timeframe: OHLCV(instrument.symbol, self.default_timeframe, max_size)}
 
     def remove(self, instrument: Instrument) -> None:
         self._ohlcvs.pop(instrument, None)
         self._last_bar.pop(instrument, None)
         self._updates.pop(instrument, None)
-        self._recent_trades.pop(instrument, None)
-        self._recent_quotes.pop(instrument, None)
-        self._recent_orderbooks.pop(instrument, None)
+        self._instr_to_sub_to_buffer.pop(instrument, None)
 
     def is_data_ready(self) -> bool:
         """
@@ -89,17 +81,25 @@ class CachedMarketDataHolder:
 
         return self._ohlcvs[instrument][tf]
 
-    def update(self, instrument: Instrument, data: Bar | Quote | Trade | OrderBook, update_ohlc: bool):
-        if isinstance(data, Bar):
-            self.update_by_bar(instrument, data)
-        elif isinstance(data, Quote):
-            self.update_by_quote(instrument, data, update_ohlc)
-        elif isinstance(data, Trade):
-            self.update_by_trade(instrument, data, update_ohlc)
-        elif isinstance(data, OrderBook):
-            self.update_by_orderbook(instrument, data, update_ohlc)
-        else:
-            raise ValueError(f"Unsupported data type {type(data)}")
+    def get_data(self, instrument: Instrument, sub_type: str) -> List[Any]:
+        return list(self._instr_to_sub_to_buffer[instrument][sub_type])
+
+    def update(self, instrument: Instrument, sub_type: str, data: Any, update_ohlc: bool = False) -> None:
+        # - store data in buffer if it's not OHLC
+        if sub_type != SubscriptionType.OHLC:
+            self._instr_to_sub_to_buffer[instrument][sub_type].append(data)
+
+        match sub_type:
+            case SubscriptionType.OHLC:
+                self.update_by_bar(instrument, data)
+            case SubscriptionType.QUOTE:
+                self.update_by_quote(instrument, data, update_ohlc)
+            case SubscriptionType.TRADE:
+                self.update_by_trade(instrument, data, update_ohlc)
+            case SubscriptionType.ORDERBOOK:
+                self.update_by_orderbook(instrument, data, update_ohlc)
+            case _:
+                pass
 
     @SW.watch("CachedMarketDataHolder")
     def update_by_bars(self, instrument: Instrument, timeframe: str, bars: List[Bar]) -> OHLCV:
