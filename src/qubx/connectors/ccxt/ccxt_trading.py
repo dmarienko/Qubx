@@ -36,7 +36,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
     sync: Exchange
 
     _fees_calculator: TransactionCostsCalculator
-    _positions: Dict[str, Position]
+    _positions: Dict[Instrument, Position]
 
     def __init__(
         self,
@@ -141,15 +141,12 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
         return position
 
-    def get_position(self, instrument: Instrument | str) -> Position:
-        symbol = instrument.symbol if isinstance(instrument, Instrument) else instrument
-
-        if symbol not in self._positions:
-            position = Position(instrument)  # type: ignore
+    def get_position(self, instrument: Instrument) -> Position:
+        if instrument not in self._positions:
+            position = Position(instrument)
             position = self._sync_position_and_orders(position)
             self.acc.attach_positions(position)
-
-        return self._positions[symbol]
+        return self._positions[instrument]
 
     def send_order(
         self,
@@ -162,7 +159,6 @@ class CCXTTradingConnector(ITradingServiceProvider):
         time_in_force: str = "gtc",
     ) -> Order:
         params = {}
-        symbol = instrument.symbol
 
         if order_type == "limit":
             params["timeInForce"] = time_in_force.upper()
@@ -174,7 +170,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
         r: Dict[str, Any] | None = None
         try:
-            r = self.sync.create_order(symbol, order_type, order_side, amount, price, params=params)  # type: ignore
+            r = self.sync.create_order(instrument.symbol, order_type, order_side, amount, price, params=params)  # type: ignore
         except ccxt.BadRequest as exc:
             logger.error(
                 f"(CCXTSyncTradingConnector::send_order) BAD REQUEST for {order_side} {amount} {order_type} for {symbol} : {exc}"
@@ -182,7 +178,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
             raise exc
         except Exception as err:
             logger.error(
-                f"(CCXTSyncTradingConnector::send_order) {order_side} {amount} {order_type} for {symbol} exception : {err}"
+                f"(CCXTSyncTradingConnector::send_order) {order_side} {amount} {order_type} for {instrument.symbol} exception : {err}"
             )
             logger.error(traceback.format_exc())
             raise err
@@ -191,7 +187,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
             logger.error(f"(CCXTSyncTradingConnector::send_order) No response from exchange")
             raise ExchangeError("(CCXTSyncTradingConnector::send_order) No response from exchange")
 
-        order = ccxt_convert_order_info(symbol, r)
+        order = ccxt_convert_order_info(instrument, r)
         logger.info(f"(CCXTSyncTradingConnector) New order {order}")
         return order
 
@@ -235,9 +231,6 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
     def get_base_currency(self) -> str:
         return self.acc.base_currency
-
-    def _get_instrument(self, symbol: str) -> Instrument:
-        return self.get_position(symbol).instrument
 
     def _fill_missing_fee_info(self, instrument: Instrument, deals: List[Deal]) -> None:
         for d in deals:

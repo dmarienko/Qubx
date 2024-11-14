@@ -1,8 +1,8 @@
 from typing import Callable, Iterable, List, Set, Tuple, Union, Dict, Any
 
 from qubx import logger, lookup
-from qubx.core.basics import Instrument, Signal, TriggerEvent, MarketEvent
-from qubx.core.interfaces import IStrategy, IStrategyContext, SubscriptionType
+from qubx.core.basics import Instrument, Signal, TriggerEvent, MarketEvent, SubscriptionType
+from qubx.core.interfaces import IStrategy, IStrategyContext
 
 from qubx import logger, lookup
 from qubx.data import loader

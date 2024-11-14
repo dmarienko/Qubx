@@ -1,6 +1,6 @@
-from typing import Any, List
-from qubx.core.basics import Instrument
-from qubx.core.interfaces import IBrokerServiceProvider, ISubscriptionManager, SubscriptionType
+from typing import Any, List, Dict
+from qubx.core.basics import Instrument, SubscriptionType
+from qubx.core.interfaces import IBrokerServiceProvider, ISubscriptionManager
 
 
 class SubscriptionManager(ISubscriptionManager):
@@ -15,11 +15,11 @@ class SubscriptionManager(ISubscriptionManager):
         self.__is_simulation = broker.is_simulated_trading
         self.__base_subscription = SubscriptionType.OHLC if self.__is_simulation else SubscriptionType.ORDERBOOK
         self.__base_subscription_params = {
-            SubscriptionType.OHLC: {"timeframe": "1h"},
+            SubscriptionType.OHLC: {"timeframe": "1m"},
             SubscriptionType.ORDERBOOK: {},
         }[self.__base_subscription]
         self.__subscription_to_warmup = {
-            SubscriptionType.OHLC: "7d",
+            SubscriptionType.OHLC: "1h",
             SubscriptionType.ORDERBOOK: "1m",
             SubscriptionType.QUOTE: "1m",
             SubscriptionType.TRADE: "1m",
@@ -27,26 +27,34 @@ class SubscriptionManager(ISubscriptionManager):
 
     def subscribe(
         self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None, **kwargs
-    ) -> bool:
+    ) -> None:
         if subscription_type is None:
             subscription_type = self.__base_subscription
+
         __subscription_to_warmup = self.__subscription_to_warmup.copy()
+
         # - take default warmup period for current subscription if None is given
         kwargs["warmup_period"] = kwargs.get("warmup_period", __subscription_to_warmup.get(subscription_type))
+
         # - if this is the base subscription, we also need to fetch historical OHLC data for warmup
-        if subscription_type == self.__base_subscription:
+        if subscription_type == self.__base_subscription and subscription_type != SubscriptionType.OHLC:
             kwargs["ohlc_warmup_period"] = kwargs.get(
                 "ohlc_warmup_period", __subscription_to_warmup.get(subscription_type)
             )
-        instruments = [instruments] if isinstance(instruments, Instrument) else instruments
-        return self.__broker.subscribe(instruments, subscription_type, **kwargs)
+            kwargs |= self.__base_subscription_params
 
-    def unsubscribe(self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None) -> bool:
+        instruments = [instruments] if isinstance(instruments, Instrument) else instruments
+        self.__broker.subscribe(instruments, subscription_type, **kwargs)
+
+    def unsubscribe(self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None) -> None:
         instruments = instruments if isinstance(instruments, list) else [instruments]
-        return self.__broker.unsubscribe(instruments, subscription_type)
+        self.__broker.unsubscribe(instruments, subscription_type)
 
     def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
         return self.__broker.has_subscription(instrument, subscription_type)
+
+    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+        return self.__broker.get_subscriptions(instrument)
 
     def get_base_subscription(self) -> tuple[SubscriptionType, dict]:
         """

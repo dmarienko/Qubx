@@ -17,7 +17,7 @@ _SW = Stopwatch()
 
 
 class DataLoader:
-    _TYPE_MAPPERS = {"agg_trade": "trade", "ohlc": "bar", "ohlcv": "bar"}
+    _TYPE_MAPPERS = {"agg_trade": "trade", "bar": "ohlc", "ohlcv": "ohlc"}
 
     def __init__(
         self,

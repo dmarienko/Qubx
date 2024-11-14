@@ -5,9 +5,11 @@ import pandas as pd
 from dataclasses import dataclass, field
 
 from threading import Event, Lock
-from queue import Queue
+from queue import Queue, Empty
+from enum import StrEnum
 
 from qubx import logger
+from qubx.core.exceptions import QueueTimeout
 from qubx.utils.misc import Stopwatch
 from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.core.utils import prec_ceil, prec_floor
@@ -313,6 +315,9 @@ class MarketEvent:
     data: Any
     is_trigger: bool = False
 
+    def __repr__(self):
+        return f"MarketEvent(time={self.time}, type={self.type}, instrument={self.instrument}, data={self.data})"
+
 
 @dataclass
 class Deal:
@@ -580,8 +585,11 @@ class CtrlChannel:
         if self.control.is_set():
             self._queue.put(data)
 
-    def receive(self) -> Any:
-        return self._queue.get()
+    def receive(self, timeout: int | None = None) -> Any:
+        try:
+            return self._queue.get(timeout=timeout)
+        except Empty:
+            raise QueueTimeout(f"Timeout waiting for data on {self.name} channel")
 
 
 class SimulatedCtrlChannel(CtrlChannel):
@@ -598,7 +606,7 @@ class SimulatedCtrlChannel(CtrlChannel):
         # - when data is sent, invoke callback
         return self._callback.process_data(*data)
 
-    def receive(self) -> Any:
+    def receive(self, timeout: int | None = None) -> Any:
         raise ValueError("This method should not be called in a simulated environment.")
 
     def stop(self):
@@ -628,6 +636,23 @@ class ITimeProvider:
         Returns current time
         """
         ...
+
+
+class SubscriptionType(StrEnum):
+    """Subscription type constants."""
+
+    QUOTE = "quote"
+    TRADE = "trade"
+    OHLC = "ohlc"
+    ORDERBOOK = "orderbook"
+    LIQUIDATION = "liquidation"
+    FUNDING_RATE = "funding_rate"
+
+    def __repr__(self) -> str:
+        return self.value
+
+    def __str__(self) -> str:
+        return self.value
 
 
 class TradingSessionResult:

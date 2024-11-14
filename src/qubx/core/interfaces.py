@@ -30,9 +30,9 @@ from qubx.core.basics import (
     ITimeProvider,
     IComminucationManager,
     SW,
+    SubscriptionType,
 )
 from qubx.core.series import OrderBook, Trade, Quote, Bar, OHLCV
-from enum import StrEnum
 
 
 class ITradingServiceProvider(ITimeProvider, IComminucationManager):
@@ -213,7 +213,7 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
         warmup_period: str | None = None,
         ohlc_warmup_period: str | None = None,
         **kwargs,
-    ) -> bool:
+    ) -> None:
         """
         Subscribe to market data for a list of instruments.
 
@@ -223,22 +223,16 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
             warmup_period: Warmup period for the subscription
             ohlc_warmup_period: Warmup period for OHLC data
             **kwargs: Additional subscription parameters
-
-        Returns:
-            bool: True if subscription was successful
         """
         ...
 
-    def unsubscribe(self, instruments: List[Instrument], subscription_type: str | None) -> bool:
+    def unsubscribe(self, instruments: List[Instrument], subscription_type: str | None) -> None:
         """
         Unsubscribe from market data for a list of instruments.
 
         Args:
             instruments: List of instruments to unsubscribe from
             subscription_type: Type of subscription to unsubscribe from (optional)
-
-        Returns:
-            bool: True if unsubscribe was successful
         """
         ...
 
@@ -252,6 +246,18 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
 
         Returns:
             bool: True if instrument has the subscription
+        """
+        ...
+
+    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all subscriptions for an instrument.
+
+        Args:
+            instrument: Instrument to get subscriptions for
+
+        Returns:
+            dict[str, dict]: Dictionary of subscriptions (type -> parameters)
         """
         ...
 
@@ -277,24 +283,16 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
     def is_simulated_trading(self) -> bool: ...
 
 
-class SubscriptionType(StrEnum):
-    """Subscription type constants."""
-
-    QUOTE = "quote"
-    TRADE = "trade"
-    OHLC = "ohlc"
-    ORDERBOOK = "orderbook"
-
-
 class IMarketDataProvider(ITimeProvider):
     """Interface for market data providing class"""
 
-    def ohlc(self, instrument: Instrument, timeframe: str) -> OHLCV:
-        """Get OHLCV data for an instrument.
+    def ohlc(self, instrument: Instrument, timeframe: str | None = None, length: int | None = None) -> OHLCV:
+        """Get OHLCV data for an instrument. If length is larger then available cached data, it will be requested from the broker.
 
         Args:
             instrument: The instrument to get data for
-            timeframe: The timeframe of the OHLCV data
+            timeframe (optional): The timeframe of the data. If None, the default timeframe is used.
+            length (optional): Number of bars to retrieve. If None, full cached data is returned.
 
         Returns:
             OHLCV: The OHLCV data series
@@ -312,16 +310,16 @@ class IMarketDataProvider(ITimeProvider):
         """
         ...
 
-    def get_historical_ohlcs(self, instrument: Instrument, timeframe: str, length: int) -> OHLCV:
-        """Get historical OHLCV data for an instrument.
+    def get_data(self, instrument: Instrument, sub_type: str) -> List[Any]:
+        """Get data for an instrument. This method is used for getting data for custom subscription types.
+        Could be used for orderbook, trades, liquidations, funding rates, etc.
 
         Args:
             instrument: The instrument to get data for
-            timeframe: The timeframe of the data
-            length: Number of bars to retrieve
+            sub_type: The subscription type of data to get
 
         Returns:
-            OHLCV: Historical OHLCV data series
+            List[Any]: The data
         """
         ...
 
@@ -403,7 +401,7 @@ class ITradingManager:
 class IUniverseManager:
     """Manages universe updates."""
 
-    def set_universe(self, instruments: list[Instrument]):
+    def set_universe(self, instruments: list[Instrument], skip_callback: bool = False):
         """Set the trading universe.
 
         Args:
@@ -424,28 +422,22 @@ class ISubscriptionManager:
 
     def subscribe(
         self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None, **kwargs
-    ) -> bool:
+    ) -> None:
         """Subscribe to market data for an instrument.
 
         Args:
             instruments: A list of instrument of instrument to subscribe to
             subscription_type: Type of subscription. If None, the base subscription type is used.
             **kwargs: Additional subscription parameters
-
-        Returns:
-            bool: True if subscription successful
         """
         ...
 
-    def unsubscribe(self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None) -> bool:
+    def unsubscribe(self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None) -> None:
         """Unsubscribe from market data for an instrument.
 
         Args:
             instruments: A list of instrument of instrument to unsubscribe from
             subscription_type: Type of subscription to unsubscribe from (optional)
-
-        Returns:
-            bool: True if unsubscribe successful
         """
         ...
 
@@ -476,6 +468,18 @@ class ISubscriptionManager:
         Args:
             subscription_type: Type of subscription
             **kwargs: Additional subscription parameters (e.g. timeframe for OHLCV)
+        """
+        ...
+
+    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all subscriptions for an instrument.
+
+        Args:
+            instrument: Instrument to get subscriptions for
+
+        Returns:
+            dict[str, dict]: Dictionary of subscriptions (type -> parameters)
         """
         ...
 

@@ -1,6 +1,6 @@
 import traceback
 
-from typing import Any, Callable, List
+from typing import Any, Callable, List, Dict
 from threading import Thread
 
 from qubx import logger
@@ -57,7 +57,7 @@ class StrategyContext(IStrategyContext):
         instruments: list[Instrument],
         logging: StrategyLogging,
         config: dict[str, Any] | None = None,
-        position_gathering: IPositionGathering | None = None,
+        position_gathering: IPositionGathering | None = None,  # TODO: make position gathering part of the strategy
         aux_data_provider: DataReader | None = None,
     ) -> None:
         self.account = account
@@ -106,6 +106,7 @@ class StrategyContext(IStrategyContext):
         self.__processing_manager = ProcessingManager(
             context=self,
             strategy=self.strategy,
+            broker=self.__broker,
             logging=self.__logging,
             market_data=self,
             subscription_manager=self,
@@ -139,6 +140,9 @@ class StrategyContext(IStrategyContext):
         databus = self.__broker.get_communication_channel()
         databus.register(self)
 
+        # - update universe with initial instruments after the strategy is initialized
+        self.set_universe(self.__initial_instruments, skip_callback=True)
+
         # - initialize strategy (should we do that after any first market data received ?)
         if not self.__is_initialized:
             try:
@@ -151,9 +155,6 @@ class StrategyContext(IStrategyContext):
                 logger.error(traceback.format_exc())
                 return
 
-        # - update universe with initial instruments after the strategy is initialized
-        self.set_universe(self.__initial_instruments)
-
         # - for live we run loop
         if not self.__broker.is_simulated_trading:
             self.__thread_data_loop = Thread(target=self.__process_incoming_data_loop, args=(databus,), daemon=True)
@@ -164,6 +165,7 @@ class StrategyContext(IStrategyContext):
 
     def stop(self):
         if self.__thread_data_loop:
+            self.__broker.close()
             self.__broker.get_communication_channel().stop()
             self.__thread_data_loop.join()
             try:
@@ -197,14 +199,14 @@ class StrategyContext(IStrategyContext):
         return self.account.get_reserved(instrument)
 
     # IMarketDataProvider delegation
-    def ohlc(self, instrument: Instrument, timeframe: str):
-        return self.__market_data_provider.ohlc(instrument, timeframe)
+    def ohlc(self, instrument: Instrument, timeframe: str | None = None, length: int | None = None):
+        return self.__market_data_provider.ohlc(instrument, timeframe, length)
 
     def quote(self, instrument: Instrument):
         return self.__market_data_provider.quote(instrument)
 
-    def get_historical_ohlcs(self, instrument: Instrument, timeframe: str, length: int):
-        return self.__market_data_provider.get_historical_ohlcs(instrument, timeframe, length)
+    def get_data(self, instrument: Instrument, sub_type: str) -> List[Any]:
+        return self.__market_data_provider.get_data(instrument, sub_type)
 
     def get_aux_data(self, data_id: str, **parameters):
         return self.__market_data_provider.get_aux_data(data_id, **parameters)
@@ -226,8 +228,8 @@ class StrategyContext(IStrategyContext):
         return self.__trading_manager.cancel_order(order_id)
 
     # IUniverseManager delegation
-    def set_universe(self, instruments: list[Instrument]):
-        return self.__universe_manager.set_universe(instruments)
+    def set_universe(self, instruments: list[Instrument], skip_callback: bool = False):
+        return self.__universe_manager.set_universe(instruments, skip_callback)
 
     @property
     def instruments(self):
@@ -243,6 +245,9 @@ class StrategyContext(IStrategyContext):
     def has_subscription(self, instrument: Instrument, subscription_type: str):
         return self.__subscription_manager.has_subscription(instrument, subscription_type)
 
+    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+        return self.__subscription_manager.get_subscriptions(instrument)
+
     def get_base_subscription(self):
         return self.__subscription_manager.get_base_subscription()
 
@@ -256,8 +261,8 @@ class StrategyContext(IStrategyContext):
         return self.__subscription_manager.set_warmup(subscription_type, period)
 
     # IProcessingManager delegation
-    def process_data(self, symbol: str, d_type: str, data: Any):
-        return self.__processing_manager.process_data(symbol, d_type, data)
+    def process_data(self, instrument: Instrument, d_type: str, data: Any):
+        return self.__processing_manager.process_data(instrument, d_type, data)
 
     def set_fit_schedule(self, schedule: str):
         return self.__processing_manager.set_fit_schedule(schedule)

@@ -23,6 +23,7 @@ from qubx.core.basics import (
     TradingSessionResult,
     TransactionCostsCalculator,
     dt_64,
+    SubscriptionType,
 )
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
 from qubx.core.interfaces import (
@@ -32,7 +33,6 @@ from qubx.core.interfaces import (
     PositionsTracker,
     IStrategyContext,
     TriggerEvent,
-    SubscriptionType,
 )
 
 from qubx.core.context import StrategyContext
@@ -491,6 +491,11 @@ class SimulatedExchange(IBrokerServiceProvider):
 
     def has_subscription(self, subscription_type: str, instrument: Instrument) -> bool:
         return instrument in self._loaders and subscription_type in self._loaders[instrument]
+
+    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+        # TODO: implement
+        # return {k: v.params for k, v in self._loaders[instrument].items()}
+        return {}
 
     def _try_add_process_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
         if self._pregenerated_signals:
