@@ -121,7 +121,7 @@ class ProcessingManager(IProcessingManager):
             elif handler:
                 event = handler(self, instrument, d_type, data)
             else:
-                event = self._process_event(instrument, d_type, data)
+                event = self._process_custom_event(instrument, d_type, data)
 
         # - check if it still didn't call on_fit() for first time
         if not self.__init_fit_was_called:
@@ -308,7 +308,7 @@ class ProcessingManager(IProcessingManager):
     ###########################################################################
 
     # it's important that we call it with _process to not include in the handlers map
-    def _process_event(self, instrument: Instrument, event_type: str, event_data: Any) -> MarketEvent | None:
+    def _process_custom_event(self, instrument: Instrument, event_type: str, event_data: Any) -> MarketEvent | None:
         if event_type.startswith("hist_"):
             return self._process_hist_event(instrument, event_type, event_data)
         self.__update_base_data(instrument, event_type, event_data)
@@ -321,6 +321,9 @@ class ProcessingManager(IProcessingManager):
                 self.__update_base_data(instrument, event_type, data, is_historical=True)
         else:
             self.__update_base_data(instrument, event_type, event_data, is_historical=True)
+
+    def _handle_event(self, instrument: Instrument, event_type: str, event_data: Any) -> TriggerEvent:
+        return TriggerEvent(self.__time_provider.time(), event_type, instrument, event_data)
 
     def _handle_service_time(self, instrument: str, event_type: str, data: dt_64) -> TriggerEvent | None:
         """It is used by simulation as a dummy to trigger actual time events."""
