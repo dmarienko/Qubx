@@ -11,7 +11,7 @@ from qubx import lookup, logger, QubxLogConfig
 from qubx.core.account import AccountProcessor
 from qubx.core.helpers import BasicScheduler
 from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
-from qubx.core.series import Quote
+from qubx.core.series import Quote, time_as_nsec
 from qubx.core.basics import (
     ITimeProvider,
     Instrument,
@@ -603,17 +603,32 @@ class SimulatedExchange(IBrokerServiceProvider):
 
     def get_historical_ohlcs(self, instrument: Instrument, timeframe: str, nbarsback: int) -> list[Bar]:
         start = pd.Timestamp(self.time())
-        end = start - nbarsback * pd.Timedelta(timeframe)
+        end = start - nbarsback * (_timeframe := pd.Timedelta(timeframe))
         _spec = f"{instrument.exchange}:{instrument.symbol}"
-        records = self._reader.read(
-            data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()  # type: ignore
+
+        return self._convert_records_to_bars(
+            self._reader.read(data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()),  # type: ignore
+            time_as_nsec(self.time()),
+            _timeframe.asm8.item(),
         )
-        if not records:
-            return []
-        return [
-            Bar(np.datetime64(r["timestamp_ns"], "ns").item(), r["open"], r["high"], r["low"], r["close"], r["volume"])
-            for r in records
-        ]
+
+    def _convert_records_to_bars(self, records: List[Dict[str, Any]], cut_time_ns: int, timeframe_ns: int) -> List[Bar]:
+        """
+        Convert records to bars and we need to cut last bar up to the cut_time_ns
+        """
+        bars = []
+        if records is not None:
+            for r in records:
+                bar_timestamp = np.datetime64(r["timestamp_ns"], "ns").item()
+                o, h, l, c, v = r["open"], r["high"], r["low"], r["close"], r["volume"]
+
+                if bar_timestamp <= cut_time_ns and cut_time_ns < bar_timestamp + timeframe_ns:
+                    # bars.append(Bar(bar_timestamp, o, o, o, o, 0))
+                    break
+
+                bars.append(Bar(bar_timestamp, o, h, l, c, v))
+
+        return bars
 
     def set_generated_signals(self, signals: pd.Series | pd.DataFrame):
         logger.debug(f"Using pre-generated signals:\n {str(signals.count()).strip('ndtype: int64')}")

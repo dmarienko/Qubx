@@ -1,5 +1,7 @@
 from typing import Callable, Iterable, List, Set, Tuple, Union, Dict, Any
 
+import pandas as pd
+
 from qubx import logger, lookup
 from qubx.core.basics import Instrument, Signal, TriggerEvent, MarketEvent, SubscriptionType
 from qubx.core.interfaces import IStrategy, IStrategyContext
@@ -89,6 +91,32 @@ class Issue3(IStrategy):
         return []
 
 
+class Issue4(IStrategy):
+    _err_time: int = 0
+    _err_bars: int = 0
+
+    def on_init(self, ctx: IStrategyContext) -> None:
+        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1d")
+        ctx.set_event_schedule("0 0 * * *")  # Run at 00:00 every day
+
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
+        # logger.info(f"On Event: {ctx.time()}")
+
+        data = ctx.ohlc(ctx.instruments[0], "1d", 10)
+        # logger.info(f"On Event: {len(data)} -> {data[0].open} ~ {data[0].close}")
+        print(f"On Event: {ctx.time()}\n{str(data)}")
+
+        # - at 00:00 bar[0] must be previous day's bar !
+        if data[0].time >= ctx.time().item() - pd.Timedelta("1d").asm8:
+            self._err_time += 1
+
+        # - check bar's consitency
+        if data[0].open == data[0].close and data[0].open == data[0].low and data[0].open == data[0].low:
+            self._err_bars += 1
+
+        return []
+
+
 class TestSimulator:
     def test_fit_event_quotes(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
@@ -150,3 +178,23 @@ class TestSimulator:
         )
 
         assert stg._triggers_called * 4 == stg._market_called, "Got Errors during the simulation"
+
+    def test_ohlc_data(self):
+        ld = loader("BINANCE.UM", "1d", source="csv::tests/data/csv_1h/", n_jobs=1)
+        test4 = simulate(
+            {
+                "Issue4": (stg := Issue4()),
+            },
+            ld,
+            aux_data=ld,
+            capital=100_000,
+            instruments=["BINANCE.UM:BTCUSDT"],
+            commissions="vip0_usdt",
+            start="2023-07-01",
+            stop="2023-07-10",
+            debug="DEBUG",
+            silent=True,
+            n_jobs=1,
+        )
+        assert stg._err_time == 0, "Got wrong OHLC bars time"
+        assert stg._err_bars == 0, "OHLC bars were not consistent"
