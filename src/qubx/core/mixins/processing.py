@@ -325,6 +325,9 @@ class ProcessingManager(IProcessingManager):
     def _handle_event(self, instrument: Instrument, event_type: str, event_data: Any) -> TriggerEvent:
         return TriggerEvent(self.__time_provider.time(), event_type, instrument, event_data)
 
+    def _handle_time(self, instrument: Instrument, event_type: str, data: dt_64) -> TriggerEvent:
+        return TriggerEvent(self.__time_provider.time(), event_type, instrument, data)
+
     def _handle_service_time(self, instrument: str, event_type: str, data: dt_64) -> TriggerEvent | None:
         """It is used by simulation as a dummy to trigger actual time events."""
         pass
