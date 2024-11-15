@@ -186,11 +186,11 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         _sub_to_params = self._get_updated_sub_to_params()
         _has_something_changed = False
         for sub, params in _sub_to_params.items():
-            _current_instruments = self._subscriptions[sub]
+            _current_sub_instruments = self._subscriptions[sub]
             _removed_instruments = self._get_pending_unsub_instr(sub)
             _added_instruments = self._get_pending_sub_instr(sub)
-            _updated_instruments = _current_instruments.union(_added_instruments).difference(_removed_instruments)
-            if _updated_instruments != _current_instruments:
+            _updated_instruments = _current_sub_instruments.union(_added_instruments).difference(_removed_instruments)
+            if _updated_instruments != _current_sub_instruments:
                 _has_something_changed = True
                 self._subscribe(_updated_instruments, sub, **params)
 
@@ -363,69 +363,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             *[self._fetch_and_send_ohlc(channel, instr, timeframe, warmup_period) for instr in instruments]
         )
 
-    async def _listen_to_stream(
-        self,
-        subscriber: Callable[[], Awaitable[None]],
-        exchange: Exchange,
-        channel: CtrlChannel,
-        name: str,
-        unsubscriber: Callable[[], Awaitable[None]] | None = None,
-    ):
-        logger.debug(f"Listening to {name}")
-        self._is_sub_name_enabled[name] = True
-        n_retry = 0
-        while channel.control.is_set():
-            try:
-                await subscriber()
-                n_retry = 0
-                if not self._is_sub_name_enabled[name]:
-                    if unsubscriber is not None:
-                        await unsubscriber()
-                    break
-            except CancelledError:
-                if unsubscriber is not None:
-                    try:
-                        # - unsubscribe from stream, but ignore if there is an error
-                        # because we anyway close the connection
-                        await unsubscriber()
-                    except:
-                        pass
-                break
-            except ExchangeClosedByUser:
-                # - we closed connection so just stop it
-                logger.info(f"{name} listening has been stopped")
-                break
-            except (NetworkError, ExchangeError, ExchangeNotAvailable) as e:
-                logger.error(f"Error in {name} : {e}")
-                await asyncio.sleep(1)
-                continue
-            except Exception as e:
-                logger.error(f"exception in {name} : {e}")
-                logger.exception(e)
-                n_retry += 1
-                if n_retry >= self.max_ws_retries:
-                    logger.error(f"Max retries reached for {name}. Closing connection.")
-                    del exchange
-                    break
-                await asyncio.sleep(min(2**n_retry, 60))  # Exponential backoff with a cap at 60 seconds
-
-    async def _fetch_and_send_ohlc(
-        self, channel: CtrlChannel, instrument: Instrument, timeframe: str, warmup_period: str
-    ) -> None:
-        nbarsback = pd.Timedelta(warmup_period) // pd.Timedelta(timeframe)
-        exch_timeframe = self._get_exch_timeframe(timeframe)
-        start = self._time_msec_nbars_back(timeframe, nbarsback)
-        ohlcv = await self._exchange.fetch_ohlcv(instrument.symbol, exch_timeframe, since=start, limit=nbarsback + 1)
-        # - just send data as the list
-        channel.send(
-            (
-                instrument,
-                self._get_hist_type(SubscriptionType.OHLC),
-                [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in ohlcv],
-            )
-        )
-        logger.info(f"{instrument}: loaded {len(ohlcv)} {timeframe} bars")
-
     def _get_exch_timeframe(self, timeframe: str) -> str:
         if timeframe is not None:
             _t = re.match(r"(\d+)(\w+)", timeframe)
@@ -491,8 +428,9 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                 # so just cancel
                 future.result(0.1)
             except TimeoutError:
-                if future.running():
-                    future.cancel()
+                future.cancel()
+            finally:
+                del self._sub_to_coro[_name]
 
     def _get_latest_instruments(self, sub_type: str, warmup_period: str) -> Set[Instrument]:
         """
@@ -504,6 +442,69 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             for (_sub_type, instr), _time in self._sub_instr_to_time.items()
             if _sub_type == sub_type and _time > _oldest_allowed_time
         }
+
+    async def _listen_to_stream(
+        self,
+        subscriber: Callable[[], Awaitable[None]],
+        exchange: Exchange,
+        channel: CtrlChannel,
+        name: str,
+        unsubscriber: Callable[[], Awaitable[None]] | None = None,
+    ):
+        logger.debug(f"Listening to {name}")
+        self._is_sub_name_enabled[name] = True
+        n_retry = 0
+        while channel.control.is_set():
+            try:
+                await subscriber()
+                n_retry = 0
+                if not self._is_sub_name_enabled[name]:
+                    if unsubscriber is not None:
+                        await unsubscriber()
+                    break
+            except CancelledError:
+                if unsubscriber is not None:
+                    try:
+                        # - unsubscribe from stream, but ignore if there is an error
+                        # because we anyway close the connection
+                        await unsubscriber()
+                    except:
+                        pass
+                break
+            except ExchangeClosedByUser:
+                # - we closed connection so just stop it
+                logger.info(f"{name} listening has been stopped")
+                break
+            except (NetworkError, ExchangeError, ExchangeNotAvailable) as e:
+                logger.error(f"Error in {name} : {e}")
+                await asyncio.sleep(1)
+                continue
+            except Exception as e:
+                logger.error(f"exception in {name} : {e}")
+                logger.exception(e)
+                n_retry += 1
+                if n_retry >= self.max_ws_retries:
+                    logger.error(f"Max retries reached for {name}. Closing connection.")
+                    del exchange
+                    break
+                await asyncio.sleep(min(2**n_retry, 60))  # Exponential backoff with a cap at 60 seconds
+
+    async def _fetch_and_send_ohlc(
+        self, channel: CtrlChannel, instrument: Instrument, timeframe: str, warmup_period: str
+    ) -> None:
+        nbarsback = pd.Timedelta(warmup_period) // pd.Timedelta(timeframe)
+        exch_timeframe = self._get_exch_timeframe(timeframe)
+        start = self._time_msec_nbars_back(timeframe, nbarsback)
+        ohlcv = await self._exchange.fetch_ohlcv(instrument.symbol, exch_timeframe, since=start, limit=nbarsback + 1)
+        # - just send data as the list
+        channel.send(
+            (
+                instrument,
+                self._get_hist_type(SubscriptionType.OHLC),
+                [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in ohlcv],
+            )
+        )
+        logger.info(f"{instrument}: loaded {len(ohlcv)} {timeframe} bars")
 
     #############################
     # - Subscription methods
