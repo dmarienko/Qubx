@@ -96,6 +96,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         read_only: bool = False,
         loop: AbstractEventLoop | None = None,
         max_ws_retries: int = 10,
+        use_testnet: bool = False,
         **exchange_auth,
     ):
         super().__init__(exchange_id, trading_service)
@@ -122,6 +123,9 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
         # - create exchange's instance
         self._exchange = getattr(cxp, exch)(exchange_auth | {"asyncio_loop": self._loop})
+        if use_testnet:
+            self._exchange.set_sandbox_mode(True)
+
         self._last_quotes = defaultdict(lambda: None)
         self._subscriptions = defaultdict(set)
         self._subscription_to_params = defaultdict(dict)

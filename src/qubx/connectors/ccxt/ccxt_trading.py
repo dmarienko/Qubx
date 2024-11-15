@@ -43,6 +43,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
         exchange_id: str,
         account_id: str,
         commissions: str | None = None,
+        use_testnet: bool = False,
         **exchange_auth,
     ):
         exchange_id = exchange_id.lower()
@@ -56,6 +57,8 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
         # - sync exchange
         self.sync: Exchange = getattr(ccxt, exch.lower())(exchange_auth)
+        if use_testnet:
+            self.sync.set_sandbox_mode(True)
 
         logger.info(f"{exch.upper()} loading ...")
         self.sync.load_markets()

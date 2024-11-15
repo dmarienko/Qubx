@@ -8,7 +8,11 @@ help:
 
 
 test:
-	poetry run pytest
+	poetry run pytest -m "not integration"
+
+
+test-integration:
+	poetry run pytest -m integration --env=.env.integration
 
 
 build:

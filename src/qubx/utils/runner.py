@@ -95,6 +95,7 @@ def run_ccxt_trading(
     base_currency: str = "USDT",
     capital: float = 100_000,
     commissions: str | None = None,
+    use_testnet: bool = False,
 ) -> IStrategyContext:
     # TODO: setup proper loggers to write out to files
     instruments = [lookup.find_symbol(exchange.upper(), s.upper()) for s in symbols]
@@ -102,14 +103,16 @@ def run_ccxt_trading(
 
     logs_writer = InMemoryLogsWriter("test", "test", "0")
 
-    trading_service = CCXTTradingConnector(exchange, account_id, commissions, **credentials)
+    trading_service = CCXTTradingConnector(exchange, account_id, commissions, use_testnet=use_testnet, **credentials)
 
     account = AccountProcessor(
         account_id=trading_service.get_account_id(),
         base_currency=base_currency,
         initial_capital=capital,
     )
-    broker = CCXTExchangesConnector(exchange, trading_service, loop=asyncio.new_event_loop(), **credentials)
+    broker = CCXTExchangesConnector(
+        exchange, trading_service, loop=asyncio.new_event_loop(), use_testnet=use_testnet, **credentials
+    )
 
     ctx = StrategyContext(
         strategy=strategy,
