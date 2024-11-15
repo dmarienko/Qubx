@@ -9,6 +9,7 @@ from qubx.core.interfaces import IStrategy, IStrategyContext
 from qubx import logger, lookup
 from qubx.data import loader
 from qubx.backtester.simulator import simulate
+from qubx.core.series import Quote
 
 
 class Issue1(IStrategy):
@@ -76,18 +77,67 @@ class Issue3(IStrategy):
     _fits_called = 0
     _triggers_called = 0
     _market_called = 0
+    _last_trigger_event: TriggerEvent | None = None
+    _last_market_event: MarketEvent | None = None
+    _market_events: list[MarketEvent]
 
     def on_init(self, ctx: IStrategyContext) -> None:
         ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1h")
         self._fits_called = 0
         self._triggers_called = 0
+        self._market_events = []
+
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent):
+        self._triggers_called += 1
+        self._last_trigger_event = event
+
+    def on_market_data(self, ctx: IStrategyContext, event: MarketEvent):
+        self._market_called += 1
+        self._last_market_event = event
+        self._market_events.append(event)
+
+
+class Issue4(IStrategy):
+    _issues = 0
+
+    def on_init(self, ctx: IStrategyContext) -> None:
+        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1h")
+
+    def on_market_data(self, ctx: IStrategyContext, event: MarketEvent):
+        try:
+            if event.type != SubscriptionType.QUOTE:
+                return
+            quote = event.data
+            assert isinstance(quote, Quote)
+            _ohlc = ctx.ohlc(event.instrument)
+            assert _ohlc[0].close == quote.mid_price(), f"OHLC: {_ohlc[0].close} != Quote: {quote.mid_price()}"
+        except:
+            self._issues += 1
+
+
+class Issue5(IStrategy):
+    _err_time: int = 0
+    _err_bars: int = 0
+
+    def on_init(self, ctx: IStrategyContext) -> None:
+        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1d")
+        ctx.set_event_schedule("0 0 * * *")  # Run at 00:00 every day
 
     def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
-        self._triggers_called += 1
-        return []
+        # logger.info(f"On Event: {ctx.time()}")
 
-    def on_market_data(self, ctx: IStrategyContext, data: MarketEvent) -> List[Signal]:
-        self._market_called += 1
+        data = ctx.ohlc(ctx.instruments[0], "1d", 10)
+        # logger.info(f"On Event: {len(data)} -> {data[0].open} ~ {data[0].close}")
+        print(f"On Event: {ctx.time()}\n{str(data)}")
+
+        # - at 00:00 bar[0] must be previous day's bar !
+        if data[0].time >= ctx.time().item() - pd.Timedelta("1d").asm8:
+            self._err_time += 1
+
+        # - check bar's consitency
+        if data[0].open == data[0].close and data[0].open == data[0].low and data[0].open == data[0].low:
+            self._err_bars += 1
+
         return []
 
 
