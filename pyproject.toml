@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Qubx"
-version = "0.4.0"
+version = "0.4.1"
 description = "Qubx - quantitative trading framework"
 authors = ["Dmitry Marienko <dmitry@gmail.com>", "Yuriy Arabskyy <yuriy.arabskyy@gmail.com>"]
 readme = "README.md"
@@ -68,3 +68,6 @@ pytest-mock = "*"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+filterwarnings = [
+    "ignore:.*Jupyter is migrating.*:DeprecationWarning",
+]

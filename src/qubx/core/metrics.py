@@ -537,7 +537,7 @@ def var_cov_var(P_usd, mu, sigma, c=0.95):
     :param sigma: standard deviation of returns
     :return: value at risk
     """
-    alpha = norm.ppf(1 - c, mu, sigma)
+    alpha = norm.ppf(1 - c, mu, sigma) if sigma != 0.0 else 0
     return P_usd - P_usd * (alpha + 1)
 
 

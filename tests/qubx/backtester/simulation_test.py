@@ -118,6 +118,7 @@ class Issue4(IStrategy):
 class Issue5(IStrategy):
     _err_time: int = 0
     _err_bars: int = 0
+    _out = None
 
     def on_init(self, ctx: IStrategyContext) -> None:
         ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1d")
@@ -138,6 +139,7 @@ class Issue5(IStrategy):
         if data[0].open == data[0].close and data[0].open == data[0].low and data[0].open == data[0].low:
             self._err_bars += 1
 
+        self._out = data
         return []
 
 
@@ -201,13 +203,35 @@ class TestSimulator:
             n_jobs=1,
         )
 
-        assert stg._triggers_called * 4 == stg._market_called, "Got Errors during the simulation"
+        # +1 because first event is used for on_fit and skipped for on_market_data
+        assert stg._triggers_called * 4 == stg._market_called + 1, "Got Errors during the simulation"
+
+    def test_ohlc_quote_update(self):
+        ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
+
+        test0 = simulate(
+            {
+                "fail4": (stg := Issue4()),
+            },
+            ld,
+            aux_data=ld,
+            capital=100_000,
+            instruments=["BINANCE.UM:BTCUSDT"],
+            commissions="vip0_usdt",
+            start="2023-06-01",
+            stop="2023-06-10",
+            debug="DEBUG",
+            n_jobs=1,
+        )
+
+        assert stg._issues == 0, "Got Errors during the simulation"
 
     def test_ohlc_data(self):
-        ld = loader("BINANCE.UM", "1d", source="csv::tests/data/csv_1h/", n_jobs=1)
+        ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
+
         test4 = simulate(
             {
-                "Issue4": (stg := Issue4()),
+                "Issue5": (stg := Issue5()),
             },
             ld,
             aux_data=ld,
@@ -222,3 +246,8 @@ class TestSimulator:
         )
         assert stg._err_time == 0, "Got wrong OHLC bars time"
         assert stg._err_bars == 0, "OHLC bars were not consistent"
+
+        r = ld[["BTCUSDT"], "2023-06-22":"2023-07-10"]("1d")["BTCUSDT"]
+        assert all(
+            stg._out.pd()[["open", "high", "low", "close"]] == r[["open", "high", "low", "close"]]
+        ), "Out OHLC differ"
