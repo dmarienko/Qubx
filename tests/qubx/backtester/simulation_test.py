@@ -141,32 +141,6 @@ class Issue5(IStrategy):
         return []
 
 
-class Issue4(IStrategy):
-    _err_time: int = 0
-    _err_bars: int = 0
-
-    def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1d")
-        ctx.set_event_schedule("0 0 * * *")  # Run at 00:00 every day
-
-    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
-        # logger.info(f"On Event: {ctx.time()}")
-
-        data = ctx.ohlc(ctx.instruments[0], "1d", 10)
-        # logger.info(f"On Event: {len(data)} -> {data[0].open} ~ {data[0].close}")
-        print(f"On Event: {ctx.time()}\n{str(data)}")
-
-        # - at 00:00 bar[0] must be previous day's bar !
-        if data[0].time >= ctx.time().item() - pd.Timedelta("1d").asm8:
-            self._err_time += 1
-
-        # - check bar's consitency
-        if data[0].open == data[0].close and data[0].open == data[0].low and data[0].open == data[0].low:
-            self._err_bars += 1
-
-        return []
-
-
 class TestSimulator:
     def test_fit_event_quotes(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
