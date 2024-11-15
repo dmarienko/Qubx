@@ -7,6 +7,7 @@ from qubx.core.interfaces import IStrategy, IStrategyContext
 from qubx import logger, lookup
 from qubx.data import loader
 from qubx.backtester.simulator import simulate
+from qubx.core.series import Quote
 
 
 class Issue1(IStrategy):
@@ -74,19 +75,42 @@ class Issue3(IStrategy):
     _fits_called = 0
     _triggers_called = 0
     _market_called = 0
+    _last_trigger_event: TriggerEvent | None = None
+    _last_market_event: MarketEvent | None = None
+    _market_events: list[MarketEvent]
 
     def on_init(self, ctx: IStrategyContext) -> None:
         ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1h")
         self._fits_called = 0
         self._triggers_called = 0
+        self._market_events = []
 
-    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent):
         self._triggers_called += 1
-        return []
+        self._last_trigger_event = event
 
-    def on_market_data(self, ctx: IStrategyContext, data: MarketEvent) -> List[Signal]:
+    def on_market_data(self, ctx: IStrategyContext, event: MarketEvent):
         self._market_called += 1
-        return []
+        self._last_market_event = event
+        self._market_events.append(event)
+
+
+class Issue4(IStrategy):
+    _issues = 0
+
+    def on_init(self, ctx: IStrategyContext) -> None:
+        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1h")
+
+    def on_market_data(self, ctx: IStrategyContext, event: MarketEvent):
+        try:
+            if event.type != SubscriptionType.QUOTE:
+                return
+            quote = event.data
+            assert isinstance(quote, Quote)
+            _ohlc = ctx.ohlc(event.instrument)
+            assert _ohlc[0].close == quote.mid_price(), f"OHLC: {_ohlc[0].close} != Quote: {quote.mid_price()}"
+        except:
+            self._issues += 1
 
 
 class TestSimulator:
@@ -149,4 +173,25 @@ class TestSimulator:
             n_jobs=1,
         )
 
-        assert stg._triggers_called * 4 == stg._market_called, "Got Errors during the simulation"
+        # +1 because first event is used for on_fit and skipped for on_market_data
+        assert stg._triggers_called * 4 == stg._market_called + 1, "Got Errors during the simulation"
+
+    def test_ohlc_quote_update(self):
+        ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
+
+        test0 = simulate(
+            {
+                "fail4": (stg := Issue4()),
+            },
+            ld,
+            aux_data=ld,
+            capital=100_000,
+            instruments=["BINANCE.UM:BTCUSDT"],
+            commissions="vip0_usdt",
+            start="2023-06-01",
+            stop="2023-06-10",
+            debug="DEBUG",
+            n_jobs=1,
+        )
+
+        assert stg._issues == 0, "Got Errors during the simulation"

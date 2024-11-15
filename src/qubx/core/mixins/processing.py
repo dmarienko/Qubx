@@ -264,7 +264,15 @@ class ProcessingManager(IProcessingManager):
             bool: True if the data is base data and the strategy should be triggered, False otherwise.
         """
         is_base_data = self.__is_base_data(data)
-        self.__cache.update(instrument, event_type, data, update_ohlc=is_base_data)
+        # update cached ohlc is this is base subscription or if we are in simulation and subscribed to ohlc
+        # and receive quotes
+        _update_ohlc = is_base_data or (
+            not is_historical
+            and self.__is_simulation
+            and SubscriptionType.OHLC == self.__subscription_manager.get_base_subscription()[0]
+            and isinstance(data, Quote)
+        )
+        self.__cache.update(instrument, event_type, data, update_ohlc=_update_ohlc)
         # update trackers, gatherers on base data and on Quote (always)
         if not is_historical and is_base_data or isinstance(data, Quote):
             _data = data if not isinstance(data, OrderBook) else data.to_quote()
