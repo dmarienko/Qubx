@@ -270,6 +270,9 @@ class StrategyContext(IStrategyContext):
     def set_event_schedule(self, schedule: str):
         return self.__processing_manager.set_event_schedule(schedule)
 
+    def is_fitted(self) -> bool:
+        return self.__processing_manager.is_fitted()
+
     # private methods
     def __process_incoming_data_loop(self, channel: CtrlChannel):
         logger.info("(StrategyContext) Start processing market data")

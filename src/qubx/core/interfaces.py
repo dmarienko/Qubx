@@ -534,6 +534,12 @@ class IProcessingManager:
         Set the schedule for triggering events (default is to only trigger on data events).
         """
         ...
+    
+    def is_fitted(self) -> bool:
+        """
+        Check if the strategy is fitted.
+        """
+        ...
 
 
 class IAccountViewer:

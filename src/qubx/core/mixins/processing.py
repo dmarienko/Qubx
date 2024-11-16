@@ -184,6 +184,9 @@ class ProcessingManager(IProcessingManager):
         self.__logging.notify(self.__time_provider.time())
 
         return False
+    
+    def is_fitted(self) -> bool:
+        return self.__init_fit_was_called
 
     @SW.watch("StrategyContext.on_fit")
     def __invoke_on_fit(self) -> None:

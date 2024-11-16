@@ -21,6 +21,7 @@ from qubx.connectors.ccxt.ccxt_utils import (
     ccxt_convert_deal_info,
     ccxt_extract_deals_from_exec,
     ccxt_restore_position_from_deals,
+    ccxt_restore_positions_from_info,
 )
 from qubx.utils.ntp import time_now
 
@@ -35,7 +36,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
     sync: Exchange
 
-    _fees_calculator: TransactionCostsCalculator
+    _fees_calculator: TransactionCostsCalculator | None = None
     _positions: Dict[Instrument, Position]
 
     def __init__(
@@ -95,6 +96,16 @@ class CCXTTradingConnector(ITradingServiceProvider):
                 self._fees_calculator = lookup.fees.find(self.exchange_id.lower(), default_commissions)
             else:
                 raise ValueError("Can't get commissions level from account, but default commissions is not defined !")
+
+        # - try to sync account positions
+        try:
+            pos_infos = self.sync.fetch_positions()
+            positions = ccxt_restore_positions_from_info(pos_infos, self.exchange_id.upper())
+            for p in positions:
+                self.acc.attach_positions(p)
+        except Exception as err:
+            logger.debug(f"Exchange {self.get_name()} doesn't support positions fetching")
+            pass
 
     def _get_open_orders_from_exchange(self, instrument: Instrument, days_before: int = 60) -> Dict[str, Order]:
         """

@@ -3,7 +3,7 @@ import numpy as np
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from qubx import logger
+from qubx import logger, lookup
 from qubx.core.basics import Order, Deal, Position, Instrument
 from qubx.core.series import TimeSeries, Bar, Trade, Quote, OrderBook, time_as_nsec
 from qubx.utils.orderbook import build_orderbook_snapshots
@@ -119,6 +119,24 @@ def ccxt_convert_trade(trade: dict[str, Any]) -> Trade:
     s, info, price, amnt = trade["symbol"], trade["info"], trade["price"], trade["amount"]
     m = info["m"]
     return Trade(t_ns, price, amnt, int(not m), int(trade["id"]))
+
+
+def ccxt_restore_positions_from_info(pos_infos: dict, exchange: str) -> list[Position]:
+    positions = []
+    for info in pos_infos:
+        symbol = info["info"]["symbol"]
+        instr = lookup.find_symbol(exchange, symbol)
+        if instr is None:
+            logger.warning(f"Could not find symbol {symbol}, skipping position...")
+            continue
+        pos = Position(
+            instrument=instr,
+            quantity=info["contracts"] * (-1 if info["side"] == "short" else 1),
+            pos_average_price=info["entryPrice"],
+        )
+        pos.update_market_price(pd.Timestamp(info["timestamp"], unit="ms").asm8, info["markPrice"], 1)
+        positions.append(pos)
+    return positions
 
 
 def ccxt_convert_orderbook(

@@ -371,20 +371,12 @@ class Position:
     last_update_conversion_rate: float = np.nan  # last update conversion rate
 
     # - helpers for position processing
-    _formatter: str
-    _prc_formatter: str
     _qty_multiplier: float = 1.0
     __pos_incr_qty: float = 0
 
     def __init__(self, instrument: Instrument, quantity=0.0, pos_average_price=0.0, r_pnl=0.0) -> None:
         self.instrument = instrument
 
-        # - size/price formaters
-        #                 time         [symbol]                                                        qty
-        self._formatter = f"%s [{instrument.exchange}:{instrument.symbol}] %{instrument.size_precision+8}.{instrument.size_precision}f"
-        #                           pos_avg_px                 pnl  | mkt_price mkt_value
-        self._formatter += f"%10.{instrument.price_precision}f %+10.4f | %s  %10.2f"
-        self._prc_formatter = f"%.{instrument.price_precision}f"
         if instrument.is_futures:
             self._qty_multiplier = instrument.futures_info.contract_size  # type: ignore
 
@@ -521,6 +513,9 @@ class Position:
             pnl += self.quantity * (self.last_update_price - self.position_avg_price) / self.last_update_conversion_rate  # type: ignore
         return pnl
 
+    def is_open(self) -> bool:
+        return abs(self.quantity) > self.instrument.min_size
+
     def get_amount_released_funds_after_closing(self, to_remain: float = 0.0) -> float:
         """
         Estimate how much funds would be released if part of position closed
@@ -541,15 +536,20 @@ class Position:
         )
 
     def __str__(self):
-        _mkt_price = (self._prc_formatter % self.last_update_price) if self.last_update_price else "---"
-        return self._formatter % (
-            Position._t2s(self.last_update_time),
-            self.quantity,
-            self.position_avg_price_funds,
-            self.pnl,
-            _mkt_price,
-            self.market_value_funds,
+        return " ".join(
+            [
+                f"{self._t2s(self.last_update_time)}",
+                f"[{self.instrument}]",
+                f"qty={self.quantity}",
+                f"entryPrice={self.position_avg_price:.4f}",
+                f"price={self.last_update_price:.4f}",
+                f"pnl={self.pnl:.2f}",
+                f"value={self.market_value_funds:.2f}",
+            ]
         )
+
+    def __repr__(self):
+        return self.__str__()
 
 
 class CtrlChannel:

@@ -120,6 +120,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         # - create new even loop
         self._loop = asyncio.new_event_loop() if loop is None else loop
         asyncio.set_event_loop(self._loop)
+        self._check_event_loop_is_running()
 
         # - create exchange's instance
         self._exchange = getattr(cxp, exch)(exchange_auth | {"asyncio_loop": self._loop})
@@ -273,8 +274,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         _subscriber = self._subscribers.get(sub_type)
         if _subscriber is None:
             raise ValueError(f"Subscription type {sub_type} is not supported")
-
-        self._check_event_loop_is_running()
 
         _current_instruments = self._subscriptions[sub_type]
         _added_instruments = instruments.difference(_current_instruments)

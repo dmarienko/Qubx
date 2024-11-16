@@ -60,7 +60,7 @@ def run_ccxt_paper_trading(
         base_currency=base_currency,
         initial_capital=capital,
     )
-    broker = CCXTExchangesConnector(exchange.lower(), trading_service, read_only=True, loop=asyncio.new_event_loop())
+    broker = CCXTExchangesConnector(exchange.lower(), trading_service, read_only=True)
 
     ctx = StrategyContext(
         strategy=strategy,
@@ -110,9 +110,7 @@ def run_ccxt_trading(
         base_currency=base_currency,
         initial_capital=capital,
     )
-    broker = CCXTExchangesConnector(
-        exchange, trading_service, loop=asyncio.new_event_loop(), use_testnet=use_testnet, **credentials
-    )
+    broker = CCXTExchangesConnector(exchange, trading_service, use_testnet=use_testnet, **credentials)
 
     ctx = StrategyContext(
         strategy=strategy,
