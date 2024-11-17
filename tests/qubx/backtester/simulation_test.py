@@ -9,7 +9,7 @@ from qubx.core.interfaces import IStrategy, IStrategyContext
 from qubx import logger, lookup
 from qubx.data import loader
 from qubx.backtester.simulator import simulate
-from qubx.core.series import Quote
+from qubx.core.series import OHLCV, Quote
 
 
 class Issue1(IStrategy):
@@ -118,7 +118,7 @@ class Issue4(IStrategy):
 class Issue5(IStrategy):
     _err_time: int = 0
     _err_bars: int = 0
-    _out = None
+    _out: OHLCV | None = None
 
     def on_init(self, ctx: IStrategyContext) -> None:
         ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1d")
@@ -247,7 +247,7 @@ class TestSimulator:
         assert stg._err_time == 0, "Got wrong OHLC bars time"
         assert stg._err_bars == 0, "OHLC bars were not consistent"
 
-        r = ld[["BTCUSDT"], "2023-06-22":"2023-07-10"]("1d")["BTCUSDT"]
+        r = ld[["BTCUSDT"], "2023-06-22":"2023-07-10"]("1d")["BTCUSDT"]  # type: ignore
         assert all(
             stg._out.pd()[["open", "high", "low", "close"]] == r[["open", "high", "low", "close"]]
         ), "Out OHLC differ"

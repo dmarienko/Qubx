@@ -172,7 +172,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
                     for smb in data_symbols:
                         _ohlcs[smb].append(data.loc[pd.IndexSlice[:, smb], :].droplevel(1))
             except Exception as exc:
-                logger.error(f"> Failed to load data for {s} - {e} : {str(exc)}")
+                logger.warning(f"(InMemoryCachedReader) Failed to load data for {s} - {e} : {str(exc)}")
 
         ohlc = {smb.upper(): srows(*vs, keep="first") for smb, vs in _ohlcs.items() if len(vs) > 0}
         return ohlc
@@ -189,14 +189,16 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         if _new_symbols:
             _s_req = min(_start, self._start if self._start else _start)
             _e_req = max(_stop, self._stop if self._stop else _stop)
-            logger.debug(f"Loading all data {_s_req} - {_e_req} for { ','.join(_new_symbols)} ")
+            logger.debug(f"(InMemoryCachedReader) Loading all data {_s_req} - {_e_req} for { ','.join(_new_symbols)} ")
             _new_data = self._load_candle_data(_new_symbols, _s_req, _e_req + _dtf, self._data_timeframe)
             self._data |= _new_data
 
         # - part intervals
         if self._start and _start < self._start:
             _smbs = list(self._data.keys())
-            logger.debug(f"Updating {len(_smbs)} symbols before interval {_start} : {self._start}")
+            logger.debug(
+                f"(InMemoryCachedReader) Updating {len(_smbs)} symbols before interval {_start} : {self._start}"
+            )
             _before = self._load_candle_data(_smbs, _start, self._start + _dtf, self._data_timeframe)
             for k, c in _before.items():
                 self._data[k] = srows(c, self._data[k], keep="first")
@@ -204,7 +206,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         # - part intervals
         if self._stop and _stop > self._stop:
             _smbs = list(self._data.keys())
-            logger.debug(f"Updating {len(_smbs)} symbols after interval {self._stop} : {_stop}")
+            logger.debug(f"(InMemoryCachedReader) Updating {len(_smbs)} symbols after interval {self._stop} : {_stop}")
             _after = self._load_candle_data(_smbs, self._stop - _dtf, _stop, self._data_timeframe)
             for k, c in _after.items():
                 self._data[k] = srows(self._data[k], c, keep="last")
