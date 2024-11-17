@@ -119,7 +119,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
         # - create new even loop
         self._loop = asyncio.new_event_loop() if loop is None else loop
-        asyncio.set_event_loop(self._loop)
         self._check_event_loop_is_running()
 
         # - create exchange's instance

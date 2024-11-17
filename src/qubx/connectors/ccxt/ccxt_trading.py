@@ -187,22 +187,20 @@ class CCXTTradingConnector(ITradingServiceProvider):
             r = self.sync.create_order(instrument.symbol, order_type, order_side, amount, price, params=params)  # type: ignore
         except ccxt.BadRequest as exc:
             logger.error(
-                f"(CCXTSyncTradingConnector::send_order) BAD REQUEST for {order_side} {amount} {order_type} for {symbol} : {exc}"
+                f"(::send_order) BAD REQUEST for {order_side} {amount} {order_type} for {instrument.symbol} : {exc}"
             )
             raise exc
         except Exception as err:
-            logger.error(
-                f"(CCXTSyncTradingConnector::send_order) {order_side} {amount} {order_type} for {instrument.symbol} exception : {err}"
-            )
+            logger.error(f"(::send_order) {order_side} {amount} {order_type} for {instrument.symbol} exception : {err}")
             logger.error(traceback.format_exc())
             raise err
 
         if r is None:
-            logger.error(f"(CCXTSyncTradingConnector::send_order) No response from exchange")
-            raise ExchangeError("(CCXTSyncTradingConnector::send_order) No response from exchange")
+            logger.error(f"(::send_order) No response from exchange")
+            raise ExchangeError("(::send_order) No response from exchange")
 
         order = ccxt_convert_order_info(instrument, r)
-        logger.info(f"(CCXTSyncTradingConnector) New order {order}")
+        logger.info(f"New order {order}")
         return order
 
     def cancel_order(self, order_id: str) -> Order | None:
@@ -214,7 +212,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
                 # r = self._task_s(self.exchange.cancel_order(order_id, symbol=order.instrument.symbol))
                 r = self.sync.cancel_order(order_id, symbol=order.instrument.symbol)
             except Exception as err:
-                logger.error(f"(CCXTSyncTradingConnector) canceling [{order}] exception : {err}")
+                logger.error(f"Canceling [{order}] exception : {err}")
                 logger.error(traceback.format_exc())
                 raise err
         return order

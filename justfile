@@ -22,8 +22,8 @@ build:
 
 
 dev-install:
-	# - install in dev environment
-	pip install -e . --upgrade
+	poetry lock --no-update || true
+	poetry install
 	
 
 publish: build test

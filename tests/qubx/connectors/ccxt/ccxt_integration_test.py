@@ -1,8 +1,10 @@
+import asyncio
 import pytest
 from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
 
 import time
 import pandas as pd
+import threading
 from typing import Any, Callable
 from pathlib import Path
 from collections import defaultdict
@@ -29,6 +31,7 @@ class DebugStrategy(IStrategy):
 
     def on_market_data(self, ctx: IStrategyContext, data: MarketEvent):
         self._data_counter += 1
+        logger.debug(f"Processed {self._data_counter} data points")
         if self._data_counter % 1000 == 0:
             logger.debug(f"Processed {self._data_counter} data points")
 
@@ -42,25 +45,33 @@ class DebugStrategy(IStrategy):
 
 
 class TestCcxtExchangeIntegrations:
+    MIN_NOTIONAL = 100
 
     @pytest.mark.integration
-    @pytest.mark.parametrize("exchange,symbols", [("BINANCE.UM", ["BTCUSDT"])])
-    def test_basic_exchange_functions(
-        self, exchange: str, symbols: list[str], exchange_credentials: dict[str, dict[str, str]]
-    ):
+    def test_basic_binance(self, exchange_credentials: dict[str, dict[str, str]]):
+        exchange = "BINANCE"
+        self._test_basic_exchange_functions(exchange, ["BTCUSDT"], exchange_credentials[exchange])
+
+    @pytest.mark.integration
+    def test_basic_binance_um(self, exchange_credentials: dict[str, dict[str, str]]):
+        exchange = "BINANCE.UM"
+        self._test_basic_exchange_functions(exchange, ["BTCUSDT"], exchange_credentials[exchange])
+
+    def _test_basic_exchange_functions(self, exchange: str, symbols: list[str], creds: dict[str, str]):
         QubxLogConfig.set_log_level("DEBUG")
 
         ctx = run_ccxt_trading(
             strategy=(stg := DebugStrategy()),
             exchange=exchange,
             symbols=symbols,
-            credentials=exchange_credentials[exchange],
+            credentials=creds,
             blocking=False,
             use_testnet=True,
             commissions="vip0_usdt",
         )
 
-        self._wait(10, ctx.is_fitted)
+        self._wait(ctx.is_fitted)
+        self._wait(timeout=5)
 
         i1 = ctx.instruments[0]
         logger.info(f"Working with instrument {i1}")
@@ -69,7 +80,7 @@ class TestCcxtExchangeIntegrations:
             logger.info(f"Found existing position quantity {pos.quantity}")
             logger.info(f"Closing position")
             ctx.trade(i1, -pos.quantity)
-            self._wait(10, pos.is_open)
+            self._wait(lambda pos=pos: not pos.is_open())
             logger.info(f"Closed position")
 
         logger.info(f"Position is {pos.quantity}")
@@ -78,28 +89,38 @@ class TestCcxtExchangeIntegrations:
         # enter market
         amount = i1.min_size * 2
         price = ctx.ohlc(i1)[0].close
-        logger.info(f"Entering market with {amount} at market price {price}")
+        if amount * price < self.MIN_NOTIONAL:
+            amount = i1.round_size_up(self.MIN_NOTIONAL / price)
+
+        logger.info(f"Entering market amount {amount} at price {price}")
         order1 = ctx.trade(i1, amount=amount)
         assert order1 is not None and order1.price is not None
 
         try:
-            self._wait(10, lambda pos=pos: pos.quantity != qty1)
+            self._wait(lambda pos=pos: not self._almost_equal_size(pos.quantity, qty1, i1))
         except TimeoutError:
             assert pos.quantity != qty1, "Position was not updated"
 
         # close position
-        assert pos.quantity == qty1 + amount
+        assert self._almost_equal_size(pos.quantity, amount, i1)
         logger.info(f"Closing position of {pos.quantity} for {i1}")
         ctx.trade(i1, -pos.quantity)
 
-        self._wait(10, lambda pos=pos: not pos.is_open())
+        self._wait(lambda pos=pos: not pos.is_open())
 
         ctx.stop()
 
-    def _wait(self, timeout: int, condition: Callable[[], bool], period: float = 0.1):
+    def _almost_equal_size(self, a: float, b: float, i: Instrument) -> bool:
+        return abs(a - b) < i.min_size
+
+    def _wait(self, condition: Callable[[], bool] | None = None, timeout: int = 10, period: float = 1.0):
         start = time.time()
+        event = threading.Event()
+        if condition is None:
+            event.wait(timeout)
+            return
         while time.time() - start < timeout:
             if condition():
                 return
-            time.sleep(period)
+            event.wait(period)
         raise TimeoutError("Timeout reached")

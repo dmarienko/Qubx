@@ -96,7 +96,8 @@ def run_ccxt_trading(
     capital: float = 100_000,
     commissions: str | None = None,
     use_testnet: bool = False,
-) -> IStrategyContext:
+    loop: asyncio.AbstractEventLoop | None = None,
+) -> StrategyContext:
     # TODO: setup proper loggers to write out to files
     instruments = [lookup.find_symbol(exchange.upper(), s.upper()) for s in symbols]
     instruments = [i for i in instruments if i is not None]
@@ -110,7 +111,7 @@ def run_ccxt_trading(
         base_currency=base_currency,
         initial_capital=capital,
     )
-    broker = CCXTExchangesConnector(exchange, trading_service, use_testnet=use_testnet, **credentials)
+    broker = CCXTExchangesConnector(exchange, trading_service, use_testnet=use_testnet, loop=loop, **credentials)
 
     ctx = StrategyContext(
         strategy=strategy,
