@@ -180,7 +180,8 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
     def _handle_symbols_data_from_to(
         self, symbols: List[str], start: str, stop: str
     ) -> Dict[str, pd.DataFrame | pd.Series]:
-        _dtf = pd.Timedelta(self._data_timeframe)
+        # _dtf = pd.Timedelta(self._data_timeframe)
+        # T = lambda x: pd.Timestamp(x).floor(self._data_timeframe)
         T = lambda x: pd.Timestamp(x)
         _start, _stop = map(T, handle_start_stop(start, stop))
 
@@ -190,24 +191,26 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
             _s_req = min(_start, self._start if self._start else _start)
             _e_req = max(_stop, self._stop if self._stop else _stop)
             logger.debug(f"(InMemoryCachedReader) Loading all data {_s_req} - {_e_req} for { ','.join(_new_symbols)} ")
-            _new_data = self._load_candle_data(_new_symbols, _s_req, _e_req + _dtf, self._data_timeframe)
+            # _new_data = self._load_candle_data(_new_symbols, _s_req, _e_req + _dtf, self._data_timeframe)
+            _new_data = self._load_candle_data(_new_symbols, _s_req, _e_req, self._data_timeframe)
             self._data |= _new_data
 
-        # - part intervals
+        # - pre intervals
         if self._start and _start < self._start:
             _smbs = list(self._data.keys())
-            logger.debug(
-                f"(InMemoryCachedReader) Updating {len(_smbs)} symbols before interval {_start} : {self._start}"
-            )
-            _before = self._load_candle_data(_smbs, _start, self._start + _dtf, self._data_timeframe)
+            logger.debug(f"(InMemoryCachedReader) Updating {len(_smbs)} symbols pre interval {_start} : {self._start}")
+            # _before = self._load_candle_data(_smbs, _start, self._start + _dtf, self._data_timeframe)
+            _before = self._load_candle_data(_smbs, _start, self._start, self._data_timeframe)
             for k, c in _before.items():
-                self._data[k] = srows(c, self._data[k], keep="first")
+                # self._data[k] = srows(c, self._data[k], keep="first")
+                self._data[k] = srows(c, self._data[k], keep="last")
 
-        # - part intervals
+        # - post intervals
         if self._stop and _stop > self._stop:
             _smbs = list(self._data.keys())
-            logger.debug(f"(InMemoryCachedReader) Updating {len(_smbs)} symbols after interval {self._stop} : {_stop}")
-            _after = self._load_candle_data(_smbs, self._stop - _dtf, _stop, self._data_timeframe)
+            logger.debug(f"(InMemoryCachedReader) Updating {len(_smbs)} symbols post interval {self._stop} : {_stop}")
+            # _after = self._load_candle_data(_smbs, self._stop - _dtf, _stop, self._data_timeframe)
+            _after = self._load_candle_data(_smbs, self._stop, _stop, self._data_timeframe)
             for k, c in _after.items():
                 self._data[k] = srows(self._data[k], c, keep="last")
 
@@ -355,8 +358,8 @@ __KNOWN_READERS = {
 
 
 def loader(
-    exchange: str, timeframe: str, *symbols: List[str], source: str = "mqdb::localhost", **kwargs
-) -> InMemoryCachedReader:
+    exchange: str, timeframe: str, *symbols: List[str], source: str = "mqdb::localhost", no_cache=False, **kwargs
+) -> DataReader:
     """
     Create and initialize an InMemoryCachedReader for a specific exchange and timeframe.
 
@@ -367,7 +370,8 @@ def loader(
         exchange (str): The name of the exchange to load data from.
         timeframe (str): The time interval for the data (e.g., '1d' for daily, '1h' for hourly).
         *symbols (List[str]): Variable number of symbol names to pre-load data for.
-        reader (str): The data reader and it's parameter to use. Defaults to mqdb::localhost.
+        source (str): The data reader spec and it's parameter to use. Defaults to mqdb::localhost.
+        no_cache (bool): If True, data will not be cached. Defaults to False.
 
     Returns:
         InMemoryCachedReader: An initialized InMemoryCachedReader object, potentially pre-loaded with data.
@@ -391,8 +395,11 @@ def loader(
         )
 
     reader_object: DataReader = _c(_rcls_par[1]) if len(_rcls_par) else _c()
-    inmcr = InMemoryCachedReader(exchange, reader_object, timeframe, **kwargs)
-    if symbols:
-        # by default slicing from 1970-01-01 until now
-        inmcr[list(symbols), slice("1970-01-01", str(pd.Timestamp("now")))]
+    inmcr = reader_object
+    # - if not need to cache data
+    if not no_cache:
+        inmcr = InMemoryCachedReader(exchange, reader_object, timeframe, **kwargs)
+        if symbols:
+            # by default slicing from 1970-01-01 until now
+            inmcr[list(symbols), slice("1970-01-01", str(pd.Timestamp("now")))]
     return inmcr
