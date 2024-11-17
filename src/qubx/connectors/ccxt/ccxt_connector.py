@@ -136,12 +136,16 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         self._sub_to_name = {}
         self._is_sub_name_enabled = defaultdict(lambda: False)
         self._sub_instr_to_time = {}
+        self._symbol_to_instrument = {}
 
         self._subscribers = {
             n.split("_subscribe_")[1]: f
             for n, f in self.__class__.__dict__.items()
             if type(f) == FunctionType and n.startswith("_subscribe_")
         }
+
+        if not self.read_only:
+            self._subscribe_stream("executions", self._get_proxy_channel())
 
         logger.info(f"{exchange_id} initialized - current time {self.trading_service.time()}")
 
@@ -186,23 +190,17 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
     @synchronized
     def commit(self) -> None:
-        _current_instruments = self.subscribed_instruments
         _sub_to_params = self._get_updated_sub_to_params()
-        _has_something_changed = False
         for sub, params in _sub_to_params.items():
             _current_sub_instruments = self._subscriptions[sub]
             _removed_instruments = self._get_pending_unsub_instr(sub)
             _added_instruments = self._get_pending_sub_instr(sub)
             _updated_instruments = _current_sub_instruments.union(_added_instruments).difference(_removed_instruments)
             if _updated_instruments != _current_sub_instruments:
-                _has_something_changed = True
                 self._subscribe(_updated_instruments, sub, **params)
 
-        if _has_something_changed and not self.read_only:
-            _new_instruments = self.subscribed_instruments
-            _removed_instruments = _current_instruments.difference(_new_instruments)
-            _added_instruments = _new_instruments.difference(_current_instruments)
-            self._update_execution_subscriptions(_added_instruments, _removed_instruments)
+        # - update symbol to instrument mapping
+        self._symbol_to_instrument = {i.symbol: i for i in self.subscribed_instruments}
 
         # - clean up pending subs and unsubs
         self._pending_stream_subscriptions.clear()
@@ -305,22 +303,23 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     def _get_proxy_channel(self) -> ProxyCtrlChannel:
         return ProxyCtrlChannel(self.get_communication_channel(), self, self._sub_instr_to_time)
 
-    def _resubscribe_stream(self, sub_type: str, channel: CtrlChannel, instruments: Set[Instrument], **kwargs) -> None:
+    def _resubscribe_stream(
+        self, sub_type: str, channel: CtrlChannel, instruments: Set[Instrument] | None = None, **kwargs
+    ) -> None:
         if sub_type in self._sub_to_coro:
             logger.debug(f"Canceling existing {sub_type} subscription for {self._subscriptions[sub_type]}")
             self._stop_subscriber(sub_type)
-
-        if not instruments:
+        if instruments is not None and len(instruments) == 0:
             return
+        self._subscribe_stream(sub_type, channel, instruments=instruments, **kwargs)
 
+    def _subscribe_stream(self, sub_type: str, channel: CtrlChannel, **kwargs) -> None:
         _subscriber = self._subscribers[sub_type]
         _subscriber_params = set(_subscriber.__code__.co_varnames[: _subscriber.__code__.co_argcount])
         # - get only parameters that are needed for subscriber
         kwargs = {k: v for k, v in kwargs.items() if k in _subscriber_params}
-        self._sub_to_name[sub_type] = (name := self._get_subscription_name(instruments, sub_type, **kwargs))
-        self._sub_to_coro[sub_type] = self._submit_coro(
-            _subscriber(self, name, sub_type, channel, instruments, **kwargs)
-        )
+        self._sub_to_name[sub_type] = (name := self._get_subscription_name(sub_type, **kwargs))
+        self._sub_to_coro[sub_type] = self._submit_coro(_subscriber(self, name, sub_type, channel, **kwargs))
 
     def _check_event_loop_is_running(self) -> None:
         if self._loop.is_running():
@@ -393,12 +392,12 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         return symbol_to_instrument[symbol]
 
     def _get_subscription_name(
-        self, instruments: List[Instrument] | Set[Instrument] | Instrument, subscription: str, **kwargs
+        self, subscription: str, instruments: List[Instrument] | Set[Instrument] | Instrument | None = None, **kwargs
     ) -> str:
         if isinstance(instruments, Instrument):
             instruments = [instruments]
-        _symbols = [i.symbol for i in instruments]
-        _name = f"{','.join(_symbols)} {subscription}"
+        _symbols = [i.symbol for i in instruments] if instruments is not None else []
+        _name = f"{','.join(_symbols)} {subscription}" if _symbols else subscription
         if kwargs:
             kwargs_str = ",".join(f"{k}={v}" for k, v in kwargs.items())
             _name += f" ({kwargs_str})"
@@ -406,33 +405,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
     def _get_hist_type(self, sub_type: str) -> str:
         return f"hist_{sub_type}"
-
-    def _update_execution_subscriptions(self, added_instruments: Set[Instrument], removed_instruments: Set[Instrument]):
-        channel = self._get_proxy_channel()
-        _get_name = lambda instr: self._get_subscription_name(instr, "executions")
-        # - subscribe to added instruments
-        for instr in added_instruments:
-            _name = _get_name(instr)
-            future = self._sub_to_coro.get(_name)
-            if future is not None and future.running():
-                logger.warning(f"Execution subscription for {instr} is already running")
-                continue
-            self._sub_to_coro[_name] = self._submit_coro(
-                self._subscribe_executions(_name, "executions", channel, instr)
-            )
-        # - unsubscribe from removed instruments
-        for instr in removed_instruments:
-            _name = _get_name(instr)
-            self._is_sub_name_enabled[_name] = False
-            future = self._sub_to_coro[_name]
-            try:
-                # usually this will raise a timeout error because there will be no order updates
-                # so just cancel
-                future.result(0.1)
-            except TimeoutError:
-                future.cancel()
-            finally:
-                del self._sub_to_coro[_name]
 
     def _get_latest_instruments(self, sub_type: str, warmup_period: str) -> Set[Instrument]:
         """
@@ -464,6 +436,8 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                     if unsubscriber is not None:
                         await unsubscriber()
                     break
+            except CcxtSymbolNotRecognized as e:
+                continue
             except CancelledError:
                 if unsubscriber is not None:
                     try:
@@ -656,20 +630,18 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             unsubscriber=un_watch_orderbook,
         )
 
-    async def _subscribe_executions(self, name: str, sub_type: str, channel: CtrlChannel, instrument: Instrument):
-        # unfortunately binance and probably some others don't support watching orders for multiple symbols
-        # so we need to watch orders for each symbol separately
+    async def _subscribe_liquidations(self):
+        pass
+
+    async def _subscribe_executions(self, name: str, sub_type: str, channel: CtrlChannel):
         async def _watch_executions():
-            exec = await self._exchange.watch_orders(instrument.symbol)
-            _msg = f"\nexecs_{instrument.symbol} = [\n"
+            exec = await self._exchange.watch_orders()
             for report in exec:
-                _msg += "\t" + str(report) + ",\n"
+                instrument = self._find_instrument_for_exch_symbol(report["symbol"], self._symbol_to_instrument)
                 order, deals = self.trading_service.process_execution_report(instrument, report)
-                # - send update to client
                 channel.send((instrument, "order", order))
                 if deals:
                     channel.send((instrument, "deals", deals))
-            # logger.debug(_msg + "]\n")
 
         await self._listen_to_stream(
             subscriber=_watch_executions,
