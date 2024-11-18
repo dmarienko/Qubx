@@ -1,5 +1,5 @@
 import re, os
-from typing import Callable, Dict, List, Union, Optional, Iterator, Iterable, Any
+from typing import Dict, List, Set, Union, Optional, Iterator, Iterable, Any
 from os.path import exists, join
 import numpy as np
 import pandas as pd
@@ -10,6 +10,7 @@ from functools import wraps
 
 from qubx import logger
 from qubx.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
+from qubx.pandaz.utils import ohlc_resample, srows
 from qubx.utils.time import infer_series_frequency, handle_start_stop
 from psycopg.types.datetime import TimestampLoader
 
@@ -98,6 +99,33 @@ class DataReader:
     ) -> Iterator | List:
         raise NotImplemented()
 
+    def get_aux_data_ids(self) -> Set[str]:
+        """
+        Returns list of all auxiliary data IDs available for this data reader
+        """
+
+        def _list_methods(cls):
+            _meth = []
+            for k, s in cls.__dict__.items():
+                if k.startswith("get_") and k not in ["get_names", "get_aux_data_ids", "get_aux_data"] and callable(s):
+                    _meth.append(k[4:])
+            return _meth
+
+        _d_ids = _list_methods(self.__class__)
+        for bc in self.__class__.__bases__:
+            _d_ids.extend(_list_methods(bc))
+        return set(_d_ids)
+
+    def get_aux_data(self, data_id: str, **kwargs) -> Any:
+        """
+        Returns auxiliary data for the specified data ID
+        """
+        if hasattr(self, f"get_{data_id}"):
+            return getattr(self, f"get_{data_id}")(**kwargs)
+        raise ValueError(
+            f"{self.__class__.__name__} doesn't have getter for '{data_id}' auxiliary data. Available data: {self.get_aux_data_ids()}"
+        )
+
 
 class CsvStorageDataReader(DataReader):
     """
@@ -105,9 +133,10 @@ class CsvStorageDataReader(DataReader):
     """
 
     def __init__(self, path: str) -> None:
-        if not exists(path):
+        _path = os.path.expanduser(path)
+        if not exists(_path):
             raise ValueError(f"Folder is not found at {path}")
-        self.path = path
+        self.path = _path
 
     def __find_time_idx(self, arr: pa.ChunkedArray, v) -> int:
         ix = arr.index(v).as_py()
@@ -207,6 +236,28 @@ class CsvStorageDataReader(DataReader):
         transform.process_data(raw_data)
         return transform.collect()
 
+    def get_candles(
+        self,
+        exchange: str,
+        symbols: list[str],
+        start: str | pd.Timestamp,
+        stop: str | pd.Timestamp,
+        timeframe: str | None = None,
+    ) -> pd.DataFrame:
+        """
+        Returns pandas DataFrame of candles for given exchange and symbols within specified time range and timeframe
+        """
+        _r = []
+        for symbol in symbols:
+            x = self.read(
+                f"{exchange}:{symbol}", start=start, stop=stop, timeframe=timeframe, transform=AsPandasFrame()
+            )
+            if x is not None:
+                if timeframe is not None:
+                    x = ohlc_resample(x, timeframe)
+                _r.append(x.assign(symbol=symbol.upper(), timestamp=x.index))  # type: ignore
+        return srows(*_r).set_index(["timestamp", "symbol"])
+
     def get_names(self, **kwargs) -> List[str]:
         _n = []
         for root, _, files in os.walk(self.path):
@@ -228,7 +279,10 @@ class InMemoryDataFrameReader(DataReader):
     Data reader for pandas DataFrames
     """
 
-    def __init__(self, data: Dict[str, pd.DataFrame], exchange: str | None = None) -> None:
+    exchange: str | None
+    _data: dict[str, pd.DataFrame | pd.Series]
+
+    def __init__(self, data: dict[str, pd.DataFrame | pd.Series], exchange: str | None = None) -> None:
         if not isinstance(data, dict):
             raise ValueError("data must be a dictionary of pandas DataFrames")
         self._data = data
@@ -295,6 +349,9 @@ class InMemoryDataFrameReader(DataReader):
 
             return __iterable()
         return res
+
+    def get_symbols(self, **kwargs) -> List[str]:
+        return self.get_names()
 
 
 class AsPandasFrame(DataTransformer):
@@ -903,11 +960,11 @@ class QuestDBConnector(DataReader):
         where = f"where symbol in ({', '.join(quoted_symbols)}) and timestamp >= '{start}' and timestamp < '{stop}'"
         table_name = QuestDBSqlCandlesBuilder().get_table_name(f"{exchange}:{symbols[0]}")
 
-        _rsmpl = f"sample by {timeframe}"
+        _rsmpl = f"sample by {QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(timeframe)}"
 
         query = f"""
         select timestamp, 
-        symbol,
+        upper(symbol) as symbol,
         first(open) as open, 
         max(high) as high,
         min(low) as low,
@@ -919,7 +976,10 @@ class QuestDBConnector(DataReader):
         sum(taker_buy_quote_volume) as taker_buy_quote_volume
         from "{table_name}" {where} {_rsmpl};
         """
-        return self.execute(query).set_index(["timestamp", "symbol"])
+        res = self.execute(query)
+        if res.empty:
+            return res
+        return res.set_index(["timestamp", "symbol"])
 
     def get_average_quote_volume(
         self,
@@ -934,9 +994,9 @@ class QuestDBConnector(DataReader):
             select timestamp, symbol, sum(quote_volume) as qvolume 
             from "{table_name}"
             where timestamp >= '{start}' and timestamp < '{stop}'
-            SAMPLE BY {timeframe}
+            SAMPLE BY {QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(timeframe)}
         )
-        select symbol, avg(qvolume) as quote_volume from sampled
+        select upper(symbol) as symbol, avg(qvolume) as quote_volume from sampled
         group by symbol
         order by quote_volume desc;
         """
@@ -944,6 +1004,23 @@ class QuestDBConnector(DataReader):
         if vol_stats.empty:
             return pd.Series()
         return vol_stats.set_index("symbol")["quote_volume"]
+
+    def get_fundamental_data(
+        self, exchange: str, start: str | pd.Timestamp | None = None, stop: str | pd.Timestamp | None = None
+    ) -> pd.DataFrame:
+        table_name = {"BINANCE.UM": "binance.umfutures.fundamental"}[exchange]
+        query = f"select * from {table_name}"
+        if start or stop:
+            conditions = []
+            if start:
+                conditions.append(f"timestamp >= '{start}'")
+            if stop:
+                conditions.append(f"timestamp < '{stop}'")
+            query += " where " + " and ".join(conditions)
+        df = self.execute(query)
+        if df.empty:
+            return pd.DataFrame()
+        return df.set_index(["timestamp", "symbol", "metric"]).value.unstack("metric")
 
     def get_names(self) -> List[str]:
         return self._get_names(self._builder)

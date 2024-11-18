@@ -7,7 +7,7 @@ from ccxt import NetworkError
 import stackprinter
 
 from qubx import logger
-from qubx.impl.ccxt_customizations import BinanceQV
+from qubx.connectors.ccxt.ccxt_customizations import BinanceQV
 import ccxt
 
 import configparser

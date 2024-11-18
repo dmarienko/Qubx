@@ -20,7 +20,8 @@
     },
     "python.analysis.typeCheckingMode": "basic",
     "[python]": {
-        "editor.defaultFormatter": "ms-python.black-formatter"
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.formatOnSave": true
     },
     "[yaml]": {
         "editor.defaultFormatter": "redhat.vscode-yaml"

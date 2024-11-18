@@ -1,10 +1,11 @@
-from typing import Dict, Optional, Union, List
 import os
+import time
+import joblib
+import pandas as pd
+from pathlib import Path
+from typing import Any, Dict, Set, Union, List
 from collections import OrderedDict, defaultdict, namedtuple
 from os.path import basename, exists, dirname, join, expanduser
-import time
-from pathlib import Path
-import joblib
 from tqdm.auto import tqdm
 
 
@@ -263,6 +264,7 @@ class Stopwatch:
     starts: Dict[str | None, int] = {}
     counts: Dict[str | None, int] = defaultdict(lambda: 0)
     latencies: Dict[str | None, int] = {}
+    _current_scope: str | None = None
 
     def __new__(cls):
         if not hasattr(cls, "instance"):
@@ -311,6 +313,39 @@ class Stopwatch:
         for l in self.latencies.keys():
             r += f"\n\t<w>{l}</w> took <r>{self.latency_sec(l):.7f}</r> secs"
         return r
+
+    def __enter__(self):
+        self.start(self._current_scope)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop(self._current_scope)
+
+    def __call__(self, scope: str | None = "global"):
+        self._current_scope = scope
+        return self
+
+    @classmethod
+    def latency_report(cls) -> pd.DataFrame | None:
+        if not hasattr(cls, "instance"):
+            return None
+        sw = cls.instance
+        scope_to_latency_sec = {scope: sw.latency_sec(scope) for scope in sw.latencies.keys()}
+        scope_to_count = {l: sw.counts[l] for l in scope_to_latency_sec.keys()}
+        scope_to_total_time = {scope: scope_to_count[scope] * lat for scope, lat in scope_to_latency_sec.items()}
+        # create pandas datafrmae from dictionaries
+        lats = pd.DataFrame(
+            {
+                "scope": list(scope_to_latency_sec.keys()),
+                "latency": list(scope_to_latency_sec.values()),
+                "count": list(scope_to_count.values()),
+                "total_time": list(scope_to_total_time.values()),
+            }
+        )
+        lats["latency"] = lats["latency"].apply(lambda x: f"{x:.4f}")
+        lats["total_time (min)"] = lats["total_time"].apply(lambda x: f"{x / 60:.4f}")
+        lats.drop(columns=["total_time"], inplace=True)
+        return lats
 
 
 def quotify(sx: Union[str, List[str]], quote="USDT"):

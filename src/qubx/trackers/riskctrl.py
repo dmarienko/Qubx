@@ -7,7 +7,7 @@ import numpy as np
 from qubx import logger
 from qubx.core.basics import Deal, Instrument, OrderStatus, Signal, TargetPosition
 from qubx.core.series import Bar, Quote, Trade
-from qubx.core.strategy import IPositionSizer, PositionsTracker, StrategyContext
+from qubx.core.interfaces import IPositionSizer, PositionsTracker, IStrategyContext
 from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
 
 from qubx.ta.indicators import atr
@@ -32,7 +32,7 @@ class SgnCtrl:
 
 
 class RiskCalculator:
-    def calculate_risks(self, ctx: StrategyContext, quote: Quote, signal: Signal) -> Signal | None:
+    def calculate_risks(self, ctx: IStrategyContext, quote: Quote, signal: Signal) -> Signal | None:
         return signal
 
 
@@ -52,18 +52,18 @@ class RiskController(PositionsTracker):
         if isinstance(update, float):
             return update
         elif isinstance(update, Quote):
-            return update.ask if direction > 0 else update.bid  # type: ignore
+            return update.ask if direction > 0 else update.bid
         elif isinstance(update, Trade):
-            return update.price  # type: ignore
+            return update.price
         elif isinstance(update, Bar):
-            return update.close  # type: ignore
+            return update.close
         else:
             raise ValueError(f"Unknown update type: {type(update)}")
 
-    def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
+    def process_signals(self, ctx: IStrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         targets = []
         for s in signals:
-            quote = ctx.quote(s.instrument.symbol)
+            quote = ctx.quote(s.instrument)
             if quote is None:
                 logger.warning(f"Quote not available for {s.instrument.symbol}. Skipping signal {s}")
                 continue
@@ -80,7 +80,7 @@ class RiskController(PositionsTracker):
 
         return targets
 
-    def handle_new_target(self, ctx: StrategyContext, signal: Signal, target: TargetPosition) -> bool:
+    def handle_new_target(self, ctx: IStrategyContext, signal: Signal, target: TargetPosition) -> bool:
         """
         As it doesn't use any referenced orders for position - new target is always approved
         """
@@ -104,7 +104,7 @@ class ClientSideRiskController(RiskController):
     """
 
     def update(
-        self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar
     ) -> List[TargetPosition] | TargetPosition:
         c = self._trackings.get(instrument)
         if c is None:
@@ -162,8 +162,8 @@ class ClientSideRiskController(RiskController):
 
         return []
 
-    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal):
-        pos = ctx.positions[instrument.symbol].quantity
+    def on_execution_report(self, ctx: IStrategyContext, instrument: Instrument, deal: Deal):
+        pos = ctx.positions[instrument].quantity
 
         # - check what is in the waiting list
         if (c_w := self._waiting.get(instrument)) is not None:
@@ -188,7 +188,9 @@ class BrokerSideRiskController(RiskController):
     For backtesting we assume that stop orders are executed by it's price.
     """
 
-    def update(self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar) -> List[TargetPosition]:
+    def update(
+        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+    ) -> List[TargetPosition]:
         # fmt: off
         c = self._trackings.get(instrument)
         if c is None:
@@ -231,7 +233,7 @@ class BrokerSideRiskController(RiskController):
         # fmt: on
         return []
 
-    def __cncl_stop(self, ctx: StrategyContext, ctrl: SgnCtrl):
+    def __cncl_stop(self, ctx: IStrategyContext, ctrl: SgnCtrl):
         if ctrl.stop_order_id is not None:
             logger.debug(
                 f"<yellow>{self.__class__.__name__}</yellow> <m>-- canceling stop order --</m> <red>{ctrl.stop_order_id}</red> for {ctrl.signal.instrument.symbol}"
@@ -239,7 +241,7 @@ class BrokerSideRiskController(RiskController):
             ctx.cancel_order(ctrl.stop_order_id)
             ctrl.stop_order_id = None
 
-    def __cncl_take(self, ctx: StrategyContext, ctrl: SgnCtrl):
+    def __cncl_take(self, ctx: IStrategyContext, ctrl: SgnCtrl):
         if ctrl.take_order_id is not None:
             logger.debug(
                 f"<yellow>{self.__class__.__name__}</yellow> <m>-- canceling take order --</m> <red>{ctrl.take_order_id}</red> for {ctrl.signal.instrument.symbol}"
@@ -247,8 +249,8 @@ class BrokerSideRiskController(RiskController):
             ctx.cancel_order(ctrl.take_order_id)
             ctrl.take_order_id = None
 
-    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal):
-        pos = ctx.positions[instrument.symbol].quantity
+    def on_execution_report(self, ctx: IStrategyContext, instrument: Instrument, deal: Deal):
+        pos = ctx.positions[instrument].quantity
 
         if (c_w := self._waiting.get(instrument)) is not None:
             if abs(pos - c_w.target.target_position_size) <= instrument.min_size:
@@ -338,21 +340,21 @@ class GenericRiskControllerDecorator(PositionsTracker, RiskCalculator):
         super().__init__(sizer)
         self.riskctrl = riskctrl
 
-    def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
+    def process_signals(self, ctx: IStrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         return self.riskctrl.process_signals(ctx, signals)
 
     def is_active(self, instrument: Instrument) -> bool:
         return self.riskctrl.is_active(instrument)
 
     def update(
-        self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar
     ) -> List[TargetPosition] | TargetPosition:
         return self.riskctrl.update(ctx, instrument, update)
 
-    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal):
+    def on_execution_report(self, ctx: IStrategyContext, instrument: Instrument, deal: Deal):
         return self.riskctrl.on_execution_report(ctx, instrument, deal)
 
-    def calculate_risks(self, ctx: StrategyContext, quote: Quote, signal: Signal) -> Signal | None:
+    def calculate_risks(self, ctx: IStrategyContext, quote: Quote, signal: Signal) -> Signal | None:
         raise NotImplementedError("calculate_risks should be implemented by subclasses")
 
 
@@ -383,7 +385,7 @@ class StopTakePositionTracker(GenericRiskControllerDecorator):
             ),
         )
 
-    def calculate_risks(self, ctx: StrategyContext, quote: Quote, signal: Signal) -> Signal | None:
+    def calculate_risks(self, ctx: IStrategyContext, quote: Quote, signal: Signal) -> Signal | None:
         if signal.signal > 0:
             entry = signal.price if signal.price else quote.ask
             if self._take_target_fraction:
@@ -397,6 +399,11 @@ class StopTakePositionTracker(GenericRiskControllerDecorator):
                 signal.take = entry * (1 - self._take_target_fraction)
             if self._stop_risk_fraction:
                 signal.stop = entry * (1 + self._stop_risk_fraction)
+
+        if signal.stop is not None:
+            signal.stop = signal.instrument.round_price_down(signal.stop)
+        if signal.take is not None:
+            signal.take = signal.instrument.round_price_down(signal.take)
 
         return signal
 
@@ -434,7 +441,7 @@ class AtrRiskTracker(GenericRiskControllerDecorator):
             ),
         )
 
-    def calculate_risks(self, ctx: StrategyContext, quote: Quote, signal: Signal) -> Signal | None:
+    def calculate_risks(self, ctx: IStrategyContext, quote: Quote, signal: Signal) -> Signal | None:
         volatility = atr(
             ctx.ohlc(signal.instrument, self.atr_timeframe),
             self.atr_period,
@@ -470,7 +477,7 @@ class MinAtrExitDistanceTracker(PositionsTracker):
     Allow exit only if price has moved away from entry by the specified distance in ATR units.
     """
 
-    _signals: dict[str, Signal]
+    _signals: dict[Instrument, Signal]
 
     def __init__(
         self,
@@ -489,7 +496,7 @@ class MinAtrExitDistanceTracker(PositionsTracker):
         self.stop_target = stop_target
         self._signals = dict()
 
-    def process_signals(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
+    def process_signals(self, ctx: IStrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         targets = []
         for s in signals:
             volatility = atr(
@@ -501,11 +508,11 @@ class MinAtrExitDistanceTracker(PositionsTracker):
             if len(volatility) < 2:
                 continue
             last_volatility = volatility[1]
-            quote = ctx.quote(s.instrument.symbol)
+            quote = ctx.quote(s.instrument)
             if last_volatility is None or not np.isfinite(last_volatility) or quote is None:
                 continue
 
-            self._signals[s.instrument.symbol] = s
+            self._signals[s.instrument] = s
 
             if s.signal != 0:
                 # if signal is not 0, atr thresholds don't apply
@@ -529,9 +536,9 @@ class MinAtrExitDistanceTracker(PositionsTracker):
         return targets
 
     def update(
-        self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar
     ) -> List[TargetPosition] | TargetPosition:
-        signal = self._signals.get(instrument.symbol)
+        signal = self._signals.get(instrument)
         if signal is None or signal.signal != 0:
             return []
         if not self.__check_exit(ctx, instrument):
@@ -541,7 +548,7 @@ class MinAtrExitDistanceTracker(PositionsTracker):
             ctx, instrument.signal(0, group="Risk Manager", comment=f"Original signal price: {signal.reference_price}")
         )
 
-    def __check_exit(self, ctx: StrategyContext, instrument: Instrument) -> bool:
+    def __check_exit(self, ctx: IStrategyContext, instrument: Instrument) -> bool:
         volatility = atr(
             ctx.ohlc(instrument, self.atr_timeframe),
             self.atr_period,
@@ -552,11 +559,11 @@ class MinAtrExitDistanceTracker(PositionsTracker):
             return False
 
         last_volatility = volatility[1]
-        quote = ctx.quote(instrument.symbol)
+        quote = ctx.quote(instrument)
         if last_volatility is None or not np.isfinite(last_volatility) or quote is None:
             return False
 
-        pos = ctx.positions.get(instrument.symbol)
+        pos = ctx.positions.get(instrument)
         if pos is None:
             return False
 

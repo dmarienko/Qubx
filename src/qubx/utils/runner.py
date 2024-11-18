@@ -1,14 +1,18 @@
+import asyncio
+import pandas as pd
 import click, sys, yaml, sys, time
-from os.path import exists, expanduser
 import yaml, configparser, socket
 
+from os.path import exists, expanduser
 from qubx import lookup, logger, formatter
-from qubx.core.context import StrategyContextImpl
-from qubx.impl.ccxt_connector import CCXTExchangesConnector
-from qubx.impl.ccxt_trading import CCXTTradingConnector
-from qubx.core.strategy import StrategyContext
+from qubx.core.interfaces import IStrategyContext, IStrategy
+from qubx.core.account import AccountProcessor
+from qubx.core.context import StrategyContext
+from qubx.core.loggers import LogsWriter, InMemoryLogsWriter, StrategyLogging
+from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
+from qubx.connectors.ccxt.ccxt_trading import CCXTTradingConnector
 from qubx.utils.misc import add_project_to_system_path, Struct, logo, version
-from qubx.core.loggers import LogsWriter
+from qubx.backtester.simulator import SimulatedTrading
 
 
 LOGFILE = "logs/"
@@ -31,6 +35,102 @@ def _instruments_for_exchange(exch: str, symbols: list) -> list:
         else:
             logger.warning(f"Can't find instrument for symbol {s} - try to refresh lookup first !")
     return instrs
+
+
+def run_ccxt_paper_trading(
+    strategy: IStrategy,
+    exchange: str,
+    symbols: list[str],
+    strategy_config: dict | None = None,
+    blocking: bool = True,
+    base_currency: str = "USDT",
+    capital: float = 100_000,
+    commissions: str | None = None,
+) -> IStrategyContext:
+    # TODO: setup proper loggers to write out to files
+    instruments = [lookup.find_symbol(exchange.upper(), s.upper()) for s in symbols]
+    instruments = [i for i in instruments if i is not None]
+
+    logs_writer = InMemoryLogsWriter("test", "test", "0")
+
+    trading_service = SimulatedTrading("test", commissions=commissions, simulation_initial_time=pd.Timestamp.now().asm8)
+
+    account = AccountProcessor(
+        account_id=trading_service.get_account_id(),
+        base_currency=base_currency,
+        initial_capital=capital,
+    )
+    broker = CCXTExchangesConnector(exchange.lower(), trading_service, read_only=True, loop=asyncio.new_event_loop())
+
+    ctx = StrategyContext(
+        strategy=strategy,
+        broker=broker,
+        account=account,
+        instruments=instruments,
+        logging=StrategyLogging(logs_writer),
+        config=strategy_config,
+    )
+
+    if blocking:
+        try:
+            ctx.start(blocking=True)
+        except KeyboardInterrupt:
+            logger.info("Stopped by user")
+        finally:
+            ctx.stop()
+    else:
+        ctx.start()
+
+    return ctx
+
+
+def run_ccxt_trading(
+    strategy: IStrategy,
+    exchange: str,
+    symbols: list[str],
+    credentials: dict,
+    strategy_config: dict | None = None,
+    blocking: bool = True,
+    account_id: str = "main",
+    base_currency: str = "USDT",
+    capital: float = 100_000,
+    commissions: str | None = None,
+) -> IStrategyContext:
+    # TODO: setup proper loggers to write out to files
+    instruments = [lookup.find_symbol(exchange.upper(), s.upper()) for s in symbols]
+    instruments = [i for i in instruments if i is not None]
+
+    logs_writer = InMemoryLogsWriter("test", "test", "0")
+
+    trading_service = CCXTTradingConnector(exchange, account_id, commissions, **credentials)
+
+    account = AccountProcessor(
+        account_id=trading_service.get_account_id(),
+        base_currency=base_currency,
+        initial_capital=capital,
+    )
+    broker = CCXTExchangesConnector(exchange, trading_service, loop=asyncio.new_event_loop(), **credentials)
+
+    ctx = StrategyContext(
+        strategy=strategy,
+        broker=broker,
+        account=account,
+        instruments=instruments,
+        logging=StrategyLogging(logs_writer),
+        config=strategy_config,
+    )
+
+    if blocking:
+        try:
+            ctx.start(blocking=True)
+        except KeyboardInterrupt:
+            logger.info("Stopped by user")
+        finally:
+            ctx.stop()
+    else:
+        ctx.start()
+
+    return ctx
 
 
 def load_strategy_config(filename: str) -> Struct:

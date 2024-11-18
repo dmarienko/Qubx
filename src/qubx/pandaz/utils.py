@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Iterable, Literal, Optional, Union, List
+from typing import Any, Callable, Dict, Iterable, Literal, Optional, Set, Union, List
 from datetime import timedelta
 import pandas as pd
 import numpy as np
@@ -90,11 +90,11 @@ def rolling_forward_test_split(
             yield (np.array(range(i - training_period, i)), np.array(range(i, i + test_period)))
 
 
-def generate_equal_date_ranges(start: str | pd.Timestamp, end: str | pd.Timestamp, freq: int, units: str) -> Iterable:
+def generate_equal_date_ranges(start: str, end: str, freq, units):
     """
     Generator for date ranges:
 
-    for s,e in generate_equal_date_ranges('2019-01-01', '2022-05-17', 1, 'Y'):
+    for s,e in generate_ranges('2019-01-01', '2022-05-17', 1, 'Y'):
         print(s, e)
     ------------------
     2019-01-01 2019-12-31
@@ -103,9 +103,8 @@ def generate_equal_date_ranges(start: str | pd.Timestamp, end: str | pd.Timestam
     2022-01-01 2022-05-17
     """
     _as_f = lambda x: pd.Timestamp(x).strftime("%Y-%m-%d")
-
-    # - for case when end - start < freq it won't got into the loop
-    b = [start, start] if _as_f(start) > _as_f(end) else [start, end]
+    if pd.Timestamp(end) - pd.Timestamp(start) < freq * pd.Timedelta(f"1{units}"):
+        b = [start, end]
 
     for a, b in rolling_forward_test_split(pd.Series(0, pd.date_range(start, end)), freq, freq, units=units):
         yield _as_f(a[0]), _as_f(a[-1])
@@ -531,3 +530,79 @@ def shift_series(
     f0 = pd.Timedelta(forward if forward is not None else 0)
     n_sigs.index = n_sigs.index + f0 + pd.DateOffset(days=days, hours=hours, minutes=minutes, seconds=seconds)
     return n_sigs
+
+
+def _frame_to_str(data: pd.DataFrame | pd.Series, name: str, start=3, end=3, time_info=True) -> str:
+    r = ""
+    if isinstance(data, (pd.DataFrame, pd.Series)):
+        t_info = f"{len(data)} records"
+        if time_info:
+            t_info += f" | {data.index[0]}:{data.index[-1]}"
+        hdr = f"- - -({name} {t_info} records)- - -"
+        sep = " -" * 50
+        r += hdr[: len(sep)] + "\n"
+        r += data.head(start).to_string(header=True) + "\n"
+        if start < len(data):
+            r += "    . . . . . . \n"
+            r += data.tail(end).to_string(header=True) + "\n"
+        # r += sep
+    else:
+        r = str(data)
+    return r
+
+
+class OhlcDict(dict):
+    """
+    Extended dictionary with method to perform resampling on OHLCV (Open, High, Low, Close, Volume) data.
+
+    Example:
+    -------
+    >>> index=pd.date_range('2020-01-01', periods=10, freq='15min')
+        nc = np.random.rand(10).cumsum()
+        d = OhlcDict({
+            "A": pd.DataFrame({"open": nc, "high": nc,"low": nc,"close": nc }, index=index),
+            "B": pd.DataFrame({"open": nc, "high": nc,"low": nc,"close": nc }, index=index),
+        })
+        print(d.close)
+        print(d("1h").close)
+        # - just show full info about this dict
+        print(str(d))
+    """
+
+    _fields: Set[str]
+
+    def __init__(self, orig: dict):
+        _o_copy = {}
+        if isinstance(orig, dict):
+            _lst = []
+            for k, o in orig.items():
+                if not isinstance(o, (pd.DataFrame | pd.Series)):
+                    raise ValueError(
+                        f"All values in the dictionary must be pandas Series or DataFrames, but {k} is {type(o)}"
+                    )
+                # - skip empty data
+                if not o.empty:
+                    _o_copy[k] = o
+                    _lst.extend(o.columns.values)
+        self._fields = set(_lst)
+        super().__init__(_o_copy)
+
+    def __call__(self, *args: Any, **kwds: Any) -> Any:
+        if args:
+            try:
+                return OhlcDict(ohlc_resample(self, pd.Timedelta(args[0]), **kwds))
+            except Exception as e:
+                raise ValueError(str(e))
+        return self
+
+    def __getattribute__(self, name: str) -> Any:
+        if name != "_fields":
+            if name in self._fields:
+                return retain_columns_and_join(self, name)
+        return super().__getattribute__(name)
+
+    def __str__(self) -> str:
+        r = ""
+        for k, v in self.items():
+            r += _frame_to_str(v, name=k) + "\n"
+        return r

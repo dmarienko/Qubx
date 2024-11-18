@@ -5,16 +5,23 @@ import pandas as pd
 from dataclasses import dataclass, field
 
 from threading import Event, Lock
-from queue import Queue
+from queue import Queue, Empty
+from enum import StrEnum
 
+from qubx import logger
+from qubx.core.exceptions import QueueTimeout
+from qubx.utils.misc import Stopwatch
 from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.core.utils import prec_ceil, prec_floor
 
 
 dt_64 = np.datetime64
 td_64 = np.timedelta64
+ns_to_dt_64 = lambda ns: np.datetime64(ns, "ns")
 
 OPTION_FILL_AT_SIGNAL_PRICE = "fill_at_signal_price"
+
+SW = Stopwatch()
 
 
 @dataclass
@@ -202,7 +209,7 @@ class Instrument:
         **kwargs,
     ) -> Signal:
         return Signal(
-            self,
+            instrument=self,
             signal=signal,
             price=price,
             stop=stop,
@@ -211,6 +218,11 @@ class Instrument:
             comment=comment,
             options=(options or {}) | kwargs,
         )
+
+    @property
+    def id(self) -> str:
+        # TODO: maybe change this later to include exchange and market type
+        return self.symbol
 
     def __hash__(self) -> int:
         return hash((self.symbol, self.exchange, self.market_type))
@@ -223,7 +235,10 @@ class Instrument:
         return self.symbol == other.symbol and self.exchange == other.exchange and self.market_type == other.market_type
 
     def __str__(self) -> str:
-        return f"{self.exchange}:{self.symbol} [{self.market_type} {str(self.futures_info) if self.futures_info else 'SPOT ' + self.base + '/' + self.quote }]"
+        return f"{self.exchange}:{self.market_type}:{self.symbol}"
+
+    def __repr__(self) -> str:
+        return self.__str__()
 
 
 @dataclass
@@ -289,6 +304,22 @@ class TriggerEvent:
 
 
 @dataclass
+class MarketEvent:
+    """
+    Market data update.
+    """
+
+    time: dt_64
+    type: str
+    instrument: Instrument
+    data: Any
+    is_trigger: bool = False
+
+    def __repr__(self):
+        return f"MarketEvent(time={self.time}, type={self.type}, instrument={self.instrument}, data={self.data})"
+
+
+@dataclass
 class Deal:
     id: str | int  # trade id
     order_id: str | int  # order's id
@@ -309,7 +340,7 @@ OrderStatus = Literal["OPEN", "CLOSED", "CANCELED", "NEW"]
 class Order:
     id: str
     type: OrderType
-    symbol: str
+    instrument: Instrument
     time: dt_64
     quantity: float
     price: float
@@ -321,7 +352,7 @@ class Order:
     options: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
-        return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
+        return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.instrument.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
 
 
 class Position:
@@ -417,8 +448,12 @@ class Position:
 
             # - extract realized part of PnL
             if qty_closing != 0:
+                _abs_qty_close = abs(qty_closing)
                 deal_pnl = qty_closing * (self.position_avg_price - exec_price)
+
                 quantity += qty_closing
+                self.__pos_incr_qty -= _abs_qty_close
+
                 # - reset average price to 0 if smaller than minimal price change to avoid cumulative error
                 if abs(quantity) < self.instrument.min_size_step:
                     quantity = 0.0
@@ -480,6 +515,7 @@ class Position:
         return self.pnl
 
     def total_pnl(self) -> float:
+        # TODO: account for commissions
         pnl = self.r_pnl
         if not np.isnan(self.last_update_price):  # type: ignore
             pnl += self.quantity * (self.last_update_price - self.position_avg_price) / self.last_update_conversion_rate  # type: ignore
@@ -549,8 +585,11 @@ class CtrlChannel:
         if self.control.is_set():
             self._queue.put(data)
 
-    def receive(self) -> Any:
-        return self._queue.get()
+    def receive(self, timeout: int | None = None) -> Any:
+        try:
+            return self._queue.get(timeout=timeout)
+        except Empty:
+            raise QueueTimeout(f"Timeout waiting for data on {self.name} channel")
 
 
 class SimulatedCtrlChannel(CtrlChannel):
@@ -567,7 +606,7 @@ class SimulatedCtrlChannel(CtrlChannel):
         # - when data is sent, invoke callback
         return self._callback.process_data(*data)
 
-    def receive(self) -> Any:
+    def receive(self, timeout: int | None = None) -> Any:
         raise ValueError("This method should not be called in a simulated environment.")
 
     def stop(self):
@@ -596,7 +635,24 @@ class ITimeProvider:
         """
         Returns current time
         """
-        raise NotImplementedError("Subclasses must implement this method")
+        ...
+
+
+class SubscriptionType(StrEnum):
+    """Subscription type constants."""
+
+    QUOTE = "quote"
+    TRADE = "trade"
+    OHLC = "ohlc"
+    ORDERBOOK = "orderbook"
+    LIQUIDATION = "liquidation"
+    FUNDING_RATE = "funding_rate"
+
+    def __repr__(self) -> str:
+        return self.value
+
+    def __str__(self) -> str:
+        return self.value
 
 
 class TradingSessionResult:

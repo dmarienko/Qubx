@@ -1,5 +1,7 @@
-import numpy as np
 from typing import Any, Tuple
+
+import numpy as np
+cimport numpy as np
 
 import pandas as pd
 
@@ -32,6 +34,19 @@ class Trade:
     taker: int
     trade_id: int
     def __init__(self, time, price, size, taker=-1, trade_id=0): ...
+
+class OrderBook:
+    time: int
+    top_bid: float
+    top_ask: float
+    tick_size: float
+    bids: np.ndarray
+    asks: np.ndarray
+
+    def __init__(self, time, top_bid, top_ask, tick_size, bids, asks): ...
+    def to_quote(self) -> Quote: ...
+    def mid_price(self) -> float: ...
+
 
 class Locator:
     def __getitem__(self, idx): ...
@@ -68,7 +83,7 @@ class OHLCV(TimeSeries):
     volume: TimeSeries
     bvolume: TimeSeries
 
-    def __init__(self, name, timeframe, max_series_length) -> None: ...
+    def __init__(self, name, timeframe, max_series_length: int | float = np.inf) -> None: ...
     def __len__(self) -> int: ...
     def update(self, time: int, price: float, volume: float = 0.0, bvolume: float = 0.0) -> bool: ...
     def update_by_bar(
@@ -94,8 +109,9 @@ class IndicatorOHLC(Indicator):
     series: OHLCV
     def _copy_internal_series(self, start: int, stop: int, *origins): ...
 
-def time_as_nsec(time: Any) -> np.datetime64: ...
+def time_as_nsec(time: Any) -> int: ...
 
 class RollingSum:
+    is_init_stage: bool
     def __init__(self, period: int) -> None: ...
     def update(self, value: float, new_item_started: bool) -> float: ...

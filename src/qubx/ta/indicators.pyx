@@ -218,20 +218,41 @@ def lowest(series:TimeSeries, period:int):
     return Lowest.wrap(series, period)
 
 
-# - - - - TODO !!!!!!!
 cdef class Std(Indicator):
+    """
+    Streaming Standard Deviation indicator
+    """
 
     def __init__(self, str name, TimeSeries series, int period):
         self.period = period
+        self.rolling_sum = RollingSum(period)
+        self.variance_sum = RollingSum(period)
         super().__init__(name, series)
 
     cpdef double calculate(self, long long time, double value, short new_item_started):
-        pass
+        # Update the rolling sum with the new value
+        cdef double _sum = self.rolling_sum.update(value, new_item_started)
+
+        # If we're still in the initialization stage, return NaN
+        if self.rolling_sum.is_init_stage:
+            return np.nan
+
+        # Calculate the mean from the rolling sum
+        cdef double _mean = _sum / self.period
+
+        # Update the variance sum with the squared deviation from the mean
+        cdef double _var_sum = self.variance_sum.update((value - _mean) ** 2, new_item_started)
+
+        # If the variance sum is still in the initialization stage, return NaN
+        if self.variance_sum.is_init_stage:
+            return np.nan
+
+        # Return the square root of the variance (standard deviation)
+        return np.sqrt(_var_sum / self.period)
 
 
-def std(series:TimeSeries, period:int, mean=0):
+def std(series: TimeSeries, period: int, mean=0):
     return Std.wrap(series, period)
-# - - - - TODO !!!!!!!
 
 
 cdef double norm_pdf(double x):
@@ -599,6 +620,28 @@ def atr(series: OHLCV, period: int = 14, smoother="sma", percentage: bool = Fals
     if not isinstance(series, OHLCV):
         raise ValueError("Series must be OHLCV !")
     return Atr.wrap(series, period, smoother, percentage)
+
+
+cdef class Zscore(Indicator):
+    """
+    Z-score normalization using rolling SMA and Std
+    """
+
+    def __init__(self, str name, TimeSeries series, int period, str smoother):
+        self.tr = TimeSeries("tr", series.timeframe, series.max_series_length)
+        self.ma = smooth(self.tr, smoother, period)
+        self.std = std(self.tr, period)
+        super().__init__(name, series)
+
+    cpdef double calculate(self, long long time, double value, short new_item_started):
+        self.tr.update(time, value)
+        if len(self.ma) < 1 or len(self.std) < 1 or np.isnan(self.ma[0]) or np.isnan(self.std[0]) or self.std[0] == 0:
+            return np.nan
+        return (value - self.ma[0]) / self.std[0]
+
+
+def zscore(series: TimeSeries, period: int = 20, smoother="sma"):
+    return Zscore.wrap(series, period, smoother)
 
 
 cdef class Swings(IndicatorOHLC):

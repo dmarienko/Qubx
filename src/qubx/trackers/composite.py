@@ -2,7 +2,7 @@ from collections import defaultdict
 from typing import Callable
 from qubx.core.series import Bar, Quote, Trade
 from qubx.core.basics import Deal, Instrument, Signal, TargetPosition
-from qubx.core.strategy import IPositionSizer, PositionsTracker, StrategyContext
+from qubx.core.interfaces import IPositionSizer, PositionsTracker, IStrategyContext
 
 
 Targets = list[TargetPosition] | TargetPosition | None
@@ -16,55 +16,57 @@ class CompositeTracker(PositionsTracker):
     def __init__(self, *trackers: PositionsTracker) -> None:
         self.trackers = trackers
 
-    def process_signals(self, ctx: StrategyContext, signals: list[Signal]) -> list[TargetPosition]:
+    def process_signals(self, ctx: IStrategyContext, signals: list[Signal]) -> list[TargetPosition]:
         _index_to_targets: dict[int, Targets] = {
             index: tracker.process_signals(ctx, signals) for index, tracker in enumerate(self.trackers)
         }
         return self._select_min_targets(_index_to_targets)
 
-    def update(self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar) -> list[TargetPosition]:
+    def update(
+        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+    ) -> list[TargetPosition]:
         _index_to_targets: dict[int, Targets] = {
             index: tracker.update(ctx, instrument, update) for index, tracker in enumerate(self.trackers)
         }
         return self._select_min_targets(_index_to_targets)
 
-    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal):
+    def on_execution_report(self, ctx: IStrategyContext, instrument: Instrument, deal: Deal):
         for tracker in self.trackers:
             tracker.on_execution_report(ctx, instrument, deal)
 
     def _select_min_targets(self, tracker_to_targets: dict[int, Targets]) -> list[TargetPosition]:
-        _symbol_to_targets: dict[str, list[TargetPosition]] = defaultdict(list)
+        _instrument_to_targets: dict[Instrument, list[TargetPosition]] = defaultdict(list)
         for targets in tracker_to_targets.values():
             if isinstance(targets, list):
                 for target in targets:
-                    _symbol_to_targets[target.instrument.symbol].append(target)
+                    _instrument_to_targets[target.instrument].append(target)
             elif isinstance(targets, TargetPosition):
-                _symbol_to_targets[targets.instrument.symbol].append(targets)
+                _instrument_to_targets[targets.instrument].append(targets)
 
-        _symbol_to_targets = self._process_override_signals(_symbol_to_targets)
+        _instrument_to_targets = self._process_override_signals(_instrument_to_targets)
 
-        _symbol_to_min_target = {
+        _instr_to_min_target = {
             symbol: min(targets, key=lambda target: abs(target.target_position_size))
-            for symbol, targets in _symbol_to_targets.items()
+            for symbol, targets in _instrument_to_targets.items()
         }
 
-        return list(_symbol_to_min_target.values())
+        return list(_instr_to_min_target.values())
 
     def _process_override_signals(
-        self, symbol_to_targets: dict[str, list[TargetPosition]]
-    ) -> dict[str, list[TargetPosition]]:
+        self, instrument_to_targets: dict[Instrument, list[TargetPosition]]
+    ) -> dict[Instrument, list[TargetPosition]]:
         """
         Filter out signals that allow override if there is more than one signal for the same symbol.
         """
-        filt_symbol_to_targets = {}
-        for symbol, targets in symbol_to_targets.items():
+        filt_instr_to_targets = {}
+        for instr, targets in instrument_to_targets.items():
             if len(targets) == 1 or all(t.signal.options.get("allow_override", False) for t in targets):
-                filt_symbol_to_targets[symbol] = targets
+                filt_instr_to_targets[instr] = targets
                 continue
-            filt_symbol_to_targets[symbol] = [
+            filt_instr_to_targets[instr] = [
                 target for target in targets if not target.signal.options.get("allow_override", False)
             ]
-        return filt_symbol_to_targets
+        return filt_instr_to_targets
 
 
 class ConditionalTracker(PositionsTracker):
@@ -76,7 +78,7 @@ class ConditionalTracker(PositionsTracker):
         self.condition = condition
         self.tracker = tracker
 
-    def process_signals(self, ctx: StrategyContext, signals: list[Signal]) -> list[TargetPosition] | TargetPosition:
+    def process_signals(self, ctx: IStrategyContext, signals: list[Signal]) -> list[TargetPosition] | TargetPosition:
         filtered_signals = []
         for signal in signals:
             cond = self.condition(signal)
@@ -101,11 +103,11 @@ class ConditionalTracker(PositionsTracker):
         return self.tracker.process_signals(ctx, filtered_signals)
 
     def update(
-        self, ctx: StrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar
     ) -> list[TargetPosition] | TargetPosition:
         return self.tracker.update(ctx, instrument, update)
 
-    def on_execution_report(self, ctx: StrategyContext, instrument: Instrument, deal: Deal):
+    def on_execution_report(self, ctx: IStrategyContext, instrument: Instrument, deal: Deal):
         self.tracker.on_execution_report(ctx, instrument, deal)
 
 

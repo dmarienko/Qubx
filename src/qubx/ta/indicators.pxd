@@ -59,6 +59,13 @@ cdef class Lowest(Indicator):
 
 cdef class Std(Indicator):
     cdef int period
+    cdef RollingSum rolling_sum, variance_sum
+    cpdef double calculate(self, long long time, double value, short new_item_started)
+
+
+cdef class Zscore(Indicator):
+    cdef TimeSeries tr
+    cdef Indicator ma, std
     cpdef double calculate(self, long long time, double value, short new_item_started)
 
 cdef class Pewma(Indicator):

@@ -3,7 +3,7 @@ import numpy as np
 
 from qubx import logger
 from qubx.core.basics import Position, Signal, TargetPosition
-from qubx.core.strategy import IPositionSizer, StrategyContext
+from qubx.core.interfaces import IPositionSizer, IStrategyContext
 
 
 class FixedSizer(IPositionSizer):
@@ -16,12 +16,12 @@ class FixedSizer(IPositionSizer):
         self.amount_in_quote = amount_in_quote
         self.fixed_size = abs(fixed_size)
 
-    def calculate_target_positions(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
+    def calculate_target_positions(self, ctx: IStrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         if not self.amount_in_quote:
             return [TargetPosition.create(ctx, s, s.signal * self.fixed_size) for s in signals]
         positions = []
         for signal in signals:
-            q = ctx.quote(signal.instrument.symbol)
+            q = ctx.quote(signal.instrument)
             if q is None:
                 logger.error(
                     f"{self.__class__.__name__}: Can't get actual market quote for {signal.instrument.symbol} !"
@@ -46,11 +46,11 @@ class FixedLeverageSizer(IPositionSizer):
         """
         self.leverage = leverage
 
-    def calculate_target_positions(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
-        total_capital = ctx.acc.get_total_capital()
+    def calculate_target_positions(self, ctx: IStrategyContext, signals: List[Signal]) -> List[TargetPosition]:
+        total_capital = ctx.account.get_total_capital()
         positions = []
         for signal in signals:
-            q = ctx.quote(signal.instrument.symbol)
+            q = ctx.quote(signal.instrument)
             if q is None:
                 logger.error(
                     f"{self.__class__.__name__}: Can't get actual market quote for {signal.instrument.symbol} !"
@@ -80,18 +80,21 @@ class FixedRiskSizer(IPositionSizer):
         self.reinvest_profit = reinvest_profit
         self.divide_by_symbols = divide_by_symbols
 
-    def calculate_target_positions(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
+    def calculate_target_positions(self, ctx: IStrategyContext, signals: List[Signal]) -> List[TargetPosition]:
         t_pos = []
         for signal in signals:
             target_position_size = 0
             if signal.signal != 0:
                 if signal.stop and signal.stop > 0:
-                    _pos = ctx.positions[signal.instrument.symbol]
-                    _q = ctx.quote(signal.instrument.symbol)
+                    _pos = ctx.positions[signal.instrument]
+                    _q = ctx.quote(signal.instrument)
+                    assert _q is not None
 
                     _direction = np.sign(signal.signal)
                     # - hey, we can't trade using negative balance ;)
-                    _cap = max(ctx.acc.get_total_capital() if self.reinvest_profit else ctx.acc.get_free_capital(), 0)
+                    _cap = max(
+                        ctx.account.get_total_capital() if self.reinvest_profit else ctx.account.get_capital(), 0
+                    )
                     _entry = _q.ask if _direction > 0 else _q.bid
                     # fmt: off
                     target_position_size = (  
@@ -112,36 +115,71 @@ class FixedRiskSizer(IPositionSizer):
         return t_pos
 
 
-class WeightedPortfolioSizer(IPositionSizer):
+class LongShortRatioPortfolioSizer(IPositionSizer):
+    """
+    Weighted portfolio sizer. Signals are cosidered as weigths.
+    It's supposed to split capital in the given ratio between longs and shorts positions.
+    For example if ratio is 1 capital invested in long and short positions should be the same.
 
-    def __init__(self, capital_using: float = 1.0):
+    So if we S_l = sum all long signals, S_s = abs sum all short signals, r (longs_shorts_ratio) given ratio
+
+        k_s * S_s + k_l * S_l = 1
+        k_l * S_l / k_s * S_s = r
+
+    then
+
+        k_s = 1 / S_s * (1 + r) or 0 if S_s == 0 (no short signals)
+        k_l = r / S_l * (1 + r) or 0 if S_l == 0 (no long signals)
+
+    and final positions:
+        P_i = S_i * available_capital * capital_using * (k_l if S_i > 0 else k_s)
+    """
+
+    _r: float
+
+    def __init__(self, capital_using: float = 1.0, longs_to_shorts_ratio: float = 1):
         """
-        Weighted portfolio sizer. Signals are cosidered as weigths.
+        Create weighted portfolio sizer.
 
-        :param cap_used_pct: how much of total capital to be used for sizing
+        :param capital_using: how much of total capital to be used for positions
+        :param longs_shorts_ratio: ratio of longs to shorts positions
         """
-        self.capital_using = min(abs(capital_using), 1.0)
+        assert 0 < capital_using <= 1, f"Capital using factor must be between 0 and 1, got {capital_using}"
+        assert 0 < longs_to_shorts_ratio, f"Longs/shorts ratio must be greater 0, got {longs_to_shorts_ratio}"
+        self.capital_using = capital_using
+        self._r = longs_to_shorts_ratio
 
-    def calculate_target_positions(self, ctx: StrategyContext, signals: List[Signal]) -> List[TargetPosition]:
-        sw = np.sum([max(s.signal, 0) for s in signals])
+    def calculate_target_positions(self, ctx: IStrategyContext, signals: List[Signal]) -> List[TargetPosition]:
+        """
+        Calculates target positions for each signal using weighted portfolio approach.
 
-        # - in case if all positions need to be closed
-        sw = 1 if sw == 0 else sw
+        Parameters:
+        ctx (StrategyContext): The strategy context containing information about the current state of the strategy.
+        signals (List[Signal]): A list of signals generated by the strategy.
 
-        cap = self.capital_using * ctx.get_capital()
+        Returns:
+        List[TargetPosition]: A list of target positions for each signal, representing the desired size of the position
+        in the corresponding instrument.
+        """
+        total_capital = ctx.get_total_capital()
+        cap = self.capital_using * total_capital
+
+        _S_l, _S_s = 0, 0
+        for s in signals:
+            _S_l += s.signal if s.signal > 0 else 0
+            _S_s += abs(s.signal) if s.signal < 0 else 0
+        k_s = 1 / (_S_s * (1 + self._r)) if _S_s > 0 else 0
+        k_l = self._r / (_S_l * (1 + self._r)) if _S_l > 0 else 0
+
         t_pos = []
-
         for signal in signals:
-            # _pos = ctx.positions[signal.instrument.symbol]
-            _q = ctx.quote(signal.instrument.symbol)
+            # _pos = ctx.positions[signal.instrument]
+            _q = ctx.quote(signal.instrument)
             if _q is not None:
-                t_pos.append(
-                    TargetPosition.create(
-                        ctx,
-                        signal,
-                        cap * max(signal.signal, 0) / sw / _q.mid_price(),
-                    )
-                )
+                _p_q = cap / _q.mid_price()
+                # _t_p = (_c_p / _S_l) if signal.signal > 0 else (_c_p / _S_s) if signal.signal < 0 else 0
+                _p = k_l * signal.signal if signal.signal > 0 else k_s * signal.signal
+                t_pos.append(TargetPosition.create(ctx, signal, _p * _p_q))
             else:
                 logger.error(
                     f"{self.__class__.__name__}: Can't get actual market quote for {signal.instrument.symbol} !"
