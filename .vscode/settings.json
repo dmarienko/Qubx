@@ -1,6 +1,7 @@
 {
     "python.testing.pytestArgs": [
-        "tests"
+        "tests",
+        "-s",
     ],
     "python.analysis.extraPaths": [
         "${env:HOME}/projects",
