@@ -1,5 +1,7 @@
+from collections import defaultdict
 from typing import Callable, Iterable, List, Set, Tuple, Union, Dict, Any
 
+import numpy as np
 import pandas as pd
 
 from qubx import logger, lookup
@@ -143,6 +145,50 @@ class Issue5(IStrategy):
         return []
 
 
+class Test6_HistOHLC(IStrategy):
+    _U: List[List[Instrument]] = []
+    _out: Dict[Any, OHLCV] = {}
+    _out_fit: Dict[Any, Any] = {}
+
+    def on_init(self, ctx: IStrategyContext) -> None:
+        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1d")
+        # ctx.set_fit_schedule("59 22 * */1 L7")
+        # ctx.set_event_schedule("55 23 * * *")
+        # ctx.set_fit_schedule("0 0 * */1 L1")
+        ctx.set_fit_schedule("0 0 * * *")
+        ctx.set_event_schedule("0 0 * * *")
+        # ctx.set_warmup(SubscriptionType.OHLC, "1d")
+        self._U = [
+            [self.find_instrument(s) for s in ["BTCUSDT", "ETHUSDT"]],
+            [self.find_instrument(s) for s in ["BTCUSDT", "BCHUSDT", "LTCUSDT"]],
+            [self.find_instrument(s) for s in ["BTCUSDT", "AAVEUSDT", "ETHUSDT"]],
+        ]
+        self._out = {}
+        self._out_fit = {}
+
+    def find_instrument(self, symbol: str) -> Instrument:
+        assert (i := lookup.find_symbol("BINANCE.UM", symbol)) is not None, f"Could not find BINANCE.UM:{symbol}"
+        return i
+
+    def on_fit(self, ctx: IStrategyContext):
+        print(f" - - - - - - - ||| FIT : {ctx.time()}")
+        self._out_fit |= self.get_ohlc(ctx, self._U[0])
+        ctx.set_universe(self._U[0])
+
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
+        print(f" - - - - - - - {ctx.time()}")
+        self._out |= self.get_ohlc(ctx, ctx.instruments)
+        return []
+
+    def get_ohlc(self, ctx: IStrategyContext, instruments: List[Instrument]) -> dict:
+        closes = defaultdict(dict)
+        for i in instruments:
+            data = ctx.ohlc(i, "1d", 4)
+            print(f":: :: :: {i.symbol} :: :: ::\n{str(data)}")
+            closes[pd.Timestamp(data[0].time, unit="ns")] |= {i.symbol: data[0].close}
+        return closes
+
+
 class TestSimulator:
     def test_fit_event_quotes(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
@@ -209,20 +255,14 @@ class TestSimulator:
     def test_ohlc_quote_update(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
 
+        # fmt: off
         test0 = simulate(
-            {
-                "fail4": (stg := Issue4()),
-            },
-            ld,
-            aux_data=ld,
-            capital=100_000,
-            instruments=["BINANCE.UM:BTCUSDT"],
-            commissions="vip0_usdt",
-            start="2023-06-01",
-            stop="2023-06-10",
-            debug="DEBUG",
-            n_jobs=1,
+            { "fail4": (stg := Issue4()), },
+            ld, aux_data=ld,
+            capital=100_000, instruments=["BINANCE.UM:BTCUSDT"], commissions="vip0_usdt", debug="DEBUG", n_jobs=1,
+            start="2023-06-01", stop="2023-06-10",
         )
+        # fmt: on
 
         assert stg._issues == 0, "Got Errors during the simulation"
 
@@ -251,3 +291,23 @@ class TestSimulator:
         assert all(
             stg._out.pd()[["open", "high", "low", "close"]] == r[["open", "high", "low", "close"]]
         ), "Out OHLC differ"
+
+    def test_ohlc_hist_data(self):
+        ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
+        ld_test = loader("BINANCE.UM", "1d", source="csv::tests/data/csv_1h/", n_jobs=1)
+
+        # fmt: off
+        simulate({ "Issue5": (stg := Test6_HistOHLC()), },
+            ld, 
+            capital=100_000, instruments=["BINANCE.UM:BTCUSDT"], commissions="vip0_usdt",
+            start="2023-07-01", stop="2023-07-04",
+            debug="DEBUG", silent=True, n_jobs=1,
+        )
+        # fmt: on
+
+        r = ld_test[["BTCUSDT", "ETHUSDT"], "2023-06-30":"2023-07-03 23:59:59"]("1d")  # type: ignore
+        # print(r.display(-1))
+        assert all(pd.DataFrame.from_dict(stg._out_fit, orient="index") == r.close)
+
+        r = ld_test[["BTCUSDT", "ETHUSDT"], "2023-07-01":"2023-07-03 23:59:59"]("1d")  # type: ignore
+        assert all(pd.DataFrame.from_dict(stg._out, orient="index") == r.close)
