@@ -151,7 +151,8 @@ class ProcessingManager(IProcessingManager):
                     signals = []
 
                 if isinstance(event, TriggerEvent) or (isinstance(event, MarketEvent) and event.is_trigger):
-                    _signals = self._wrap_signal_list(self.__strategy.on_event(self.__context, event))
+                    _trigger_event = event.to_trigger() if isinstance(event, MarketEvent) else event
+                    _signals = self._wrap_signal_list(self.__strategy.on_event(self.__context, _trigger_event))
                     signals.extend(_signals)
 
                 self.__broker.commit()  # apply pending broker operations
@@ -184,7 +185,7 @@ class ProcessingManager(IProcessingManager):
         self.__logging.notify(self.__time_provider.time())
 
         return False
-    
+
     def is_fitted(self) -> bool:
         return self.__init_fit_was_called
 
@@ -319,10 +320,17 @@ class ProcessingManager(IProcessingManager):
     ###########################################################################
 
     # it's important that we call it with _process to not include in the handlers map
-    def _process_custom_event(self, instrument: Instrument, event_type: str, event_data: Any) -> MarketEvent | None:
-        if event_type.startswith("hist_"):
+    def _process_custom_event(
+        self, instrument: Instrument | None, event_type: str, event_data: Any
+    ) -> MarketEvent | None:
+        if event_type.startswith("hist_") and instrument is not None:
             return self._process_hist_event(instrument, event_type, event_data)
-        self.__update_base_data(instrument, event_type, event_data)
+        if instrument is not None:
+            self.__update_base_data(instrument, event_type, event_data)
+        elif instrument is None and isinstance(event_data, dict):
+            for _instrument, data in event_data.items():
+                if isinstance(_instrument, Instrument):
+                    self.__update_base_data(_instrument, event_type, data)
         return MarketEvent(self.__time_provider.time(), event_type, instrument, event_data)
 
     def _process_hist_event(self, instrument: Instrument, event_type: str, event_data: Any) -> None:

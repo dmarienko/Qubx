@@ -311,12 +311,22 @@ class MarketEvent:
 
     time: dt_64
     type: str
-    instrument: Instrument
+    instrument: Instrument | None
     data: Any
     is_trigger: bool = False
 
+    def to_trigger(self) -> TriggerEvent:
+        return TriggerEvent(self.time, self.type, self.instrument, self.data)
+
     def __repr__(self):
-        return f"MarketEvent(time={self.time}, type={self.type}, instrument={self.instrument}, data={self.data})"
+        _items = [
+            f"time={self.time}",
+            f"type={self.type}",
+        ]
+        if self.instrument is not None:
+            _items.append(f"instrument={self.instrument}")
+        _items.append(f"data={self.data}")
+        return f"MarketEvent({', '.join(_items)})"
 
 
 @dataclass
@@ -702,3 +712,21 @@ class TradingSessionResult:
         self.executions_log = executions_log
         self.signals_log = signals_log
         self.is_simulation = is_simulation
+
+
+@dataclass
+class Liquidation:
+    time: dt_64
+    quantity: float
+    price: float
+    side: int
+
+
+@dataclass
+class FundingRate:
+    time: dt_64
+    rate: float
+    interval: str
+    next_funding_time: dt_64
+    mark_price: float | None = None
+    index_price: float | None = None

@@ -23,6 +23,8 @@ class SubscriptionManager(ISubscriptionManager):
             SubscriptionType.ORDERBOOK: "1m",
             SubscriptionType.QUOTE: "1m",
             SubscriptionType.TRADE: "1m",
+            SubscriptionType.LIQUIDATION: "1m",
+            SubscriptionType.FUNDING_RATE: "1m",
         }
 
     def subscribe(

@@ -12,7 +12,7 @@ from asyncio.events import AbstractEventLoop
 from asyncio.exceptions import CancelledError
 from collections import defaultdict
 from types import FunctionType
-from ccxt import NetworkError, ExchangeClosedByUser, ExchangeError, ExchangeNotAvailable
+from ccxt import NetworkError, ExchangeClosedByUser, ExchangeError, ExchangeNotAvailable, BadSymbol
 from ccxt.base.exchange import Exchange
 
 from qubx import logger
@@ -22,8 +22,15 @@ from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider
 from qubx.utils.threading import synchronized
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.utils.ntp import start_ntp_thread, time_now
-from .ccxt_utils import DATA_PROVIDERS_ALIASES, ccxt_convert_trade, ccxt_convert_orderbook
-from .ccxt_exceptions import CcxtSymbolNotRecognized
+from .ccxt_utils import (
+    DATA_PROVIDERS_ALIASES,
+    ccxt_convert_trade,
+    ccxt_convert_orderbook,
+    ccxt_convert_liquidation,
+    ccxt_convert_funding_rate,
+    ccxt_symbol_info_to_instrument,
+)
+from .ccxt_exceptions import CcxtSymbolNotRecognized, CcxtLiquidationParsingError
 
 # - register custom wrappers
 from .ccxt_customizations import BinanceQV, BinanceQVUSDM
@@ -200,7 +207,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                 self._subscribe(_updated_instruments, sub, **params)
 
         # - update symbol to instrument mapping
-        self._symbol_to_instrument = {i.symbol: i for i in self.subscribed_instruments}
+        self._symbol_to_instrument.update({i.symbol: i for i in self.subscribed_instruments})
 
         # - clean up pending subs and unsubs
         self._pending_stream_subscriptions.clear()
@@ -378,6 +385,23 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     def _get_exch_symbol(self, instrument: Instrument) -> str:
         return f"{instrument.base}/{instrument.quote}:{instrument.margin_symbol}"
 
+    def _get_instrument(self, symbol: str, symbol_to_instrument: Dict[str, Instrument] | None = None) -> Instrument:
+        instrument = self._symbol_to_instrument.get(symbol)
+        if instrument is None and symbol_to_instrument is not None:
+            try:
+                instrument = self._find_instrument_for_exch_symbol(symbol, symbol_to_instrument)
+            except CcxtSymbolNotRecognized:
+                pass
+        if instrument is None:
+            try:
+                symbol_info = self._exchange.market(symbol)
+            except BadSymbol:
+                raise CcxtSymbolNotRecognized(f"Unknown symbol {symbol}")
+            instrument = ccxt_symbol_info_to_instrument(self._exchange_id, symbol_info)
+        if symbol not in self._symbol_to_instrument:
+            self._symbol_to_instrument[symbol] = instrument
+        return instrument
+
     def _find_instrument_for_exch_symbol(
         self, exch_symbol: str, symbol_to_instrument: Dict[str, Instrument]
     ) -> Instrument:
@@ -485,6 +509,23 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     #############################
     # - Subscription methods
     #############################
+    async def _subscribe_executions(self, name: str, sub_type: str, channel: CtrlChannel):
+        async def _watch_executions():
+            exec = await self._exchange.watch_orders()
+            for report in exec:
+                instrument = self._get_instrument(report["symbol"], self._symbol_to_instrument)
+                order, deals = self.trading_service.process_execution_report(instrument, report)
+                channel.send((instrument, "order", order))
+                if deals:
+                    channel.send((instrument, "deals", deals))
+
+        await self._listen_to_stream(
+            subscriber=_watch_executions,
+            exchange=self._exchange,
+            channel=channel,
+            name=name,
+        )
+
     async def _subscribe_ohlc(
         self,
         name: str,
@@ -504,7 +545,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             _time = self.time()
             # - ohlcv is symbol -> timeframe -> list[timestamp, open, high, low, close, volume]
             for exch_symbol, _data in ohlcv.items():
-                instrument = self._find_instrument_for_exch_symbol(exch_symbol, _symbol_to_instrument)
+                instrument = self._get_instrument(exch_symbol, _symbol_to_instrument)
                 for _, ohlcvs in _data.items():
                     for oh in ohlcvs:
                         channel.send(
@@ -553,7 +594,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             trades = await self._exchange.watch_trades_for_symbols(symbols)
             symbol = trades[0]["symbol"]
             _time = self.time()
-            instrument = self._find_instrument_for_exch_symbol(symbol, _symbol_to_instrument)
+            instrument = self._get_instrument(symbol, _symbol_to_instrument)
             last_trade = ccxt_convert_trade(trades[-1])
             self.trading_service.update_position_price(instrument, _time, last_trade)
             for trade in trades:
@@ -567,7 +608,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         if warmup_period is not None:
             _new_instruments = instruments.difference(self._get_latest_instruments(sub_type, warmup_period))
             if _new_instruments:
-                logger.debug(f"New instruments for trade warmup: {_new_instruments}")
+                logger.debug(f"Running trade warmup for {_new_instruments}")
 
                 async def fetch_and_send_trades(instr: Instrument):
                     trades = await self._exchange.fetch_trades(
@@ -598,7 +639,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         sub_type: str,
         channel: CtrlChannel,
         instruments: Set[Instrument],
-        warmup_period: str | None = None,
     ):
         symbols = [i.symbol for i in instruments]
         _symbol_to_instrument = {i.symbol: i for i in instruments}
@@ -606,7 +646,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         async def watch_orderbook():
             ccxt_ob = await self._exchange.watch_order_book_for_symbols(symbols)
             exch_symbol = ccxt_ob["symbol"]
-            instrument = self._find_instrument_for_exch_symbol(exch_symbol, _symbol_to_instrument)
+            instrument = self._get_instrument(exch_symbol, _symbol_to_instrument)
             ob = ccxt_convert_orderbook(ccxt_ob, instrument)
             if ob is None:
                 return
@@ -620,8 +660,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             if unwatch is not None:
                 await unwatch
 
-        # TODO: add historical orderbook fetching
-
+        # - fetching of orderbooks for warmup is not supported by ccxt
         await self._listen_to_stream(
             subscriber=watch_orderbook,
             exchange=self._exchange,
@@ -630,22 +669,67 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             unsubscriber=un_watch_orderbook,
         )
 
-    async def _subscribe_liquidations(self):
-        pass
+    async def _subscribe_liquidation(
+        self,
+        name: str,
+        sub_type: str,
+        channel: CtrlChannel,
+        instruments: Set[Instrument],
+    ):
+        symbols = [i.symbol for i in instruments]
+        _symbol_to_instrument = {i.symbol: i for i in instruments}
 
-    async def _subscribe_executions(self, name: str, sub_type: str, channel: CtrlChannel):
-        async def _watch_executions():
-            exec = await self._exchange.watch_orders()
-            for report in exec:
-                instrument = self._find_instrument_for_exch_symbol(report["symbol"], self._symbol_to_instrument)
-                order, deals = self.trading_service.process_execution_report(instrument, report)
-                channel.send((instrument, "order", order))
-                if deals:
-                    channel.send((instrument, "deals", deals))
+        async def watch_liquidation():
+            liquidations = await self._exchange.watch_liquidations_for_symbols(symbols)
+            for liquidation in liquidations:
+                try:
+                    instrument = self._get_instrument(liquidation["symbol"], _symbol_to_instrument)
+                    channel.send((instrument, sub_type, ccxt_convert_liquidation(liquidation)))
+                except CcxtLiquidationParsingError:
+                    logger.debug(f"Could not parse liquidation {liquidation}")
+                    continue
 
+        async def un_watch_liquidation():
+            unwatch = getattr(self._exchange, "un_watch_liquidations_for_symbols", lambda _: None)(symbols)
+            if unwatch is not None:
+                await unwatch
+
+        # - fetching of liquidations for warmup is not supported by ccxt
         await self._listen_to_stream(
-            subscriber=_watch_executions,
+            subscriber=watch_liquidation,
             exchange=self._exchange,
             channel=channel,
             name=name,
+            unsubscriber=un_watch_liquidation,
+        )
+
+    async def _subscribe_funding_rate(
+        self,
+        name: str,
+        sub_type: str,
+        channel: CtrlChannel,
+    ):
+        # it is expected that we can retrieve funding rates for all instruments
+        async def watch_funding_rates():
+            funding_rates = await self._exchange.watch_funding_rates()  # type: ignore
+            instrument_to_funding_rate = {}
+            for symbol, info in funding_rates.items():
+                try:
+                    instrument = self._get_instrument(symbol)
+                    instrument_to_funding_rate[instrument] = ccxt_convert_funding_rate(info)
+                except CcxtSymbolNotRecognized as e:
+                    continue
+            channel.send((None, sub_type, instrument_to_funding_rate))
+
+        async def un_watch_funding_rates():
+            unwatch = getattr(self._exchange, "un_watch_funding_rates", lambda: None)()
+            if unwatch is not None:
+                await unwatch
+
+        await self._listen_to_stream(
+            subscriber=watch_funding_rates,
+            exchange=self._exchange,
+            channel=channel,
+            name=name,
+            unsubscriber=un_watch_funding_rates,
         )

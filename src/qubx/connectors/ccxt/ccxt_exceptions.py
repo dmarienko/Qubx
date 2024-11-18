@@ -7,3 +7,7 @@ class CcxtOrderBookParsingError(BaseError):
 
 class CcxtSymbolNotRecognized(BaseError):
     pass
+
+
+class CcxtLiquidationParsingError(BaseError):
+    pass

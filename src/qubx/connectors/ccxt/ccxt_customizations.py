@@ -1,4 +1,6 @@
+import pandas as pd
 import ccxt.pro as cxp
+from typing import List, Dict
 from ccxt.async_support.base.ws.client import Client
 from ccxt.async_support.base.ws.cache import ArrayCacheByTimestamp, ArrayCache
 
@@ -132,6 +134,12 @@ class BinanceQVUSDM(cxp.binanceusdm, BinanceQV):
     Describe method needs to be overriden, because of the way super is called in binanceusdm.
     """
 
+    _funding_intervals: Dict[str, str]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._funding_intervals = {}
+
     def describe(self):
         """
         Overriding watchTrades to use aggTrade instead of trade.
@@ -146,3 +154,26 @@ class BinanceQVUSDM(cxp.binanceusdm, BinanceQV):
                 }
             },
         )
+
+    async def watch_funding_rates(self, symbols: List[str] | None = None):
+        await self.load_markets()
+        await self._update_funding_intervals()
+        mark_prices = await self.watch_mark_prices(symbols)
+        funding_rates = {}
+        for symbol, info in mark_prices.items():
+            interval = self._funding_intervals.get(symbol, "8h")
+            funding_rates[symbol] = {
+                "timestamp": info["timestamp"],
+                "interval": interval,
+                "fundingRate": float(info["info"]["r"]),
+                "nextFundingTime": info["info"]["T"],
+                "markPrice": info["markPrice"],
+                "indexPrice": info["indexPrice"],
+            }
+        return funding_rates
+
+    async def _update_funding_intervals(self):
+        if self._funding_intervals:
+            return
+        symbol_to_info = await self.fetch_funding_intervals()
+        self._funding_intervals = {str(s): str(info["interval"]) for s, info in symbol_to_info.items()}
