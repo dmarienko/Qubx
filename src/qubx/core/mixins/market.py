@@ -49,9 +49,7 @@ class MarketDataProvider(IMarketDataProvider):
             _timeframe_ns = pd.Timedelta(timeframe).asm8.item()
 
             # - check if we need to fetch more data
-            if (_last_bar_time + _timeframe_ns <= self.__broker.time().item()) or (
-                length and _l_rc < length
-            ):
+            if (_last_bar_time + _timeframe_ns <= self.__broker.time().item()) or (length and _l_rc < length):
                 _need_history_request = True
 
         else:
@@ -70,11 +68,7 @@ class MarketDataProvider(IMarketDataProvider):
         return self.__cache.get_data(instrument, sub_type)
 
     def get_aux_data(self, data_id: str, **parameters) -> pd.DataFrame | None:
-        return (
-            self.__aux_data_provider.get_aux_data(data_id, **parameters)
-            if self.__aux_data_provider
-            else None
-        )
+        return self.__aux_data_provider.get_aux_data(data_id, **parameters) if self.__aux_data_provider else None
 
     def get_instruments(self) -> list[Instrument]:
         return self.__universe_manager.instruments
