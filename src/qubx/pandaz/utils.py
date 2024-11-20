@@ -605,7 +605,7 @@ class OhlcDict(dict):
         r = ""
         _h, _t = (len(self), 0) if heads == -1 else (heads, tails)
         for k, v in self.items():
-            r += _frame_to_str(v, name=k, start=heads, end=tails) + "\n"
+            r += _frame_to_str(v, name=k, start=_h, end=_t) + "\n"
         return r
 
     def __str__(self) -> str:

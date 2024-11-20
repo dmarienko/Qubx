@@ -1,8 +1,3 @@
-"""
-    Temporary implementation of portfolio performance metrics
-    Probably need to consider some third-party library for this purpose
-"""
-
 from typing import List, Tuple
 import numpy as np
 import pandas as pd
@@ -15,11 +10,14 @@ from copy import copy
 from itertools import chain
 
 import plotly.graph_objects as go
+import matplotlib
+import matplotlib.pylab as plt
 
 from qubx.core.basics import TradingSessionResult
 from qubx.core.series import OHLCV
 from qubx.pandaz.utils import ohlc_resample
 from qubx.utils.charting.lookinglass import LookingGlass
+from qubx.utils.charting.mpl_helpers import sbp
 from qubx.utils.time import infer_series_frequency
 
 
@@ -749,7 +747,45 @@ def tearsheet(
     sort_ascending: bool = False,
     plot_equities: bool = True,
     commission_factor: float = 1,
+    use_plotly: bool = True,
 ):
+    """
+    Generate a tearsheet for one or multiple trading sessions.
+
+    This function creates a performance report and visualization for trading session(s).
+    It can handle both single and multiple sessions, providing different outputs accordingly.
+
+    Parameters:
+    -----------
+    session : TradingSessionResult | List[TradingSessionResult]
+        The trading session(s) to analyze. Can be a single session or a list of sessions.
+    compound : bool, optional
+        Whether to use compound returns for charting (default is True).
+    account_transactions : bool, optional
+        Whether to account for transactions in calculations (default is True).
+    performance_statistics_period : int, optional
+        The period for performance statistics calculations in days (default is 365).
+    timeframe : str | pd.Timedelta, optional
+        The timeframe for resampling data. If None, it will be estimated (default is None).
+    sort_by : str, optional
+        The metric to sort multiple sessions by (default is "Sharpe").
+    sort_ascending : bool, optional
+        Whether to sort in ascending order (default is False).
+    plot_equities : bool, optional
+        Whether to plot equity curves for multiple sessions (default is True).
+    commission_factor : float, optional
+        Factor to apply to commissions (default is 1).
+    use_plotly : bool, optional
+        Whether to use Plotly for visualizations instead of Matplotlib (default is plotly).
+
+    Returns:
+    --------
+    For a single session:
+        A Plotly or Matplotlib visualization of the session's performance.
+    For multiple sessions:
+        A pandas DataFrame containing performance metrics for all sessions,
+        optionally accompanied by a plot of equity curves.
+    """
     if timeframe is None:
         timeframe = _estimate_timeframe(session)
     if isinstance(session, list):
@@ -761,6 +797,7 @@ def tearsheet(
                 performance_statistics_period,
                 timeframe=timeframe,
                 commission_factor=commission_factor,
+                use_plotly=use_plotly,
             )
         else:
             import matplotlib.pyplot as plt
@@ -803,6 +840,7 @@ def tearsheet(
             performance_statistics_period,
             timeframe=timeframe,
             commission_factor=commission_factor,
+            use_plotly=use_plotly,
         )
 
 
@@ -851,7 +889,7 @@ def _pfl_metrics_prepare(
     account_transactions: bool,
     performance_statistics_period: int,
     commission_factor: float = 1,
-):
+) -> Tuple[pd.Series, dict]:
     mtrx = portfolio_metrics(
         session.portfolio_log,
         session.executions_log,
@@ -875,52 +913,70 @@ def _tearsheet_single(
     performance_statistics_period=365,
     timeframe: str | pd.Timedelta = "1h",
     commission_factor: float = 1,
+    use_plotly: bool = True,
 ):
     report, mtrx = _pfl_metrics_prepare(
         session, account_transactions, performance_statistics_period, commission_factor=commission_factor
     )
-    tbl = go.Table(
-        columnwidth=[130, 130, 130, 130, 200],
-        header=dict(
-            values=report.index,
-            line_color="darkslategray",
-            fill_color="#303030",
-            font=dict(color="white", size=11),
-        ),
-        cells=dict(
-            values=round(report, 3).values.tolist(),
-            line_color="darkslategray",
-            fill_color="#101010",
-            align=["center", "left"],
-            font=dict(size=10),
-        ),
-    )
-
     eqty = 100 * mtrx["compound_returns"] if compound else mtrx["equity"] - mtrx["equity"].iloc[0]
     eqty = eqty.resample(timeframe).ffill()
     _eqty = ["area", "green", eqty]
     dd = mtrx["drawdown_pct"] if compound else mtrx["drawdown_usd"]
     dd = dd.resample(timeframe).ffill()
-    _dd = [
-        "area",
-        -dd,
-        "lim",
-        [-dd, 0],
-    ]
-    chart = (
-        LookingGlass(
-            _eqty,
-            {
-                "Drawdown": _dd,
-            },
-            study_plot_height=75,
+
+    # - make plotly charts
+    if use_plotly:
+        _dd = [
+            "area",
+            -dd,
+            "lim",
+            [-dd, 0],
+        ]
+        tbl = go.Table(
+            columnwidth=[130, 130, 130, 130, 200],
+            header=dict(
+                values=report.index,
+                line_color="darkslategray",
+                fill_color="#303030",
+                font=dict(color="white", size=11),
+            ),
+            cells=dict(
+                values=round(report, 3).values.tolist(),
+                line_color="darkslategray",
+                fill_color="#101010",
+                align=["center", "left"],
+                font=dict(size=10),
+            ),
         )
-        .look(title=("Simulation: " if session.is_simulation else "") + session.name)
-        .hover(h=500)
-    )
-    table = go.FigureWidget(tbl).update_layout(margin=dict(r=5, l=5, t=0, b=1), height=80)
-    chart.show()
-    table.show()
+        chart = (
+            LookingGlass(
+                _eqty,
+                {
+                    "Drawdown": _dd,
+                },
+                study_plot_height=75,
+            )
+            .look(title=("Simulation: " if session.is_simulation else "") + session.name)
+            .hover(h=500)
+        )
+        table = go.FigureWidget(tbl).update_layout(margin=dict(r=5, l=5, t=0, b=1), height=80)
+        chart.show()
+        table.show()
+    # - make mpl charts
+    else:
+        ax = sbp(41, 1, r=3)
+        plt.plot(eqty, lw=2, c="g", label="Equity")
+        plt.fill_between(eqty.index, eqty.values, 0, color="#003000", alpha=0.8)
+        plt.title(("Simulation: " if session.is_simulation else "") + session.name, fontsize=18)
+        plt.legend()
+        plt.subplots_adjust(hspace=0)
+        ay = sbp(41, 4)
+        plt.plot(-dd, c="r", lw=1.5, label="Drawdown")
+        plt.fill_between(dd.index, -dd.values, 0, color="#800000", alpha=0.8)
+        if not compound:
+            ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda y, p: str(y / 1000) + " K"))
+            ay.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda y, p: str(y / 1000) + " K"))
+        return pd.DataFrame(report).T.round(3)
 
 
 def chart_signals(
