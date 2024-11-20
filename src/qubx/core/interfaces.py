@@ -30,7 +30,7 @@ from qubx.core.basics import (
     ITimeProvider,
     IComminucationManager,
     SW,
-    SubscriptionType,
+    Subtype,
 )
 from qubx.core.series import OrderBook, Trade, Quote, Bar, OHLCV
 
@@ -421,7 +421,7 @@ class ISubscriptionManager:
     """Manages subscriptions."""
 
     def subscribe(
-        self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None, **kwargs
+        self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None, **kwargs
     ) -> None:
         """Subscribe to market data for an instrument.
 
@@ -432,12 +432,12 @@ class ISubscriptionManager:
         """
         ...
 
-    def unsubscribe(self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None) -> None:
+    def unsubscribe(self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None) -> None:
         """Unsubscribe from market data for an instrument.
 
         Args:
-            instruments: A list of instrument of instrument to unsubscribe from
-            subscription_type: Type of subscription to unsubscribe from (optional)
+            subscription_type: Type of subscription to unsubscribe from (e.g. Subtype.OHLC)
+            instruments (optional): A list of instruments or instrument to unsubscribe from.
         """
         ...
 
@@ -453,7 +453,7 @@ class ISubscriptionManager:
         """
         ...
 
-    def get_base_subscription(self) -> tuple[SubscriptionType, dict]:
+    def get_base_subscription(self) -> tuple[Subtype, dict]:
         """
         Get the main subscription which should be used for the simulation.
         This data is used for updating the internal OHLCV data series.
@@ -461,7 +461,7 @@ class ISubscriptionManager:
         """
         ...
 
-    def set_base_subscription(self, subscription_type: SubscriptionType, **kwargs) -> None:
+    def set_base_subscription(self, subscription_type: Subtype, **kwargs) -> None:
         """
         Set the main subscription which should be used for the simulation.
 
@@ -483,25 +483,35 @@ class ISubscriptionManager:
         """
         ...
 
-    def get_warmup(self, subscription_type: str) -> str:
+    def get_warmup(self, subscription_type: str, **kwargs) -> str:
         """
         Get the warmup period for a subscription type.
 
         Args:
-            subscription_type: Type of subscription (e.g. SubscriptionType.OHLC, or something custom like "liquidation")
+            subscription_type: Type of subscription (e.g. Subtype.OHLC, or something custom like "liquidation")
+            **kwargs: Additional subscription parameters (e.g. timeframe for OHLCV)
 
         Returns:
             str: Warmup period
         """
         ...
 
-    def set_warmup(self, subscription_type: str, period: str) -> None:
+    def set_warmup(self, configs: dict[str | dict[str, Any], str]) -> None:
         """
-        Set the warmup period for a subscription type (default is 0).
+        Set the warmup period for different subscriptions.
+
+        If there are multiple ohlc configs specified, they will be warmed up in parallel.
 
         Args:
-            subscription_type: Type of subscription (e.g. SubscriptionType.OHLC, or something custom like "liquidation")
-            period: Warmup period (e.g. "1d")
+            configs: Dictionary of subscription types and warmup periods.
+                     Keys can be subscription types of dictionaries with subscription parameters.
+
+        Example:
+            set_warmup({
+                Subtype.OHLC["1h"]: "30d",
+                Subtype.OHLC["1Min"]: "6h",
+                Subtype.OHLC["1Sec"]: "5Min",
+            })
         """
         ...
 
@@ -534,7 +544,7 @@ class IProcessingManager:
         Set the schedule for triggering events (default is to only trigger on data events).
         """
         ...
-    
+
     def is_fitted(self) -> bool:
         """
         Check if the strategy is fitted.
@@ -586,6 +596,12 @@ class IStrategyContext(
 
     def stop(self):
         """Stops the strategy context."""
+        ...
+
+    def is_running(self) -> bool:
+        """
+        Check if the strategy is running.
+        """
         ...
 
     @property

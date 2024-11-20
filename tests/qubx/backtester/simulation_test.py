@@ -1,7 +1,7 @@
 from typing import Callable, Iterable, List, Set, Tuple, Union, Dict, Any
 
 from qubx import logger, lookup
-from qubx.core.basics import Instrument, Signal, TriggerEvent, MarketEvent, SubscriptionType
+from qubx.core.basics import Instrument, Signal, TriggerEvent, MarketEvent, Subtype
 from qubx.core.interfaces import IStrategy, IStrategyContext
 
 from qubx import logger, lookup
@@ -17,7 +17,7 @@ class Issue1(IStrategy):
     _to_test: List[List[Instrument]] = []
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1h")
+        ctx.set_base_subscription(Subtype.OHLC, timeframe="1h")
         ctx.set_fit_schedule("59 22 * */1 L7")  # Run at 22:59 every month on Sunday
         ctx.set_event_schedule("55 23 * * *")  # Run at 23:55 every day
         self._to_test = [
@@ -55,7 +55,7 @@ class Issue2(IStrategy):
     _events_called = 0
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1h")
+        ctx.set_base_subscription(Subtype.OHLC, timeframe="1h")
         ctx.set_fit_schedule("59 22 * * *")  # Run at 22:59 every month on Sunday
         ctx.set_event_schedule("55 23 * * *")  # Run at 23:55 every day
         self._fits_called = 0
@@ -80,7 +80,7 @@ class Issue3(IStrategy):
     _market_events: list[MarketEvent]
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1h")
+        ctx.set_base_subscription(Subtype.OHLC, timeframe="1h")
         self._fits_called = 0
         self._triggers_called = 0
         self._market_events = []
@@ -99,11 +99,11 @@ class Issue4(IStrategy):
     _issues = 0
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1h")
+        ctx.set_base_subscription(Subtype.OHLC, timeframe="1h")
 
     def on_market_data(self, ctx: IStrategyContext, event: MarketEvent):
         try:
-            if event.type != SubscriptionType.QUOTE:
+            if event.type != Subtype.QUOTE:
                 return
             quote = event.data
             assert isinstance(quote, Quote)

@@ -19,7 +19,7 @@ from qubx.core.basics import (
     Instrument,
     TriggerEvent,
     TargetPosition,
-    SubscriptionType,
+    Subtype,
 )
 from qubx.core.interfaces import (
     IMarketDataProvider,
@@ -273,7 +273,7 @@ class ProcessingManager(IProcessingManager):
         _update_ohlc = is_base_data or (
             not is_historical
             and self.__is_simulation
-            and SubscriptionType.OHLC == self.__subscription_manager.get_base_subscription()[0]
+            and Subtype.OHLC == self.__subscription_manager.get_base_subscription()[0]
             and isinstance(data, Quote)
         )
         self.__cache.update(instrument, event_type, data, update_ohlc=_update_ohlc)
@@ -290,7 +290,7 @@ class ProcessingManager(IProcessingManager):
     def __is_base_data(self, data: Any) -> bool:
         sub_type, sub_params = self.__subscription_manager.get_base_subscription()
         timeframe = sub_params.get("timeframe")
-        if self.__is_simulation and SubscriptionType.OHLC == sub_type and timeframe:
+        if self.__is_simulation and Subtype.OHLC == sub_type and timeframe:
             # in simulate we transform OHLC into quotes, so we need to check
             # if this is the final quote of a bar which should be considered as base data
             if self._trig_bar_freq_nsec is None:
@@ -309,10 +309,10 @@ class ProcessingManager(IProcessingManager):
 
         # TODO: handle batched events
         return (
-            (sub_type == SubscriptionType.OHLC and isinstance(data, Bar))
-            or (sub_type == SubscriptionType.QUOTE and isinstance(data, Quote))
-            or (sub_type == SubscriptionType.ORDERBOOK and isinstance(data, OrderBook))
-            or (sub_type == SubscriptionType.TRADE and isinstance(data, Trade))
+            (sub_type == Subtype.OHLC and isinstance(data, Bar))
+            or (sub_type == Subtype.QUOTE and isinstance(data, Quote))
+            or (sub_type == Subtype.ORDERBOOK and isinstance(data, OrderBook))
+            or (sub_type == Subtype.TRADE and isinstance(data, Trade))
         )
 
     ###########################################################################

@@ -648,9 +648,15 @@ class ITimeProvider:
         ...
 
 
-class SubscriptionType(StrEnum):
-    """Subscription type constants."""
+class Subtype(StrEnum):
+    """
+    Subscription type constants. Used for specifying the type of data to subscribe to.
+    Special value `Subtype.ALL` can be used to subscribe to all available data types
+    that are currently in use by the broker for other instruments.
+    """
 
+    ALL = "__all__"
+    NONE = "__none__"
     QUOTE = "quote"
     TRADE = "trade"
     OHLC = "ohlc"
@@ -663,6 +669,50 @@ class SubscriptionType(StrEnum):
 
     def __str__(self) -> str:
         return self.value
+
+    def __getitem__(self, *args, **kwargs) -> str:
+        match self:
+            case Subtype.OHLC:
+                tf = args[0] if args else kwargs.get("timeframe")
+                if not tf:
+                    raise ValueError("Timeframe is not provided for OHLC subscription")
+                return f"{self.value}({tf})"
+            case Subtype.ORDERBOOK:
+                if len(args) == 2:
+                    tick_size_pct, depth = args
+                elif len(args) > 0:
+                    raise ValueError(f"Invalid arguments for ORDERBOOK subscription: {args}")
+                else:
+                    tick_size_pct = kwargs.get("tick_size_pct", 0.01)
+                    depth = kwargs.get("depth", 200)
+                return f"{self.value}({tick_size_pct}, {depth})"
+            case _:
+                return self.value
+
+    @staticmethod
+    def from_str(value: str) -> tuple["Subtype", dict[str, Any]]:
+        """
+        Parse subscription type from string.
+        Returns: (is_valid, subtype, params)
+        """
+        try:
+            # Handle simple types without parameters
+            if "(" not in value:
+                return Subtype(value.lower()), {}
+
+            # Parse type and parameters
+            type_name, params_str = value.split("(", 1)
+            params = [p.strip() for p in params_str.rstrip(")").split(",")]
+
+            match type_name.lower():
+                case Subtype.OHLC.value:
+                    return Subtype.OHLC, {"timeframe": params[0]}
+                case Subtype.ORDERBOOK.value:
+                    return Subtype.ORDERBOOK, {"tick_size_pct": float(params[0]), "depth": int(params[1])}
+                case _:
+                    return Subtype.NONE, {}
+        except (ValueError, IndexError):
+            return Subtype.NONE, {}
 
 
 class TradingSessionResult:

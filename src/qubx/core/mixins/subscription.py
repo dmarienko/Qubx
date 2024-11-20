@@ -1,11 +1,11 @@
 from typing import Any, List, Dict
-from qubx.core.basics import Instrument, SubscriptionType
+from qubx.core.basics import Instrument, Subtype
 from qubx.core.interfaces import IBrokerServiceProvider, ISubscriptionManager
 
 
 class SubscriptionManager(ISubscriptionManager):
     __broker: IBrokerServiceProvider
-    __base_subscription: SubscriptionType
+    __base_subscription: Subtype
     __base_subscription_params: dict[str, Any]
     __is_simulation: bool
     __subscription_to_warmup: dict[str, str]
@@ -13,18 +13,18 @@ class SubscriptionManager(ISubscriptionManager):
     def __init__(self, broker: IBrokerServiceProvider):
         self.__broker = broker
         self.__is_simulation = broker.is_simulated_trading
-        self.__base_subscription = SubscriptionType.OHLC if self.__is_simulation else SubscriptionType.ORDERBOOK
+        self.__base_subscription = Subtype.OHLC if self.__is_simulation else Subtype.ORDERBOOK
         self.__base_subscription_params = {
-            SubscriptionType.OHLC: {"timeframe": "1m"},
-            SubscriptionType.ORDERBOOK: {},
+            Subtype.OHLC: {"timeframe": "1m"},
+            Subtype.ORDERBOOK: {},
         }[self.__base_subscription]
         self.__subscription_to_warmup = {
-            SubscriptionType.OHLC: "1h",
-            SubscriptionType.ORDERBOOK: "1m",
-            SubscriptionType.QUOTE: "1m",
-            SubscriptionType.TRADE: "1m",
-            SubscriptionType.LIQUIDATION: "1m",
-            SubscriptionType.FUNDING_RATE: "1m",
+            Subtype.OHLC: "1h",
+            Subtype.ORDERBOOK: "1m",
+            Subtype.QUOTE: "1m",
+            Subtype.TRADE: "1m",
+            Subtype.LIQUIDATION: "1m",
+            Subtype.FUNDING_RATE: "1m",
         }
 
     def subscribe(
@@ -39,7 +39,7 @@ class SubscriptionManager(ISubscriptionManager):
         kwargs["warmup_period"] = kwargs.get("warmup_period", __subscription_to_warmup.get(subscription_type))
 
         # - if this is the base subscription, we also need to fetch historical OHLC data for warmup
-        if subscription_type == self.__base_subscription and subscription_type != SubscriptionType.OHLC:
+        if subscription_type == self.__base_subscription and subscription_type != Subtype.OHLC:
             kwargs["ohlc_warmup_period"] = kwargs.get(
                 "ohlc_warmup_period", __subscription_to_warmup.get(subscription_type)
             )
@@ -58,7 +58,7 @@ class SubscriptionManager(ISubscriptionManager):
     def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
         return self.__broker.get_subscriptions(instrument)
 
-    def get_base_subscription(self) -> tuple[SubscriptionType, dict]:
+    def get_base_subscription(self) -> tuple[Subtype, dict]:
         """
         Get the main subscription which should be used for the simulation.
         This data is used for updating the internal OHLCV data series.
@@ -66,7 +66,7 @@ class SubscriptionManager(ISubscriptionManager):
         """
         return self.__base_subscription, self.__base_subscription_params
 
-    def set_base_subscription(self, subscription_type: SubscriptionType, **kwargs) -> None:
+    def set_base_subscription(self, subscription_type: Subtype, **kwargs) -> None:
         """
         Set the main subscription which should be used for the simulation.
         """

@@ -16,7 +16,7 @@ from ccxt import NetworkError, ExchangeClosedByUser, ExchangeError, ExchangeNotA
 from ccxt.base.exchange import Exchange
 
 from qubx import logger
-from qubx.core.basics import Instrument, Position, dt_64, Deal, CtrlChannel, SubscriptionType
+from qubx.core.basics import Instrument, Position, dt_64, Deal, CtrlChannel, Subtype
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider, ITimeProvider
 from qubx.utils.threading import synchronized
@@ -154,7 +154,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         if not self.read_only:
             self._subscribe_stream("executions", self._get_proxy_channel())
 
-        logger.info(f"{exchange_id} initialized - current time {self.trading_service.time()}")
+        logger.info(f"Initialized {exchange_id} (exchange time: {self.trading_service.time()})")
 
     @property
     def is_simulated_trading(self) -> bool:
@@ -191,7 +191,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                 _sub_to_params[sub] = self._subscription_to_params[sub]
         return _sub_to_params
 
-    def has_subscription(self, subscription_type: str, instrument: Instrument) -> bool:
+    def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
         sub = subscription_type.lower()
         return sub in self._subscriptions and instrument in self._subscriptions[sub]
 
@@ -500,7 +500,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         channel.send(
             (
                 instrument,
-                self._get_hist_type(SubscriptionType.OHLC),
+                self._get_hist_type(Subtype.OHLC),
                 [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in ohlcv],
             )
         )

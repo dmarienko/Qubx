@@ -180,6 +180,9 @@ class StrategyContext(IStrategyContext):
         # - close logging
         self._logging.close()
 
+    def is_running(self):
+        return self._thread_data_loop is not None and self._thread_data_loop.is_alive()
+
     @property
     def is_simulation(self) -> bool:
         return self._broker.is_simulated_trading

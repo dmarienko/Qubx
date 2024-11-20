@@ -23,7 +23,7 @@ from qubx.core.basics import (
     TradingSessionResult,
     TransactionCostsCalculator,
     dt_64,
-    SubscriptionType,
+    Subtype,
 )
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
 from qubx.core.interfaces import (
@@ -451,16 +451,16 @@ class SimulatedExchange(IBrokerServiceProvider):
             )
 
             # - for ohlc data we need to restore ticks from OHLC bars
-            if subscription_type == SubscriptionType.OHLC:
+            if subscription_type == Subtype.OHLC:
                 _params["transformer"] = RestoreTicksFromOHLC(
                     trades="trades" in subscription_type,
                     spread=instr.min_tick,
                     timestamp_units=units,
                 )
-                _params["output_type"] = SubscriptionType.QUOTE
-            elif subscription_type == SubscriptionType.QUOTE:
+                _params["output_type"] = Subtype.QUOTE
+            elif subscription_type == Subtype.QUOTE:
                 _params["transformer"] = AsQuotes()
-            elif subscription_type == SubscriptionType.TRADE:
+            elif subscription_type == Subtype.TRADE:
                 _params["transformer"] = AsTrades()
             else:
                 raise ValueError(f"Unknown subscription type: {subscription_type}")
@@ -489,7 +489,7 @@ class SimulatedExchange(IBrokerServiceProvider):
                     self._loaders.pop(instr)
         return True
 
-    def has_subscription(self, subscription_type: str, instrument: Instrument) -> bool:
+    def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
         return instrument in self._loaders and subscription_type in self._loaders[instrument]
 
     def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
@@ -904,7 +904,7 @@ class SignalsProxy(IStrategy):
     timeframe: str = "1m"
 
     def on_init(self, ctx: IStrategyContext):
-        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe=self.timeframe)
+        ctx.set_base_subscription(Subtype.OHLC, timeframe=self.timeframe)
 
     def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
         if event.data and event.type == "event":

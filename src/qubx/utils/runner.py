@@ -70,7 +70,7 @@ def run_ccxt_paper_trading(
         broker=broker,
         account=account,
         instruments=instruments,
-        logging=StrategyLogging(logs_writer),
+        logging=StrategyLogging(logs_writer, heartbeat_freq="1m"),
         config=strategy_config,
     )
 
@@ -121,7 +121,7 @@ def run_ccxt_trading(
         broker=broker,
         account=account,
         instruments=instruments,
-        logging=StrategyLogging(logs_writer),
+        logging=StrategyLogging(logs_writer, heartbeat_freq="1m"),
         config=strategy_config,
     )
 
