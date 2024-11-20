@@ -50,6 +50,7 @@ from qubx.data.readers import (
 )
 from qubx.pandaz.utils import scols
 from qubx.utils.misc import ProgressParallel
+from qubx.utils.time import infer_series_frequency
 from joblib import delayed
 from .queue import DataLoader, SimulatedDataQueue, EventBatcher
 
@@ -605,11 +606,10 @@ class SimulatedExchange(IBrokerServiceProvider):
         start = pd.Timestamp(self.time())
         end = start - nbarsback * (_timeframe := pd.Timedelta(timeframe))
         _spec = f"{instrument.exchange}:{instrument.symbol}"
-
         return self._convert_records_to_bars(
-            self._reader.read(data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()),  # type: ignore
-            time_as_nsec(self.time()),
-            _timeframe.asm8.item(),
+            self._reader.read(data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()), 
+            time_as_nsec(self.time()), 
+            _timeframe.asm8.item()
         )
 
     def _convert_records_to_bars(self, records: List[Dict[str, Any]], cut_time_ns: int, timeframe_ns: int) -> List[Bar]:
@@ -617,16 +617,19 @@ class SimulatedExchange(IBrokerServiceProvider):
         Convert records to bars and we need to cut last bar up to the cut_time_ns
         """
         bars = []
+
+        _data_tf = infer_series_frequency([r['timestamp_ns'] for r in records[:100]])
+        timeframe_ns = _data_tf.item()
+
         if records is not None:
             for r in records:
-                bar_timestamp = np.datetime64(r["timestamp_ns"], "ns").item()
+                _bts_0 = np.datetime64(r["timestamp_ns"], "ns").item()
                 o, h, l, c, v = r["open"], r["high"], r["low"], r["close"], r["volume"]
 
-                if bar_timestamp <= cut_time_ns and cut_time_ns < bar_timestamp + timeframe_ns:
-                    # bars.append(Bar(bar_timestamp, o, o, o, o, 0))
+                if _bts_0 <= cut_time_ns and cut_time_ns < _bts_0 + timeframe_ns:
                     break
 
-                bars.append(Bar(bar_timestamp, o, h, l, c, v))
+                bars.append(Bar(_bts_0, o, h, l, c, v))
 
         return bars
 
