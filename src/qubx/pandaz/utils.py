@@ -573,8 +573,8 @@ class OhlcDict(dict):
 
     def __init__(self, orig: dict):
         _o_copy = {}
+        _lst = []
         if isinstance(orig, dict):
-            _lst = []
             for k, o in orig.items():
                 if not isinstance(o, (pd.DataFrame | pd.Series)):
                     raise ValueError(
@@ -610,7 +610,3 @@ class OhlcDict(dict):
 
     def __str__(self) -> str:
         return self.display(3, 3)
-        # r = ""
-        # for k, v in self.items():
-        #     r += _frame_to_str(v, name=k) + "\n"
-        # return r

@@ -2,7 +2,11 @@ import pandas as pd
 from typing import List, Any
 
 from qubx import lookup
-from qubx.core.interfaces import IMarketDataProvider, IBrokerServiceProvider, IUniverseManager
+from qubx.core.interfaces import (
+    IMarketDataProvider,
+    IBrokerServiceProvider,
+    IUniverseManager,
+)
 from qubx.core.helpers import CachedMarketDataHolder
 from qubx.core.series import Quote, OHLCV
 from qubx.core.basics import Instrument
@@ -27,16 +31,37 @@ class MarketDataProvider(IMarketDataProvider):
         self.__universe_manager = universe_manager
         self.__aux_data_provider = aux_data_provider
 
-    def ohlc(self, instrument: Instrument, timeframe: str | None = None, length: int | None = None) -> OHLCV:
+    def ohlc(
+        self,
+        instrument: Instrument,
+        timeframe: str | None = None,
+        length: int | None = None,
+    ) -> OHLCV:
         timeframe = timeframe or convert_seconds_to_str(
             int(pd.Timedelta(self.__cache.default_timeframe).total_seconds())
         )
         rc = self.__cache.get_ohlcv(instrument, timeframe)
-        if length is None or len(rc) >= length:
-            return rc
+
+        # - check if we need to fetch more data
+        _need_history_request = False
+        if (_l_rc := len(rc)) > 0:
+            _last_bar_time = rc[0].time
+            _timeframe_ns = pd.Timedelta(timeframe).asm8.item()
+
+            # - check if we need to fetch more data
+            if (_last_bar_time + _timeframe_ns <= self.__broker.time().item()) or (
+                length and _l_rc < length
+            ):
+                _need_history_request = True
+
+        else:
+            _need_history_request = True
+
         # - send request for historical data
-        bars = self.__broker.get_historical_ohlcs(instrument, timeframe, length)
-        return self.__cache.update_by_bars(instrument, timeframe, bars)
+        if _need_history_request and length is not None:
+            bars = self.__broker.get_historical_ohlcs(instrument, timeframe, length)
+            rc = self.__cache.update_by_bars(instrument, timeframe, bars)
+        return rc
 
     def quote(self, instrument: Instrument) -> Quote | None:
         return self.__broker.get_quote(instrument)
@@ -45,7 +70,11 @@ class MarketDataProvider(IMarketDataProvider):
         return self.__cache.get_data(instrument, sub_type)
 
     def get_aux_data(self, data_id: str, **parameters) -> pd.DataFrame | None:
-        return self.__aux_data_provider.get_aux_data(data_id, **parameters) if self.__aux_data_provider else None
+        return (
+            self.__aux_data_provider.get_aux_data(data_id, **parameters)
+            if self.__aux_data_provider
+            else None
+        )
 
     def get_instruments(self) -> list[Instrument]:
         return self.__universe_manager.instruments
