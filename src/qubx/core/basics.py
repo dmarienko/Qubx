@@ -670,6 +670,14 @@ class Subtype(StrEnum):
     def __str__(self) -> str:
         return self.value
 
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, Subtype):
+            return self.value == other.value
+        return self.value == Subtype.from_str(other)[0].value
+
+    def __hash__(self) -> int:
+        return hash(self.value)
+
     def __getitem__(self, *args, **kwargs) -> str:
         match self:
             case Subtype.OHLC:
@@ -693,26 +701,41 @@ class Subtype(StrEnum):
     def from_str(value: str) -> tuple["Subtype", dict[str, Any]]:
         """
         Parse subscription type from string.
-        Returns: (is_valid, subtype, params)
+        Returns: (subtype, params)
+
+        Example:
+        >>> Subtype.from_str("ohlc(1Min)")
+        (Subtype.OHLC, {"timeframe": "1Min"})
+
+        >>> Subtype.from_str("orderbook(0.01, 100)")
+        (Subtype.ORDERBOOK, {"tick_size_pct": 0.01, "depth": 100})
+
+        >>> Subtype.from_str("quote")
+        (Subtype.QUOTE, {})
         """
         try:
-            # Handle simple types without parameters
-            if "(" not in value:
-                return Subtype(value.lower()), {}
+            _value = value.lower()
+            _has_params = Subtype._str_has_params(value)
+            if not _has_params and _value not in Subtype.__members__:
+                return Subtype.NONE, {}
+            elif not _has_params:
+                return Subtype(_value), {}
+            else:
+                type_name, params_str = value.split("(", 1)
+                params = [p.strip() for p in params_str.rstrip(")").split(",")]
+                match type_name.lower():
+                    case Subtype.OHLC.value:
+                        return Subtype.OHLC, {"timeframe": params[0]}
+                    case Subtype.ORDERBOOK.value:
+                        return Subtype.ORDERBOOK, {"tick_size_pct": float(params[0]), "depth": int(params[1])}
+                    case _:
+                        return Subtype.NONE, {}
+        except IndexError:
+            raise ValueError(f"Invalid subscription type: {value}")
 
-            # Parse type and parameters
-            type_name, params_str = value.split("(", 1)
-            params = [p.strip() for p in params_str.rstrip(")").split(",")]
-
-            match type_name.lower():
-                case Subtype.OHLC.value:
-                    return Subtype.OHLC, {"timeframe": params[0]}
-                case Subtype.ORDERBOOK.value:
-                    return Subtype.ORDERBOOK, {"tick_size_pct": float(params[0]), "depth": int(params[1])}
-                case _:
-                    return Subtype.NONE, {}
-        except (ValueError, IndexError):
-            return Subtype.NONE, {}
+    @staticmethod
+    def _str_has_params(value: str) -> bool:
+        return "(" in value
 
 
 class TradingSessionResult:

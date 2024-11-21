@@ -105,14 +105,14 @@ class CachedMarketDataHolder:
                 pass
 
     @SW.watch("CachedMarketDataHolder")
-    def update_by_bars(self, instrument: Instrument, timeframe: str, bars: List[Bar]) -> OHLCV:
+    def update_by_bars(self, instrument: Instrument, timeframe: str | np.timedelta64, bars: List[Bar]) -> OHLCV:
         """
         Substitute or create new series based on provided historical bars
         """
         if instrument not in self._ohlcvs:
             self._ohlcvs[instrument] = {}
 
-        tf = convert_tf_str_td64(timeframe)
+        tf = convert_tf_str_td64(timeframe) if isinstance(timeframe, str) else timeframe
         new_ohlc = OHLCV(instrument.symbol, tf)
         for b in bars:
             new_ohlc.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume, b.bought_volume)

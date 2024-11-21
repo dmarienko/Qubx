@@ -19,7 +19,6 @@ from qubx import logger
 from qubx.core.basics import Instrument, Position, dt_64, Deal, CtrlChannel, Subtype
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider, ITimeProvider
-from qubx.utils.threading import synchronized
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.utils.ntp import start_ntp_thread, time_now
 from .ccxt_utils import (
@@ -44,37 +43,6 @@ cxp.exchanges.append("binanceqv_usdm")
 EXCH_SYMBOL_PATTERN = re.compile(r"(?P<base>[^/]+)/(?P<quote>[^:]+)(?::(?P<margin>.+))?")
 
 
-class ProxyCtrlChannel(CtrlChannel):
-    """
-    ProxyCtrlChannel is a wrapper around CtrlChannel that tracks the time of the last message sent.
-    """
-
-    control: Event
-    name: str
-    lock: Lock
-
-    _channel: CtrlChannel
-    _time_provider: ITimeProvider
-    _sub_instr_to_time: Dict[Tuple[str, Instrument], dt_64]
-
-    def __init__(
-        self, channel: CtrlChannel, time_provider: ITimeProvider, sub_instr_to_time: Dict[Tuple[str, Instrument], dt_64]
-    ):
-        self.name = channel.name
-        self.control = channel.control
-        self.lock = channel.lock
-        self._channel = channel
-        self._time_provider = time_provider
-        self._sub_instr_to_time = sub_instr_to_time
-
-    def send(self, msg: Tuple):
-        self._channel.send(msg)
-        if len(msg) != 3:
-            raise ValueError(f"Invalid message {msg}")
-        instr, sub_type, _ = msg
-        self._sub_instr_to_time[(sub_type, instr)] = self._time_provider.time()
-
-
 class CCXTExchangesConnector(IBrokerServiceProvider):
 
     _exchange: Exchange
@@ -82,10 +50,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
     # - subscriptions
     _subscriptions: Dict[str, Set[Instrument]]
-    _subscription_to_params: Dict[str, Dict[str, Any]]
-    _pending_stream_subscriptions: Dict[Tuple[str, Tuple], Set[Instrument]]
-    _pending_stream_unsubscriptions: Dict[str, Set[Instrument]]
-    _pending_instrument_unsubscriptions: Set[Instrument]
     _sub_to_coro: Dict[str, concurrent.futures.Future]
     _sub_to_name: Dict[str, str]
     _is_sub_name_enabled: Dict[str, bool]
@@ -94,7 +58,10 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     _last_quotes: Dict[str, Optional[Quote]]
     _loop: AbstractEventLoop
     _thread_event_loop: Thread
+    _warmup_timeout: int
+
     _subscribers: Dict[str, Callable]
+    _warmupers: Dict[str, Callable]
 
     def __init__(
         self,
@@ -104,12 +71,14 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         loop: AbstractEventLoop | None = None,
         max_ws_retries: int = 10,
         use_testnet: bool = False,
+        warmup_timeout: int = 120,
         **exchange_auth,
     ):
         super().__init__(exchange_id, trading_service)
         self.trading_service = trading_service
         self.read_only = read_only
         self.max_ws_retries = max_ws_retries
+        self._warmup_timeout = warmup_timeout
         exchange_id = exchange_id.lower()
 
         # - start NTP thread
@@ -135,14 +104,9 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
         self._last_quotes = defaultdict(lambda: None)
         self._subscriptions = defaultdict(set)
-        self._subscription_to_params = defaultdict(dict)
-        self._pending_stream_subscriptions = defaultdict(set)
-        self._pending_stream_unsubscriptions = defaultdict(set)
-        self._pending_instrument_unsubscriptions = set()
         self._sub_to_coro = {}
         self._sub_to_name = {}
         self._is_sub_name_enabled = defaultdict(lambda: False)
-        self._sub_instr_to_time = {}
         self._symbol_to_instrument = {}
 
         self._subscribers = {
@@ -150,9 +114,14 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             for n, f in self.__class__.__dict__.items()
             if type(f) == FunctionType and n.startswith("_subscribe_")
         }
+        self._warmupers = {
+            n.split("_warmup_")[1]: f
+            for n, f in self.__class__.__dict__.items()
+            if type(f) == FunctionType and n.startswith("_warmup_")
+        }
 
         if not self.read_only:
-            self._subscribe_stream("executions", self._get_proxy_channel())
+            self._subscribe_stream("executions", self.get_communication_channel())
 
         logger.info(f"Initialized {exchange_id} (exchange time: {self.trading_service.time()})")
 
@@ -170,49 +139,64 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
     def subscribe(
         self,
-        instruments: List[Instrument],
         subscription_type: str,
-        **kwargs,
+        instruments: List[Instrument],
+        reset: bool = False,
     ) -> None:
-        self._pending_stream_subscriptions[
-            self._parse_subscription_type(subscription_type), tuple(kwargs.items())
-        ].update(instruments)
+        _updated_instruments = set(instruments)
 
-    def unsubscribe(self, instruments: List[Instrument], subscription_type: str | None = None) -> None:
-        if subscription_type is None:
-            self._pending_instrument_unsubscriptions.update(instruments)
-        else:
-            self._pending_stream_unsubscriptions[self._parse_subscription_type(subscription_type)].update(instruments)
+        # - update symbol to instrument mapping
+        self._symbol_to_instrument.update({i.symbol: i for i in instruments})
 
-    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
-        _sub_to_params = {}
-        for sub, instrs in self._subscriptions.items():
-            if instrument in instrs:
-                _sub_to_params[sub] = self._subscription_to_params[sub]
-        return _sub_to_params
+        # - add existing subscription instruments if reset is False
+        if not reset:
+            _current_instruments = self.get_subscribed_instruments(subscription_type)
+            _updated_instruments = _updated_instruments.union(_current_instruments)
+
+        # - update subscriptions
+        self._subscribe(_updated_instruments, subscription_type)
+
+    def unsubscribe(self, subscription_type: str, instruments: List[Instrument]) -> None:
+        _current_instruments = self.get_subscribed_instruments(subscription_type)
+        _updated_instruments = set(_current_instruments).difference(instruments)
+        self._subscribe(_updated_instruments, subscription_type)
+
+    def get_subscriptions(self, instrument: Instrument | None = None) -> List[str]:
+        return (
+            [sub for sub, instrs in self._subscriptions.items() if instrument in instrs]
+            if instrument is not None
+            else list(self._subscriptions.keys())
+        )
+
+    def get_subscribed_instruments(self, subscription_type: str | None = None) -> List[Instrument]:
+        return (
+            list(self._subscriptions.get(subscription_type, set()))
+            if subscription_type is not None
+            else list(self.subscribed_instruments)
+        )
 
     def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
         sub = subscription_type.lower()
         return sub in self._subscriptions and instrument in self._subscriptions[sub]
 
-    @synchronized
-    def commit(self) -> None:
-        _sub_to_params = self._get_updated_sub_to_params()
-        for sub, params in _sub_to_params.items():
-            _current_sub_instruments = self._subscriptions[sub]
-            _removed_instruments = self._get_pending_unsub_instr(sub)
-            _added_instruments = self._get_pending_sub_instr(sub)
-            _updated_instruments = _current_sub_instruments.union(_added_instruments).difference(_removed_instruments)
-            if _updated_instruments != _current_sub_instruments:
-                self._subscribe(_updated_instruments, sub, **params)
-
-        # - update symbol to instrument mapping
-        self._symbol_to_instrument.update({i.symbol: i for i in self.subscribed_instruments})
-
-        # - clean up pending subs and unsubs
-        self._pending_stream_subscriptions.clear()
-        self._pending_instrument_unsubscriptions.clear()
-        self._pending_stream_unsubscriptions.clear()
+    def warmup(self, warmups: Dict[Tuple[str, Instrument], str]) -> None:
+        _coros = []
+        for (sub_type, instrument), period in warmups.items():
+            _sub_type, _params = Subtype.from_str(sub_type)
+            _warmuper = self._warmupers.get(_sub_type)
+            if _warmuper is None:
+                logger.warning(f"Warmup for {sub_type} is not supported")
+                continue
+            _coros.append(
+                _warmuper(
+                    self.get_communication_channel(),
+                    instrument,
+                    period,
+                    **_params,
+                )
+            )
+        if _coros:
+            asyncio.run_coroutine_threadsafe(asyncio.gather(*_coros), self._loop).result(self._warmup_timeout)
 
     def get_quote(self, instrument: Instrument) -> Quote | None:
         return self._last_quotes[instrument.symbol]
@@ -260,39 +244,18 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             return set()
         return set.union(*self._subscriptions.values())
 
-    def _get_pending_unsub_instr(self, sub: str) -> Set[Instrument]:
-        return self._pending_stream_unsubscriptions.get(sub, set()).union(self._pending_instrument_unsubscriptions)
-
-    def _get_pending_sub_instr(self, sub: str) -> Set[Instrument]:
-        for (sub_type, _), instrs in self._pending_stream_subscriptions.items():
-            if sub_type == sub:
-                return instrs
-        return set()
-
     def _subscribe(
         self,
         instruments: Set[Instrument],
         sub_type: str,
-        **kwargs,
     ) -> None:
-        _subscriber = self._subscribers.get(sub_type)
+        _sub_type, params = Subtype.from_str(sub_type)
+        _subscriber = self._subscribers.get(_sub_type)
         if _subscriber is None:
             raise ValueError(f"Subscription type {sub_type} is not supported")
-
-        _current_instruments = self._subscriptions[sub_type]
-        _added_instruments = instruments.difference(_current_instruments)
-
-        _channel = self._get_proxy_channel()
-
-        # - fetch historical ohlc for added instruments
-        if (ohlc_warmup_period := kwargs.get("ohlc_warmup_period")) is not None and (
-            timeframe := kwargs.get("timeframe")
-        ) is not None:
-            self._run_ohlc_warmup_sync(_channel, _added_instruments, timeframe, ohlc_warmup_period, timeout=60 * 10)
-
-        self._resubscribe_stream(sub_type, _channel, instruments, **kwargs)
+        _channel = self.get_communication_channel()
+        self._resubscribe_stream(sub_type, _channel, instruments, **params)
         self._subscriptions[sub_type] = instruments
-        self._subscription_to_params[sub_type] = kwargs
 
     def _stop_subscriber(self, sub_type: str) -> None:
         if sub_type not in self._sub_to_coro:
@@ -306,9 +269,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         del self._sub_to_coro[sub_type]
         del self._sub_to_name[sub_type]
         del self._is_sub_name_enabled[sub_name]
-
-    def _get_proxy_channel(self) -> ProxyCtrlChannel:
-        return ProxyCtrlChannel(self.get_communication_channel(), self, self._sub_instr_to_time)
 
     def _resubscribe_stream(
         self, sub_type: str, channel: CtrlChannel, instruments: Set[Instrument] | None = None, **kwargs
@@ -334,42 +294,11 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         self._thread_event_loop = Thread(target=self._loop.run_forever, args=(), daemon=True)
         self._thread_event_loop.start()
 
-    def _parse_subscription_type(self, subscription_type: str) -> str:
-        return subscription_type.lower()
-
-    def _get_updated_sub_to_params(self) -> Dict[str, Dict[str, Any]]:
-        _update_subs = set(self._pending_stream_unsubscriptions.keys())
-        if self._pending_instrument_unsubscriptions:
-            _update_subs |= set(self._subscriptions.keys())
-        _update_subs.update(sub for sub, _ in self._pending_stream_subscriptions)
-        _sub_to_params = {
-            **self._subscription_to_params,
-            **{sub: dict(sub_args) for sub, sub_args in self._pending_stream_subscriptions.keys()},
-        }
-        _sub_to_params = {sub: _sub_to_params.get(sub, {}) for sub in _update_subs}
-        return _sub_to_params
-
     def _submit_coro(self, coro: Awaitable[None]) -> concurrent.futures.Future:
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
     def _time_msec_nbars_back(self, timeframe: str, nbarsback: int = 1) -> int:
         return (self.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
-
-    def _run_ohlc_warmup_sync(
-        self, channel: CtrlChannel, instruments: Set[Instrument], timeframe: str, warmup_period: str, timeout: int
-    ) -> None:
-        future = self._submit_coro(self._run_ohlc_warmup(channel, instruments, timeframe, warmup_period))
-        future.result(timeout)
-
-    async def _run_ohlc_warmup(
-        self, channel: CtrlChannel, instruments: Set[Instrument], timeframe: str, warmup_period: str
-    ) -> None:
-        if not instruments:
-            return
-        logger.debug(f"Running OHLC warmup for {instruments} with period {warmup_period}")
-        await asyncio.gather(
-            *[self._fetch_and_send_ohlc(channel, instr, timeframe, warmup_period) for instr in instruments]
-        )
 
     def _get_exch_timeframe(self, timeframe: str) -> str:
         if timeframe is not None:
@@ -430,17 +359,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     def _get_hist_type(self, sub_type: str) -> str:
         return f"hist_{sub_type}"
 
-    def _get_latest_instruments(self, sub_type: str, warmup_period: str) -> Set[Instrument]:
-        """
-        Get the latest instruments that have relatively fresh data that does not exceed 1/4 of the warmup period.
-        """
-        _oldest_allowed_time = (pd.Timestamp(self.time()) - pd.Timedelta(warmup_period) / 4).asm8
-        return {
-            instr
-            for (_sub_type, instr), _time in self._sub_instr_to_time.items()
-            if _sub_type == sub_type and _time > _oldest_allowed_time
-        }
-
     async def _listen_to_stream(
         self,
         subscriber: Callable[[], Awaitable[None]],
@@ -489,22 +407,35 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                     break
                 await asyncio.sleep(min(2**n_retry, 60))  # Exponential backoff with a cap at 60 seconds
 
-    async def _fetch_and_send_ohlc(
-        self, channel: CtrlChannel, instrument: Instrument, timeframe: str, warmup_period: str
+    #############################
+    # - Warmup methods
+    #############################
+    async def _warmup_ohlc(
+        self, channel: CtrlChannel, instrument: Instrument, warmup_period: str, timeframe: str
     ) -> None:
         nbarsback = pd.Timedelta(warmup_period) // pd.Timedelta(timeframe)
         exch_timeframe = self._get_exch_timeframe(timeframe)
         start = self._time_msec_nbars_back(timeframe, nbarsback)
         ohlcv = await self._exchange.fetch_ohlcv(instrument.symbol, exch_timeframe, since=start, limit=nbarsback + 1)
-        # - just send data as the list
+        logger.debug(f"{instrument}: loaded {len(ohlcv)} {timeframe} bars")
         channel.send(
             (
                 instrument,
-                self._get_hist_type(Subtype.OHLC),
+                self._get_hist_type(Subtype.OHLC[timeframe]),
                 [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in ohlcv],
             )
         )
-        logger.info(f"{instrument}: loaded {len(ohlcv)} {timeframe} bars")
+
+    async def _warmup_trade(self, channel: CtrlChannel, instrument: Instrument, warmup_period: str):
+        trades = await self._exchange.fetch_trades(instrument.symbol, since=self._time_msec_nbars_back(warmup_period))
+        logger.debug(f"Loaded {len(trades)} trades for {instrument}")
+        channel.send(
+            (
+                instrument,
+                self._get_hist_type(Subtype.TRADE),
+                [ccxt_convert_trade(trade) for trade in trades],
+            )
+        )
 
     #############################
     # - Subscription methods
@@ -532,7 +463,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         sub_type: str,
         channel: CtrlChannel,
         instruments: Set[Instrument],
-        warmup_period: str | None = None,
         timeframe: str = "1m",
     ):
         symbols = [i.symbol for i in instruments]
@@ -556,6 +486,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                             )
                         )
                     last_close = ohlcvs[-1][4]
+                    # TODO: move trading server update to context impl
                     self.trading_service.update_position_price(
                         instrument,
                         _time,
@@ -566,10 +497,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             unwatch = getattr(self._exchange, "un_watch_ohlcv_for_symbols", lambda _: None)(_symbol_timeframe_pairs)
             if unwatch is not None:
                 await unwatch
-
-        if warmup_period is not None:
-            _new_instruments = instruments.difference(self._get_latest_instruments(sub_type, warmup_period))
-            await self._run_ohlc_warmup(channel, _new_instruments, timeframe, warmup_period)
 
         await self._listen_to_stream(
             subscriber=watch_ohlcv,
@@ -585,7 +512,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         sub_type: str,
         channel: CtrlChannel,
         instruments: Set[Instrument],
-        warmup_period: str | None = None,
     ):
         symbols = [i.symbol for i in instruments]
         _symbol_to_instrument = {i.symbol: i for i in instruments}
@@ -596,6 +522,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             _time = self.time()
             instrument = self._get_instrument(symbol, _symbol_to_instrument)
             last_trade = ccxt_convert_trade(trades[-1])
+            # TODO: move trading server update to context impl
             self.trading_service.update_position_price(instrument, _time, last_trade)
             for trade in trades:
                 channel.send((instrument, sub_type, ccxt_convert_trade(trade)))
@@ -604,26 +531,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             unwatch = getattr(self._exchange, "un_watch_trades_for_symbols", lambda _: None)(symbols)
             if unwatch is not None:
                 await unwatch
-
-        if warmup_period is not None:
-            _new_instruments = instruments.difference(self._get_latest_instruments(sub_type, warmup_period))
-            if _new_instruments:
-                logger.debug(f"Running trade warmup for {_new_instruments}")
-
-                async def fetch_and_send_trades(instr: Instrument):
-                    trades = await self._exchange.fetch_trades(
-                        instr.symbol, since=self._time_msec_nbars_back(warmup_period)
-                    )
-                    logger.debug(f"Loaded {len(trades)} trades for {instr}")
-                    channel.send(
-                        (
-                            instr,
-                            self._get_hist_type(sub_type),
-                            [ccxt_convert_trade(trade) for trade in trades],
-                        )
-                    )
-
-                await asyncio.gather(*(fetch_and_send_trades(instr) for instr in _new_instruments))
 
         await self._listen_to_stream(
             subscriber=watch_trades,

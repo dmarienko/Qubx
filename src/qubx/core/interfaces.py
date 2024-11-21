@@ -12,7 +12,7 @@ This module includes:
 import traceback
 import pandas as pd
 
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Set
 from qubx import lookup, logger
 from qubx.core.account import AccountProcessor
 from qubx.core.helpers import BasicScheduler, set_parameters_to_object
@@ -208,31 +208,27 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
 
     def subscribe(
         self,
-        instruments: List[Instrument],
         subscription_type: str,
-        warmup_period: str | None = None,
-        ohlc_warmup_period: str | None = None,
-        **kwargs,
+        instruments: Set[Instrument],
+        reset: bool = False,
     ) -> None:
         """
         Subscribe to market data for a list of instruments.
 
         Args:
             subscription_type: Type of subscription
-            instruments: List of instruments to subscribe to
-            warmup_period: Warmup period for the subscription
-            ohlc_warmup_period: Warmup period for OHLC data
-            **kwargs: Additional subscription parameters
+            instruments: Set of instruments to subscribe to
+            reset: Reset existing instruments for the subscription type. Default is False.
         """
         ...
 
-    def unsubscribe(self, instruments: List[Instrument], subscription_type: str | None) -> None:
+    def unsubscribe(self, subscription_type: str | None, instruments: Set[Instrument]) -> None:
         """
         Unsubscribe from market data for a list of instruments.
 
         Args:
-            instruments: List of instruments to unsubscribe from
             subscription_type: Type of subscription to unsubscribe from (optional)
+            instruments: Set of instruments to unsubscribe from
         """
         ...
 
@@ -249,21 +245,44 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
         """
         ...
 
-    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+    def get_subscriptions(self, instrument: Instrument | None = None) -> List[str]:
         """
         Get all subscriptions for an instrument.
 
         Args:
-            instrument: Instrument to get subscriptions for
+            instrument (optional): Instrument to get subscriptions for. If None, all subscriptions are returned.
 
         Returns:
-            dict[str, dict]: Dictionary of subscriptions (type -> parameters)
+            List[str]: List of subscriptions
         """
         ...
 
-    def commit(self) -> None:
+    def get_subscribed_instruments(self, subscription_type: str | None = None) -> List[Instrument]:
         """
-        Apply all pending subscription changes.
+        Get a list of instruments that are subscribed to a specific subscription type.
+
+        Args:
+            subscription_type: Type of subscription to filter by (optional)
+
+        Returns:
+            List[Instrument]: List of subscribed instruments
+        """
+        ...
+
+    def warmup(self, configs: Dict[Tuple[str, Instrument], str]) -> None:
+        """
+        Run warmup for subscriptions.
+
+        Args:
+            configs: Dictionary of (subscription type, instrument) pairs and warmup periods.
+
+        Example:
+            warmup({
+                (Subtype.OHLC["1h"], instr1): "30d",
+                (Subtype.OHLC["1Min"], instr1): "6h",
+                (Subtype.OHLC["1Sec"], instr2): "5Min",
+                (Subtype.TRADE, instr2): "1h",
+            })
         """
         ...
 
@@ -420,15 +439,12 @@ class IUniverseManager:
 class ISubscriptionManager:
     """Manages subscriptions."""
 
-    def subscribe(
-        self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None, **kwargs
-    ) -> None:
+    def subscribe(self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None) -> None:
         """Subscribe to market data for an instrument.
 
         Args:
-            instruments: A list of instrument of instrument to subscribe to
             subscription_type: Type of subscription. If None, the base subscription type is used.
-            **kwargs: Additional subscription parameters
+            instruments: A list of instrument of instrument to subscribe to
         """
         ...
 
@@ -453,7 +469,7 @@ class ISubscriptionManager:
         """
         ...
 
-    def get_base_subscription(self) -> tuple[Subtype, dict]:
+    def get_base_subscription(self) -> str:
         """
         Get the main subscription which should be used for the simulation.
         This data is used for updating the internal OHLCV data series.
@@ -461,42 +477,40 @@ class ISubscriptionManager:
         """
         ...
 
-    def set_base_subscription(self, subscription_type: Subtype, **kwargs) -> None:
+    def set_base_subscription(self, subscription_type: str) -> None:
         """
         Set the main subscription which should be used for the simulation.
 
         Args:
-            subscription_type: Type of subscription
-            **kwargs: Additional subscription parameters (e.g. timeframe for OHLCV)
+            subscription_type: Type of subscription (e.g. Subtype.OHLC, Subtype.OHLC["1h"])
         """
         ...
 
-    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+    def get_subscriptions(self, instrument: Instrument | None = None) -> List[str]:
         """
         Get all subscriptions for an instrument.
 
         Args:
-            instrument: Instrument to get subscriptions for
+            instrument: Instrument to get subscriptions for (optional)
 
         Returns:
-            dict[str, dict]: Dictionary of subscriptions (type -> parameters)
+            List[str]: List of subscriptions
         """
         ...
 
-    def get_warmup(self, subscription_type: str, **kwargs) -> str:
+    def get_warmup(self, subscription_type: str) -> str:
         """
         Get the warmup period for a subscription type.
 
         Args:
-            subscription_type: Type of subscription (e.g. Subtype.OHLC, or something custom like "liquidation")
-            **kwargs: Additional subscription parameters (e.g. timeframe for OHLCV)
+            subscription_type: Type of subscription (e.g. Subtype.OHLC["1h"], etc.)
 
         Returns:
             str: Warmup period
         """
         ...
 
-    def set_warmup(self, configs: dict[str | dict[str, Any], str]) -> None:
+    def set_warmup(self, configs: dict[Any, str]) -> None:
         """
         Set the warmup period for different subscriptions.
 
@@ -511,7 +525,34 @@ class ISubscriptionManager:
                 Subtype.OHLC["1h"]: "30d",
                 Subtype.OHLC["1Min"]: "6h",
                 Subtype.OHLC["1Sec"]: "5Min",
+                Subtype.TRADE: "1h",
             })
+        """
+        ...
+
+    def commit(self) -> None:
+        """
+        Apply all pending changes.
+        """
+        ...
+
+    @property
+    def auto_subscribe(self) -> bool:
+        """
+        Get whether new instruments are automatically subscribed to existing subscriptions.
+
+        Returns:
+            bool: True if auto-subscription is enabled
+        """
+        ...
+
+    @auto_subscribe.setter
+    def auto_subscribe(self, value: bool) -> None:
+        """
+        Enable or disable automatic subscription of new instruments.
+
+        Args:
+            value: True to enable auto-subscription, False to disable
         """
         ...
 
