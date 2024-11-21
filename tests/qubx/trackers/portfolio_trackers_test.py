@@ -67,7 +67,7 @@ class TestingPositionGatherer(IPositionGathering):
 
 
 class DebugStratageyCtx(IStrategyContext):
-    _exchange: str = "BINANCE.UM"
+    _exchange: str = "BINANCE"
     _d_qts: Dict[Instrument, Quote]
     _c_time: int = 0
     _o_id: int = 10000
