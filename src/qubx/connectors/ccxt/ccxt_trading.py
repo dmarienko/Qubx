@@ -21,6 +21,7 @@ from qubx.connectors.ccxt.ccxt_utils import (
     ccxt_convert_deal_info,
     ccxt_extract_deals_from_exec,
     ccxt_restore_position_from_deals,
+    ccxt_restore_positions_from_info,
 )
 from qubx.utils.ntp import time_now
 
@@ -35,14 +36,15 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
     sync: Exchange
 
-    _fees_calculator: TransactionCostsCalculator
-    _positions: Dict[str, Position]
+    _fees_calculator: TransactionCostsCalculator | None = None
+    _positions: Dict[Instrument, Position]
 
     def __init__(
         self,
         exchange_id: str,
         account_id: str,
         commissions: str | None = None,
+        use_testnet: bool = False,
         **exchange_auth,
     ):
         exchange_id = exchange_id.lower()
@@ -56,6 +58,8 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
         # - sync exchange
         self.sync: Exchange = getattr(ccxt, exch.lower())(exchange_auth)
+        if use_testnet:
+            self.sync.set_sandbox_mode(True)
 
         logger.info(f"{exch.upper()} loading ...")
         self.sync.load_markets()
@@ -92,6 +96,16 @@ class CCXTTradingConnector(ITradingServiceProvider):
                 self._fees_calculator = lookup.fees.find(self.exchange_id.lower(), default_commissions)
             else:
                 raise ValueError("Can't get commissions level from account, but default commissions is not defined !")
+
+        # - try to sync account positions
+        try:
+            pos_infos = self.sync.fetch_positions()
+            positions = ccxt_restore_positions_from_info(pos_infos, self.exchange_id.upper())
+            for p in positions:
+                self.acc.attach_positions(p)
+        except Exception as err:
+            logger.debug(f"Exchange {self.get_name()} doesn't support positions fetching")
+            pass
 
     def _get_open_orders_from_exchange(self, instrument: Instrument, days_before: int = 60) -> Dict[str, Order]:
         """
@@ -141,15 +155,12 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
         return position
 
-    def get_position(self, instrument: Instrument | str) -> Position:
-        symbol = instrument.symbol if isinstance(instrument, Instrument) else instrument
-
-        if symbol not in self._positions:
-            position = Position(instrument)  # type: ignore
+    def get_position(self, instrument: Instrument) -> Position:
+        if instrument not in self._positions:
+            position = Position(instrument)
             position = self._sync_position_and_orders(position)
             self.acc.attach_positions(position)
-
-        return self._positions[symbol]
+        return self._positions[instrument]
 
     def send_order(
         self,
@@ -162,7 +173,6 @@ class CCXTTradingConnector(ITradingServiceProvider):
         time_in_force: str = "gtc",
     ) -> Order:
         params = {}
-        symbol = instrument.symbol
 
         if order_type == "limit":
             params["timeInForce"] = time_in_force.upper()
@@ -174,25 +184,23 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
         r: Dict[str, Any] | None = None
         try:
-            r = self.sync.create_order(symbol, order_type, order_side, amount, price, params=params)  # type: ignore
+            r = self.sync.create_order(instrument.symbol, order_type, order_side, amount, price, params=params)  # type: ignore
         except ccxt.BadRequest as exc:
             logger.error(
-                f"(CCXTSyncTradingConnector::send_order) BAD REQUEST for {order_side} {amount} {order_type} for {symbol} : {exc}"
+                f"(::send_order) BAD REQUEST for {order_side} {amount} {order_type} for {instrument.symbol} : {exc}"
             )
             raise exc
         except Exception as err:
-            logger.error(
-                f"(CCXTSyncTradingConnector::send_order) {order_side} {amount} {order_type} for {symbol} exception : {err}"
-            )
+            logger.error(f"(::send_order) {order_side} {amount} {order_type} for {instrument.symbol} exception : {err}")
             logger.error(traceback.format_exc())
             raise err
 
         if r is None:
-            logger.error(f"(CCXTSyncTradingConnector::send_order) No response from exchange")
-            raise ExchangeError("(CCXTSyncTradingConnector::send_order) No response from exchange")
+            logger.error(f"(::send_order) No response from exchange")
+            raise ExchangeError("(::send_order) No response from exchange")
 
-        order = ccxt_convert_order_info(symbol, r)
-        logger.info(f"(CCXTSyncTradingConnector) New order {order}")
+        order = ccxt_convert_order_info(instrument, r)
+        logger.info(f"New order {order}")
         return order
 
     def cancel_order(self, order_id: str) -> Order | None:
@@ -204,7 +212,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
                 # r = self._task_s(self.exchange.cancel_order(order_id, symbol=order.instrument.symbol))
                 r = self.sync.cancel_order(order_id, symbol=order.instrument.symbol)
             except Exception as err:
-                logger.error(f"(CCXTSyncTradingConnector) canceling [{order}] exception : {err}")
+                logger.error(f"Canceling [{order}] exception : {err}")
                 logger.error(traceback.format_exc())
                 raise err
         return order
@@ -235,9 +243,6 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
     def get_base_currency(self) -> str:
         return self.acc.base_currency
-
-    def _get_instrument(self, symbol: str) -> Instrument:
-        return self.get_position(symbol).instrument
 
     def _fill_missing_fee_info(self, instrument: Instrument, deals: List[Deal]) -> None:
         for d in deals:

@@ -24,3 +24,7 @@ class NotSupported(ExchangeError):
 
 class SimulatorError(BaseError):
     pass
+
+
+class QueueTimeout(BaseError):
+    pass

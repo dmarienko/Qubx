@@ -11,7 +11,7 @@ from qubx import lookup, logger, QubxLogConfig
 from qubx.core.account import AccountProcessor
 from qubx.core.helpers import BasicScheduler
 from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
-from qubx.core.series import Quote
+from qubx.core.series import Quote, time_as_nsec
 from qubx.core.basics import (
     ITimeProvider,
     Instrument,
@@ -23,6 +23,7 @@ from qubx.core.basics import (
     TradingSessionResult,
     TransactionCostsCalculator,
     dt_64,
+    Subtype,
 )
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
 from qubx.core.interfaces import (
@@ -32,7 +33,6 @@ from qubx.core.interfaces import (
     PositionsTracker,
     IStrategyContext,
     TriggerEvent,
-    SubscriptionType,
 )
 
 from qubx.core.context import StrategyContext
@@ -50,6 +50,7 @@ from qubx.data.readers import (
 )
 from qubx.pandaz.utils import scols
 from qubx.utils.misc import ProgressParallel
+from qubx.utils.time import infer_series_frequency
 from joblib import delayed
 from .queue import DataLoader, SimulatedDataQueue, EventBatcher
 
@@ -451,16 +452,16 @@ class SimulatedExchange(IBrokerServiceProvider):
             )
 
             # - for ohlc data we need to restore ticks from OHLC bars
-            if subscription_type == SubscriptionType.OHLC:
+            if subscription_type == Subtype.OHLC:
                 _params["transformer"] = RestoreTicksFromOHLC(
                     trades="trades" in subscription_type,
                     spread=instr.min_tick,
                     timestamp_units=units,
                 )
-                _params["output_type"] = SubscriptionType.QUOTE
-            elif subscription_type == SubscriptionType.QUOTE:
+                _params["output_type"] = Subtype.QUOTE
+            elif subscription_type == Subtype.QUOTE:
                 _params["transformer"] = AsQuotes()
-            elif subscription_type == SubscriptionType.TRADE:
+            elif subscription_type == Subtype.TRADE:
                 _params["transformer"] = AsTrades()
             else:
                 raise ValueError(f"Unknown subscription type: {subscription_type}")
@@ -489,8 +490,13 @@ class SimulatedExchange(IBrokerServiceProvider):
                     self._loaders.pop(instr)
         return True
 
-    def has_subscription(self, subscription_type: str, instrument: Instrument) -> bool:
+    def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
         return instrument in self._loaders and subscription_type in self._loaders[instrument]
+
+    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+        # TODO: implement
+        # return {k: v.params for k, v in self._loaders[instrument].items()}
+        return {}
 
     def _try_add_process_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
         if self._pregenerated_signals:
@@ -598,17 +604,34 @@ class SimulatedExchange(IBrokerServiceProvider):
 
     def get_historical_ohlcs(self, instrument: Instrument, timeframe: str, nbarsback: int) -> list[Bar]:
         start = pd.Timestamp(self.time())
-        end = start - nbarsback * pd.Timedelta(timeframe)
+        end = start - nbarsback * (_timeframe := pd.Timedelta(timeframe))
         _spec = f"{instrument.exchange}:{instrument.symbol}"
-        records = self._reader.read(
-            data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()  # type: ignore
+        return self._convert_records_to_bars(
+            self._reader.read(data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()), 
+            time_as_nsec(self.time()), 
+            _timeframe.asm8.item()
         )
-        if not records:
-            return []
-        return [
-            Bar(np.datetime64(r["timestamp_ns"], "ns").item(), r["open"], r["high"], r["low"], r["close"], r["volume"])
-            for r in records
-        ]
+
+    def _convert_records_to_bars(self, records: List[Dict[str, Any]], cut_time_ns: int, timeframe_ns: int) -> List[Bar]:
+        """
+        Convert records to bars and we need to cut last bar up to the cut_time_ns
+        """
+        bars = []
+
+        _data_tf = infer_series_frequency([r['timestamp_ns'] for r in records[:100]])
+        timeframe_ns = _data_tf.item()
+
+        if records is not None:
+            for r in records:
+                _bts_0 = np.datetime64(r["timestamp_ns"], "ns").item()
+                o, h, l, c, v = r["open"], r["high"], r["low"], r["close"], r["volume"]
+
+                if _bts_0 <= cut_time_ns and cut_time_ns < _bts_0 + timeframe_ns:
+                    break
+
+                bars.append(Bar(_bts_0, o, h, l, c, v))
+
+        return bars
 
     def set_generated_signals(self, signals: pd.Series | pd.DataFrame):
         logger.debug(f"Using pre-generated signals:\n {str(signals.count()).strip('ndtype: int64')}")
@@ -899,7 +922,7 @@ class SignalsProxy(IStrategy):
     timeframe: str = "1m"
 
     def on_init(self, ctx: IStrategyContext):
-        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe=self.timeframe)
+        ctx.set_base_subscription(Subtype.OHLC, timeframe=self.timeframe)
 
     def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
         if event.data and event.type == "event":

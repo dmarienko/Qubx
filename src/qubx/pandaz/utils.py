@@ -532,7 +532,7 @@ def shift_series(
     return n_sigs
 
 
-def _frame_to_str(data: pd.DataFrame | pd.Series, name: str, start=3, end=3, time_info=True) -> str:
+def _frame_to_str(data: pd.DataFrame | pd.Series, name: str, start=4, end=4, time_info=True) -> str:
     r = ""
     if isinstance(data, (pd.DataFrame, pd.Series)):
         t_info = f"{len(data)} records"
@@ -542,10 +542,10 @@ def _frame_to_str(data: pd.DataFrame | pd.Series, name: str, start=3, end=3, tim
         sep = " -" * 50
         r += hdr[: len(sep)] + "\n"
         r += data.head(start).to_string(header=True) + "\n"
-        if start < len(data):
-            r += "    . . . . . . \n"
-            r += data.tail(end).to_string(header=True) + "\n"
-        # r += sep
+        if start < len(data) and end > 0:
+            r += "\t. . . . . . \n"
+            _s = data.tail(end).to_string(header=True)
+            r += "\n".join(_s.split("\n")[2:]) + "\n"
     else:
         r = str(data)
     return r
@@ -573,8 +573,8 @@ class OhlcDict(dict):
 
     def __init__(self, orig: dict):
         _o_copy = {}
+        _lst = []
         if isinstance(orig, dict):
-            _lst = []
             for k, o in orig.items():
                 if not isinstance(o, (pd.DataFrame | pd.Series)):
                     raise ValueError(
@@ -601,8 +601,12 @@ class OhlcDict(dict):
                 return retain_columns_and_join(self, name)
         return super().__getattribute__(name)
 
-    def __str__(self) -> str:
+    def display(self, heads=-1, tails=0) -> str:
         r = ""
+        _h, _t = (len(self), 0) if heads == -1 else (heads, tails)
         for k, v in self.items():
-            r += _frame_to_str(v, name=k) + "\n"
+            r += _frame_to_str(v, name=k, start=_h, end=_t) + "\n"
         return r
+
+    def __str__(self) -> str:
+        return self.display(3, 3)

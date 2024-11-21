@@ -15,7 +15,10 @@ def formatter(record):
     if record["level"].name in {"WARNING", "SNAKY"}:
         fmt = "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - %s" % fmt
 
-    prefix = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [ <level>%s</level> ] " % record["level"].icon
+    prefix = (
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [ <level>%s</level> ] <cyan>({module})</cyan> "
+        % record["level"].icon
+    )
 
     if record["exception"] is not None:
         # stackprinter.set_excepthook(style='darkbg2')

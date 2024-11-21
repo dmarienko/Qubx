@@ -1,4 +1,5 @@
 import glob, re
+import pandas as pd
 import json, os, dataclasses
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -158,8 +159,12 @@ class InstrumentsLookup:
                     futures_info=FuturesInfo(
                         contract_type=info["type"],
                         contract_size=float(info["contractSize"]),
-                        onboard_date=info["openingDate"],
-                        delivery_date=v["expiryDatetime"] if "expiryDatetime" in info else "2100-01-01T00:00:00",
+                        onboard_date=pd.Timestamp(int(info["openingDate"]), unit="ms"),
+                        delivery_date=(
+                            pd.Timestamp(int(v["expiryDatetime"]), unit="ms")
+                            if "expiryDatetime" in info
+                            else pd.Timestamp("2100-01-01T00:00:00")
+                        ),
                         maint_margin=maint_margin,
                         required_margin=required_margin,
                     ),

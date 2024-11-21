@@ -1,13 +1,13 @@
 import traceback
 
-from typing import Any, Callable, List
+from typing import Any, Callable, List, Dict, Union
 from threading import Thread
 
 from qubx import logger
 from qubx.core.account import AccountProcessor
 from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, set_parameters_to_object
 from qubx.core.loggers import StrategyLogging
-from qubx.core.basics import Instrument, dt_64, SW, CtrlChannel
+from qubx.core.basics import Instrument, dt_64, SW, CtrlChannel, Subtype
 from qubx.core.loggers import StrategyLogging
 from qubx.data.readers import DataReader
 from qubx.gathering.simplest import SimplePositionGatherer
@@ -33,21 +33,21 @@ class StrategyContext(IStrategyContext):
         FixedSizer(1.0, amount_in_quote=False)
     )
 
-    __market_data_provider: IMarketDataProvider
-    __universe_manager: IUniverseManager
-    __subscription_manager: ISubscriptionManager
-    __trading_manager: ITradingManager
-    __processing_manager: IProcessingManager
+    _market_data_provider: IMarketDataProvider
+    _universe_manager: IUniverseManager
+    _subscription_manager: ISubscriptionManager
+    _trading_manager: ITradingManager
+    _processing_manager: IProcessingManager
 
-    __trading_service: ITradingServiceProvider  # service for exchange API: orders managemewnt
-    __logging: StrategyLogging  # recording all activities for the strat: execs, positions, portfolio
-    __broker: IBrokerServiceProvider  # market data provider
-    __cache: CachedMarketDataHolder
-    __scheduler: BasicScheduler
-    __initial_instruments: list[Instrument]
+    _trading_service: ITradingServiceProvider  # service for exchange API: orders managemewnt
+    _logging: StrategyLogging  # recording all activities for the strat: execs, positions, portfolio
+    _broker: IBrokerServiceProvider  # market data provider
+    _cache: CachedMarketDataHolder
+    _scheduler: BasicScheduler
+    _initial_instruments: list[Instrument]
 
-    __thread_data_loop: Thread | None = None  # market data loop
-    __is_initialized: bool = False
+    _thread_data_loop: Thread | None = None  # market data loop
+    _is_initialized: bool = False
 
     def __init__(
         self,
@@ -57,20 +57,20 @@ class StrategyContext(IStrategyContext):
         instruments: list[Instrument],
         logging: StrategyLogging,
         config: dict[str, Any] | None = None,
-        position_gathering: IPositionGathering | None = None,
+        position_gathering: IPositionGathering | None = None,  # TODO: make position gathering part of the strategy
         aux_data_provider: DataReader | None = None,
     ) -> None:
         self.account = account
         self.strategy = self.__instantiate_strategy(strategy, config)
 
-        self.__broker = broker
-        self.__logging = logging
-        self.__scheduler = broker.get_scheduler()
-        self.__trading_service = broker.get_trading_service()
-        self.__trading_service.set_account(self.account)
-        self.__initial_instruments = instruments
+        self._broker = broker
+        self._logging = logging
+        self._scheduler = broker.get_scheduler()
+        self._trading_service = broker.get_trading_service()
+        self._trading_service.set_account(self.account)
+        self._initial_instruments = instruments
 
-        self.__cache = CachedMarketDataHolder()
+        self._cache = CachedMarketDataHolder()
 
         __position_tracker = self.strategy.tracker(self)
         if __position_tracker is None:
@@ -78,72 +78,76 @@ class StrategyContext(IStrategyContext):
 
         __position_gathering = position_gathering if position_gathering is not None else SimplePositionGatherer()
 
-        self.__market_data_provider = MarketDataProvider(
-            cache=self.__cache,
-            broker=self.__broker,
+        self._market_data_provider = MarketDataProvider(
+            cache=self._cache,
+            broker=self._broker,
             universe_manager=self,
             aux_data_provider=aux_data_provider,
         )
-        self.__universe_manager = UniverseManager(
+        self._universe_manager = UniverseManager(
             context=self,
             strategy=self.strategy,
-            broker=self.__broker,
-            trading_service=self.__trading_service,
-            cache=self.__cache,
-            logging=self.__logging,
+            broker=self._broker,
+            trading_service=self._trading_service,
+            cache=self._cache,
+            logging=self._logging,
             subscription_manager=self,
             trading_manager=self,
             time_provider=self,
             account_processor=self.account,
             position_gathering=__position_gathering,
         )
-        self.__subscription_manager = SubscriptionManager(broker=self.__broker)
-        self.__trading_manager = TradingManager(
+        self._subscription_manager = SubscriptionManager(broker=self._broker)
+        self._trading_manager = TradingManager(
             time_provider=self,
-            trading_service=self.__trading_service,
+            trading_service=self._trading_service,
             strategy_name=self.strategy.__class__.__name__,
         )
-        self.__processing_manager = ProcessingManager(
+        self._processing_manager = ProcessingManager(
             context=self,
             strategy=self.strategy,
-            logging=self.__logging,
+            logging=self._logging,
             market_data=self,
             subscription_manager=self,
             time_provider=self,
             position_tracker=__position_tracker,
             position_gathering=__position_gathering,
-            cache=self.__cache,
-            scheduler=self.__broker.get_scheduler(),
-            is_simulation=self.__broker.is_simulated_trading,
+            cache=self._cache,
+            scheduler=self._broker.get_scheduler(),
+            is_simulation=self._broker.is_simulated_trading,
         )
         self.__post_init__()
 
     def __post_init__(self) -> None:
         self.strategy.on_init(self)
         # - update cache default timeframe
-        _, __sub_params = self.get_base_subscription()
-        __default_timeframe = __sub_params.get("timeframe", "1Sec")
-        self.__cache.update_default_timeframe(__default_timeframe)
+        sub_type = self.get_base_subscription()
+        _, params = Subtype.from_str(sub_type)
+        __default_timeframe = params.get("timeframe", "1Sec")
+        self._cache.update_default_timeframe(__default_timeframe)
 
     def time(self) -> dt_64:
-        return self.__trading_service.time()
+        return self._trading_service.time()
 
     def start(self, blocking: bool = False):
-        if self.__is_initialized:
+        if self._is_initialized:
             raise ValueError("Strategy is already started !")
 
         # - run cron scheduler
-        self.__scheduler.run()
+        self._scheduler.run()
 
         # - create incoming market data processing
-        databus = self.__broker.get_communication_channel()
+        databus = self._broker.get_communication_channel()
         databus.register(self)
 
+        # - update universe with initial instruments after the strategy is initialized
+        self.set_universe(self._initial_instruments, skip_callback=True)
+
         # - initialize strategy (should we do that after any first market data received ?)
-        if not self.__is_initialized:
+        if not self._is_initialized:
             try:
                 self.strategy.on_start(self)
-                self.__is_initialized = True
+                self._is_initialized = True
             except Exception as strat_error:
                 logger.error(
                     f"(StrategyContext) Strategy {self.strategy.__class__.__name__} raised an exception in on_start: {strat_error}"
@@ -151,21 +155,19 @@ class StrategyContext(IStrategyContext):
                 logger.error(traceback.format_exc())
                 return
 
-        # - update universe with initial instruments after the strategy is initialized
-        self.set_universe(self.__initial_instruments)
-
         # - for live we run loop
-        if not self.__broker.is_simulated_trading:
-            self.__thread_data_loop = Thread(target=self.__process_incoming_data_loop, args=(databus,), daemon=True)
-            self.__thread_data_loop.start()
+        if not self._broker.is_simulated_trading:
+            self._thread_data_loop = Thread(target=self.__process_incoming_data_loop, args=(databus,), daemon=True)
+            self._thread_data_loop.start()
             logger.info("(StrategyContext) strategy is started in thread")
             if blocking:
-                self.__thread_data_loop.join()
+                self._thread_data_loop.join()
 
     def stop(self):
-        if self.__thread_data_loop:
-            self.__broker.get_communication_channel().stop()
-            self.__thread_data_loop.join()
+        if self._thread_data_loop:
+            self._broker.close()
+            self._broker.get_communication_channel().stop()
+            self._thread_data_loop.join()
             try:
                 self.strategy.on_stop(self)
             except Exception as strat_error:
@@ -173,14 +175,17 @@ class StrategyContext(IStrategyContext):
                     f"(StrategyContext) Strategy {self.strategy.__class__.__name__} raised an exception in on_stop: {strat_error}"
                 )
                 logger.opt(colors=False).error(traceback.format_exc())
-            self.__thread_data_loop = None
+            self._thread_data_loop = None
 
         # - close logging
-        self.__logging.close()
+        self._logging.close()
+
+    def is_running(self):
+        return self._thread_data_loop is not None and self._thread_data_loop.is_alive()
 
     @property
     def is_simulation(self) -> bool:
-        return self.__broker.is_simulated_trading
+        return self._broker.is_simulated_trading
 
     # IAccountViewer delegation
     @property
@@ -197,73 +202,90 @@ class StrategyContext(IStrategyContext):
         return self.account.get_reserved(instrument)
 
     # IMarketDataProvider delegation
-    def ohlc(self, instrument: Instrument, timeframe: str):
-        return self.__market_data_provider.ohlc(instrument, timeframe)
+    def ohlc(self, instrument: Instrument, timeframe: str | None = None, length: int | None = None):
+        return self._market_data_provider.ohlc(instrument, timeframe, length)
 
     def quote(self, instrument: Instrument):
-        return self.__market_data_provider.quote(instrument)
+        return self._market_data_provider.quote(instrument)
 
-    def get_historical_ohlcs(self, instrument: Instrument, timeframe: str, length: int):
-        return self.__market_data_provider.get_historical_ohlcs(instrument, timeframe, length)
+    def get_data(self, instrument: Instrument, sub_type: str) -> List[Any]:
+        return self._market_data_provider.get_data(instrument, sub_type)
 
     def get_aux_data(self, data_id: str, **parameters):
-        return self.__market_data_provider.get_aux_data(data_id, **parameters)
+        return self._market_data_provider.get_aux_data(data_id, **parameters)
 
     def get_instruments(self):
-        return self.__market_data_provider.get_instruments()
+        return self._market_data_provider.get_instruments()
 
     def get_instrument(self, symbol: str, exchange: str):
-        return self.__market_data_provider.get_instrument(symbol, exchange)
+        return self._market_data_provider.get_instrument(symbol, exchange)
 
     # ITradingManager delegation
     def trade(self, instrument: Instrument, amount: float, price: float | None = None, time_in_force="gtc", **options):
-        return self.__trading_manager.trade(instrument, amount, price, time_in_force, **options)
+        return self._trading_manager.trade(instrument, amount, price, time_in_force, **options)
 
     def cancel(self, instrument: Instrument):
-        return self.__trading_manager.cancel(instrument)
+        return self._trading_manager.cancel(instrument)
 
     def cancel_order(self, order_id: str):
-        return self.__trading_manager.cancel_order(order_id)
+        return self._trading_manager.cancel_order(order_id)
 
     # IUniverseManager delegation
-    def set_universe(self, instruments: list[Instrument]):
-        return self.__universe_manager.set_universe(instruments)
+    def set_universe(self, instruments: list[Instrument], skip_callback: bool = False):
+        return self._universe_manager.set_universe(instruments, skip_callback)
 
     @property
     def instruments(self):
-        return self.__universe_manager.instruments
+        return self._universe_manager.instruments
 
     # ISubscriptionManager delegation
-    def subscribe(self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None, **kwargs):
-        return self.__subscription_manager.subscribe(instruments, subscription_type, **kwargs)
+    def subscribe(self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None):
+        return self._subscription_manager.subscribe(subscription_type, instruments)
 
-    def unsubscribe(self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None):
-        return self.__subscription_manager.unsubscribe(instruments, subscription_type)
+    def unsubscribe(self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None):
+        return self._subscription_manager.unsubscribe(subscription_type, instruments)
 
     def has_subscription(self, instrument: Instrument, subscription_type: str):
-        return self.__subscription_manager.has_subscription(instrument, subscription_type)
+        return self._subscription_manager.has_subscription(instrument, subscription_type)
 
-    def get_base_subscription(self):
-        return self.__subscription_manager.get_base_subscription()
+    def get_subscriptions(self, instrument: Instrument | None = None) -> List[str]:
+        return self._subscription_manager.get_subscriptions(instrument)
 
-    def set_base_subscription(self, subscription_type, **kwargs):
-        return self.__subscription_manager.set_base_subscription(subscription_type, **kwargs)
+    def get_base_subscription(self) -> str:
+        return self._subscription_manager.get_base_subscription()
 
-    def get_warmup(self, subscription_type: str):
-        return self.__subscription_manager.get_warmup(subscription_type)
+    def set_base_subscription(self, subscription_type: str):
+        return self._subscription_manager.set_base_subscription(subscription_type)
 
-    def set_warmup(self, subscription_type: str, period: str):
-        return self.__subscription_manager.set_warmup(subscription_type, period)
+    def get_warmup(self, subscription_type: str) -> str:
+        return self._subscription_manager.get_warmup(subscription_type)
+
+    def set_warmup(self, configs: dict[Any, str]):
+        return self._subscription_manager.set_warmup(configs)
+
+    def commit(self):
+        return self._subscription_manager.commit()
+
+    @property
+    def auto_subscribe(self) -> bool:
+        return self._subscription_manager.auto_subscribe
+
+    @auto_subscribe.setter
+    def auto_subscribe(self, value: bool):
+        self._subscription_manager.auto_subscribe = value
 
     # IProcessingManager delegation
-    def process_data(self, symbol: str, d_type: str, data: Any):
-        return self.__processing_manager.process_data(symbol, d_type, data)
+    def process_data(self, instrument: Instrument, d_type: str, data: Any):
+        return self._processing_manager.process_data(instrument, d_type, data)
 
     def set_fit_schedule(self, schedule: str):
-        return self.__processing_manager.set_fit_schedule(schedule)
+        return self._processing_manager.set_fit_schedule(schedule)
 
     def set_event_schedule(self, schedule: str):
-        return self.__processing_manager.set_event_schedule(schedule)
+        return self._processing_manager.set_event_schedule(schedule)
+
+    def is_fitted(self) -> bool:
+        return self._processing_manager.is_fitted()
 
     # private methods
     def __process_incoming_data_loop(self, channel: CtrlChannel):

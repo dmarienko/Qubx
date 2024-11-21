@@ -1,0 +1,187 @@
+import asyncio
+import pytest
+from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
+
+import time
+import pandas as pd
+import threading
+from typing import Any, Callable
+from pathlib import Path
+from collections import defaultdict
+
+from qubx import lookup, logger, QubxLogConfig
+from qubx.core.basics import TriggerEvent, Trade, MarketEvent, Instrument, Subtype
+from qubx.core.interfaces import IStrategyContext, IStrategy, Position
+from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
+from qubx.connectors.ccxt.ccxt_trading import CCXTTradingConnector
+from qubx.utils.runner import get_account_config
+from qubx.pandaz import scols
+from qubx.backtester.simulator import SimulatedTrading
+from qubx.utils.runner import run_ccxt_paper_trading
+from qubx.utils.collections import TimeLimitedDeque
+from qubx.utils.runner import run_ccxt_trading, run_ccxt_paper_trading
+
+
+async def wait(condition: Callable[[], bool] | None = None, timeout: int = 10, period: float = 1.0):
+    start = time.time()
+    if condition is None:
+        await asyncio.sleep(timeout)
+        return
+    while time.time() - start < timeout:
+        if condition():
+            return
+        await asyncio.sleep(period)
+    raise TimeoutError("Timeout reached")
+
+
+class DebugStrategy(IStrategy):
+    _data_counter: int = 0
+    _instr_to_dtype_to_count: dict[Instrument, dict[str, int]]
+
+    def on_init(self, ctx: IStrategyContext):
+        ctx.set_base_subscription(Subtype.OHLC, timeframe="1m")
+        ctx.set_warmup(Subtype.OHLC, "1h")
+        self._instr_to_dtype_to_count = defaultdict(lambda: defaultdict(int))
+
+    def on_market_data(self, ctx: IStrategyContext, data: MarketEvent):
+        self._instr_to_dtype_to_count[data.instrument][data.type] += 1
+
+    def on_universe_change(
+        self, ctx: IStrategyContext, add_instruments: list[Instrument], rm_instruments: list[Instrument]
+    ):
+        if add_instruments:
+            _sub_to_params = ctx.get_subscriptions(ctx.instruments[0])
+            for sub, params in _sub_to_params.items():
+                ctx.subscribe(add_instruments, sub, **params)
+
+    def get_dtype_count(self, instr: Instrument, dtype: str) -> int:
+        return self._instr_to_dtype_to_count[instr][dtype]
+
+
+class TestCcxtDataProvider:
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        QubxLogConfig.set_log_level("DEBUG")
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_binance_reader(self):
+        exchange = "BINANCE"
+        await self._test_exchange_reading(exchange, ["BTCUSDT", "ETHUSDT"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_binance_um_reader(self):
+        exchange = "BINANCE.UM"
+        await self._test_exchange_reading(exchange, ["BTCUSDT", "ETHUSDT"])
+
+    async def _test_exchange_reading(self, exchange: str, symbols: list[str], timeout: int = 60):
+        ctx = run_ccxt_paper_trading(
+            strategy=(stg := DebugStrategy()),
+            exchange=exchange,
+            symbols=symbols,
+            blocking=False,
+            use_testnet=True,
+            commissions="vip0_usdt",
+        )
+        await wait(ctx.is_fitted)
+
+        ctx.subscribe(ctx.instruments, Subtype.TRADE)
+        ctx.subscribe(ctx.instruments, Subtype.ORDERBOOK)
+
+        async def wait_for_instrument_data(instr: Instrument):
+            async def check_counts():
+                while True:
+                    if stg.get_dtype_count(instr, "trade") > 0 and stg.get_dtype_count(instr, "orderbook") > 0:
+                        return True
+                    await asyncio.sleep(0.5)
+
+            try:
+                await asyncio.wait_for(check_counts(), timeout=timeout)
+                return True
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout waiting for data on {instr}")
+                return False
+
+        results = await asyncio.gather(*(wait_for_instrument_data(instr) for instr in ctx.instruments))
+
+        assert all(results), "Not all instruments received trade and orderbook data"
+
+
+class TestCcxtTrading:
+    MIN_NOTIONAL = 100
+
+    @pytest.fixture(autouse=True)
+    def setup(self, exchange_credentials: dict[str, dict[str, str]]):
+        QubxLogConfig.set_log_level("DEBUG")
+        self._creds = exchange_credentials
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_basic_binance(self):
+        exchange = "BINANCE"
+        await self._test_basic_exchange_functions(exchange, ["BTCUSDT"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_basic_binance_um(self):
+        exchange = "BINANCE.UM"
+        await self._test_basic_exchange_functions(exchange, ["BTCUSDT"])
+
+    async def _test_basic_exchange_functions(self, exchange: str, symbols: list[str]):
+        # - Start strategy
+        ctx = run_ccxt_trading(
+            strategy=(stg := DebugStrategy()),
+            exchange=exchange,
+            symbols=symbols,
+            credentials=self._creds[exchange],
+            blocking=False,
+            use_testnet=True,
+            commissions="vip0_usdt",
+        )
+
+        await wait(ctx.is_fitted)
+        await wait(timeout=5)
+
+        i1 = ctx.instruments[0]
+        pos = ctx.positions[i1]
+        logger.info(f"Working with instrument {i1}")
+
+        await self._close_open_positions(ctx, pos)
+
+        logger.info(f"Position is {pos.quantity}")
+
+        # 1. Enter market
+        qty1 = pos.quantity
+        amount = i1.min_size * 2
+        price = ctx.ohlc(i1)[0].close
+        if amount * price < self.MIN_NOTIONAL:
+            amount = i1.round_size_up(self.MIN_NOTIONAL / price)
+
+        logger.info(f"Entering market amount {amount} at price {price}")
+        order1 = ctx.trade(i1, amount=amount)
+        assert order1 is not None and order1.price is not None
+
+        await wait(lambda pos=pos: not self._is_size_similar(pos.quantity, qty1, i1))
+
+        # 2. Close position
+        assert self._is_size_similar(pos.quantity, amount, i1)
+        logger.info(f"Closing position of {pos.quantity} for {i1}")
+        ctx.trade(i1, -pos.quantity)
+
+        await wait(lambda pos=pos: not pos.is_open())
+
+        # - Stop strategy
+        ctx.stop()
+
+    async def _close_open_positions(self, ctx: IStrategyContext, pos: Position):
+        if self._is_size_similar(pos.quantity, 0, pos.instrument):
+            return
+        logger.info(f"Found existing position quantity {pos.quantity}")
+        ctx.trade(pos.instrument, -pos.quantity)
+        await wait(lambda pos=pos: not pos.is_open())
+        logger.info(f"Closed position")
+
+    def _is_size_similar(self, a: float, b: float, i: Instrument) -> bool:
+        return abs(a - b) < i.min_size

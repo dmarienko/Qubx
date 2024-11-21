@@ -1,13 +1,14 @@
 import pandas as pd
 import numpy as np
+import ccxt
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from qubx import logger
-from qubx.core.basics import Order, Deal, Position, Instrument
+from qubx import logger, lookup
+from qubx.core.basics import Order, Deal, Position, Instrument, Liquidation, FundingRate, FuturesInfo
 from qubx.core.series import TimeSeries, Bar, Trade, Quote, OrderBook, time_as_nsec
 from qubx.utils.orderbook import build_orderbook_snapshots
-from .ccxt_exceptions import CcxtOrderBookParsingError
+from .ccxt_exceptions import CcxtOrderBookParsingError, CcxtLiquidationParsingError
 
 
 EXCHANGE_ALIASES = {"binance.um": "binanceusdm", "binance.cm": "binancecoinm", "kraken.f": "krakenfutures"}
@@ -121,9 +122,27 @@ def ccxt_convert_trade(trade: dict[str, Any]) -> Trade:
     return Trade(t_ns, price, amnt, int(not m), int(trade["id"]))
 
 
+def ccxt_restore_positions_from_info(pos_infos: dict, exchange: str) -> list[Position]:
+    positions = []
+    for info in pos_infos:
+        symbol = info["info"]["symbol"]
+        instr = lookup.find_symbol(exchange, symbol)
+        if instr is None:
+            logger.warning(f"Could not find symbol {symbol}, skipping position...")
+            continue
+        pos = Position(
+            instrument=instr,
+            quantity=info["contracts"] * (-1 if info["side"] == "short" else 1),
+            pos_average_price=info["entryPrice"],
+        )
+        pos.update_market_price(pd.Timestamp(info["timestamp"], unit="ms").asm8, info["markPrice"], 1)
+        positions.append(pos)
+    return positions
+
+
 def ccxt_convert_orderbook(
     ob: dict, instr: Instrument, levels: int = 50, tick_size_pct: float = 0.01, sizes_in_quoted: bool = False
-) -> OrderBook:
+) -> OrderBook | None:
     """
     Convert a ccxt order book to an OrderBook object with a fixed tick size percentage.
     Parameters:
@@ -155,11 +174,11 @@ def ccxt_convert_orderbook(
             sizes_in_quoted=sizes_in_quoted,
         )
     except Exception as e:
-        logger.error(f"Failed to build order book snapshots: {e}", exc_info=True)
+        logger.error(f"Failed to build order book snapshots: {e}")
         snapshots = None
 
     if not snapshots:
-        raise CcxtOrderBookParsingError("Failed to build order book snapshots")
+        return None
 
     (dt, _bids, _asks, top_bid, top_ask, tick_size) = snapshots[-1]
     bids = np.array([s for _, s in _bids[::-1]])
@@ -172,4 +191,61 @@ def ccxt_convert_orderbook(
         tick_size=tick_size,
         bids=bids,
         asks=asks,
+    )
+
+
+def ccxt_convert_liquidation(liq: dict[str, Any]) -> Liquidation:
+    try:
+        _dt = pd.Timestamp(liq["datetime"]).replace(tzinfo=None).asm8
+        return Liquidation(
+            time=_dt,
+            price=liq["price"],
+            quantity=liq["contracts"],
+            side=(1 if liq["info"]["S"] == "BUY" else -1),
+        )
+    except Exception as e:
+        raise CcxtLiquidationParsingError(f"Failed to parse liquidation: {e}")
+
+
+def ccxt_convert_funding_rate(info: dict[str, Any]) -> FundingRate:
+    return FundingRate(
+        time=pd.Timestamp(info["timestamp"], unit="ms").asm8,
+        rate=info["fundingRate"],
+        interval=info["interval"],
+        next_funding_time=pd.Timestamp(info["nextFundingTime"], unit="ms").asm8,
+        mark_price=info.get("markPrice"),
+        index_price=info.get("indexPrice"),
+    )
+
+
+def ccxt_symbol_info_to_instrument(exchange: str, symbol_info: dict[str, Any]) -> Instrument:
+    inner_info = symbol_info["info"]
+    maint_margin = 0
+    required_margin = 0
+    if "marginLevels" in inner_info:
+        margins = inner_info["marginLevels"][0]
+        maint_margin = float(margins["maintenanceMargin"])
+        required_margin = float(margins["initialMargin"])
+    return Instrument(
+        symbol_info["id"],
+        "CRYPTO",
+        exchange.upper(),
+        symbol_info["base"],
+        symbol_info["quote"],
+        symbol_info["settle"],
+        min_tick=float(symbol_info["precision"]["price"]),
+        min_size_step=float(symbol_info["precision"]["amount"]),
+        min_size=symbol_info["precision"]["amount"],
+        futures_info=FuturesInfo(
+            contract_type=symbol_info["type"],
+            contract_size=float(symbol_info["contractSize"]),
+            onboard_date=pd.Timestamp(int(inner_info["onboardDate"]), unit="ms"),
+            delivery_date=(
+                pd.Timestamp(int(symbol_info["expiryDatetime"]), unit="ms")
+                if "expiryDatetime" in inner_info
+                else pd.Timestamp("2100-01-01T00:00:00")
+            ),
+            maint_margin=maint_margin,
+            required_margin=required_margin,
+        ),
     )

@@ -15,7 +15,6 @@ from qubx.core.interfaces import (
     PositionsTracker,
     IStrategyContext,
     TriggerEvent,
-    SubscriptionType,
 )
 from qubx.data.readers import (
     AsOhlcvSeries,
@@ -25,7 +24,17 @@ from qubx.data.readers import (
     RestoreTicksFromOHLC,
     AsPandasFrame,
 )
-from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider, Position, Signal, TargetPosition
+from qubx.core.basics import (
+    ZERO_COSTS,
+    Deal,
+    Instrument,
+    Order,
+    ITimeProvider,
+    Position,
+    Signal,
+    TargetPosition,
+    Subtype,
+)
 
 
 from qubx.core.metrics import portfolio_metrics
@@ -134,7 +143,7 @@ class GuineaPig(IStrategy):
     tests = {}
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1Min")
+        ctx.set_base_subscription(Subtype.OHLC, timeframe="1Min")
 
     def on_fit(self, ctx: IStrategyContext):
         self.tests = {recognize_time(k): v for k, v in self.tests.items()}
@@ -187,7 +196,7 @@ class TestTrackersAndGatherers:
             slow_period = 12
 
             def on_init(self, ctx: IStrategyContext) -> None:
-                ctx.set_base_subscription(SubscriptionType.OHLC, timeframe=self.timeframe)
+                ctx.set_base_subscription(Subtype.OHLC, timeframe=self.timeframe)
 
             def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
                 signals = []

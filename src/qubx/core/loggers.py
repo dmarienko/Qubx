@@ -11,6 +11,7 @@ from qubx.core.basics import Deal, Position, Signal, TargetPosition, Instrument
 from qubx.core.metrics import split_cumulative_pnl
 from qubx.core.series import time_as_nsec
 from qubx.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
+from qubx.utils.time import floor_t64, convert_tf_str_td64
 from qubx.pandaz.utils import scols
 from qubx.utils.misc import makedirs, Stopwatch
 
@@ -410,6 +411,9 @@ class StrategyLogging:
     executions_logger: ExecutionsLogger | None = None
     balance_logger: BalanceLogger | None = None
     signals_logger: SignalsLogger | None = None
+    heartbeat_freq: np.timedelta64 | None = None
+
+    _last_heartbeat_ts: np.datetime64 | None = None
 
     def __init__(
         self,
@@ -418,6 +422,7 @@ class StrategyLogging:
         portfolio_log_freq: str = "5Min",
         num_exec_records_to_write=1,  # in live let's write every execution
         num_signals_records_to_write=1,
+        heartbeat_freq: str | None = None,
     ) -> None:
         # - instantiate loggers
         if logs_writer:
@@ -441,6 +446,8 @@ class StrategyLogging:
             self.balance_logger = BalanceLogger(logs_writer)
         else:
             logger.warning("Log writer is not defined - strategy activity will not be saved !")
+
+        self.heartbeat_freq = convert_tf_str_td64(heartbeat_freq) if heartbeat_freq else None
 
     def initialize(
         self, timestamp: np.datetime64, positions: Dict[Instrument, Position], balances: Dict[str, Tuple[float, float]]
@@ -476,6 +483,9 @@ class StrategyLogging:
         if self.portfolio_logger:
             self.portfolio_logger.store(timestamp)
 
+        # - log heartbeat
+        self._log_heartbeat(timestamp)
+
     def save_deals(self, instrument: Instrument, deals: List[Deal]):
         if self.executions_logger:
             self.executions_logger.record_deals(instrument, deals)
@@ -483,3 +493,11 @@ class StrategyLogging:
     def save_signals_targets(self, targets: List[TargetPosition]):
         if self.signals_logger and targets:
             self.signals_logger.record_signals(targets)
+
+    def _log_heartbeat(self, timestamp: np.datetime64):
+        if not self.heartbeat_freq:
+            return
+        _floored_ts = floor_t64(timestamp, self.heartbeat_freq)
+        if not self._last_heartbeat_ts or _floored_ts - self._last_heartbeat_ts >= self.heartbeat_freq:
+            self._last_heartbeat_ts = _floored_ts
+            logger.debug(f"Heartbeat at {_floored_ts.astype('datetime64[s]')}")

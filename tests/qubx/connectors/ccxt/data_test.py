@@ -3,7 +3,12 @@ import json
 import gzip
 
 from qubx import lookup
-from qubx.connectors.ccxt.ccxt_utils import ccxt_convert_orderbook
+from data.ccxt_responses import *
+from qubx.connectors.ccxt.ccxt_utils import (
+    ccxt_convert_orderbook,
+    ccxt_convert_liquidation,
+    ccxt_symbol_info_to_instrument,
+)
 
 
 class TestCcxtOrderbookRelatedStuff:
@@ -29,3 +34,14 @@ class TestCcxtOrderbookRelatedStuff:
         quote = ob.to_quote()
         assert quote.bid == ob.top_bid and quote.ask == ob.top_ask
         assert quote.mid_price() == ob.mid_price()
+
+    def test_ccxt_liquidation_conversion(self):
+        liquidations = []
+        for ccxt_liq in L1:
+            liquidations.append(ccxt_convert_liquidation(ccxt_liq))
+        assert len(liquidations) == len(L1)
+
+    def test_ccxt_symbol_conversion(self):
+        instr = ccxt_symbol_info_to_instrument("BINANCE.UM", M1)
+        assert instr is not None
+        assert instr.symbol == "BTCUSDT"

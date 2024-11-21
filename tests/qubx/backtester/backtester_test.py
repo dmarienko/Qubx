@@ -5,9 +5,9 @@ from qubx.pandaz.utils import *
 
 from qubx.core.series import Quote
 from qubx.core.utils import recognize_time
-from qubx.core.interfaces import IStrategy, IStrategyContext, TriggerEvent, SubscriptionType
+from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider, Subtype
+from qubx.core.interfaces import IStrategy, IStrategyContext, TriggerEvent
 from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsTimestampedRecords, AsQuotes, RestoreTicksFromOHLC
-from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider
 
 from qubx.backtester.ome import OrdersManagementEngine
 
@@ -152,7 +152,7 @@ class TestBacktesterStuff:
             slow_period = 12
 
             def on_init(self, ctx: IStrategyContext):
-                ctx.set_base_subscription(SubscriptionType.OHLC, timeframe=self.timeframe)
+                ctx.set_base_subscription(Subtype.OHLC, timeframe=self.timeframe)
 
             def on_event(self, ctx: IStrategyContext, event: TriggerEvent):
                 for i in ctx.instruments:

@@ -5,9 +5,11 @@ import pandas as pd
 from dataclasses import dataclass, field
 
 from threading import Event, Lock
-from queue import Queue
+from queue import Queue, Empty
+from enum import StrEnum
 
 from qubx import logger
+from qubx.core.exceptions import QueueTimeout
 from qubx.utils.misc import Stopwatch
 from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.core.utils import prec_ceil, prec_floor
@@ -309,9 +311,22 @@ class MarketEvent:
 
     time: dt_64
     type: str
-    instrument: Instrument
+    instrument: Instrument | None
     data: Any
     is_trigger: bool = False
+
+    def to_trigger(self) -> TriggerEvent:
+        return TriggerEvent(self.time, self.type, self.instrument, self.data)
+
+    def __repr__(self):
+        _items = [
+            f"time={self.time}",
+            f"type={self.type}",
+        ]
+        if self.instrument is not None:
+            _items.append(f"instrument={self.instrument}")
+        _items.append(f"data={self.data}")
+        return f"MarketEvent({', '.join(_items)})"
 
 
 @dataclass
@@ -366,20 +381,12 @@ class Position:
     last_update_conversion_rate: float = np.nan  # last update conversion rate
 
     # - helpers for position processing
-    _formatter: str
-    _prc_formatter: str
     _qty_multiplier: float = 1.0
     __pos_incr_qty: float = 0
 
     def __init__(self, instrument: Instrument, quantity=0.0, pos_average_price=0.0, r_pnl=0.0) -> None:
         self.instrument = instrument
 
-        # - size/price formaters
-        #                 time         [symbol]                                                        qty
-        self._formatter = f"%s [{instrument.exchange}:{instrument.symbol}] %{instrument.size_precision+8}.{instrument.size_precision}f"
-        #                           pos_avg_px                 pnl  | mkt_price mkt_value
-        self._formatter += f"%10.{instrument.price_precision}f %+10.4f | %s  %10.2f"
-        self._prc_formatter = f"%.{instrument.price_precision}f"
         if instrument.is_futures:
             self._qty_multiplier = instrument.futures_info.contract_size  # type: ignore
 
@@ -516,6 +523,9 @@ class Position:
             pnl += self.quantity * (self.last_update_price - self.position_avg_price) / self.last_update_conversion_rate  # type: ignore
         return pnl
 
+    def is_open(self) -> bool:
+        return abs(self.quantity) > self.instrument.min_size
+
     def get_amount_released_funds_after_closing(self, to_remain: float = 0.0) -> float:
         """
         Estimate how much funds would be released if part of position closed
@@ -536,15 +546,20 @@ class Position:
         )
 
     def __str__(self):
-        _mkt_price = (self._prc_formatter % self.last_update_price) if self.last_update_price else "---"
-        return self._formatter % (
-            Position._t2s(self.last_update_time),
-            self.quantity,
-            self.position_avg_price_funds,
-            self.pnl,
-            _mkt_price,
-            self.market_value_funds,
+        return " ".join(
+            [
+                f"{self._t2s(self.last_update_time)}",
+                f"[{self.instrument}]",
+                f"qty={self.quantity:.{self.instrument.size_precision}f}",
+                f"entryPrice={self.position_avg_price:.{self.instrument.price_precision}f}",
+                f"price={self.last_update_price:.{self.instrument.price_precision}f}",
+                f"pnl={self.pnl:.2f}",
+                f"value={self.market_value_funds:.2f}",
+            ]
         )
+
+    def __repr__(self):
+        return self.__str__()
 
 
 class CtrlChannel:
@@ -580,8 +595,11 @@ class CtrlChannel:
         if self.control.is_set():
             self._queue.put(data)
 
-    def receive(self) -> Any:
-        return self._queue.get()
+    def receive(self, timeout: int | None = None) -> Any:
+        try:
+            return self._queue.get(timeout=timeout)
+        except Empty:
+            raise QueueTimeout(f"Timeout waiting for data on {self.name} channel")
 
 
 class SimulatedCtrlChannel(CtrlChannel):
@@ -598,7 +616,7 @@ class SimulatedCtrlChannel(CtrlChannel):
         # - when data is sent, invoke callback
         return self._callback.process_data(*data)
 
-    def receive(self) -> Any:
+    def receive(self, timeout: int | None = None) -> Any:
         raise ValueError("This method should not be called in a simulated environment.")
 
     def stop(self):
@@ -628,6 +646,98 @@ class ITimeProvider:
         Returns current time
         """
         ...
+
+
+class Subtype(StrEnum):
+    """
+    Subscription type constants. Used for specifying the type of data to subscribe to.
+    Special value `Subtype.ALL` can be used to subscribe to all available data types
+    that are currently in use by the broker for other instruments.
+    """
+
+    ALL = "__all__"
+    NONE = "__none__"
+    QUOTE = "quote"
+    TRADE = "trade"
+    OHLC = "ohlc"
+    ORDERBOOK = "orderbook"
+    LIQUIDATION = "liquidation"
+    FUNDING_RATE = "funding_rate"
+
+    def __repr__(self) -> str:
+        return self.value
+
+    def __str__(self) -> str:
+        return self.value
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, Subtype):
+            return self.value == other.value
+        return self.value == Subtype.from_str(other)[0].value
+
+    def __hash__(self) -> int:
+        return hash(self.value)
+
+    def __getitem__(self, *args, **kwargs) -> str:
+        match self:
+            case Subtype.OHLC:
+                tf = args[0] if args else kwargs.get("timeframe")
+                if not tf:
+                    raise ValueError("Timeframe is not provided for OHLC subscription")
+                return f"{self.value}({tf})"
+            case Subtype.ORDERBOOK:
+                if len(args) == 2:
+                    tick_size_pct, depth = args
+                elif len(args) > 0:
+                    raise ValueError(f"Invalid arguments for ORDERBOOK subscription: {args}")
+                else:
+                    tick_size_pct = kwargs.get("tick_size_pct", 0.01)
+                    depth = kwargs.get("depth", 200)
+                return f"{self.value}({tick_size_pct}, {depth})"
+            case _:
+                return self.value
+
+    @staticmethod
+    def from_str(value: Union[str, "Subtype"]) -> tuple["Subtype", dict[str, Any]]:
+        """
+        Parse subscription type from string.
+        Returns: (subtype, params)
+
+        Example:
+        >>> Subtype.from_str("ohlc(1Min)")
+        (Subtype.OHLC, {"timeframe": "1Min"})
+
+        >>> Subtype.from_str("orderbook(0.01, 100)")
+        (Subtype.ORDERBOOK, {"tick_size_pct": 0.01, "depth": 100})
+
+        >>> Subtype.from_str("quote")
+        (Subtype.QUOTE, {})
+        """
+        if isinstance(value, Subtype):
+            return value, {}
+        try:
+            _value = value.lower()
+            _has_params = Subtype._str_has_params(value)
+            if not _has_params and value.upper() not in Subtype.__members__:
+                return Subtype.NONE, {}
+            elif not _has_params:
+                return Subtype(_value), {}
+            else:
+                type_name, params_str = value.split("(", 1)
+                params = [p.strip() for p in params_str.rstrip(")").split(",")]
+                match type_name.lower():
+                    case Subtype.OHLC.value:
+                        return Subtype.OHLC, {"timeframe": params[0]}
+                    case Subtype.ORDERBOOK.value:
+                        return Subtype.ORDERBOOK, {"tick_size_pct": float(params[0]), "depth": int(params[1])}
+                    case _:
+                        return Subtype.NONE, {}
+        except IndexError:
+            raise ValueError(f"Invalid subscription type: {value}")
+
+    @staticmethod
+    def _str_has_params(value: str) -> bool:
+        return "(" in value
 
 
 class TradingSessionResult:
@@ -677,3 +787,21 @@ class TradingSessionResult:
         self.executions_log = executions_log
         self.signals_log = signals_log
         self.is_simulation = is_simulation
+
+
+@dataclass
+class Liquidation:
+    time: dt_64
+    quantity: float
+    price: float
+    side: int
+
+
+@dataclass
+class FundingRate:
+    time: dt_64
+    rate: float
+    interval: str
+    next_funding_time: dt_64
+    mark_price: float | None = None
+    index_price: float | None = None
