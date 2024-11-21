@@ -181,7 +181,7 @@ class LongShortRatioPortfolioSizer(IPositionSizer):
                 _p = k_l * signal.signal if signal.signal > 0 else k_s * signal.signal
                 t_pos.append(TargetPosition.create(ctx, signal, _p * _p_q))
             else:
-                logger.error(
+                logger.warning(
                     f"{self.__class__.__name__}: Can't get actual market quote for {signal.instrument.symbol} !"
                 )
 
