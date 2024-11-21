@@ -15,9 +15,10 @@ from qubx.utils import convert_seconds_to_str
 
 
 class MarketDataProvider(IMarketDataProvider):
-    __cache: CachedMarketDataHolder
-    __broker: IBrokerServiceProvider
-    __aux_data_provider: DataReader | None
+    _cache: CachedMarketDataHolder
+    _broker: IBrokerServiceProvider
+    _universe_manager: IUniverseManager
+    _aux_data_provider: DataReader | None
 
     def __init__(
         self,
@@ -26,10 +27,10 @@ class MarketDataProvider(IMarketDataProvider):
         universe_manager: IUniverseManager,
         aux_data_provider: DataReader | None = None,
     ):
-        self.__cache = cache
-        self.__broker = broker
-        self.__universe_manager = universe_manager
-        self.__aux_data_provider = aux_data_provider
+        self._cache = cache
+        self._broker = broker
+        self._universe_manager = universe_manager
+        self._aux_data_provider = aux_data_provider
 
     def ohlc(
         self,
@@ -38,9 +39,9 @@ class MarketDataProvider(IMarketDataProvider):
         length: int | None = None,
     ) -> OHLCV:
         timeframe = timeframe or convert_seconds_to_str(
-            int(pd.Timedelta(self.__cache.default_timeframe).total_seconds())
+            int(pd.Timedelta(self._cache.default_timeframe).total_seconds())
         )
-        rc = self.__cache.get_ohlcv(instrument, timeframe)
+        rc = self._cache.get_ohlcv(instrument, timeframe)
 
         # - check if we need to fetch more data
         _need_history_request = False
@@ -49,7 +50,7 @@ class MarketDataProvider(IMarketDataProvider):
             _timeframe_ns = pd.Timedelta(timeframe).asm8.item()
 
             # - check if we need to fetch more data
-            if (_last_bar_time + _timeframe_ns <= self.__broker.time().item()) or (length and _l_rc < length):
+            if (_last_bar_time + _timeframe_ns <= self._broker.time().item()) or (length and _l_rc < length):
                 _need_history_request = True
 
         else:
@@ -57,21 +58,21 @@ class MarketDataProvider(IMarketDataProvider):
 
         # - send request for historical data
         if _need_history_request and length is not None:
-            bars = self.__broker.get_historical_ohlcs(instrument, timeframe, length)
-            rc = self.__cache.update_by_bars(instrument, timeframe, bars)
+            bars = self._broker.get_historical_ohlcs(instrument, timeframe, length)
+            rc = self._cache.update_by_bars(instrument, timeframe, bars)
         return rc
 
     def quote(self, instrument: Instrument) -> Quote | None:
-        return self.__broker.get_quote(instrument)
+        return self._broker.get_quote(instrument)
 
     def get_data(self, instrument: Instrument, sub_type: str) -> List[Any]:
-        return self.__cache.get_data(instrument, sub_type)
+        return self._cache.get_data(instrument, sub_type)
 
     def get_aux_data(self, data_id: str, **parameters) -> pd.DataFrame | None:
-        return self.__aux_data_provider.get_aux_data(data_id, **parameters) if self.__aux_data_provider else None
+        return self._aux_data_provider.get_aux_data(data_id, **parameters) if self._aux_data_provider else None
 
     def get_instruments(self) -> list[Instrument]:
-        return self.__universe_manager.instruments
+        return self._universe_manager.instruments
 
     def get_instrument(self, symbol: str, exchange: str) -> Instrument | None:
         return lookup.find_symbol(exchange, symbol)
