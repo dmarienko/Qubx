@@ -133,9 +133,10 @@ class CsvStorageDataReader(DataReader):
     """
 
     def __init__(self, path: str) -> None:
-        if not exists(path):
+        _path = os.path.expanduser(path)
+        if not exists(_path):
             raise ValueError(f"Folder is not found at {path}")
-        self.path = path
+        self.path = _path
 
     def __find_time_idx(self, arr: pa.ChunkedArray, v) -> int:
         ix = arr.index(v).as_py()
