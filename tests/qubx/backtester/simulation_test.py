@@ -287,7 +287,7 @@ class TestSimulator:
         assert stg._err_time == 0, "Got wrong OHLC bars time"
         assert stg._err_bars == 0, "OHLC bars were not consistent"
 
-        r = ld[["BTCUSDT"], "2023-06-22":"2023-07-10"]("1d")["BTCUSDT"]  # type: ignore
+        r = ld[["BTCUSDT"], "2023-06-30":"2023-07-10"]("1d")["BTCUSDT"]  # type: ignore
         assert all(
             stg._out.pd()[["open", "high", "low", "close"]] == r[["open", "high", "low", "close"]]
         ), "Out OHLC differ"
