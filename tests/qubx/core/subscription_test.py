@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import Mock, call
 from qubx import lookup
-from qubx.core.mixins.subscription import SubscriptionManager
 from qubx.core.basics import Instrument, Subtype
+from qubx.core.mixins.subscription import SubscriptionManager
 
 
 class TestSubscriptionStuff:
@@ -18,6 +18,23 @@ class TestSubscriptionStuff:
         instr = lookup.find_symbol(self.exchange, symbol)
         assert instr is not None
         return instr
+
+    def test_sub_types(self):
+        trade, _ = Subtype.from_str("trade")
+        assert trade == Subtype.TRADE
+
+        ohlc, params = Subtype.from_str("ohlc(1Min)")
+        assert ohlc == Subtype.OHLC
+        assert params == {"timeframe": "1Min"}
+
+        ob, params = Subtype.from_str("orderbook(0.01, 100)")
+        assert ob == Subtype.ORDERBOOK
+        assert params == {"tick_size_pct": 0.01, "depth": 100}
+
+        assert Subtype.from_str("quote") == (Subtype.QUOTE, {})
+        assert Subtype.from_str("liquidation") == (Subtype.LIQUIDATION, {})
+        assert Subtype.from_str("orderbook") == (Subtype.ORDERBOOK, {})
+        assert Subtype.from_str(Subtype.TRADE) == (Subtype.TRADE, {})
 
     def test_basic_subscription(self):
         instrument = self._get_instrument("BTCUSDT")

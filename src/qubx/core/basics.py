@@ -698,7 +698,7 @@ class Subtype(StrEnum):
                 return self.value
 
     @staticmethod
-    def from_str(value: str) -> tuple["Subtype", dict[str, Any]]:
+    def from_str(value: Union[str, "Subtype"]) -> tuple["Subtype", dict[str, Any]]:
         """
         Parse subscription type from string.
         Returns: (subtype, params)
@@ -713,10 +713,12 @@ class Subtype(StrEnum):
         >>> Subtype.from_str("quote")
         (Subtype.QUOTE, {})
         """
+        if isinstance(value, Subtype):
+            return value, {}
         try:
             _value = value.lower()
             _has_params = Subtype._str_has_params(value)
-            if not _has_params and _value not in Subtype.__members__:
+            if not _has_params and value.upper() not in Subtype.__members__:
                 return Subtype.NONE, {}
             elif not _has_params:
                 return Subtype(_value), {}

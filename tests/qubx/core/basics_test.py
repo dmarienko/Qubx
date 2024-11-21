@@ -190,19 +190,3 @@ class TestBasics:
         assert 355 * 5 == pos2.get_amount_released_funds_after_closing(10)
         assert 355 * 1 == pos2.get_amount_released_funds_after_closing(-4)
         assert 355 * 5 == pos2.get_amount_released_funds_after_closing()
-
-    def test_sub_types(self):
-        trade, _ = Subtype.from_str("trade")
-        assert trade == Subtype.TRADE
-
-        ohlc, params = Subtype.from_str("ohlc(1Min)")
-        assert ohlc == Subtype.OHLC
-        assert params == {"timeframe": "1Min"}
-
-        ob, params = Subtype.from_str("orderbook(0.01, 100)")
-        assert ob == Subtype.ORDERBOOK
-        assert params == {"tick_size_pct": 0.01, "depth": 100}
-
-        assert Subtype.from_str("quote") == (Subtype.QUOTE, {})
-        assert Subtype.from_str("liquidation") == (Subtype.LIQUIDATION, {})
-        assert Subtype.from_str("orderbook") == (Subtype.ORDERBOOK, {})

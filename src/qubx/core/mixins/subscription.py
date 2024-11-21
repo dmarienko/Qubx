@@ -103,7 +103,11 @@ class SubscriptionManager(ISubscriptionManager):
         return self._broker.has_subscription(instrument, subscription_type)
 
     def get_subscriptions(self, instrument: Instrument | None = None) -> List[str]:
-        return self._broker.get_subscriptions(instrument)
+        return list(
+            set(self._broker.get_subscriptions(instrument))
+            | {self.get_base_subscription()}
+            | self._pending_global_subscriptions
+        )
 
     def get_base_subscription(self) -> str:
         return self._base_sub

@@ -181,6 +181,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
     def warmup(self, warmups: Dict[Tuple[str, Instrument], str]) -> None:
         _coros = []
+
         for (sub_type, instrument), period in warmups.items():
             _sub_type, _params = Subtype.from_str(sub_type)
             _warmuper = self._warmupers.get(_sub_type)
@@ -189,14 +190,19 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
                 continue
             _coros.append(
                 _warmuper(
-                    self.get_communication_channel(),
-                    instrument,
-                    period,
+                    self,
+                    channel=self.get_communication_channel(),
+                    instrument=instrument,
+                    warmup_period=period,
                     **_params,
                 )
             )
+
+        async def gather_coros():
+            return await asyncio.gather(*_coros)
+
         if _coros:
-            asyncio.run_coroutine_threadsafe(asyncio.gather(*_coros), self._loop).result(self._warmup_timeout)
+            asyncio.run_coroutine_threadsafe(gather_coros(), self._loop).result(self._warmup_timeout)
 
     def get_quote(self, instrument: Instrument) -> Quote | None:
         return self._last_quotes[instrument.symbol]
@@ -249,13 +255,23 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         instruments: Set[Instrument],
         sub_type: str,
     ) -> None:
-        _sub_type, params = Subtype.from_str(sub_type)
+        _sub_type, _params = Subtype.from_str(sub_type)
         _subscriber = self._subscribers.get(_sub_type)
         if _subscriber is None:
             raise ValueError(f"Subscription type {sub_type} is not supported")
         _channel = self.get_communication_channel()
-        self._resubscribe_stream(sub_type, _channel, instruments, **params)
+        self._resubscribe_stream(_sub_type, _channel, instruments, **_params)
         self._subscriptions[sub_type] = instruments
+
+    def _resubscribe_stream(
+        self, sub_type: str, channel: CtrlChannel, instruments: Set[Instrument] | None = None, **kwargs
+    ) -> None:
+        if sub_type in self._sub_to_coro:
+            logger.debug(f"Canceling existing {sub_type} subscription for {self._subscriptions[sub_type]}")
+            self._stop_subscriber(sub_type)
+        if instruments is not None and len(instruments) == 0:
+            return
+        self._subscribe_stream(sub_type, channel, instruments=instruments, **kwargs)
 
     def _stop_subscriber(self, sub_type: str) -> None:
         if sub_type not in self._sub_to_coro:
@@ -269,16 +285,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         del self._sub_to_coro[sub_type]
         del self._sub_to_name[sub_type]
         del self._is_sub_name_enabled[sub_name]
-
-    def _resubscribe_stream(
-        self, sub_type: str, channel: CtrlChannel, instruments: Set[Instrument] | None = None, **kwargs
-    ) -> None:
-        if sub_type in self._sub_to_coro:
-            logger.debug(f"Canceling existing {sub_type} subscription for {self._subscriptions[sub_type]}")
-            self._stop_subscriber(sub_type)
-        if instruments is not None and len(instruments) == 0:
-            return
-        self._subscribe_stream(sub_type, channel, instruments=instruments, **kwargs)
 
     def _subscribe_stream(self, sub_type: str, channel: CtrlChannel, **kwargs) -> None:
         _subscriber = self._subscribers[sub_type]

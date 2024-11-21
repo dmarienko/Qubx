@@ -120,7 +120,7 @@ class ProcessingManager(IProcessingManager):
                 event = self._process_custom_event(instrument, d_type, data)
 
         # - check if it still didn't call on_fit() for first time
-        if not self._init_fit_was_called:
+        if not self._init_fit_was_called and not self._fit_is_running:
             self._handle_fit(None, "fit", (None, self._time_provider.time()))
             return False
 
