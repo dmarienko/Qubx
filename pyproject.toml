@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Qubx"
-version = "0.4.0"
+version = "0.4.2"
 description = "Qubx - quantitative trading framework"
 authors = ["Dmitry Marienko <dmitry@gmail.com>", "Yuriy Arabskyy <yuriy.arabskyy@gmail.com>"]
 readme = "README.md"
@@ -62,9 +62,15 @@ build-backend = "poetry.core.masonry.api"
 script = "build.py"
 generate-setup-file = false
 
+[tool.poetry.scripts]
+qubx = 'qubx.utils.runner:run'
+
 [tool.poetry.group.test.dependencies]
 pytest = "^7.1.3"
 pytest-mock = "*"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+filterwarnings = [
+    "ignore:.*Jupyter is migrating.*:DeprecationWarning",
+]
