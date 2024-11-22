@@ -1,4 +1,5 @@
 import pandas as pd
+import ccxt
 import ccxt.pro as cxp
 from typing import List, Dict
 from ccxt.async_support.base.ws.client import Client
@@ -177,3 +178,27 @@ class BinanceQVUSDM(cxp.binanceusdm, BinanceQV):
             return
         symbol_to_info = await self.fetch_funding_intervals()
         self._funding_intervals = {str(s): str(info["interval"]) for s, info in symbol_to_info.items()}
+
+
+class BinancePortfolioMargin(BinanceQV):
+    def describe(self):
+        return self.deep_extend(
+            super().describe(),
+            {
+                "options": {
+                    "portfolioMargin": True,
+                }
+            },
+        )
+
+
+class BinancePortfolioMarginUsdm(BinanceQVUSDM):
+    def describe(self):
+        return self.deep_extend(
+            super().describe(),
+            {
+                "options": {
+                    "portfolioMargin": True,
+                }
+            },
+        )

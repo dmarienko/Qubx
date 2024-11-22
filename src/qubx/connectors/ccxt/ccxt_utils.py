@@ -11,7 +11,13 @@ from qubx.utils.orderbook import build_orderbook_snapshots
 from .ccxt_exceptions import CcxtOrderBookParsingError, CcxtLiquidationParsingError
 
 
-EXCHANGE_ALIASES = {"binance.um": "binanceusdm", "binance.cm": "binancecoinm", "kraken.f": "krakenfutures"}
+EXCHANGE_ALIASES = {
+    "binance.um": "binanceusdm",
+    "binance.cm": "binancecoinm",
+    "kraken.f": "krakenfutures",
+    "binance.pm": "binancepm",
+    "binance.pm.um": "binancepm_usdm",
+}
 
 DATA_PROVIDERS_ALIASES = EXCHANGE_ALIASES | {"binance": "binanceqv", "binance.um": "binanceqv_usdm"}
 

@@ -32,12 +32,17 @@ from .ccxt_utils import (
 from .ccxt_exceptions import CcxtSymbolNotRecognized, CcxtLiquidationParsingError
 
 # - register custom wrappers
-from .ccxt_customizations import BinanceQV, BinanceQVUSDM
+from .ccxt_customizations import BinanceQV, BinanceQVUSDM, BinancePortfolioMargin, BinancePortfolioMarginUsdm
 
 cxp.binanceqv = BinanceQV  # type: ignore
 cxp.binanceqv_usdm = BinanceQVUSDM  # type: ignore
+cxp.binancepm = BinancePortfolioMargin  # type: ignore
+cxp.binancepm_usdm = BinancePortfolioMarginUsdm  # type: ignore
+
 cxp.exchanges.append("binanceqv")
 cxp.exchanges.append("binanceqv_usdm")
+cxp.exchanges.append("binancepm")
+cxp.exchanges.append("binancepm_usdm")
 
 
 EXCH_SYMBOL_PATTERN = re.compile(r"(?P<base>[^/]+)/(?P<quote>[^:]+)(?::(?P<margin>.+))?")

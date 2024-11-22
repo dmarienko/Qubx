@@ -29,6 +29,36 @@ from qubx.utils.ntp import time_now
 ORDERS_HISTORY_LOOKBACK_DAYS = 30
 
 
+class BinancePortfolioMargin(ccxt.binance):
+    def describe(self):
+        return self.deep_extend(
+            super().describe(),
+            {
+                "options": {
+                    "portfolioMargin": True,
+                }
+            },
+        )
+
+
+class BinancePortfolioMarginUsdm(ccxt.binanceusdm):
+    def describe(self):
+        return self.deep_extend(
+            super().describe(),
+            {
+                "options": {
+                    "portfolioMargin": True,
+                }
+            },
+        )
+
+
+ccxt.binancepm = BinancePortfolioMargin  # type: ignore
+ccxt.binancepm_usdm = BinancePortfolioMarginUsdm  # type: ignore
+ccxt.exchanges.append("binancepm")
+ccxt.exchanges.append("binancepm_usdm")
+
+
 class CCXTTradingConnector(ITradingServiceProvider):
     """
     Synchronous instance of trading API
@@ -81,11 +111,12 @@ class CCXTTradingConnector(ITradingServiceProvider):
         # - check what we have on balance: TODO test on futures account
         for k, vol in self._balance["total"].items():  # type: ignore
             if vol != 0.0:  # - get all non zero balances
-                self.acc.update_balance(k, vol, vol - self._balance["free"].get(k, 0))
+                _locked = vol - self._get_free_balance_for_asset(k, self._balance)
+                self.acc.update_balance(k, vol, _locked)
 
         # - try to get account's commissions calculator or set default one
         if _info:
-            _fees = _info.get("commissionRates")
+            _fees = _info.get("commissionRates") if isinstance(_info, dict) else None
             if _fees:
                 self._fees_calculator = TransactionCostsCalculator(
                     "account", 100 * float(_fees["maker"]), 100 * float(_fees["taker"])
@@ -106,6 +137,21 @@ class CCXTTradingConnector(ITradingServiceProvider):
         except Exception as err:
             logger.debug(f"Exchange {self.get_name()} doesn't support positions fetching")
             pass
+
+    def _get_free_balance_for_asset(self, asset: str, balance: dict) -> float:
+        # - try parse it from top level but it is not always there
+        _free = balance["free"].get(asset)
+        if _free is not None:
+            return _free
+        # - on portfolio margin account on binance it's inside of info -> asset -> crossMarginFree
+        _info = balance.get("info")
+        if isinstance(_info, list):
+            for a in _info:
+                if a["asset"] == asset:
+                    _free = a.get("crossMarginFree")
+                    if _free is not None:
+                        return float(_free)
+        return 0.0
 
     def _get_open_orders_from_exchange(self, instrument: Instrument, days_before: int = 60) -> Dict[str, Order]:
         """

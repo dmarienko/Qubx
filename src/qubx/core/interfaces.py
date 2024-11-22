@@ -816,3 +816,19 @@ class IStrategy:
 
     def tracker(self, ctx: IStrategyContext) -> PositionsTracker | None:
         pass
+
+
+
+class IPlottable:
+
+    def get_plots(self) -> list[str]:
+        """
+        Get the list of available plots.
+        """
+        ...
+
+    def plot(self, ctx: IStrategyContext, plot_name: str):
+        """
+        Plot the specified plot.
+        """
+        ...
