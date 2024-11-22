@@ -1,6 +1,8 @@
+import asyncio
 import pandas as pd
 import numpy as np
 import ccxt
+import ccxt.pro as cxp
 
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -9,17 +11,6 @@ from qubx.core.basics import Order, Deal, Position, Instrument, Liquidation, Fun
 from qubx.core.series import TimeSeries, Bar, Trade, Quote, OrderBook, time_as_nsec
 from qubx.utils.orderbook import build_orderbook_snapshots
 from .ccxt_exceptions import CcxtOrderBookParsingError, CcxtLiquidationParsingError
-
-
-EXCHANGE_ALIASES = {
-    "binance.um": "binanceusdm",
-    "binance.cm": "binancecoinm",
-    "kraken.f": "krakenfutures",
-    "binance.pm": "binancepm",
-    "binance.pm.um": "binancepm_usdm",
-}
-
-DATA_PROVIDERS_ALIASES = EXCHANGE_ALIASES | {"binance": "binanceqv", "binance.um": "binanceqv_usdm"}
 
 
 def ccxt_convert_order_info(instrument: Instrument, raw: dict[str, Any]) -> Order:

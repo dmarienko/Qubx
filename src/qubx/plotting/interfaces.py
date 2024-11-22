@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 from dataclasses import dataclass
 
 
@@ -17,8 +17,8 @@ class IPlotter:
         Get the list of plots that this object can generate.
         """
         ...
-    
-    def get_plot_data(self, plot_name: str) -> PlotData:
+
+    def get_plot_data(self, plot_name: str) -> Tuple[str, dict]:
         """
         Get the data for the specified plot.
         """

@@ -26,7 +26,7 @@ def exchange_credentials(request):
     for key, api_key in api_keys.items():
         exchange = key[: -len("_API_KEY")]
         exchange_credentials[EXCHANGE_MAPPINGS.get(exchange, exchange)] = {
-            "apiKey": api_key,
+            "api_key": api_key,
             "secret": api_secrets[f"{exchange}_SECRET"],
         }
     return exchange_credentials

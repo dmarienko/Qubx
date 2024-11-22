@@ -13,6 +13,7 @@ from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
 from qubx.connectors.ccxt.ccxt_trading import CCXTTradingConnector
 from qubx.utils.misc import add_project_to_system_path, Struct, logo, version
 from qubx.backtester.simulator import SimulatedTrading
+from qubx.connectors.ccxt.factory import get_ccxt_exchange
 
 
 LOGFILE = "logs/"
@@ -63,7 +64,10 @@ def run_ccxt_paper_trading(
         base_currency=base_currency,
         initial_capital=capital,
     )
-    broker = CCXTExchangesConnector(exchange.lower(), trading_service, read_only=True, use_testnet=use_testnet)
+
+    _exchange = get_ccxt_exchange(exchange, use_testnet=use_testnet)
+
+    broker = CCXTExchangesConnector(_exchange, trading_service)
 
     ctx = StrategyContext(
         strategy=strategy,
@@ -107,14 +111,17 @@ def run_ccxt_trading(
 
     logs_writer = InMemoryLogsWriter("test", "test", "0")
 
-    trading_service = CCXTTradingConnector(exchange, account_id, commissions, use_testnet=use_testnet, **credentials)
+    _exchange = get_ccxt_exchange(exchange, use_testnet=use_testnet, loop=loop, **credentials)
+
+    trading_service = CCXTTradingConnector(_exchange, account_id, commissions)
 
     account = AccountProcessor(
         account_id=trading_service.get_account_id(),
         base_currency=base_currency,
         initial_capital=capital,
     )
-    broker = CCXTExchangesConnector(exchange, trading_service, use_testnet=use_testnet, loop=loop, **credentials)
+
+    broker = CCXTExchangesConnector(_exchange, trading_service)
 
     ctx = StrategyContext(
         strategy=strategy,

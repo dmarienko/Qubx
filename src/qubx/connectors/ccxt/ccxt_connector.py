@@ -22,7 +22,6 @@ from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.utils.ntp import start_ntp_thread, time_now
 from .ccxt_utils import (
-    DATA_PROVIDERS_ALIASES,
     ccxt_convert_trade,
     ccxt_convert_orderbook,
     ccxt_convert_liquidation,
@@ -30,19 +29,6 @@ from .ccxt_utils import (
     ccxt_symbol_info_to_instrument,
 )
 from .ccxt_exceptions import CcxtSymbolNotRecognized, CcxtLiquidationParsingError
-
-# - register custom wrappers
-from .ccxt_customizations import BinanceQV, BinanceQVUSDM, BinancePortfolioMargin, BinancePortfolioMarginUsdm
-
-cxp.binanceqv = BinanceQV  # type: ignore
-cxp.binanceqv_usdm = BinanceQVUSDM  # type: ignore
-cxp.binancepm = BinancePortfolioMargin  # type: ignore
-cxp.binancepm_usdm = BinancePortfolioMarginUsdm  # type: ignore
-
-cxp.exchanges.append("binanceqv")
-cxp.exchanges.append("binanceqv_usdm")
-cxp.exchanges.append("binancepm")
-cxp.exchanges.append("binancepm_usdm")
 
 
 EXCH_SYMBOL_PATTERN = re.compile(r"(?P<base>[^/]+)/(?P<quote>[^:]+)(?::(?P<margin>.+))?")
@@ -70,21 +56,15 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
 
     def __init__(
         self,
-        exchange_id: str,
+        exchange: cxp.Exchange,
         trading_service: ITradingServiceProvider,
-        read_only: bool = False,
-        loop: AbstractEventLoop | None = None,
         max_ws_retries: int = 10,
-        use_testnet: bool = False,
         warmup_timeout: int = 120,
-        **exchange_auth,
     ):
-        super().__init__(exchange_id, trading_service)
+        super().__init__(str(exchange.name), trading_service)
         self.trading_service = trading_service
-        self.read_only = read_only
         self.max_ws_retries = max_ws_retries
         self._warmup_timeout = warmup_timeout
-        exchange_id = exchange_id.lower()
 
         # - start NTP thread
         start_ntp_thread()
@@ -93,19 +73,9 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         self.set_communication_channel(bus := CtrlChannel("databus", sentinel=(None, None, None)))
         self.trading_service.set_communication_channel(bus)
 
-        # - init CCXT stuff
-        exch = DATA_PROVIDERS_ALIASES.get(exchange_id, exchange_id)
-        if exch not in cxp.exchanges:
-            raise ValueError(f"Exchange {exchange_id} -> {exch} is not supported by CCXT.pro !")
-
         # - create new even loop
-        self._loop = asyncio.new_event_loop() if loop is None else loop
-        self._check_event_loop_is_running()
-
-        # - create exchange's instance
-        self._exchange = getattr(cxp, exch)(exchange_auth | {"asyncio_loop": self._loop})
-        if use_testnet:
-            self._exchange.set_sandbox_mode(True)
+        self._exchange = exchange
+        self._loop = self._exchange.asyncio_loop
 
         self._last_quotes = defaultdict(lambda: None)
         self._subscriptions = defaultdict(set)
@@ -125,10 +95,10 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             if type(f) == FunctionType and n.startswith("_warmup_")
         }
 
-        if not self.read_only:
+        if not self.is_read_only:
             self._subscribe_stream("executions", self.get_communication_channel())
 
-        logger.info(f"Initialized {exchange_id} (exchange time: {self.trading_service.time()})")
+        logger.info(f"Initialized {self._exchange_id}")
 
     @property
     def is_simulated_trading(self) -> bool:
@@ -255,6 +225,11 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
             return set()
         return set.union(*self._subscriptions.values())
 
+    @property
+    def is_read_only(self) -> bool:
+        _key = self._exchange.apiKey
+        return _key is None or _key == ""
+
     def _subscribe(
         self,
         instruments: Set[Instrument],
@@ -298,12 +273,6 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         kwargs = {k: v for k, v in kwargs.items() if k in _subscriber_params}
         self._sub_to_name[sub_type] = (name := self._get_subscription_name(sub_type, **kwargs))
         self._sub_to_coro[sub_type] = self._submit_coro(_subscriber(self, name, sub_type, channel, **kwargs))
-
-    def _check_event_loop_is_running(self) -> None:
-        if self._loop.is_running():
-            return
-        self._thread_event_loop = Thread(target=self._loop.run_forever, args=(), daemon=True)
-        self._thread_event_loop.start()
 
     def _submit_coro(self, coro: Awaitable[None]) -> concurrent.futures.Future:
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
