@@ -39,20 +39,14 @@ class DebugStrategy(IStrategy):
     _instr_to_dtype_to_count: dict[Instrument, dict[str, int]]
 
     def on_init(self, ctx: IStrategyContext):
-        ctx.set_base_subscription(Subtype.OHLC, timeframe="1m")
-        ctx.set_warmup(Subtype.OHLC, "1h")
+        ctx.set_base_subscription(Subtype.OHLC["1m"])
+        ctx.set_warmup({Subtype.OHLC["1m"]: "1h"})
         self._instr_to_dtype_to_count = defaultdict(lambda: defaultdict(int))
 
     def on_market_data(self, ctx: IStrategyContext, data: MarketEvent):
+        if data.instrument is None:
+            return
         self._instr_to_dtype_to_count[data.instrument][data.type] += 1
-
-    def on_universe_change(
-        self, ctx: IStrategyContext, add_instruments: list[Instrument], rm_instruments: list[Instrument]
-    ):
-        if add_instruments:
-            _sub_to_params = ctx.get_subscriptions(ctx.instruments[0])
-            for sub, params in _sub_to_params.items():
-                ctx.subscribe(add_instruments, sub, **params)
 
     def get_dtype_count(self, instr: Instrument, dtype: str) -> int:
         return self._instr_to_dtype_to_count[instr][dtype]
@@ -87,8 +81,8 @@ class TestCcxtDataProvider:
         )
         await wait(ctx.is_fitted)
 
-        ctx.subscribe(ctx.instruments, Subtype.TRADE)
-        ctx.subscribe(ctx.instruments, Subtype.ORDERBOOK)
+        ctx.subscribe(Subtype.TRADE)
+        ctx.subscribe(Subtype.ORDERBOOK)
 
         async def wait_for_instrument_data(instr: Instrument):
             async def check_counts():
