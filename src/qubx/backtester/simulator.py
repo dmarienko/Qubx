@@ -498,6 +498,12 @@ class SimulatedExchange(IBrokerServiceProvider):
         # return {k: v.params for k, v in self._loaders[instrument].items()}
         return {}
 
+    def warmup(self, configs: Dict[Tuple[str, Instrument], str]) -> None:
+        # - TODO:
+        # 1. run warm up for each instrument
+        # 2. provide initial "market quote" for each instrument
+        pass
+
     def _try_add_process_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
         if self._pregenerated_signals:
             for s, v in self._pregenerated_signals.items():
@@ -607,9 +613,9 @@ class SimulatedExchange(IBrokerServiceProvider):
         end = start - nbarsback * (_timeframe := pd.Timedelta(timeframe))
         _spec = f"{instrument.exchange}:{instrument.symbol}"
         return self._convert_records_to_bars(
-            self._reader.read(data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()), 
-            time_as_nsec(self.time()), 
-            _timeframe.asm8.item()
+            self._reader.read(data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()),
+            time_as_nsec(self.time()),
+            _timeframe.asm8.item(),
         )
 
     def _convert_records_to_bars(self, records: List[Dict[str, Any]], cut_time_ns: int, timeframe_ns: int) -> List[Bar]:
@@ -618,7 +624,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         """
         bars = []
 
-        _data_tf = infer_series_frequency([r['timestamp_ns'] for r in records[:100]])
+        _data_tf = infer_series_frequency([r["timestamp_ns"] for r in records[:100]])
         timeframe_ns = _data_tf.item()
 
         if records is not None:
