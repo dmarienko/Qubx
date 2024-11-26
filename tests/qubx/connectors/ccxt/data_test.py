@@ -4,7 +4,7 @@ import gzip
 
 from qubx import lookup
 from data.ccxt_responses import *
-from qubx.connectors.ccxt.ccxt_utils import (
+from qubx.connectors.ccxt.utils import (
     ccxt_convert_orderbook,
     ccxt_convert_liquidation,
     ccxt_symbol_info_to_instrument,

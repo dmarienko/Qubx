@@ -10,7 +10,7 @@ from qubx import logger, lookup
 from qubx.core.basics import Order, Deal, Position, Instrument, Liquidation, FundingRate, FuturesInfo
 from qubx.core.series import TimeSeries, Bar, Trade, Quote, OrderBook, time_as_nsec
 from qubx.utils.orderbook import build_orderbook_snapshots
-from .ccxt_exceptions import CcxtOrderBookParsingError, CcxtLiquidationParsingError
+from .exceptions import CcxtOrderBookParsingError, CcxtLiquidationParsingError
 
 
 def ccxt_convert_order_info(instrument: Instrument, raw: dict[str, Any]) -> Order:

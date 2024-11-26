@@ -21,21 +21,20 @@ from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider, ITimeProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.utils.ntp import start_ntp_thread, time_now
-from .ccxt_utils import (
+from .exceptions import CcxtSymbolNotRecognized, CcxtLiquidationParsingError
+from .utils import (
     ccxt_convert_trade,
     ccxt_convert_orderbook,
     ccxt_convert_liquidation,
     ccxt_convert_funding_rate,
     ccxt_symbol_info_to_instrument,
 )
-from .ccxt_exceptions import CcxtSymbolNotRecognized, CcxtLiquidationParsingError
 
 
 EXCH_SYMBOL_PATTERN = re.compile(r"(?P<base>[^/]+)/(?P<quote>[^:]+)(?::(?P<margin>.+))?")
 
 
-class CCXTExchangesConnector(IBrokerServiceProvider):
-
+class CcxtBrokerServiceProvider(IBrokerServiceProvider):
     _exchange: Exchange
     _scheduler: BasicScheduler | None = None
 
@@ -211,7 +210,7 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
     def close(self):
         try:
             if hasattr(self._exchange, "close"):
-                future = self._submit_coro(self._exchange.close())  # type: ignore
+                future = self._task_s(self._exchange.close())  # type: ignore
                 # - wait for 5 seconds for connection to close
                 future.result(5)
             else:
@@ -272,9 +271,9 @@ class CCXTExchangesConnector(IBrokerServiceProvider):
         # - get only parameters that are needed for subscriber
         kwargs = {k: v for k, v in kwargs.items() if k in _subscriber_params}
         self._sub_to_name[sub_type] = (name := self._get_subscription_name(sub_type, **kwargs))
-        self._sub_to_coro[sub_type] = self._submit_coro(_subscriber(self, name, sub_type, channel, **kwargs))
+        self._sub_to_coro[sub_type] = self._task_s(_subscriber(self, name, sub_type, channel, **kwargs))
 
-    def _submit_coro(self, coro: Awaitable[None]) -> concurrent.futures.Future:
+    def _task_s(self, coro: Awaitable[None]) -> concurrent.futures.Future:
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
     def _time_msec_nbars_back(self, timeframe: str, nbarsback: int = 1) -> int:

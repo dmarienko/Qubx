@@ -16,8 +16,8 @@ from IPython.display import clear_output
 from plotly.subplots import make_subplots
 from qubx import lookup, logger, QubxLogConfig
 from qubx.core.basics import Instrument
-from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
-from qubx.connectors.ccxt.ccxt_trading import CCXTTradingConnector
+from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
+from qubx.connectors.ccxt.trading import CcxtTradingConnector
 from qubx.utils.runner import get_account_config
 from qubx.pandaz import scols
 from qubx.backtester.simulator import SimulatedTrading

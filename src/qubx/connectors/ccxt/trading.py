@@ -16,24 +16,20 @@ from qubx.core.basics import Instrument, Position, Order, TransactionCostsCalcul
 from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.utils.ntp import time_now
-from qubx.connectors.ccxt.ccxt_utils import (
+from .exceptions import CcxtPositionRestoreError
+from .utils import (
     ccxt_convert_order_info,
     ccxt_convert_deal_info,
     ccxt_extract_deals_from_exec,
     ccxt_restore_position_from_deals,
     ccxt_restore_positions_from_info,
 )
-from .ccxt_exceptions import CcxtPositionRestoreError
 
 
 ORDERS_HISTORY_LOOKBACK_DAYS = 30
 
 
-class CCXTTradingConnector(ITradingServiceProvider):
-    """
-    Synchronous instance of trading API
-    """
-
+class CcxtTradingConnector(ITradingServiceProvider):
     exchange: cxp.Exchange
 
     _fees_calculator: TransactionCostsCalculator | None = None
@@ -53,13 +49,13 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
     def set_account(self, acc: AccountProcessor):
         super().set_account(acc)
-        self._submit_coro(self._sync_account_info(self.commissions)).result()
+        self._task_s(self._sync_account_info(self.commissions)).result()
         self._positions = self.acc._positions
         self._log_reserved()
 
     def get_position(self, instrument: Instrument) -> Position:
         if instrument not in self._positions:
-            position: Position = self._submit_coro(self._sync_position_and_orders(instrument)).result()
+            position: Position = self._task_s(self._sync_position_and_orders(instrument)).result()
             self.acc.attach_positions(position)
         return self._positions[instrument]
 
@@ -83,9 +79,11 @@ class CCXTTradingConnector(ITradingServiceProvider):
         if client_id:
             params["newClientOrderId"] = client_id
 
+        params["type"] = "swap" if instrument.is_futures else "spot"
+
         r: Dict[str, Any] | None = None
         try:
-            r = self._submit_coro(
+            r = self._task_s(
                 self.exchange.create_order(
                     symbol=instrument.symbol, type=order_type, side=order_side, amount=amount, price=price, params=params  # type: ignore
                 )
@@ -114,7 +112,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
             order = self.acc._active_orders[order_id]
             try:
                 logger.info(f"Canceling order {order_id} ...")
-                r = self._submit_coro(self.exchange.cancel_order(order_id, symbol=order.instrument.symbol)).result()
+                r = self._task_s(self.exchange.cancel_order(order_id, symbol=order.instrument.symbol)).result()
             except Exception as err:
                 logger.error(f"Canceling [{order}] exception : {err}")
                 logger.error(traceback.format_exc())
@@ -125,7 +123,6 @@ class CCXTTradingConnector(ITradingServiceProvider):
         """
         Returns current time as dt64
         """
-        # return np.datetime64(self.sync.microseconds() * 1000, "ns")
         return time_now()
 
     def get_name(self) -> str:
@@ -148,7 +145,7 @@ class CCXTTradingConnector(ITradingServiceProvider):
         self.acc.process_order(order)
         return order, deals
 
-    def _submit_coro(self, coro: Coroutine) -> concurrent.futures.Future:
+    def _task_s(self, coro: Coroutine) -> concurrent.futures.Future:
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
     def _fill_missing_fee_info(self, instrument: Instrument, deals: List[Deal]) -> None:
@@ -206,10 +203,11 @@ class CCXTTradingConnector(ITradingServiceProvider):
         if self._fees_calculator is None:
             self._fees_calculator = lookup.fees.find(self.exchange_id.lower(), default_commissions)
 
-        _restored = await self._try_restore_futures_positions()
-        if not _restored:
-            _restored = await self._try_restore_spot_positions()
-        if not _restored:
+        _future_restored = await self._try_restore_futures_positions()
+        _spot_restored = await self._try_restore_spot_positions()
+        # if not _restored:
+        # _restored = await self._try_restore_spot_positions()
+        if not _future_restored and not _spot_restored:
             raise CcxtPositionRestoreError("Could not restore positions from exchange")
 
     async def _try_restore_futures_positions(self) -> bool:
@@ -235,8 +233,9 @@ class CCXTTradingConnector(ITradingServiceProvider):
 
     async def _try_restore_spot_positions(self) -> bool:
         _balances = self.acc.get_balances()
-        _currencies = list(_balances.keys())
+        _currencies = set(_balances.keys())
         _quote_asset = self.acc.base_currency
+        _currencies.discard(_quote_asset)
 
         _instruments = []
         for currency in _currencies:
@@ -298,5 +297,9 @@ class CCXTTradingConnector(ITradingServiceProvider):
             position = ccxt_restore_position_from_deals(
                 position, vol_from_exch, deals, reserved_amount=self.acc.get_reserved(position.instrument)
             )
+
+        if position.quantity == 0 and vol_from_exch != 0:
+            position.quantity = vol_from_exch
+            position.change_position_by(self.time(), vol_from_exch, 0)
 
         return position

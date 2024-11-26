@@ -3,7 +3,7 @@ import pandas as pd
 from qubx import lookup
 from qubx.core.account import AccountProcessor
 from qubx.core.basics import Deal, Instrument, Position
-from qubx.connectors.ccxt.ccxt_utils import (
+from qubx.connectors.ccxt.utils import (
     ccxt_convert_deal_info,
     ccxt_convert_order_info,
     ccxt_extract_deals_from_exec,

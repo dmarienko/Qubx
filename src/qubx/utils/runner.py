@@ -9,8 +9,8 @@ from qubx.core.interfaces import IStrategyContext, IStrategy
 from qubx.core.account import AccountProcessor
 from qubx.core.context import StrategyContext
 from qubx.core.loggers import LogsWriter, InMemoryLogsWriter, StrategyLogging
-from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
-from qubx.connectors.ccxt.ccxt_trading import CCXTTradingConnector
+from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
+from qubx.connectors.ccxt.trading import CcxtTradingConnector
 from qubx.utils.misc import add_project_to_system_path, Struct, logo, version
 from qubx.backtester.simulator import SimulatedTrading
 from qubx.connectors.ccxt.factory import get_ccxt_exchange
@@ -55,19 +55,19 @@ def run_ccxt_paper_trading(
 
     logs_writer = InMemoryLogsWriter("test", "test", "0")
 
+    _exchange = get_ccxt_exchange(exchange, use_testnet=use_testnet)
+
     trading_service = SimulatedTrading(
         exchange, commissions=commissions, simulation_initial_time=pd.Timestamp.now().asm8
     )
+
+    broker = CcxtBrokerServiceProvider(_exchange, trading_service)
 
     account = AccountProcessor(
         account_id=trading_service.get_account_id(),
         base_currency=base_currency,
         initial_capital=capital,
     )
-
-    _exchange = get_ccxt_exchange(exchange, use_testnet=use_testnet)
-
-    broker = CCXTExchangesConnector(_exchange, trading_service)
 
     ctx = StrategyContext(
         strategy=strategy,
@@ -113,7 +113,7 @@ def run_ccxt_trading(
 
     _exchange = get_ccxt_exchange(exchange, use_testnet=use_testnet, loop=loop, **credentials)
 
-    trading_service = CCXTTradingConnector(_exchange, account_id, commissions)
+    trading_service = CcxtTradingConnector(_exchange, account_id, commissions)
 
     account = AccountProcessor(
         account_id=trading_service.get_account_id(),
@@ -121,7 +121,7 @@ def run_ccxt_trading(
         initial_capital=capital,
     )
 
-    broker = CCXTExchangesConnector(_exchange, trading_service)
+    broker = CcxtBrokerServiceProvider(_exchange, trading_service)
 
     ctx = StrategyContext(
         strategy=strategy,
@@ -230,8 +230,8 @@ def create_strategy_context(config_file: str, accounts_cfg_file: str, search_pat
     match conn:
         case "ccxt":
             # - TODO: we need some factory here
-            broker = CCXTTradingConnector(cfg.exchange.lower(), **acc_config)
-            exchange_connector = CCXTExchangesConnector(cfg.exchange.lower(), broker, **acc_config)
+            broker = CcxtTradingConnector(cfg.exchange.lower(), **acc_config)
+            exchange_connector = CcxtBrokerServiceProvider(cfg.exchange.lower(), broker, **acc_config)
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
 

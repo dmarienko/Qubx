@@ -235,7 +235,9 @@ class Instrument:
         return self.symbol == other.symbol and self.exchange == other.exchange and self.market_type == other.market_type
 
     def __str__(self) -> str:
-        return f"{self.exchange}:{self.market_type}:{self.symbol}"
+        # TODO: refactor to support futures, options, etc
+        _type = ("swap" if self.is_futures else "spot").upper()
+        return f"{self.exchange}:{self.market_type}:{_type}:{self.symbol}"
 
     def __repr__(self) -> str:
         return self.__str__()
@@ -395,6 +397,9 @@ class Position:
             self.quantity = quantity
             self.position_avg_price = pos_average_price
             self.r_pnl = r_pnl
+
+    def is_spot(self) -> bool:
+        return not self.instrument.is_futures
 
     def reset(self):
         """

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from qubx import lookup
 from qubx.core.basics import Instrument, CtrlChannel
 from qubx.core.exceptions import QueueTimeout
-from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
+from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
 
 
 OHLCV_RESPONSE = {"ETH/USDT": {"5m": [[1731239700000, 3222.69, 3227.58, 3218.18, 3220.01, 2866.3094, 10000.0, 5000.0]]}}
@@ -36,7 +36,7 @@ class MockExchange:
 
 
 class TestCcxtExchangeConnector:
-    connector: CCXTExchangesConnector
+    connector: CcxtBrokerServiceProvider
 
     @pytest.fixture(autouse=True)
     def setup(self):
@@ -55,7 +55,7 @@ class TestCcxtExchangeConnector:
             patch("qubx.utils.ntp.time_now", return_value=self.fixed_time),
             patch("ccxt.pro.binanceqv", return_value=self.mock_exchange),
         ):
-            self.connector = CCXTExchangesConnector(
+            self.connector = CcxtBrokerServiceProvider(
                 exchange_id="binanceqv", trading_service=self.mock_trading_service, loop=self.loop
             )
 
