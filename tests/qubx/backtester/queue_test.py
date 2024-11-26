@@ -1,7 +1,7 @@
 import pandas as pd
 from typing import Any, Iterator
 from qubx.core.basics import BatchEvent
-from qubx.backtester.queue import SimulatedDataQueue, DataLoader, EventBatcher
+from qubx.backtester.queue import IndexedObjects, SimulatedDataQueue, DataLoader, EventBatcher
 
 
 class DummyEvent:
@@ -49,6 +49,24 @@ class DummyDataLoader(DataLoader):
 
 def get_event_dt(i: float, base: pd.Timestamp = pd.Timestamp("2021-01-01"), offset: str = "D") -> pd.Timestamp:
     return (base + pd.Timedelta(i, offset)).as_unit("ns").asm8.item()  # type: ignore
+
+
+class TestIndexedObjects:
+
+    def test_indexed_objects(self):
+        ivs = IndexedObjects()
+        ivs.add_value("Test 1")
+        ivs.add_value("Test 2")
+        ivs.add_value("Test 3")
+        assert 3 == len(ivs.values())
+
+        ivs.remove_value("Test 2")
+        ivs.remove_value("Test 1")
+        ivs.remove_value("Test 1")
+        ivs.remove_value("Test 1")
+        assert 4 == ivs.add_value("Test 1")
+        assert 2 == len(ivs.values())
+        assert 3 == ivs.get_index_of_value("Test 3")
 
 
 class TestSimulatedQueueStuff:
