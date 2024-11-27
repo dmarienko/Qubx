@@ -161,18 +161,25 @@ class IteratorsTimeSlicer(Iterator):
             raise StopIteration
 
         k = self._r_keys[0]
-        d = self._datas[k]
+        data = self._datas[k]
 
-        if not d:
+        if not data:
             try:
-                d.extend(self._fetch_next_chunk(k))
+                # - get next chunk of data
+                data.extend(self._fetch_next_chunk(k))
             except StopIteration:
                 print(f" > Iterator[{k}] is empty")
-                self.remove(k)
-                return ()
-        _last = d.pop()
-        r = (k, _t := _last.time, _last)
 
+                # - remove iterable data
+                self._datas.pop(k)
+                self._iterators.pop(k)
+                self._keys.remove(k)
+                self._r_keys.remove(k)
+
+                return ()
+
+        _last = data.pop()
+        value = (k, _t := _last.time, _last)
         if self._init_k_idxs:
             if _t >= self._k_max:
                 self._r_keys.append(self._init_k_idxs.pop(0))
@@ -185,7 +192,7 @@ class IteratorsTimeSlicer(Iterator):
             if _t >= self._k_max:
                 self._r_keys.rotate(-1)  # - switch to the next iterated data
                 self._k_max = _t
-        return r
+        return value
 
 
 class SimulationDataLoader:
