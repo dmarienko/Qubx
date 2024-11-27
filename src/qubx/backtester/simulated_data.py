@@ -74,7 +74,7 @@ class BiDirectionIndexedObjects:
 
 class IteratorsTimeSlicer(Iterator):
     _iterators: dict[int, Iterator]
-    _datas: dict[int, list[tuple[int, int, Any]]]
+    _buffers: dict[int, list[tuple[int, int, Any]]]
 
     _keys: deque[int]
     _r_keys: deque[int]
@@ -84,7 +84,7 @@ class IteratorsTimeSlicer(Iterator):
     _iterating: bool
 
     def __init__(self):
-        self._datas = defaultdict(list)
+        self._buffers = defaultdict(list)
         self._iterators = {}
         self._keys = deque()
         self._r_keys = deque()
@@ -98,7 +98,7 @@ class IteratorsTimeSlicer(Iterator):
         for k, vi in data.items():
             if k not in self._keys:
                 self._iterators[k] = vi
-                self._datas[k] = self._fetch_next_chunk(k)  # do initial chunk fetching
+                self._buffers[k] = self._get_next_chunk_to_buffer(k)  # do initial chunk fetching
                 self._keys.append(k)
                 _rebuild = True
 
@@ -118,8 +118,8 @@ class IteratorsTimeSlicer(Iterator):
         _keys = keys if isinstance(keys, list) else [keys]
         _rebuild = False
         for i in _keys:
-            if i in self._datas:
-                self._datas.pop(i)
+            if i in self._buffers:
+                self._buffers.pop(i)
                 self._iterators.pop(i)
                 self._keys.remove(i)
                 _rebuild = True
@@ -140,10 +140,10 @@ class IteratorsTimeSlicer(Iterator):
         self._init_k_maxes = []
         self._r_keys = deque(self._keys)
 
-        if len(self._datas) > 1:
+        if len(self._buffers) > 1:
             self._r_keys = deque()
 
-            _init_seq = {k: self._datas[k][-1].time for k in self._keys}
+            _init_seq = {k: self._buffers[k][-1].time for k in self._keys}
             _init_seq = dict(sorted(_init_seq.items(), key=lambda item: item[1]))
 
             self._init_k_maxes = list(_init_seq.values())[1:]
@@ -152,7 +152,7 @@ class IteratorsTimeSlicer(Iterator):
             self._k_max = self._init_k_maxes.pop(0)
             self._r_keys.append(self._init_k_idxs.pop(0))
 
-    def _fetch_next_chunk(self, index: int) -> list[tuple[int, int, Any]]:
+    def _get_next_chunk_to_buffer(self, index: int) -> list[tuple[int, int, Any]]:
         return list(reversed(next(self._iterators[index])))
 
     def __next__(self) -> tuple[int, int, Any]:
@@ -161,17 +161,17 @@ class IteratorsTimeSlicer(Iterator):
             raise StopIteration
 
         k = self._r_keys[0]
-        data = self._datas[k]
+        data = self._buffers[k]
 
         if not data:
             try:
                 # - get next chunk of data
-                data.extend(self._fetch_next_chunk(k))
+                data.extend(self._get_next_chunk_to_buffer(k))
             except StopIteration:
                 print(f" > Iterator[{k}] is empty")
 
                 # - remove iterable data
-                self._datas.pop(k)
+                self._buffers.pop(k)
                 self._iterators.pop(k)
                 self._keys.remove(k)
                 self._r_keys.remove(k)
@@ -218,22 +218,21 @@ class SimulationDataLoader:
                 self._transformer = RestoreTicksFromOHLC()
                 self._timeframe = self._subparams.get("timeframe")
                 self._data_type = "ohlc"
-                _id = self._data_type + str(self._timeframe)
+                self._id = hash(self._data_type + str(self._timeframe))
             case Subtype.TRADE:
                 self._transformer = AsTimestampedRecords()
                 self._data_type = "agg_trades"
-                _id = self._data_type
+                self._id = hash(self._data_type)
             case Subtype.QUOTE:
                 self._transformer = AsTimestampedRecords()
                 self._data_type = "orderbook"
-                _id = self._data_type
+                self._id = hash(self._data_type)
             case _:
                 raise ValueError(f"Unsupported subscription type: {self._subtype}")
 
         for i in instruments:
             self.attach_instrument(i)
 
-        self._id = hash(_id)
         self._chunksize = chunksize  # TODO:
 
     def __hash__(self) -> int:
