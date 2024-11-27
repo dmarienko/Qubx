@@ -186,18 +186,7 @@ class BinancePortfolioMargin(BinanceQV):
             super().describe(),
             {
                 "options": {
-                    "portfolioMargin": True,
-                }
-            },
-        )
-
-
-class BinancePortfolioMarginUsdm(BinanceQVUSDM):
-    def describe(self):
-        return self.deep_extend(
-            super().describe(),
-            {
-                "options": {
+                    "defaultType": "margin",
                     "portfolioMargin": True,
                 }
             },

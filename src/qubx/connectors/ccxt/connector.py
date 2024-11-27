@@ -27,7 +27,7 @@ from .utils import (
     ccxt_convert_orderbook,
     ccxt_convert_liquidation,
     ccxt_convert_funding_rate,
-    ccxt_symbol_info_to_instrument,
+    ccxt_symbol_to_instrument,
 )
 
 
@@ -291,7 +291,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         return tframe
 
     def _get_exch_symbol(self, instrument: Instrument) -> str:
-        return f"{instrument.base}/{instrument.quote}:{instrument.margin_symbol}"
+        return f"{instrument.base}/{instrument.quote}:{instrument.margin_asset}"
 
     def _get_instrument(self, symbol: str, symbol_to_instrument: Dict[str, Instrument] | None = None) -> Instrument:
         instrument = self._symbol_to_instrument.get(symbol)
@@ -305,7 +305,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
                 symbol_info = self._exchange.market(symbol)
             except BadSymbol:
                 raise CcxtSymbolNotRecognized(f"Unknown symbol {symbol}")
-            instrument = ccxt_symbol_info_to_instrument(self._exchange_id, symbol_info)
+            instrument = ccxt_symbol_to_instrument(self._exchange_id, symbol_info)
         if symbol not in self._symbol_to_instrument:
             self._symbol_to_instrument[symbol] = instrument
         return instrument

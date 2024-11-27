@@ -3,7 +3,7 @@ import asyncio
 import ccxt.pro as cxp
 from threading import Thread
 from typing import Any
-from .customizations import BinanceQV, BinancePortfolioMargin, BinancePortfolioMarginUsdm, BinanceQVUSDM
+from .customizations import BinanceQV, BinanceQVUSDM, BinancePortfolioMargin
 
 
 EXCHANGE_ALIASES = {
@@ -11,14 +11,12 @@ EXCHANGE_ALIASES = {
     "binance.um": "binanceqv_usdm",
     "binance.cm": "binancecoinm",
     "binance.pm": "binancepm",
-    "binance.pm.um": "binancepm_usdm",
     "kraken.f": "krakenfutures",
 }
 
 cxp.binanceqv = BinanceQV  # type: ignore
 cxp.binanceqv_usdm = BinanceQVUSDM  # type: ignore
 cxp.binancepm = BinancePortfolioMargin  # type: ignore
-cxp.binancepm_usdm = BinancePortfolioMarginUsdm  # type: ignore
 
 cxp.exchanges.append("binanceqv")
 cxp.exchanges.append("binanceqv_usdm")

@@ -4,18 +4,18 @@ from qubx.core.interfaces import ITradingServiceProvider, ITradingManager, ITime
 
 
 class TradingManager(ITradingManager):
-    __time_provider: ITimeProvider
-    __trading_service: ITradingServiceProvider
-    __strategy_name: str
+    _time_provider: ITimeProvider
+    _trading_service: ITradingServiceProvider
+    _strategy_name: str
 
-    __order_id: int | None = None
+    _order_id: int | None = None
 
     def __init__(
         self, time_provider: ITimeProvider, trading_service: ITradingServiceProvider, strategy_name: str
     ) -> None:
-        self.__time_provider = time_provider
-        self.__trading_service = trading_service
-        self.__strategy_name = strategy_name
+        self._time_provider = time_provider
+        self._trading_service = trading_service
+        self._strategy_name = strategy_name
 
     def trade(
         self,
@@ -43,7 +43,7 @@ class TradingManager(ITradingManager):
         )
         client_id = self._generate_order_client_id(instrument.symbol)
 
-        order = self.__trading_service.send_order(
+        order = self._trading_service.send_order(
             instrument=instrument,
             order_side=side,
             order_type=type,
@@ -57,17 +57,17 @@ class TradingManager(ITradingManager):
         return order
 
     def cancel(self, instrument: Instrument) -> None:
-        for o in self.__trading_service.get_orders(instrument):
-            self.__trading_service.cancel_order(o.id)
+        for o in self._trading_service.get_orders(instrument):
+            self._trading_service.cancel_order(o.id)
 
     def cancel_order(self, order_id: str) -> None:
         if not order_id:
             return
-        self.__trading_service.cancel_order(order_id)
+        self._trading_service.cancel_order(order_id)
 
     def _generate_order_client_id(self, symbol: str) -> str:
-        if self.__order_id is None:
-            self.__order_id = self.__time_provider.time().item() // 100_000_000
-        assert self.__order_id is not None
-        self.__order_id += 1
-        return "_".join([self.__strategy_name, symbol, str(self.__order_id)])
+        if self._order_id is None:
+            self._order_id = self._time_provider.time().item() // 100_000_000
+        assert self._order_id is not None
+        self._order_id += 1
+        return "_".join([self._strategy_name, symbol, str(self._order_id)])

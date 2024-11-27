@@ -1,6 +1,5 @@
 import pandas as pd
 from qubx import lookup, logger
-from qubx.core.account import AccountProcessor
 from qubx.core.helpers import CachedMarketDataHolder
 from qubx.core.loggers import StrategyLogging
 from qubx.core.basics import TargetPosition, Instrument, Position, Subtype
@@ -15,6 +14,7 @@ from qubx.core.interfaces import (
     ISubscriptionManager,
     ITradingManager,
     ITimeProvider,
+    IAccountProcessor,
 )
 
 
@@ -42,7 +42,7 @@ class UniverseManager(IUniverseManager):
         subscription_manager: ISubscriptionManager,
         trading_manager: ITradingManager,
         time_provider: ITimeProvider,
-        account_processor: AccountProcessor,
+        account_processor: IAccountProcessor,
         position_gathering: IPositionGathering,
     ):
         self._context = context

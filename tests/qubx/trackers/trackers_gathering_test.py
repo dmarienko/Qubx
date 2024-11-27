@@ -3,7 +3,7 @@ from typing import Any, Optional, List
 from pandas import Timestamp
 
 from qubx import QubxLogConfig, lookup, logger
-from qubx.core.account import AccountProcessor
+from qubx.core.account import BasicAccountProcessor
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.pandaz.utils import *
 from qubx.core.utils import recognize_time, time_to_str
@@ -84,7 +84,7 @@ class DebugStratageyCtx(IStrategyContext):
         self.capital = capital
 
         positions = {i: Position(i) for i in instrs}
-        self.account = AccountProcessor("test", "USDT", reserves={})  # , initial_capital=10000.0)
+        self.account = BasicAccountProcessor("test", "USDT")  # , initial_capital=10000.0)
         self.account.update_balance("USDT", capital, 0)
         self.account.attach_positions(*positions.values())
         self._n_orders = 0
@@ -143,7 +143,7 @@ class GuineaPig(IStrategy):
     tests = {}
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(Subtype.OHLC, timeframe="1Min")
+        ctx.set_base_subscription(Subtype.OHLC["1Min"])
 
     def on_fit(self, ctx: IStrategyContext):
         self.tests = {recognize_time(k): v for k, v in self.tests.items()}
@@ -196,7 +196,7 @@ class TestTrackersAndGatherers:
             slow_period = 12
 
             def on_init(self, ctx: IStrategyContext) -> None:
-                ctx.set_base_subscription(Subtype.OHLC, timeframe=self.timeframe)
+                ctx.set_base_subscription(Subtype.OHLC[self.timeframe])
 
             def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
                 signals = []

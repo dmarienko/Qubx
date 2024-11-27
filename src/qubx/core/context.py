@@ -4,7 +4,6 @@ from typing import Any, Callable, List, Dict, Union
 from threading import Thread
 
 from qubx import logger
-from qubx.core.account import AccountProcessor
 from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, set_parameters_to_object
 from qubx.core.loggers import StrategyLogging
 from qubx.core.basics import Instrument, dt_64, SW, CtrlChannel, Subtype
@@ -24,6 +23,7 @@ from qubx.core.interfaces import (
     ITradingManager,
     IProcessingManager,
     PositionsTracker,
+    IAccountProcessor,
 )
 from .mixins import ProcessingManager, SubscriptionManager, TradingManager, UniverseManager, MarketDataProvider
 
@@ -53,7 +53,7 @@ class StrategyContext(IStrategyContext):
         self,
         strategy: IStrategy,
         broker: IBrokerServiceProvider,
-        account: AccountProcessor,
+        account: IAccountProcessor,
         instruments: list[Instrument],
         logging: StrategyLogging,
         config: dict[str, Any] | None = None,

@@ -1,12 +1,12 @@
-from typing import Any, Dict, List, Tuple
-from multiprocessing.pool import ThreadPool
-import numpy as np
 import csv, os
-
+import numpy as np
 import pandas as pd
 
+from typing import Any, Dict, List, Tuple
+from multiprocessing.pool import ThreadPool
+
 from qubx import logger
-from qubx.core.basics import Deal, Position, Signal, TargetPosition, Instrument
+from qubx.core.basics import Deal, Position, Signal, TargetPosition, Instrument, AssetBalance
 
 from qubx.core.metrics import split_cumulative_pnl
 from qubx.core.series import time_as_nsec
@@ -226,7 +226,7 @@ class PositionsDumper(_BaseIntervalDumper):
             data.append(
                 {
                     "timestamp": str(actual_timestamp),
-                    "instrument_id": i.id,
+                    "instrument_id": i.symbol,
                     "pnl_quoted": p.total_pnl(),
                     "quantity": p.quantity,
                     "realized_pnl_quoted": p.r_pnl,
@@ -252,7 +252,7 @@ class PortfolioLogger(PositionsDumper):
             data.append(
                 {
                     "timestamp": str(interval_start_time),
-                    "instrument_id": i.id,
+                    "instrument_id": i.symbol,
                     "pnl_quoted": p.total_pnl(),
                     "quantity": p.quantity,
                     "realized_pnl_quoted": p.r_pnl,
@@ -297,7 +297,7 @@ class ExecutionsLogger(_BaseIntervalDumper):
             data.append(
                 {
                     "timestamp": d.time,
-                    "instrument_id": i.id,
+                    "instrument_id": i.symbol,
                     "side": "buy" if d.amount > 0 else "sell",
                     "filled_qty": d.amount,
                     "price": d.price,
@@ -344,7 +344,7 @@ class SignalsLogger(_BaseIntervalDumper):
             data.append(
                 {
                     "timestamp": s.time,
-                    "instrument_id": s.instrument.id,
+                    "instrument_id": s.instrument.symbol,
                     "exchange_id": s.instrument.exchange,
                     "signal": s.signal.signal,
                     "target_position": s.target_position_size,
@@ -380,7 +380,7 @@ class BalanceLogger(_BaseIntervalDumper):
         super().__init__(None)  # no intervals
         self._writer = writer
 
-    def record_balance(self, timestamp: np.datetime64, balance: Dict[str, Tuple[float, float]]):
+    def record_balance(self, timestamp: np.datetime64, balance: Dict[str, AssetBalance]):
         if balance:
             data = []
             for s, d in balance.items():
@@ -388,8 +388,8 @@ class BalanceLogger(_BaseIntervalDumper):
                     {
                         "timestamp": timestamp,
                         "instrument_id": s,
-                        "total": d[0],
-                        "locked": d[1],
+                        "total": d.total,
+                        "locked": d.locked,
                     }
                 )
             self._writer.write_data("balance", data)
@@ -450,7 +450,10 @@ class StrategyLogging:
         self.heartbeat_freq = convert_tf_str_td64(heartbeat_freq) if heartbeat_freq else None
 
     def initialize(
-        self, timestamp: np.datetime64, positions: Dict[Instrument, Position], balances: Dict[str, Tuple[float, float]]
+        self,
+        timestamp: np.datetime64,
+        positions: dict[Instrument, Position],
+        balances: dict[str, AssetBalance],
     ) -> None:
         # - attach positions to loggers
         if self.positions_dumper:

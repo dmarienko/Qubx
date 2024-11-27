@@ -7,7 +7,7 @@ from data.ccxt_responses import *
 from qubx.connectors.ccxt.utils import (
     ccxt_convert_orderbook,
     ccxt_convert_liquidation,
-    ccxt_symbol_info_to_instrument,
+    ccxt_symbol_to_instrument,
 )
 
 
@@ -42,6 +42,6 @@ class TestCcxtOrderbookRelatedStuff:
         assert len(liquidations) == len(L1)
 
     def test_ccxt_symbol_conversion(self):
-        instr = ccxt_symbol_info_to_instrument("BINANCE.UM", M1)
+        instr = ccxt_symbol_to_instrument("BINANCE.UM", M1)
         assert instr is not None
         assert instr.symbol == "BTCUSDT"

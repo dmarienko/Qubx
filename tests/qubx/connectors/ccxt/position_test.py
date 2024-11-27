@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from qubx import lookup
-from qubx.core.account import AccountProcessor
+from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import Deal, Instrument, Position
 from qubx.connectors.ccxt.utils import (
     ccxt_convert_deal_info,
@@ -102,7 +102,7 @@ class TestStrats:
         )
 
         pos1 = ccxt_restore_position_from_deals(pos1, vol1, deals)
-        assert N(pos1.quantity, instr1.min_size_step) == vol1
+        assert N(pos1.quantity, instr1.lot_size) == vol1
 
         deals = [
             Deal("0", 2, time=pd.Timestamp("2024-04-07 12:40:41.717000"), amount=0.154, price=587.1, aggressive=True, fee_amount=0.0001155, fee_currency="BNB"),  # type: ignore
@@ -118,10 +118,10 @@ class TestStrats:
         vol2 = np.sum([d.amount for d in deals]) - instr2.round_size_up(np.sum([d.fee_amount for d in deals]))  # type: ignore
 
         pos2 = ccxt_restore_position_from_deals(pos2, vol2, deals)
-        assert N(pos2.quantity, instr2.min_size_step) == vol2
+        assert N(pos2.quantity, instr2.lot_size) == vol2
 
     def test_account_processor_from_ccxt_reports(self):
-        acc = AccountProcessor("TestAcc1", "USDT", {}, 100)
+        acc = BasicAccountProcessor("TestAcc1", "USDT", 100)
         acc.attach_positions(
             Position(lookup.find_symbol("BINANCE", "RAREUSDT")),  # type: ignore
             Position(lookup.find_symbol("BINANCE", "SUPERUSDT")),  # type: ignore

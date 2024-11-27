@@ -6,7 +6,7 @@ import yaml, configparser, socket
 from os.path import exists, expanduser
 from qubx import lookup, logger, formatter
 from qubx.core.interfaces import IStrategyContext, IStrategy
-from qubx.core.account import AccountProcessor
+from qubx.core.account import BasicAccountProcessor
 from qubx.core.context import StrategyContext
 from qubx.core.loggers import LogsWriter, InMemoryLogsWriter, StrategyLogging
 from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
@@ -63,7 +63,7 @@ def run_ccxt_paper_trading(
 
     broker = CcxtBrokerServiceProvider(_exchange, trading_service)
 
-    account = AccountProcessor(
+    account = BasicAccountProcessor(
         account_id=trading_service.get_account_id(),
         base_currency=base_currency,
         initial_capital=capital,
@@ -115,7 +115,7 @@ def run_ccxt_trading(
 
     trading_service = CcxtTradingConnector(_exchange, account_id, commissions)
 
-    account = AccountProcessor(
+    account = BasicAccountProcessor(
         account_id=trading_service.get_account_id(),
         base_currency=base_currency,
         initial_capital=capital,

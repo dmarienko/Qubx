@@ -8,7 +8,6 @@ from tqdm.auto import tqdm
 from itertools import chain
 
 from qubx import lookup, logger, QubxLogConfig
-from qubx.core.account import AccountProcessor
 from qubx.core.helpers import BasicScheduler
 from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
 from qubx.core.series import Quote, time_as_nsec
@@ -36,6 +35,7 @@ from qubx.core.interfaces import (
 )
 
 from qubx.core.context import StrategyContext
+from qubx.core.account import BasicAccountProcessor
 from qubx.backtester.ome import OrdersManagementEngine, OmeReport
 
 from qubx.data.helpers import InMemoryCachedReader, TimeGuardedWrapper
@@ -247,7 +247,7 @@ class SimulatedTrading(ITradingServiceProvider):
         if report.exec is not None:
             self.process_execution_report(instrument, {"order": order, "deals": [report.exec]})
         else:
-            self.acc.add_active_orders({order.id: order})
+            self.acc.process_order(order)
 
         # - send reports to channel
         self.send_execution_report(instrument, report)
@@ -301,15 +301,15 @@ class SimulatedTrading(ITradingServiceProvider):
 
         # - initiolize empty position
         position = Position(instrument)  # type: ignore
-        self._half_tick_size[instrument] = instrument.min_tick / 2  # type: ignore
+        self._half_tick_size[instrument] = instrument.tick_size / 2  # type: ignore
         self.acc.attach_positions(position)
-        return self.acc._positions[instrument]
+        return self.acc.positions[instrument]
 
     def time(self) -> dt_64:
         return self._current_time
 
     def get_base_currency(self) -> str:
-        return self.acc.base_currency
+        return self.acc.get_base_currency()
 
     def get_name(self) -> str:
         return self._name
@@ -327,6 +327,9 @@ class SimulatedTrading(ITradingServiceProvider):
     def emulate_quote_from_data(
         self, instrument: Instrument, timestamp: dt_64, data: float | Trade | Bar
     ) -> Quote | None:
+        if instrument not in self._half_tick_size:
+            _ = self.get_position(instrument)
+
         _ts2 = self._half_tick_size[instrument]
         if isinstance(data, Quote):
             return data
@@ -455,7 +458,7 @@ class SimulatedExchange(IBrokerServiceProvider):
             if subscription_type == Subtype.OHLC:
                 _params["transformer"] = RestoreTicksFromOHLC(
                     trades="trades" in subscription_type,
-                    spread=instr.min_tick,
+                    spread=instr.tick_size,
                     timestamp_units=units,
                 )
                 _params["output_type"] = Subtype.QUOTE
@@ -607,9 +610,9 @@ class SimulatedExchange(IBrokerServiceProvider):
         end = start - nbarsback * (_timeframe := pd.Timedelta(timeframe))
         _spec = f"{instrument.exchange}:{instrument.symbol}"
         return self._convert_records_to_bars(
-            self._reader.read(data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()), 
-            time_as_nsec(self.time()), 
-            _timeframe.asm8.item()
+            self._reader.read(data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()),  # type: ignore
+            time_as_nsec(self.time()),
+            _timeframe.asm8.item(),
         )
 
     def _convert_records_to_bars(self, records: List[Dict[str, Any]], cut_time_ns: int, timeframe_ns: int) -> List[Bar]:
@@ -618,7 +621,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         """
         bars = []
 
-        _data_tf = infer_series_frequency([r['timestamp_ns'] for r in records[:100]])
+        _data_tf = infer_series_frequency([r["timestamp_ns"] for r in records[:100]])
         timeframe_ns = _data_tf.item()
 
         if records is not None:
@@ -639,11 +642,11 @@ class SimulatedExchange(IBrokerServiceProvider):
         signals.index = pd.DatetimeIndex(signals.index)
 
         if isinstance(signals, pd.Series):
-            self._pregenerated_signals[signals.name] = signals
+            self._pregenerated_signals[signals.name] = signals  # type: ignore
 
         elif isinstance(signals, pd.DataFrame):
             for col in signals.columns:
-                self._pregenerated_signals[col] = signals[col]
+                self._pregenerated_signals[col] = signals[col]  # type: ignore
         else:
             raise ValueError("Invalid signals or strategy configuration")
 
@@ -922,7 +925,7 @@ class SignalsProxy(IStrategy):
     timeframe: str = "1m"
 
     def on_init(self, ctx: IStrategyContext):
-        ctx.set_base_subscription(Subtype.OHLC, timeframe=self.timeframe)
+        ctx.set_base_subscription(Subtype.OHLC[self.timeframe])
 
     def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
         if event.data and event.type == "event":
@@ -1036,7 +1039,7 @@ def _run_setup(
             logger.error("Aux data provider should be an instance of InMemoryCachedReader! Skipping it.")
         _aux_data = TimeGuardedWrapper(aux_data_provider, trading_service)
 
-    account = AccountProcessor(
+    account = BasicAccountProcessor(
         account_id=trading_service.get_account_id(),
         base_currency=setup.base_currency,
         initial_capital=setup.capital,

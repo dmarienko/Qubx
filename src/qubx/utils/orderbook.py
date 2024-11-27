@@ -397,8 +397,8 @@ def read_and_process_orderbook_updates(
                 day_updates,
                 n_levels,
                 price_bin_pct,
-                instr.min_tick,
-                instr.min_size_step,
+                instr.tick_size,
+                instr.lot_size,
                 sizes_in_quoted=sizes_in_quoted,
                 initial_snapshot=_latest_snapshot,
             )

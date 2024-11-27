@@ -110,56 +110,60 @@ class TargetPosition:
         return f"{'::: INFORMATIVE ::: ' if self.is_service else ''}Target for {self.signal} -> {self.target_position_size} at {self.time}"
 
 
-@dataclass
-class FuturesInfo:
-    contract_type: Optional[str] = None  # contract type
-    delivery_date: Optional[datetime] = None  # delivery date
-    onboard_date: Optional[datetime] = None  # futures contract size
-    contract_size: float = 1.0  # futures contract size
-    maint_margin: float = 0.0  # maintanance margin
-    required_margin: float = 0.0  # required margin
-    liquidation_fee: float = 0.0  # liquidation cost
+class AssetType(StrEnum):
+    CRYPTO = "CRYPTO"
+    STOCK = "STOCK"
+    FX = "FX"
+    INDEX = "INDEX"
 
-    def __str__(self) -> str:
-        return f"{self.contract_type} ({self.contract_size}) {self.onboard_date.isoformat()} -> {self.delivery_date.isoformat()}"
+
+class MarketType(StrEnum):
+    SPOT = "SPOT"
+    MARGIN = "MARGIN"
+    SWAP = "SWAP"
+    FUTURE = "FUTURE"
+    OPTION = "OPTION"
 
 
 @dataclass
 class Instrument:
-    symbol: str  # instrument's name
-    market_type: str  # market type (CRYPTO, STOCK, FX, etc)
-    exchange: str  # exchange id
-    base: str  # base symbol
-    quote: str  # quote symbol
-    margin_symbol: str  # margin asset
-    min_tick: float = 0.0  # tick size - minimal price change
-    min_size_step: float = 0.0  # minimal position change step size
-    min_size: float = 0.0  # minimal allowed position size
-
-    # - futures section
-    futures_info: Optional[FuturesInfo] = None
-
-    _aux_instrument: Optional["Instrument"] = None  # instrument used for conversion to main asset basis
-    #  | let's say we trade BTC/ETH with main account in USDT
-    #  | so we need to use ETH/USDT for convert profits/losses to USDT
-    _tick_precision: int = field(repr=False, default=-1)  # type: check
-    _size_precision: int = field(repr=False, default=-1)
-
-    @property
-    def is_futures(self) -> bool:
-        return self.futures_info is not None
+    symbol: str
+    asset_type: AssetType
+    market_type: MarketType
+    exchange: str
+    base: str
+    quote: str
+    settle: str
+    exchange_symbol: str  # symbol used by the exchange
+    tick_size: float  # minimal price step
+    lot_size: float  # minimal position size
+    min_size: float  # minimal allowed position size
+    min_notional: float = 0.0  # minimal notional value
+    initial_margin: float = 0.0  # initial margin
+    maint_margin: float = 0.0  # maintenance margin
+    liquidation_fee: float = 0.0  # liquidation fee
+    contract_size: float = 1.0  # contract size
+    onboard_date: datetime | None = None
+    delivery_date: datetime | None = None
 
     @property
     def price_precision(self):
-        if self._tick_precision < 0:
-            self._tick_precision = int(abs(np.log10(self.min_tick)))
-        return self._tick_precision
+        if not hasattr(self, "_price_precision"):
+            self._price_precision = int(abs(np.log10(self.tick_size)))
+        return self._price_precision
 
     @property
     def size_precision(self):
-        if self._size_precision < 0:
-            self._size_precision = int(abs(np.log10(self.min_size_step)))
+        if not hasattr(self, "_size_precision"):
+            self._size_precision = int(abs(np.log10(self.lot_size)))
         return self._size_precision
+
+    def is_futures(self) -> bool:
+        return self.market_type in [MarketType.FUTURE, MarketType.SWAP]
+
+    def is_spot(self) -> bool:
+        # TODO: handle margin better
+        return self.market_type in [MarketType.SPOT, MarketType.MARGIN]
 
     def round_size_down(self, size: float) -> float:
         """
@@ -219,11 +223,6 @@ class Instrument:
             options=(options or {}) | kwargs,
         )
 
-    @property
-    def id(self) -> str:
-        # TODO: maybe change this later to include exchange and market type
-        return self.symbol
-
     def __hash__(self) -> int:
         return hash((self.symbol, self.exchange, self.market_type))
 
@@ -235,9 +234,7 @@ class Instrument:
         return self.symbol == other.symbol and self.exchange == other.exchange and self.market_type == other.market_type
 
     def __str__(self) -> str:
-        # TODO: refactor to support futures, options, etc
-        _type = ("swap" if self.is_futures else "spot").upper()
-        return f"{self.exchange}:{self.market_type}:{_type}:{self.symbol}"
+        return ":".join([self.exchange, self.market_type, self.symbol])
 
     def __repr__(self) -> str:
         return self.__str__()
@@ -333,8 +330,8 @@ class MarketEvent:
 
 @dataclass
 class Deal:
-    id: str | int  # trade id
-    order_id: str | int  # order's id
+    id: str  # trade id
+    order_id: str  # order's id
     time: dt_64  # time of trade
     amount: float  # signed traded amount: positive for buy and negative for selling
     price: float
@@ -367,8 +364,35 @@ class Order:
         return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.instrument.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
 
 
+@dataclass
+class AssetBalance:
+    free: float = 0.0
+    locked: float = 0.0
+    total: float = 0.0
+
+    def __str__(self) -> str:
+        return f"free={self.free:.2f} locked={self.locked:.2f} total={self.total:.2f}"
+
+    def lock(self, lock_amount: float) -> None:
+        self.locked += lock_amount
+        self.free = self.total - self.locked
+
+    def __add__(self, amount: float) -> "AssetBalance":
+        self.total += amount
+        self.free += amount
+        return self
+
+    def __sub__(self, amount: float) -> "AssetBalance":
+        self.total -= amount
+        self.free -= amount
+        return self
+
+
+MARKET_TYPE = Literal["SPOT", "MARGIN", "SWAP", "FUTURES", "OPTION"]
+
+
 class Position:
-    instrument: Instrument  # instrument for this poisition
+    instrument: Instrument  # instrument for this position
     quantity: float = 0.0  # quantity positive for long and negative for short
     pnl: float = 0.0  # total cumulative position PnL in portfolio basic funds currency
     r_pnl: float = 0.0  # total cumulative position PnL in portfolio basic funds currency
@@ -382,24 +406,27 @@ class Position:
     last_update_price: float = np.nan  # last update price (actually instrument's price) in quoted currency
     last_update_conversion_rate: float = np.nan  # last update conversion rate
 
+    # margin requirements
+    maint_margin: float = 0.0
+
     # - helpers for position processing
     _qty_multiplier: float = 1.0
     __pos_incr_qty: float = 0
 
-    def __init__(self, instrument: Instrument, quantity=0.0, pos_average_price=0.0, r_pnl=0.0) -> None:
+    def __init__(
+        self,
+        instrument: Instrument,
+        quantity: float = 0.0,
+        pos_average_price: float = 0.0,
+        r_pnl: float = 0.0,
+    ) -> None:
         self.instrument = instrument
-
-        if instrument.is_futures:
-            self._qty_multiplier = instrument.futures_info.contract_size  # type: ignore
 
         self.reset()
         if quantity != 0.0 and pos_average_price > 0.0:
             self.quantity = quantity
             self.position_avg_price = pos_average_price
             self.r_pnl = r_pnl
-
-    def is_spot(self) -> bool:
-        return not self.instrument.is_futures
 
     def reset(self):
         """
@@ -416,7 +443,9 @@ class Position:
         self.last_update_time = np.nan  # type: ignore
         self.last_update_price = np.nan
         self.last_update_conversion_rate = np.nan
+        self.maint_margin = 0.0
         self.__pos_incr_qty = 0
+        self._qty_multiplier = self.instrument.contract_size
 
     def _price(self, update: Quote | Trade) -> float:
         if isinstance(update, Quote):
@@ -462,7 +491,7 @@ class Position:
                 self.__pos_incr_qty -= _abs_qty_close
 
                 # - reset average price to 0 if smaller than minimal price change to avoid cumulative error
-                if abs(quantity) < self.instrument.min_size_step:
+                if abs(quantity) < self.instrument.lot_size:
                     quantity = 0.0
                     self.position_avg_price = 0.0
                     self.__pos_incr_qty = 0
@@ -474,7 +503,11 @@ class Position:
                     self.__pos_incr_qty + _abs_qty_open
                 )
                 # - round position average price to be in line with how it's calculated by broker
-                self.position_avg_price = self.instrument.round_price_down(pos_avg_price_raw)
+                self.position_avg_price = (
+                    self.instrument.round_price_down(pos_avg_price_raw)
+                    if direction < 0
+                    else self.instrument.round_price_up(pos_avg_price_raw)
+                )
                 self.__pos_incr_qty += _abs_qty_open
 
             # - update position and position's price
@@ -514,11 +547,22 @@ class Position:
         self.last_update_conversion_rate = conversion_rate
 
         if not np.isnan(price):
-            self.pnl = self.quantity * (price - self.position_avg_price) / conversion_rate + self.r_pnl
-            self.market_value = self.quantity * self.last_update_price * self._qty_multiplier
+            u_pnl = self.quantity * (price - self.position_avg_price) / conversion_rate
+            self.pnl = u_pnl + self.r_pnl
+            if self.instrument.is_futures():
+                # for derivatives market value of the position is the current unrealized PnL
+                self.market_value = u_pnl
+            else:
+                # for spot: market value is the current value of the position
+                # TODO: implement market value calculation for margin
+                self.market_value = self.quantity * self.last_update_price * self._qty_multiplier
 
             # calculate mkt value in funded currency
             self.market_value_funds = self.market_value / conversion_rate
+
+            # - update margin requirements
+            self._update_maint_margin()
+
         return self.pnl
 
     def total_pnl(self) -> float:
@@ -565,6 +609,12 @@ class Position:
 
     def __repr__(self):
         return self.__str__()
+
+    def _update_maint_margin(self) -> None:
+        if self.instrument.maint_margin:
+            self.maint_margin = (
+                self.instrument.maint_margin * self._qty_multiplier * abs(self.quantity) * self.last_update_price
+            )
 
 
 class CtrlChannel:

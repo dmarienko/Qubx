@@ -14,7 +14,6 @@ import pandas as pd
 
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Set
 from qubx import lookup, logger
-from qubx.core.account import AccountProcessor
 from qubx.core.helpers import BasicScheduler, set_parameters_to_object
 from qubx.core.basics import (
     MarketEvent,
@@ -31,6 +30,7 @@ from qubx.core.basics import (
     IComminucationManager,
     SW,
     Subtype,
+    AssetBalance,
 )
 from qubx.core.series import OrderBook, Trade, Quote, Bar, OHLCV
 
@@ -41,21 +41,21 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
     Handles account operations, order placement, and position tracking.
     """
 
-    acc: AccountProcessor
+    acc: "IAccountProcessor"
 
-    def set_account(self, account: AccountProcessor):
+    def set_account(self, account: "IAccountProcessor"):
         """Sets the account processor for the trading service provider.
 
         Args:
-            account: AccountProcessor instance to be set.
+            account: "IAccountProcessor" instance to be set.
         """
         self.acc = account
 
-    def get_account(self) -> AccountProcessor:
+    def get_account(self) -> "IAccountProcessor":
         """Retrieve the current account processor.
 
         Returns:
-            AccountProcessor: The current AccountProcessor object.
+            "IAccountProcessor": The current AccountProcessor object.
         """
         return self.acc
 
@@ -594,28 +594,239 @@ class IProcessingManager:
 
 
 class IAccountViewer:
-    @property
-    def positions(self) -> dict[Instrument, Position]:
-        """
-        Get the current positions.
+
+    def get_base_currency(self) -> str:
+        """Get the base currency for the account.
+
+        Returns:
+            str: The base currency.
         """
         ...
 
+    ########################################################
+    # Capital information
+    ########################################################
     def get_capital(self) -> float:
-        """
-        Get the available free capital in the account.
+        """Get the available free capital in the account.
+
+        Returns:
+            float: The amount of free capital available for trading
         """
         ...
 
     def get_total_capital(self) -> float:
+        """Get the total capital in the account including positions value.
+
+        Returns:
+            float: Total account capital
         """
-        Get the total capital in the account.
+        ...
+
+    @property
+    def reserved(self) -> dict[Instrument, float]:
+        """Get the amount of capital reserved for each instrument.
+
+        Returns:
+            dict[Instrument, float]: Dictionary mapping instruments to reserved capital
         """
         ...
 
     def get_reserved(self, instrument: Instrument) -> float:
+        """Get the amount of capital reserved for an instrument.
+
+        Args:
+            instrument: The instrument to check
+
+        Returns:
+            float: Amount of capital reserved
         """
-        Get the reserved amount for an instrument.
+        ...
+
+    def get_reserved_capital(self) -> float:
+        """Get the total amount of capital reserved from trading.
+
+        Returns:
+            float: Total reserved capital
+        """
+        ...
+
+    ########################################################
+    # Balance and position information
+    ########################################################
+    def get_balances(self) -> dict[str, AssetBalance]:
+        """Get all currency balances.
+
+        Returns:
+            dict[str, AssetBalance]: Dictionary mapping currency codes to AssetBalance objects
+        """
+        ...
+
+    def get_positions(self) -> dict[Instrument, Position]:
+        """Get all current positions.
+
+        Returns:
+            dict[Instrument, Position]: Dictionary mapping instruments to their positions
+        """
+        ...
+
+    @property
+    def positions(self) -> dict[Instrument, Position]:
+        """[Deprecated: Use get_positions()] Get all current positions.
+
+        Returns:
+            dict[Instrument, Position]: Dictionary mapping instruments to their positions
+        """
+        return self.get_positions()
+
+    def get_orders(self, instrument: Instrument | None = None) -> dict[str, Order]:
+        """Get active orders, optionally filtered by instrument.
+
+        Args:
+            instrument: Optional instrument to filter orders by
+
+        Returns:
+            dict[str, Order]: Dictionary mapping order IDs to Order objects
+        """
+        ...
+
+    def position_report(self) -> dict:
+        """Get detailed report of all positions.
+
+        Returns:
+            dict: Dictionary containing position details including quantities, prices, PnL etc.
+        """
+        ...
+
+    ########################################################
+    # Leverage information
+    ########################################################
+    def get_leverage(self, instrument: Instrument) -> float:
+        """Get the leverage used for a specific instrument.
+
+        Args:
+            instrument: The instrument to check
+
+        Returns:
+            float: Current leverage ratio for the instrument
+        """
+        ...
+
+    def get_leverages(self) -> dict[Instrument, float]:
+        """Get leverages for all instruments.
+
+        Returns:
+            dict[Instrument, float]: Dictionary mapping instruments to their leverage ratios
+        """
+        ...
+
+    def get_net_leverage(self) -> float:
+        """Get the net leverage across all positions.
+
+        Returns:
+            float: Net leverage ratio
+        """
+        ...
+
+    def get_gross_leverage(self) -> float:
+        """Get the gross leverage across all positions.
+
+        Returns:
+            float: Gross leverage ratio
+        """
+        ...
+
+    ########################################################
+    # Margin information
+    # Used for margin, swap, futures, options trading
+    ########################################################
+    def get_total_required_margin(self) -> float:
+        """Get total margin required for all positions.
+
+        Returns:
+            float: Total required margin
+        """
+        ...
+
+    def get_available_margin(self) -> float:
+        """Get available margin for new positions.
+
+        Returns:
+            float: Available margin
+        """
+        ...
+
+    def get_margin_ratio(self) -> float:
+        """Get current margin ratio.
+
+        Formula: (total capital + positions value) / total required margin
+
+        Example:
+            If total capital is 1000, positions value is 2000, and total required margin is 3000,
+            the margin ratio would be (1000 + 2000) / 3000 = 1.0
+
+        Returns:
+            float: Current margin ratio
+        """
+        ...
+
+
+class IAccountProcessor(IAccountViewer):
+
+    def update_balance(self, currency: str, total: float, locked: float):
+        """Update balance for a specific currency.
+
+        Args:
+            currency: Currency code
+            total: Total amount of currency
+            locked: Amount of locked currency
+        """
+        ...
+
+    def update_position_price(self, time: dt_64, instrument: Instrument, price: float) -> None:
+        """Update position price for an instrument.
+
+        Args:
+            time: Timestamp of the update
+            instrument: Instrument being updated
+            price: New price
+        """
+        ...
+
+    def process_deals(self, instrument: Instrument, deals: list[Deal]) -> None:
+        """Process executed deals for an instrument.
+
+        Args:
+            instrument: Instrument the deals belong to
+            deals: List of deals to process
+        """
+        ...
+
+    def process_order(self, order: Order) -> None:
+        """Process order updates.
+
+        Args:
+            order: Order to process
+        """
+        ...
+
+    def attach_positions(self, *position: Position) -> "IAccountProcessor":
+        """Attach positions to the account.
+
+        Args:
+            *position: Position objects to attach
+
+        Returns:
+            I"IAccountProcessor": Self for chaining
+        """
+        ...
+
+    def add_active_orders(self, orders: Dict[str, Order]) -> None:
+        """Add active orders to the account.
+
+        Warning only use in the beginning for state restoration because it does not update locked balances.
+
+        Args:
+            orders: Dictionary mapping order IDs to Order objects
         """
         ...
 
@@ -623,7 +834,7 @@ class IAccountViewer:
 class IStrategyContext(
     IMarketDataProvider, ITradingManager, IUniverseManager, ISubscriptionManager, IProcessingManager, IAccountViewer
 ):
-    account: AccountProcessor
+    account: "IAccountProcessor"
     strategy: "IStrategy"
 
     def start(self, blocking: bool = False):
