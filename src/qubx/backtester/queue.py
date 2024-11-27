@@ -1,16 +1,14 @@
 import pandas as pd
 import heapq
 
-from dataclasses import dataclass
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Any, Dict, Iterator, Iterable, List, Set, Tuple
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, Future
 
 from qubx import logger
-from qubx.core.basics import Instrument, dt_64, BatchEvent
-from qubx.data.readers import DataReader, DataTransformer
+from qubx.core.basics import Instrument, Subtype, dt_64, BatchEvent
+from qubx.data.readers import AsTimestampedRecords, DataReader, DataTransformer, RestoreTicksFromOHLC
 from qubx.utils.misc import Stopwatch
-from qubx.core.exceptions import SimulatorError
 
 
 _SW = Stopwatch()
@@ -248,64 +246,3 @@ class EventBatcher:
     @staticmethod
     def _batch_event(buffer: list[Any]) -> Any:
         return BatchEvent(buffer[-1].time, buffer) if len(buffer) > 1 else buffer[0]
-
-
-class IndexedObjects:
-    _obj_to_index: Dict[Any, int]
-    _index_to_obj: Dict[int, Any]
-    _last_attached_idx: int
-    _removed_obj_indices: Set[int]
-
-    def __init__(self):
-        self._obj_to_index = {}
-        self._index_to_obj = {}
-        self._last_attached_idx = 0
-        self._removed_obj_indices = set()
-
-    def contains(self, obj: Any) -> bool:
-        return obj in self._obj_to_index
-
-    def add_value(self, obj: Any) -> int:
-        if not self.contains(obj):
-            self._last_attached_idx += 1
-            self._index_to_obj[self._last_attached_idx] = obj
-            self._obj_to_index[obj] = self._last_attached_idx
-        else:
-            return -1
-        return self._last_attached_idx
-
-    def remove_value(self, obj: Any) -> int:
-        idx_to_remove = -1
-        if self.contains(obj):
-            self._index_to_obj.pop(idx_to_remove := self._obj_to_index.pop(obj))
-            self._removed_obj_indices.add(idx_to_remove)
-        return idx_to_remove
-
-    def get_value_by_index(self, idx: int) -> Any:
-        return self._index_to_obj.get(idx)
-
-    def get_index_of_value(self, obj: Any) -> Any:
-        return self._obj_to_index.get(obj, -1)
-
-    def items(self) -> Iterator[Tuple[int, Any]]:
-        return ((idx, obj) for idx, obj in self._index_to_obj.items() if idx not in self._removed_obj_indices)
-
-    def values(self) -> List[Any]:
-        return list(self._index_to_obj.values())
-
-    def indices(self) -> List[Any]:
-        return list(self._index_to_obj.keys())
-
-    def is_removed(self, idx: int) -> bool:
-        return idx in self._removed_obj_indices
-
-    def __str__(self) -> str:
-        _r = ""
-        for i, o in self.items():
-            _r += f"[{i}]: {str(o)}\n"
-        if self._removed_obj_indices:
-            _r += "removed: " + ",".join([f"{-i}" for i in self._removed_obj_indices])
-        return _r
-
-    def __repr__(self) -> str:
-        return str(self)
