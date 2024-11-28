@@ -22,7 +22,6 @@ class DummyTimeEvent:
 
 
 class TestSimulatedDataStuff:
-
     def test_indexed_objects(self):
         ivs = BiDirectionIndexedObjects()
         ivs.add_value("Test 1")
@@ -48,7 +47,7 @@ class TestSimulatedDataStuff:
             DummyTimeEvent.from_seq("2020-01-01 00:19", 3, "1Min", "A3"),
         ]
 
-        slicer += { 1: iter(data1)}
+        slicer += { "data1": iter(data1)}
 
         r = []
         for t in slicer:
@@ -79,8 +78,8 @@ class TestSimulatedDataStuff:
 
 
         slicer += {
-            1: iter(data1),
-            2: iter(data2),
+            'I0': iter(data1),
+            'I1': iter(data2),
         }
 
         r = []
@@ -119,9 +118,9 @@ class TestSimulatedDataStuff:
         ]
 
         slicer += {
-            1: iter(data1),
-            2: iter(data2),
-            3: iter(data3),
+            'i1': iter(data1),
+            'i2': iter(data2),
+            'i3': iter(data3),
         }
 
         r = []
@@ -163,9 +162,9 @@ class TestSimulatedDataStuff:
         ]
 
         slicer += {
-            1: iter(data1),
-            2: iter(data2),
-            3: iter(data3),
+            'x1': iter(data1),
+            'x2': iter(data2),
+            'x3': iter(data3),
         }
 
         r, k = [], 0
@@ -175,8 +174,8 @@ class TestSimulatedDataStuff:
             print(f"{k:3d}: {pd.Timestamp(t[2].time, 'ns')} | id={t[0]} | {t[2].data}")
             assert t[2].time >= ti
             r.append(t[2].data)
-            if k == 3: slicer.remove(1)
-            if k == 11: slicer += {10: iter(data4)}
+            if k == 3: slicer.remove('x1')
+            if k == 11: slicer += {'x10': iter(data4)}
             k += 1
             ti = t[2].time
         assert r == [

@@ -1,14 +1,16 @@
 import pandas as pd
 
 from collections import defaultdict, deque
-from typing import Any, Iterator, Iterable
-
-# from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, Future
+from typing import Iterator, TypeAlias
 
 from qubx import logger
-from qubx.core.basics import Instrument, Subtype, dt_64, BatchEvent
-from qubx.data.readers import AsTimestampedRecords, DataReader, DataTransformer, RestoreTicksFromOHLC
-from qubx.utils.misc import Stopwatch
+from qubx.core.basics import Instrument, Subtype, dt_64
+from qubx.core.series import Quote, Trade, Bar, OrderBook
+from qubx.data.readers import AsTimestampedRecords, DataReader, RestoreTicksFromOHLC
+# from qubx.utils.misc import Stopwatch
+
+T: TypeAlias = Quote | Trade | Bar | OrderBook
+D: TypeAlias = tuple[str, int, T] | tuple
 
 
 class BiDirectionIndexedObjects:
@@ -73,13 +75,13 @@ class BiDirectionIndexedObjects:
 
 
 class IteratorsTimeSlicer(Iterator):
-    _iterators: dict[int, Iterator]
-    _buffers: dict[int, list[tuple[int, int, Any]]]
+    _iterators: dict[str, Iterator]
+    _buffers: dict[str, list[T]]
 
-    _keys: deque[int]
-    _r_keys: deque[int]
+    _keys: deque[str]
+    _r_keys: deque[str]
     _init_k_maxes: list[int]
-    _init_k_idxs: list[int]
+    _init_k_idxs: list[str]
     _k_max: int
     _iterating: bool
 
@@ -93,7 +95,7 @@ class IteratorsTimeSlicer(Iterator):
         self._k_max = 0
         self._iterating = False
 
-    def put(self, data: dict[int, Iterator]):
+    def put(self, data: dict[str, Iterator]):
         _rebuild = False
         for k, vi in data.items():
             if k not in self._keys:
@@ -106,11 +108,11 @@ class IteratorsTimeSlicer(Iterator):
         if _rebuild and self._iterating:
             self._build_initial_iteration_strategy()
 
-    def __add__(self, data: dict[int, Iterator]) -> "IteratorsTimeSlicer":
+    def __add__(self, data: dict[str, Iterator]) -> "IteratorsTimeSlicer":
         self.put(data)
         return self
 
-    def remove(self, keys: list[int] | int):
+    def remove(self, keys: list[str] | str):
         """
         Remove data iterator and associated keys from the queue.
         If the key is not found, it does nothing.
@@ -152,10 +154,10 @@ class IteratorsTimeSlicer(Iterator):
             self._k_max = self._init_k_maxes.pop(0)
             self._r_keys.append(self._init_k_idxs.pop(0))
 
-    def _get_next_chunk_to_buffer(self, index: int) -> list[tuple[int, int, Any]]:
+    def _get_next_chunk_to_buffer(self, index: str) -> list[T]:
         return list(reversed(next(self._iterators[index])))
 
-    def __next__(self) -> tuple[int, int, Any]:
+    def __next__(self) -> D:
         if not self._r_keys:
             self._iterating = False
             raise StopIteration
@@ -238,7 +240,7 @@ class SimulationDataLoader:
     def __hash__(self) -> int:
         return self._id
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, SimulationDataLoader):
             return False
         return self._data_type == other._data_type and self._timeframe == other._timeframe

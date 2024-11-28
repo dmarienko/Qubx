@@ -428,67 +428,62 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         logger.info(f"SimulatedData.{exchange_id} initialized")
 
-    def subscribe(
-        self,
-        instruments: list[Instrument],
-        subscription_type: str,
-        warmup_period: str | None = None,
-        timeframe: str | None = None,
-        **kwargs,
-    ) -> bool:
-        units = kwargs.get("timestamp_units", "ns")
+    def subscribe(self, subscription_type: str, instruments: set[Instrument], reset: bool) -> None:
+        pass
+        # units = kwargs.get("timestamp_units", "ns")
 
-        for instr in instruments:
-            logger.debug(
-                f"SimulatedExchangeService :: subscribe :: {instr.symbol}({subscription_type}, {warmup_period}, {timeframe})"
-            )
-            self._symbol_to_instrument[instr.symbol] = instr
+        # for inst in instruments:
+        #     logger.debug(
+        #         f"SimulatedExchangeService :: subscribe :: {instr.symbol}({subscription_type}, {warmup_period}, {timeframe})"
+        #     )
+        #     self._symbol_to_instrument[instr.symbol] = instr
 
-            _params: Dict[str, Any] = dict(
-                reader=self._reader,
-                instrument=instr,
-                warmup_period=warmup_period,
-                timeframe=timeframe,
-            )
+        #     _params: Dict[str, Any] = dict(
+        #         reader=self._reader,
+        #         instrument=instr,
+        #         warmup_period=warmup_period,
+        #         timeframe=timeframe,
+        #     )
 
-            # - for ohlc data we need to restore ticks from OHLC bars
-            if subscription_type == Subtype.OHLC:
-                _params["transformer"] = RestoreTicksFromOHLC(
-                    trades="trades" in subscription_type,
-                    spread=instr.min_tick,
-                    timestamp_units=units,
-                )
-                _params["output_type"] = Subtype.QUOTE
-            elif subscription_type == Subtype.QUOTE:
-                _params["transformer"] = AsQuotes()
-            elif subscription_type == Subtype.TRADE:
-                _params["transformer"] = AsTrades()
-            else:
-                raise ValueError(f"Unknown subscription type: {subscription_type}")
+        #     # - for ohlc data we need to restore ticks from OHLC bars
+        #     if subscription_type == Subtype.OHLC:
+        #         _params["transformer"] = RestoreTicksFromOHLC(
+        #             trades="trades" in subscription_type,
+        #             spread=instr.min_tick,
+        #             timestamp_units=units,
+        #         )
+        #         _params["output_type"] = Subtype.QUOTE
+        #     elif subscription_type == Subtype.QUOTE:
+        #         _params["transformer"] = AsQuotes()
+        #     elif subscription_type == Subtype.TRADE:
+        #         _params["transformer"] = AsTrades()
+        #     else:
+        #         raise ValueError(f"Unknown subscription type: {subscription_type}")
 
-            _params["data_type"] = subscription_type
+        #     _params["data_type"] = subscription_type
 
-            # - add loader for this instrument
-            ldr = DataLoader(**_params)
-            self._loaders[instr][subscription_type] = ldr
-            self._data_queue += ldr
+        #     # - add loader for this instrument
+        #     ldr = DataLoader(**_params)
+        #     self._loaders[instr][subscription_type] = ldr
+        #     self._data_queue += ldr
 
-        return True
+        # return True
 
-    def unsubscribe(self, instruments: List[Instrument], subscription_type: str | None) -> bool:
-        for instr in instruments:
-            if instr.symbol in self._loaders:
-                if subscription_type:
-                    logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol} :: {subscription_type}")
-                    self._data_queue -= self._loaders[instr].pop(subscription_type)
-                    if not self._loaders[instr]:
-                        self._loaders.pop(instr)
-                else:
-                    logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol}")
-                    for ldr in self._loaders[instr].values():
-                        self._data_queue -= ldr
-                    self._loaders.pop(instr)
-        return True
+    def unsubscribe(self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None) -> None:
+        pass
+        # for instr in instruments:
+        #     if instr.symbol in self._loaders:
+        #         if subscription_type:
+        #             logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol} :: {subscription_type}")
+        #             self._data_queue -= self._loaders[instr].pop(subscription_type)
+        #             if not self._loaders[instr]:
+        #                 self._loaders.pop(instr)
+        #         else:
+        #             logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol}")
+        #             for ldr in self._loaders[instr].values():
+        #                 self._data_queue -= ldr
+        #             self._loaders.pop(instr)
+        # return True
 
     def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
         return instrument in self._loaders and subscription_type in self._loaders[instrument]
