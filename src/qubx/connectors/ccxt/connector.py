@@ -5,10 +5,8 @@ import pandas as pd
 import ccxt.pro as cxp
 import concurrent.futures
 
-from threading import Event, Lock, Thread
-from typing import Any, Dict, List, Optional, Callable, Awaitable, Tuple, Set
-from asyncio.tasks import Task
-from asyncio.events import AbstractEventLoop
+from threading import Thread
+from typing import Dict, List, Optional, Callable, Awaitable, Tuple, Set
 from asyncio.exceptions import CancelledError
 from collections import defaultdict
 from types import FunctionType
@@ -21,6 +19,7 @@ from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider, ITimeProvider
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.utils.ntp import start_ntp_thread, time_now
+from qubx.utils.misc import AsyncThreadLoop
 from .exceptions import CcxtSymbolNotRecognized, CcxtLiquidationParsingError
 from .utils import (
     ccxt_convert_trade,
@@ -46,7 +45,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
 
     _sub_instr_to_time: Dict[Tuple[str, Instrument], dt_64]
     _last_quotes: Dict[str, Optional[Quote]]
-    _loop: AbstractEventLoop
+    _loop: AsyncThreadLoop
     _thread_event_loop: Thread
     _warmup_timeout: int
 
@@ -74,7 +73,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
 
         # - create new even loop
         self._exchange = exchange
-        self._loop = self._exchange.asyncio_loop
+        self._loop = AsyncThreadLoop(self._exchange.asyncio_loop)
 
         self._last_quotes = defaultdict(lambda: None)
         self._subscriptions = defaultdict(set)
@@ -210,7 +209,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
     def close(self):
         try:
             if hasattr(self._exchange, "close"):
-                future = self._task_s(self._exchange.close())  # type: ignore
+                future = self._loop.submit(self._exchange.close())  # type: ignore
                 # - wait for 5 seconds for connection to close
                 future.result(5)
             else:
@@ -271,10 +270,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         # - get only parameters that are needed for subscriber
         kwargs = {k: v for k, v in kwargs.items() if k in _subscriber_params}
         self._sub_to_name[sub_type] = (name := self._get_subscription_name(sub_type, **kwargs))
-        self._sub_to_coro[sub_type] = self._task_s(_subscriber(self, name, sub_type, channel, **kwargs))
-
-    def _task_s(self, coro: Awaitable[None]) -> concurrent.futures.Future:
-        return asyncio.run_coroutine_threadsafe(coro, self._loop)
+        self._sub_to_coro[sub_type] = self._loop.submit(_subscriber(self, name, sub_type, channel, **kwargs))
 
     def _time_msec_nbars_back(self, timeframe: str, nbarsback: int = 1) -> int:
         return (self.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
@@ -291,7 +287,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         return tframe
 
     def _get_exch_symbol(self, instrument: Instrument) -> str:
-        return f"{instrument.base}/{instrument.quote}:{instrument.margin_asset}"
+        return f"{instrument.base}/{instrument.quote}:{instrument.settle}"
 
     def _get_instrument(self, symbol: str, symbol_to_instrument: Dict[str, Instrument] | None = None) -> Instrument:
         instrument = self._symbol_to_instrument.get(symbol)

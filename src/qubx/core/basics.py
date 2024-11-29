@@ -447,6 +447,10 @@ class Position:
         self.__pos_incr_qty = 0
         self._qty_multiplier = self.instrument.contract_size
 
+    @property
+    def notional_value(self) -> float:
+        return self.quantity * self.last_update_price
+
     def _price(self, update: Quote | Trade) -> float:
         if isinstance(update, Quote):
             return update.bid if np.sign(self.quantity) > 0 else update.ask
@@ -681,7 +685,7 @@ class SimulatedCtrlChannel(CtrlChannel):
         self.control.set()
 
 
-class IComminucationManager:
+class ICommunicationManager:
     databus: CtrlChannel
 
     def get_communication_channel(self) -> CtrlChannel:

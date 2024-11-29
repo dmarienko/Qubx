@@ -7,7 +7,17 @@ import ccxt.pro as cxp
 from typing import Any, Dict, List, Optional, Tuple
 
 from qubx import logger, lookup
-from qubx.core.basics import Order, Deal, Position, Instrument, Liquidation, FundingRate, AssetType, MarketType
+from qubx.core.basics import (
+    Order,
+    Deal,
+    Position,
+    Instrument,
+    Liquidation,
+    FundingRate,
+    AssetType,
+    MarketType,
+    AssetBalance,
+)
 from qubx.core.series import TimeSeries, Bar, Trade, Quote, OrderBook, time_as_nsec
 from qubx.utils.orderbook import build_orderbook_snapshots
 from qubx.utils.marketdata.ccxt import ccxt_symbol_to_instrument, ccxt_build_qubx_exchange_name
@@ -219,3 +229,24 @@ def ccxt_convert_funding_rate(info: dict[str, Any]) -> FundingRate:
         mark_price=info.get("markPrice"),
         index_price=info.get("indexPrice"),
     )
+
+
+def ccxt_convert_balance(d: dict[str, Any]) -> dict[str, AssetBalance]:
+    balances = {}
+    for currency, data in d["total"].items():
+        if not data:
+            continue
+        total = float(d["total"].get(currency, 0) or 0)
+        locked = float(d["used"].get(currency, 0) or 0)
+        balances[currency] = AssetBalance(free=total - locked, locked=locked, total=total)
+    return balances
+
+
+def ccxt_convert_positions(
+    raw_positions: list[dict[str, Any]], markets: dict[str, dict[str, Any]]
+) -> dict[Instrument, Position]:
+    positions = {}
+    for raw_pos in raw_positions:
+        instr = ccxt_symbol_to_instrument(raw_pos["symbol"], markets)
+        pass
+    return positions

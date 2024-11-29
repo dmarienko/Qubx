@@ -15,6 +15,7 @@ from qubx.core.basics import Instrument, Position, Order, TransactionCostsCalcul
 from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider, IAccountProcessor
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.utils.ntp import time_now
+from qubx.utils.misc import AsyncThreadLoop
 from .exceptions import CcxtPositionRestoreError
 from .utils import (
     ccxt_convert_order_info,
@@ -34,6 +35,7 @@ class CcxtTradingConnector(ITradingServiceProvider):
 
     _fees_calculator: TransactionCostsCalculator | None = None
     _positions: Dict[Instrument, Position]
+    _loop: AsyncThreadLoop
 
     def __init__(
         self,
@@ -48,17 +50,21 @@ class CcxtTradingConnector(ITradingServiceProvider):
         )
         self.account_id = account_id
         self.commissions = commissions
-        self._loop = exchange.asyncio_loop
+        self._loop = AsyncThreadLoop(exchange.asyncio_loop)
+
+    def set_communication_channel(self, channel: CtrlChannel):
+        self.acc.set_communication_channel(channel)
+        return super().set_communication_channel(channel)
 
     def set_account(self, acc: IAccountProcessor):
         super().set_account(acc)
-        self._task_s(self._sync_account_info(self.commissions)).result()
+        self._loop.submit(self._sync_account_info(self.commissions)).result()
         self._positions = self.acc.get_positions()
         self._log_reserved()
 
     def get_position(self, instrument: Instrument) -> Position:
         if instrument not in self._positions:
-            position: Position = self._task_s(self._sync_position_and_orders(instrument)).result()
+            position: Position = self._loop.submit(self._sync_position_and_orders(instrument)).result()
             self.acc.attach_positions(position)
         return self._positions[instrument]
 
@@ -87,7 +93,7 @@ class CcxtTradingConnector(ITradingServiceProvider):
 
         r: Dict[str, Any] | None = None
         try:
-            r = self._task_s(
+            r = self._loop.submit(
                 self.exchange.create_order(
                     symbol=instrument.symbol, type=order_type, side=order_side, amount=amount, price=price, params=params  # type: ignore
                 )
@@ -117,7 +123,7 @@ class CcxtTradingConnector(ITradingServiceProvider):
             order = orders[order_id]
             try:
                 logger.info(f"Canceling order {order_id} ...")
-                r = self._task_s(self.exchange.cancel_order(order_id, symbol=order.instrument.symbol)).result()
+                r = self._loop.submit(self.exchange.cancel_order(order_id, symbol=order.instrument.symbol)).result()
             except Exception as err:
                 logger.error(f"Canceling [{order}] exception : {err}")
                 logger.error(traceback.format_exc())
@@ -149,9 +155,6 @@ class CcxtTradingConnector(ITradingServiceProvider):
         self.acc.process_deals(instrument, deals)
         self.acc.process_order(order)
         return order, deals
-
-    def _task_s(self, coro: Coroutine) -> concurrent.futures.Future:
-        return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
     def _fill_missing_fee_info(self, instrument: Instrument, deals: List[Deal]) -> None:
         for d in deals:

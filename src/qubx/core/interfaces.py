@@ -27,7 +27,7 @@ from qubx.core.basics import (
     dt_64,
     td_64,
     ITimeProvider,
-    IComminucationManager,
+    ICommunicationManager,
     SW,
     Subtype,
     AssetBalance,
@@ -35,7 +35,7 @@ from qubx.core.basics import (
 from qubx.core.series import OrderBook, Trade, Quote, Bar, OHLCV
 
 
-class ITradingServiceProvider(ITimeProvider, IComminucationManager):
+class ITradingServiceProvider(ITimeProvider, ICommunicationManager):
     """Trading service provider interface for managing trading operations.
 
     Handles account operations, order placement, and position tracking.
@@ -199,7 +199,7 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
         self.acc.update_position_price(timestamp, instrument, ITradingServiceProvider._extract_price(update))
 
 
-class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
+class IBrokerServiceProvider(ICommunicationManager, ITimeProvider):
     trading_service: ITradingServiceProvider
 
     def __init__(self, exchange_id: str, trading_service: ITradingServiceProvider) -> None:
@@ -770,7 +770,7 @@ class IAccountViewer:
         ...
 
 
-class IAccountProcessor(IAccountViewer):
+class IAccountProcessor(IAccountViewer, ICommunicationManager):
 
     def update_balance(self, currency: str, total: float, locked: float):
         """Update balance for a specific currency.

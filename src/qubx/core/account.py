@@ -58,6 +58,7 @@ class BasicAccountProcessor(IAccountProcessor):
         return ols
 
     def get_reserved(self, instrument: Instrument) -> float:
+        # TODO: reimplement reserved logic if needed
         return 0.0
 
     def get_reserved_capital(self) -> float:
@@ -115,7 +116,7 @@ class BasicAccountProcessor(IAccountProcessor):
     def update_balance(self, currency: str, total: float, locked: float):
         # create new asset balance if doesn't exist, otherwise update existing
         if currency not in self._balances:
-            self._balances[currency] = AssetBalance(free=total, locked=locked, total=total)
+            self._balances[currency] = AssetBalance(free=total - locked, locked=locked, total=total)
         else:
             self._balances[currency].free = total - locked
             self._balances[currency].locked = locked
@@ -139,7 +140,6 @@ class BasicAccountProcessor(IAccountProcessor):
 
         if pos is not None:
             conversion_rate = 1
-            instr = pos.instrument
             traded_amnt, realized_pnl, deal_cost = 0, 0, 0
 
             # - process deals
@@ -159,7 +159,7 @@ class BasicAccountProcessor(IAccountProcessor):
                         self._balances[self.base_currency] -= fee_in_base
                         self._balances[instrument.settle] += realized_pnl
 
-    def process_order(self, order: Order) -> None:
+    def process_order(self, order: Order, update_locked_value: bool = True) -> None:
         _new = order.status == "NEW"
         _open = order.status == "OPEN"
         _closed = order.status == "CLOSED"
@@ -169,7 +169,7 @@ class BasicAccountProcessor(IAccountProcessor):
             self._active_orders[order.id] = order
 
             # - calculate amount locked by this order
-            if order.type == "LIMIT":
+            if update_locked_value and order.type == "LIMIT":
                 self._lock_limit_order_value(order)
 
         if _closed or _cancel:
@@ -180,7 +180,7 @@ class BasicAccountProcessor(IAccountProcessor):
                 self._active_orders.pop(order.id)
 
         # - calculate amount to unlock after canceling
-        if _cancel and order.type == "LIMIT":
+        if _cancel and update_locked_value and order.type == "LIMIT":
             self._unlock_limit_order_value(order)
 
         logger.debug(
