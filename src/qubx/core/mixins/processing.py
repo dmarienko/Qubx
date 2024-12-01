@@ -287,6 +287,9 @@ class ProcessingManager(IProcessingManager):
         _sub_type = self._subscription_manager.get_base_subscription()
         sub_type, sub_params = Subtype.from_str(_sub_type)
         timeframe = sub_params.get("timeframe")
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        # TODO - think about refactoring we need to get rid of it !!!
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         if self._is_simulation and Subtype.OHLC == sub_type and timeframe:
             # in simulate we transform OHLC into quotes, so we need to check
             # if this is the final quote of a bar which should be considered as base data

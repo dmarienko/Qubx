@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import pandas as pd
-from qubx.backtester.simulated_data import BiDirectionIndexedObjects, IteratorsTimeSlicer
+from qubx.backtester.simulated_data import BiDirectionIndexedObjects, IteratedDataStreamsSlicer
 
 
 @dataclass
@@ -39,7 +39,7 @@ class TestSimulatedDataStuff:
 
     def test_iterator_slicer_1(self):
         # fmt: off
-        slicer = IteratorsTimeSlicer()
+        slicer = IteratedDataStreamsSlicer()
 
         data1 = [
             DummyTimeEvent.from_seq("2020-01-01 00:05", 3, "1Min", "A1"),
@@ -64,7 +64,7 @@ class TestSimulatedDataStuff:
 
     def test_iterator_slicer_2(self):
         # fmt: off
-        slicer = IteratorsTimeSlicer()
+        slicer = IteratedDataStreamsSlicer()
 
         data1 = [
             DummyTimeEvent.from_seq("2020-01-01 00:05", 10, "1Min", "A1"),
@@ -100,7 +100,7 @@ class TestSimulatedDataStuff:
 
     def test_iterator_slicer_3(self):
         # fmt: off
-        slicer = IteratorsTimeSlicer()
+        slicer = IteratedDataStreamsSlicer()
 
         data1 = [
             DummyTimeEvent.from_seq("2020-01-01 00:00", 10, "1Min", "A1"),
@@ -140,7 +140,7 @@ class TestSimulatedDataStuff:
 
     def test_iterator_slicer_add_remove(self):
         # fmt: off
-        slicer = IteratorsTimeSlicer()
+        slicer = IteratedDataStreamsSlicer()
 
         data1 = [
             DummyTimeEvent.from_seq("2020-01-01 00:00", 10, "1Min", "A1"),

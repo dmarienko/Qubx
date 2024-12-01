@@ -6,11 +6,10 @@ from typing import Iterator, TypeAlias
 from qubx import logger
 from qubx.core.basics import Instrument, Subtype, dt_64
 from qubx.core.series import Quote, Trade, Bar, OrderBook
-from qubx.data.readers import AsTimestampedRecords, DataReader, RestoreTicksFromOHLC
-# from qubx.utils.misc import Stopwatch
+from qubx.data.readers import AsTimestampedRecords, DataReader, DataTransformer, RestoreTicksFromOHLC
 
-T: TypeAlias = Quote | Trade | Bar | OrderBook
-D: TypeAlias = tuple[str, int, T] | tuple
+_T: TypeAlias = Quote | Trade | Bar | OrderBook
+_D: TypeAlias = tuple[str, int, _T] | tuple
 
 
 class BiDirectionIndexedObjects:
@@ -74,9 +73,13 @@ class BiDirectionIndexedObjects:
         return str(self)
 
 
-class IteratorsTimeSlicer(Iterator):
-    _iterators: dict[str, Iterator]
-    _buffers: dict[str, list[T]]
+class IteratedDataStreamsSlicer(Iterator[_D]):
+    """
+    Slicer for iteratged data streams.
+    """
+
+    _iterators: dict[str, Iterator[list[_T]]]
+    _buffers: dict[str, list[_T]]
 
     _keys: deque[str]
     _r_keys: deque[str]
@@ -95,7 +98,7 @@ class IteratorsTimeSlicer(Iterator):
         self._k_max = 0
         self._iterating = False
 
-    def put(self, data: dict[str, Iterator]):
+    def put(self, data: dict[str, Iterator[list[_T]]]):
         _rebuild = False
         for k, vi in data.items():
             if k not in self._keys:
@@ -108,7 +111,7 @@ class IteratorsTimeSlicer(Iterator):
         if _rebuild and self._iterating:
             self._build_initial_iteration_strategy()
 
-    def __add__(self, data: dict[str, Iterator]) -> "IteratorsTimeSlicer":
+    def __add__(self, data: dict[str, Iterator]) -> "IteratedDataStreamsSlicer":
         self.put(data)
         return self
 
@@ -154,10 +157,10 @@ class IteratorsTimeSlicer(Iterator):
             self._k_max = self._init_k_maxes.pop(0)
             self._r_keys.append(self._init_k_idxs.pop(0))
 
-    def _get_next_chunk_to_buffer(self, index: str) -> list[T]:
+    def _get_next_chunk_to_buffer(self, index: str) -> list[_T]:
         return list(reversed(next(self._iterators[index])))
 
-    def __next__(self) -> D:
+    def __next__(self) -> _D:
         if not self._r_keys:
             self._iterating = False
             raise StopIteration
@@ -302,3 +305,119 @@ class SimulationDataLoader:
                 raise IndexError(f"No instrument found for index {ix}")
 
         return _r_iters
+
+
+class SubscribedDataFetcher:
+    _data_type: str
+    _data_ids: list[str]
+
+    _transformer: DataTransformer
+    _timeframe: str | None = None
+    _warmup_period: pd.Timedelta | None = None
+    _chunksize: int = 5000
+    _warmed: dict[str, bool]
+
+    def __init__(self, subscription: str, warmup_period: str | None = None, chunksize: int = 5000) -> None:
+        _subtype, _subparams = Subtype.from_str(subscription)
+        match _subtype:
+            case Subtype.OHLC:
+                # - making ticks out of OHLC
+                self._transformer = RestoreTicksFromOHLC()
+                self._timeframe = _subparams.get("timeframe")
+                self._data_type = "ohlc"
+            case Subtype.TRADE:
+                self._transformer = AsTimestampedRecords()
+                self._data_type = "agg_trades"
+            case Subtype.QUOTE:
+                self._transformer = AsTimestampedRecords()
+                self._data_type = "orderbook"
+            case _:
+                raise ValueError(f"Unsupported subscription type: {_subtype}")
+        self._warmup_period = pd.Timedelta(warmup_period) if warmup_period else None
+        self._warmed = {}
+
+    def _key(self, data_id: str) -> str:
+        return f"{data_id}#{self._timeframe}" if self._timeframe else data_id
+
+    def attach_instrument(self, instrument: Instrument) -> str:
+        _data_id = f"{instrument.exchange}:{instrument.symbol}"
+
+        if _data_id not in self._data_ids:
+            self._data_ids.append(_data_id)
+            self._warmed[_data_id] = False
+
+    def load(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> dict[str, Iterator]:
+        # - iterate over all instruments if no indices specified
+        _indices = self._instruments.indices() if not indices else indices
+        _r_iters = {}
+
+        for ix in _indices:
+            # if ix == -1:
+            # continue
+
+            if _i := self._data_ids.get_value_by_index(ix):
+                _s = f"{_i.exchange}:{_i.symbol}"
+                _start = pd.Timestamp(start)
+                if self._warmup_period and not self._warmed.get(_s):
+                    _start -= self._warmup_period
+                    self._warmed[_s] = True
+
+                _args = dict(
+                    data_id=_s,
+                    start=_start,
+                    stop=end,
+                    transform=self._transformer,
+                    data_type=self._data_type,
+                    chunksize=self._chunksize,
+                )
+
+                if self._timeframe:
+                    _args["timeframe"] = self._timeframe
+
+                _r_iters[ix] = self._reader.read(**_args)  # type: ignore
+            else:
+                raise IndexError(f"No instrument found for key {ix}")
+
+        return _r_iters
+
+
+class SimulatedDataHub:
+    # _instruments: BiDirectionIndexedObjects
+    _reader: DataReader
+    _warmed: dict[str, bool]
+    _subtypes: dict[str, list[str]]
+
+    def __init__(self, reader: DataReader):
+        # self._instruments = BiDirectionIndexedObjects()
+        self._reader = reader
+        self._warmed = {}
+
+    def setup_warmup_period(self, subscription: str, warmup_period: str | None = None, chunksize: int = 5000):
+        _subtype, _subparams = Subtype.from_str(subscription)
+
+    def attach_instrument(self, subscription: str, instrument: Instrument):
+        _subtype, _subparams = Subtype.from_str(subscription)
+        # _warmup_period = warmup_period
+        # _timeframe = None
+
+        match _subtype:
+            case Subtype.OHLC:
+                # - making ticks out of OHLC
+                _transformer = RestoreTicksFromOHLC()
+                _timeframe = _subparams.get("timeframe")
+                _data_type = "ohlc"
+                # self._id = hash(self._data_type + str(self._timeframe))
+            case Subtype.TRADE:
+                _transformer = AsTimestampedRecords()
+                _data_type = "agg_trades"
+                # self._id = hash(self._data_type)
+            case Subtype.QUOTE:
+                _transformer = AsTimestampedRecords()
+                _data_type = "orderbook"
+                # self._id = hash(self._data_type)
+            case _:
+                raise ValueError(f"Unsupported subscription type: {_subtype}")
+
+        self._warmed |= {f"{instrument.id}:{_data_type}": False}
+
+        # _chunksize = chunksize
