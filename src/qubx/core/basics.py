@@ -664,6 +664,7 @@ class Subtype(StrEnum):
     ORDERBOOK = "orderbook"
     LIQUIDATION = "liquidation"
     FUNDING_RATE = "funding_rate"
+    OHLC_TICKS = "ohlc_ticks"  # when we want to emulate ticks from OHLC data
 
     def __repr__(self) -> str:
         return self.value

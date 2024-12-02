@@ -3,7 +3,8 @@ import pandas as pd
 
 from qubx import QubxLogConfig
 from qubx.core.basics import ITimeProvider
-from qubx.core.series import OHLCV, Quote, Trade
+from qubx.core.series import OHLCV, Bar, Quote, Trade
+from qubx.core.utils import time_to_str
 from qubx.data.helpers import TimeGuardedWrapper, loader
 from qubx.data.readers import (
     STOCK_DAILY_SESSION,
@@ -12,8 +13,8 @@ from qubx.data.readers import (
     InMemoryDataFrameReader,
     AsQuotes,
     AsOhlcvSeries,
-    QuestDBConnector,
     RestoreTicksFromOHLC,
+    RestoredBarsFromOHLC,
 )
 from pytest import approx
 
@@ -23,7 +24,6 @@ T = lambda t: np.datetime64(t, "ns")
 
 
 class TestDataReaders:
-
     def test_quotes_reader(self):
         r0 = CsvStorageDataReader("tests/data/csv")
 
@@ -85,14 +85,14 @@ class TestDataReaders:
         for t in tick_data:
             if isinstance(t, Trade):
                 restored_ohlc.update(t.time, t.price, t.size)
+                # print(f"{time_to_str(t.time)} : {str(t)}")
+
             else:
                 restored_ohlc.update(t.time, t.mid_price())
 
         assert all((restored_ohlc.pd() - ohlc_data.pd()) < 1e-10)
 
-        d1 = r.read("SPY", transform=RestoreTicksFromOHLC(daily_session_start_end=STOCK_DAILY_SESSION))[
-            :4
-        ]  # type: ignore
+        d1 = r.read("SPY", transform=RestoreTicksFromOHLC(daily_session_start_end=STOCK_DAILY_SESSION))[:4]  # type: ignore
 
         assert d1[0].time == T("2000-01-03T09:30:00.100000000").item()
         assert d1[3].time == T("2000-01-03T15:59:59.900000000").item()
@@ -178,3 +178,17 @@ class TestDataReaders:
         d1x = Lt["BTCUSDT", "2023-07-01":"2023-07-28"]
         d2x = L0["BTCUSDT", "2023-07-01":"2023-07-28"]
         assert sum(d1x.close - d2x.close) == 0  # type: ignore
+
+    def test_simulated_bars_from_ohlc(self):
+        r = CsvStorageDataReader("tests/data/csv/")
+
+        bars_data = r.read("BTCUSDT_ohlcv_M1", transform=RestoredBarsFromOHLC(open_close_time_shift_secs=10))
+        ohlc_data = r.read("BTCUSDT_ohlcv_M1", transform=AsOhlcvSeries())
+
+        restored_ohlc = OHLCV("restored", "1Min")
+        for b in bars_data:
+            if isinstance(b, Bar):
+                restored_ohlc.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume)
+                # print(f"{time_to_str(b.time)} : {str(b)}")
+
+        assert all((restored_ohlc.pd() - ohlc_data.pd()) < 1e-10)

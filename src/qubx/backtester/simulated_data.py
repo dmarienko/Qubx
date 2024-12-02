@@ -6,7 +6,13 @@ from typing import Any, Iterator, TypeAlias
 from qubx import logger
 from qubx.core.basics import Instrument, Subtype, dt_64
 from qubx.core.series import Quote, Trade, Bar, OrderBook
-from qubx.data.readers import AsTimestampedRecords, DataReader, DataTransformer, RestoreTicksFromOHLC
+from qubx.data.readers import (
+    AsTimestampedRecords,
+    DataReader,
+    DataTransformer,
+    RestoreTicksFromOHLC,
+    RestoredBarsFromOHLC,
+)
 
 _T: TypeAlias = Quote | Trade | Bar | OrderBook
 _D: TypeAlias = tuple[str, int, _T] | tuple
@@ -337,8 +343,14 @@ class DataFetcher:
         self._params = params
 
         match data_type:
-            case Subtype.OHLC:
+            case Subtype.OHLC_TICKS:
                 self._transformer = RestoreTicksFromOHLC()  # TODO: we need restored bars here !
+                if "timeframe" in params:
+                    self._timeframe = params.get("timeframe", "1Min")
+
+            case Subtype.OHLC:
+                # self._transformer = RestoreTicksFromOHLC()  # TODO: temporary here
+                self._transformer = RestoredBarsFromOHLC()  # TODO: we need restored bars here !
                 if "timeframe" in params:
                     self._timeframe = params.get("timeframe", "1Min")
 
@@ -400,7 +412,7 @@ class DataFetcher:
         return _r_iters
 
     def __repr__(self) -> str:
-        return f"{self._data_type}({self._params}) [{','.join(self._specs)}]"
+        return f"{self._data_type}({self._params}) (-{self._warmup_period if self._warmup_period else '--'}) [{','.join(self._specs)}]"
 
 
 class IterableSimulatorData:
@@ -437,11 +449,13 @@ class IterableSimulatorData:
                 raise ValueError(f"Unsupported subscription type: {_subtype}")
         return _access_key, _data_type, _params
 
-    def add_instrument_with_subscription(self, subscription: str, instrument: Instrument):
+    def add_instrument_with_subscription(self, subscription: str, instruments: list[Instrument] | Instrument):
         _access_key, _data_type, _params = self._parse_subscription_spec(subscription)
         fetcher = self._subscriptions.get(_access_key)
+
         if not fetcher:
             self._subscriptions[_access_key] = (
                 fetcher := DataFetcher(_access_key, _data_type, _params, warmup_period=self._warmups.get(_access_key))
             )
+
         fetcher.attach_instrument(instrument)

@@ -9,7 +9,7 @@ import psycopg as pg
 from functools import wraps
 
 from qubx import logger
-from qubx.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
+from qubx.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade, Bar
 from qubx.pandaz.utils import ohlc_resample, srows
 from qubx.utils.time import infer_series_frequency, handle_start_stop
 from psycopg.types.datetime import TimestampLoader
@@ -17,6 +17,8 @@ from psycopg.types.datetime import TimestampLoader
 _DT = lambda x: pd.Timedelta(x).to_numpy().item()
 D1, H1 = _DT("1D"), _DT("1h")
 MS1 = 1_000_000
+S1 = 1000 * MS1
+M1 = 60 * S1
 
 DEFAULT_DAILY_SESSION = (_DT("00:00:00.100"), _DT("23:59:59.900"))
 STOCK_DAILY_SESSION = (_DT("9:30:00.100"), _DT("15:59:59.900"))
@@ -60,7 +62,6 @@ _FIND_TIME_COL_IDX = lambda column_names: _find_column_index_in_list(
 
 
 class DataTransformer:
-
     def __init__(self) -> None:
         self.buffer = []
         self._column_names = []
@@ -84,7 +85,6 @@ class DataTransformer:
 
 
 class DataReader:
-
     def get_names(self, **kwargs) -> List[str]:
         raise NotImplemented()
 
@@ -167,7 +167,6 @@ class CsvStorageDataReader(DataReader):
         timeframe=None,
         **kwargs,
     ) -> Iterable | Any:
-
         f_path = self.__check_file_name(data_id)
         if not f_path:
             ValueError(f"Can't find any csv data for {data_id} in {self.path} !")
@@ -433,7 +432,6 @@ class AsOhlcvSeries(DataTransformer):
                 self._bid_idx = _find_column_index_in_list(column_names, "bid")
                 self._data_type = "quotes"
             except:
-
                 try:
                     self._price_idx = _find_column_index_in_list(column_names, "price")
                     self._size_idx = _find_column_index_in_list(
@@ -641,7 +639,7 @@ class RestoreTicksFromOHLC(DataTransformer):
         self._freq = None
         try:
             self._volume_idx = _find_column_index_in_list(column_names, "volume", "vol")
-        except:
+        except:  # noqa: E722
             pass
 
         if self._volume_idx is None and self._trades:
@@ -684,6 +682,7 @@ class RestoreTicksFromOHLC(DataTransformer):
             l = data[self._low_idx]
             c = data[self._close_idx]
             rv = data[self._volume_idx] if self._volume_idx else 0
+            rv = rv / (h - l) if h > l else rv
 
             # - opening quote
             self.buffer.append(Quote(ti + self._t_start, o - s2, o + s2, self._bid_size, self._ask_size))
@@ -745,6 +744,97 @@ class RestoreTicksFromOHLC(DataTransformer):
 
             # - closing quote
             self.buffer.append(Quote(ti + self._t_end, c - s2, c + s2, self._bid_size, self._ask_size))
+
+
+class RestoredBarsFromOHLC(DataTransformer):
+    """
+    Transforms OHLC data into a sequence of bars trying to mimic real-world market data updates
+    """
+
+    def __init__(
+        self, daily_session_start_end=DEFAULT_DAILY_SESSION, timestamp_units="ns", open_close_time_shift_secs=1
+    ):
+        super().__init__()
+        self._d_session_start = daily_session_start_end[0]
+        self._d_session_end = daily_session_start_end[1]
+        self._timestamp_units = timestamp_units
+        self._open_close_time_shift_secs = open_close_time_shift_secs
+
+    def start_transform(self, name: str, column_names: List[str], **kwargs):
+        self.buffer = []
+        # - it will fail if receive data doesn't look as ohlcv
+        self._time_idx = _FIND_TIME_COL_IDX(column_names)
+        self._open_idx = _find_column_index_in_list(column_names, "open")
+        self._high_idx = _find_column_index_in_list(column_names, "high")
+        self._low_idx = _find_column_index_in_list(column_names, "low")
+        self._close_idx = _find_column_index_in_list(column_names, "close")
+        self._volume_idx = None
+        self._freq = None
+        try:
+            self._volume_idx = _find_column_index_in_list(column_names, "volume", "vol")
+        except:  # noqa: E722
+            pass
+
+    def process_data(self, rows_data: List[List]) -> Any:
+        if rows_data is None:
+            return
+
+        if self._freq is None:
+            ts = [t[self._time_idx] for t in rows_data[:100]]
+            try:
+                self._freq = infer_series_frequency(ts)
+            except ValueError:
+                logger.warning("Can't determine frequency of incoming data")
+                return
+
+            # - timestamps when we emit simulated quotes
+            dt = self._freq.astype("timedelta64[ns]").item()
+
+            # - adjust open-close time shift to avoid overlapping timestamps
+            if 2 * self._open_close_time_shift_secs * S1 > dt:
+                self._open_close_time_shift_secs = dt // S1 // 2
+
+            if dt < D1:
+                self._t_start = self._open_close_time_shift_secs * S1
+                self._t_mid1 = dt // 2 - dt // 10
+                self._t_mid2 = dt // 2 + dt // 10
+                self._t_end = dt - self._open_close_time_shift_secs * S1
+            else:
+                self._t_start = self._d_session_start
+                self._t_mid1 = dt // 2 - H1
+                self._t_mid2 = dt // 2 + H1
+                self._t_end = self._d_session_end
+
+        # - input data
+        for data in rows_data:
+            ti = _time(data[self._time_idx], self._timestamp_units)
+            o = data[self._open_idx]
+            h = data[self._high_idx]
+            l = data[self._low_idx]
+            c = data[self._close_idx]
+
+            vol = data[self._volume_idx] if self._volume_idx is not None else 0
+            rvol = vol / (h - l) if h > l else vol
+
+            # - opening bar (o,h,l,c=o, v=0)
+            self.buffer.append(Bar(ti + self._t_start, o, o, o, o, 0))
+
+            if c >= o:
+                v1 = rvol * (o - l)
+                self.buffer.append(Bar(ti + self._t_mid1, o, o, l, l, v1))
+
+                v2 = v1 + rvol * (c - o)
+                self.buffer.append(Bar(ti + self._t_mid2, o, h, l, h, v2))
+
+            else:
+                v1 = rvol * (h - o)
+                self.buffer.append(Bar(ti + self._t_mid1, o, h, o, h, v1))
+
+                v2 = v1 + rvol * (o - c)
+                self.buffer.append(Bar(ti + self._t_mid2, o, h, l, l, v2))
+
+            # - full bar
+            self.buffer.append(Bar(ti + self._t_end, o, h, l, c, vol))
 
 
 def _retry(fn):
@@ -1131,7 +1221,6 @@ WHERE timestamp BETWEEN '{raw_start_dt}' AND '{end_dt}'
 
 
 class TradeSql(QuestDBSqlCandlesBuilder):
-
     def prepare_data_sql(
         self,
         data_id: str,
