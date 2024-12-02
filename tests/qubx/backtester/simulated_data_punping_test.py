@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import pandas as pd
-from qubx.backtester.simulated_data import BiDirectionIndexedObjects, IteratedDataStreamsSlicer
+from qubx.backtester.simulated_data import IteratedDataStreamsSlicer
 
 
 @dataclass
@@ -22,21 +22,6 @@ class DummyTimeEvent:
 
 
 class TestSimulatedDataStuff:
-    def test_indexed_objects(self):
-        ivs = BiDirectionIndexedObjects()
-        ivs.add_value("Test 1")
-        ivs.add_value("Test 2")
-        ivs.add_value("Test 3")
-        assert 3 == len(ivs.values())
-
-        ivs.remove_value("Test 2")
-        ivs.remove_value("Test 1")
-        ivs.remove_value("Test 1")
-        ivs.remove_value("Test 1")
-        assert 4 == ivs.add_value("Test 1")
-        assert 2 == len(ivs.values())
-        assert 3 == ivs.get_index_of_value("Test 3")
-
     def test_iterator_slicer_1(self):
         # fmt: off
         slicer = IteratedDataStreamsSlicer()
@@ -188,4 +173,47 @@ class TestSimulatedDataStuff:
             'C2', 'B2', 'C2', 'B2', 'C2', 'B2', 'C2', 'B2', 'C2', 'B2', 'C2', 'B2', 
             'C2', 'C2', 'C2'
         ]
+        # fmt: on
+
+    def test_iterator_4_streams(self):
+        # fmt: off
+        slicer = IteratedDataStreamsSlicer()
+
+        data1 = [
+            DummyTimeEvent.from_seq("2020-01-01 00:00", 10, "1Min", "A1"),
+        ]
+
+        data2 = [
+            DummyTimeEvent.from_seq("2020-01-01 00:00:00", 10, "1Min", "B1"),
+        ]
+
+        data3 = [
+            DummyTimeEvent.from_seq("2020-01-01 00:00:00", 10, "1Min", "C1"),
+        ]
+
+        data4 = [
+            DummyTimeEvent.from_seq("2020-01-01 00:00:00", 12, "1Min", "D1"),
+        ]
+
+        data5 = [
+            DummyTimeEvent.from_seq("2020-01-01 00:00:00", 12, "1Min", "E1"),
+        ]
+
+        slicer += {
+            "it1": iter(data1),
+            "it2": iter(data2),
+            "it3": iter(data3),
+            "it4": iter(data4),
+            "it5": iter(data5),
+        }
+
+        r = []
+        for t in slicer:
+            if not t:
+                continue
+            print(f"{pd.Timestamp(t[2].time, 'ns')} | id={t[0]} | {t[2].data}")
+            r.append(t[2].data)
+
+        assert r[:4] == [ "A1", "B1", "C1", "D1", ]
+
         # fmt: on
