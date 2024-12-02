@@ -180,7 +180,9 @@ class SimulatedDataQueue:
     @_SW.watch("DataQueue")
     def _next_chunk(self, index: int) -> list[Any]:
         if index not in self._index_to_iterator:
-            self._index_to_iterator[index] = self._index_to_loader[index].load(pd.Timestamp(self._current_time, unit="ns"), self._stop)  # type: ignore
+            self._index_to_iterator[index] = self._index_to_loader[index].load(
+                pd.Timestamp(self._current_time, unit="ns"), self._stop
+            )  # type: ignore
         iterator = self._index_to_iterator[index]
         try:
             return next(iterator)

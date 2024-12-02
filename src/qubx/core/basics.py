@@ -682,7 +682,7 @@ class Subtype(StrEnum):
 
     def __getitem__(self, *args, **kwargs) -> str:
         match self:
-            case Subtype.OHLC:
+            case Subtype.OHLC | Subtype.OHLC_TICKS:
                 tf = args[0] if args else kwargs.get("timeframe")
                 if not tf:
                     raise ValueError("Timeframe is not provided for OHLC subscription")
@@ -730,8 +730,13 @@ class Subtype(StrEnum):
                 match type_name.lower():
                     case Subtype.OHLC.value:
                         return Subtype.OHLC, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
+
+                    case Subtype.OHLC_TICKS.value:
+                        return Subtype.OHLC_TICKS, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
+
                     case Subtype.ORDERBOOK.value:
                         return Subtype.ORDERBOOK, {"tick_size_pct": float(params[0]), "depth": int(params[1])}
+
                     case _:
                         return Subtype.NONE, {}
         except IndexError:

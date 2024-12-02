@@ -321,7 +321,8 @@ class SimulationDataLoader:
 
 class DataFetcher:
     _fetcher_id: str
-    _data_type: str
+    _requested_data_type: str
+    _producing_data_type: str
     _params: dict[str, object]
     _specs: list[str]
 
@@ -333,99 +334,135 @@ class DataFetcher:
     def __init__(
         self,
         fetcher_id: str,
-        data_type: str,
+        subtype: str,
         params: dict[str, Any],
         warmup_period: pd.Timedelta | None = None,
         chunksize: int = 5000,
     ) -> None:
         self._fetcher_id = fetcher_id
-        self._data_type = data_type
         self._params = params
 
-        match data_type:
+        match subtype:
             case Subtype.OHLC_TICKS:
-                self._transformer = RestoreTicksFromOHLC()  # TODO: we need restored bars here !
+                self._transformer = RestoreTicksFromOHLC()
+                self._requested_data_type = "ohlc"
+                self._producing_data_type = "quote"
                 if "timeframe" in params:
                     self._timeframe = params.get("timeframe", "1Min")
 
             case Subtype.OHLC:
-                # self._transformer = RestoreTicksFromOHLC()  # TODO: temporary here
-                self._transformer = RestoredBarsFromOHLC()  # TODO: we need restored bars here !
+                # TODO: open/close shift may depends on simulation
+                self._transformer = RestoredBarsFromOHLC(open_close_time_shift_secs=1)
+                self._requested_data_type = "ohlc"
+                self._producing_data_type = "ohlc"
                 if "timeframe" in params:
                     self._timeframe = params.get("timeframe", "1Min")
 
             case Subtype.TRADE:
+                self._requested_data_type = "trade"
+                self._producing_data_type = "trade"
                 self._transformer = AsTimestampedRecords()
 
             case Subtype.QUOTE:
+                self._requested_data_type = "orderbook"
+                self._producing_data_type = "quote"
                 self._transformer = AsTimestampedRecords()
 
             case _:
-                raise ValueError(f"Unsupported subscription type: {data_type}")
+                raise ValueError(f"Unsupported subscription type: {subtype}")
 
         self._warmup_period = warmup_period
         self._warmed = {}
         self._specs = []
         self._chunksize = chunksize
 
-    # def _key(self, data_id: str) -> str:
-    #     return f"{data_id}#{self._timeframe}" if self._timeframe else data_id
+    @staticmethod
+    def _make_request_id(instrument: Instrument) -> str:
+        return f"{instrument.exchange}:{instrument.symbol}"
 
-    def attach_instrument(self, instrument: Instrument) -> "DataFetcher":
-        _data_id = f"{instrument.exchange}:{instrument.symbol}"
+    def attach_instrument(self, instrument: Instrument) -> str:
+        _data_id = self._make_request_id(instrument)
 
         if _data_id not in self._specs:
             self._specs.append(_data_id)
             self._warmed[_data_id] = False
 
-        return self
+        return self._fetcher_id + "." + _data_id
 
-    def load(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> dict[str, Iterator]:
+    def remove_instrument(self, instrument: Instrument) -> str:
+        _data_id = self._make_request_id(instrument)
+
+        if _data_id in self._specs:
+            self._specs.remove(_data_id)
+            del self._warmed[_data_id]
+
+        return self._fetcher_id + "." + _data_id
+
+    def has_instrument(self, instrument: Instrument) -> bool:
+        return self._make_request_id(instrument) in self._specs
+
+    def load(
+        self, reader: DataReader, start: str | pd.Timestamp, end: str | pd.Timestamp, to_load: list[Instrument] | None
+    ) -> dict[str, Iterator]:
         # - iterate over all instruments if no indices specified
-        _indices = self._instruments.indices() if not indices else indices
+        _requests = self._specs if not to_load else set(self._make_request_id(i) for i in to_load)
         _r_iters = {}
 
-        for ix in _indices:
-            if _i := self._specs.get_value_by_index(ix):
-                _s = f"{_i.exchange}:{_i.symbol}"
+        logger.debug(f"{self._fetcher_id} loading {_requests}")
+
+        for _r in _requests:  # - TODO: replace this loop with multi-instrument request after DataReader refactoring
+            if _r in self._specs:
                 _start = pd.Timestamp(start)
-                if self._warmup_period and not self._warmed.get(_s):
+                if self._warmup_period and not self._warmed.get(_r):
                     _start -= self._warmup_period
-                    self._warmed[_s] = True
+                    self._warmed[_r] = True
 
                 _args = dict(
-                    data_id=_s,
+                    data_id=_r,
                     start=_start,
                     stop=end,
                     transform=self._transformer,
-                    data_type=self._data_type,
+                    data_type=self._requested_data_type,
                     chunksize=self._chunksize,
                 )
 
                 if self._timeframe:
                     _args["timeframe"] = self._timeframe
 
-                _r_iters[ix] = self._reader.read(**_args)  # type: ignore
+                _r_iters[self._fetcher_id + "." + _r] = reader.read(**_args)  # type: ignore
             else:
-                raise IndexError(f"No instrument found for key {ix}")
+                raise IndexError(
+                    f"Instrument {_r} is not subscribed for this data {self._requested_data_type} in {self._fetcher_id} !"
+                )
 
         return _r_iters
 
     def __repr__(self) -> str:
-        return f"{self._data_type}({self._params}) (-{self._warmup_period if self._warmup_period else '--'}) [{','.join(self._specs)}]"
+        return f"{self._requested_data_type}({self._params}) (-{self._warmup_period if self._warmup_period else '--'}) [{','.join(self._specs)}] :-> {self._transformer.__class__.__name__}"
 
 
-class IterableSimulatorData:
+class IterableSimulatorData(Iterator):
     _reader: DataReader
-    _slicer: IteratedDataStreamsSlicer
-    _subscriptions: dict[str, DataFetcher]
+    _slicer_ctrl: IteratedDataStreamsSlicer | None
+    _subt_to_fetcher: dict[str, DataFetcher]
     _warmups: dict[str, pd.Timedelta]
+    _instruments: dict[str, tuple[Instrument, DataFetcher]]
+
+    _start: pd.Timestamp | None
+    _stop: pd.Timestamp | None
+    _current_time: int | None
 
     def __init__(self, reader: DataReader):
         self._reader = reader
-        self._slicer = IteratedDataStreamsSlicer()
-        self._subscriptions = {}
+        self._instruments = {}
+        self._subt_to_fetcher = {}
         self._warmups = {}
+
+        self._slicer_ctrl = None
+        self._slicing_iterator = None
+        self._start = None
+        self._stop = None
+        self._current_time = None
 
     def set_warmup_period(self, subscription: str, warmup_period: str | None = None):
         if warmup_period:
@@ -435,27 +472,107 @@ class IterableSimulatorData:
     def _parse_subscription_spec(self, subscription: str) -> tuple[str, str, dict[str, object]]:
         _subtype, _params = Subtype.from_str(subscription)
         match _subtype:
-            case Subtype.OHLC:
+            case Subtype.OHLC | Subtype.OHLC_TICKS:
                 _timeframe = _params.get("timeframe", "1Min")
-                _data_type = "ohlc"
-                _access_key = f"{_data_type}.{_timeframe}"
-            case Subtype.TRADE:
-                _data_type = "agg_trades"
-                _access_key = f"{_data_type}"
-            case Subtype.QUOTE:
-                _data_type = "orderbook"
-                _access_key = f"{_data_type}"
+                _access_key = f"{_subtype}.{_timeframe}"
+            case Subtype.TRADE | Subtype.QUOTE:
+                _access_key = f"{_subtype}"
             case _:
                 raise ValueError(f"Unsupported subscription type: {_subtype}")
-        return _access_key, _data_type, _params
+        return _access_key, _subtype, _params
 
-    def add_instrument_with_subscription(self, subscription: str, instruments: list[Instrument] | Instrument):
-        _access_key, _data_type, _params = self._parse_subscription_spec(subscription)
-        fetcher = self._subscriptions.get(_access_key)
+    def add_instruments_for_subscription(self, subscription: str, instruments: list[Instrument] | Instrument):
+        instruments = instruments if isinstance(instruments, list) else [instruments]
+        _subt_key, _data_type, _params = self._parse_subscription_spec(subscription)
 
+        fetcher = self._subt_to_fetcher.get(_subt_key)
         if not fetcher:
-            self._subscriptions[_access_key] = (
-                fetcher := DataFetcher(_access_key, _data_type, _params, warmup_period=self._warmups.get(_access_key))
+            self._subt_to_fetcher[_subt_key] = (
+                fetcher := DataFetcher(_subt_key, _data_type, _params, warmup_period=self._warmups.get(_subt_key))
             )
 
-        fetcher.attach_instrument(instrument)
+        _instrs_to_preload = []
+        for i in instruments:
+            if not fetcher.has_instrument(i):
+                idx = fetcher.attach_instrument(i)
+                self._instruments[idx] = (i, fetcher)  # type: ignore
+                _instrs_to_preload.append(i)
+
+        if self.is_running and _instrs_to_preload:
+            self._slicer_ctrl += fetcher.load(
+                self._reader,
+                pd.Timestamp(self._current_time, unit="ns"),  # type: ignore
+                self._stop,  # type: ignore
+                _instrs_to_preload,
+            )
+
+    def remove_instruments_from_subscription(self, subscription: str, instruments: list[Instrument] | Instrument):
+        def _remove_from_fetcher(_subt_key: str, instruments: list[Instrument]):
+            fetcher = self._subt_to_fetcher.get(_subt_key)
+            if not fetcher:
+                logger.warning(f"No configured data fetcher for '{_subt_key}' subscription !")
+                return
+
+            _keys_to_remove = []
+            for i in instruments:
+                # - try to remove from data fetcher
+                if idx := fetcher.remove_instrument(i):
+                    if idx in self._instruments:
+                        self._instruments.pop(idx)
+                        _keys_to_remove.append(idx)
+
+            print("REMOVING FROM:", _keys_to_remove)
+            if self.is_running and _keys_to_remove:
+                self._slicer_ctrl.remove(_keys_to_remove)  # type: ignore
+
+        instruments = instruments if isinstance(instruments, list) else [instruments]
+
+        # - if we want to remove instruments from all subscriptions
+        if subscription == Subtype.ALL:
+            _f_keys = list(self._subt_to_fetcher.keys())
+            for s in _f_keys:
+                _remove_from_fetcher(s, instruments)
+            return
+
+        _subt_key, _, _ = self._parse_subscription_spec(subscription)
+        _remove_from_fetcher(_subt_key, instruments)
+
+    @property
+    def is_running(self) -> bool:
+        return self._current_time is not None
+
+    def create_iterable(self, start: str | pd.Timestamp, stop: str | pd.Timestamp) -> Iterator:
+        self._start = pd.Timestamp(start)
+        self._stop = pd.Timestamp(stop)
+        self._current_time = None
+        self._slicer_ctrl = IteratedDataStreamsSlicer()
+        return self
+
+    def __iter__(self) -> Iterator:
+        logger.debug("Preloading initial data for each fetcher ...")
+        assert self._start is not None
+        self._current_time = int(pd.Timestamp(self._start).timestamp() * 1e9)
+        _ct_timestap = pd.Timestamp(self._current_time, unit="ns")
+
+        for f in self._subt_to_fetcher.values():
+            self._slicer_ctrl += f.load(self._reader, _ct_timestap, self._stop, None)  # type: ignore
+
+        self._slicing_iterator = iter(self._slicer_ctrl)
+        return self
+
+    def __next__(self) -> tuple[Instrument, str, Any]:
+        try:
+            while data := next(self._slicing_iterator):  # type: ignore
+                k, t, v = data
+                instr, fetcher = self._instruments[k]
+                data_type = fetcher._producing_data_type
+                if t < self._current_time:  # type: ignore
+                    data_type = f"hist_{data_type}"
+
+                else:
+                    # only update the current time if the event is not historical
+                    self._current_time = t
+
+                return instr, data_type, v
+        except StopIteration as e:
+            raise StopIteration
