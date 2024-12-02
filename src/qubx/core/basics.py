@@ -11,7 +11,7 @@ from enum import StrEnum
 from qubx.core.exceptions import QueueTimeout
 from qubx.utils.misc import Stopwatch
 from qubx.core.series import Quote, Trade, time_as_nsec
-from qubx.core.utils import prec_ceil, prec_floor
+from qubx.core.utils import prec_ceil, prec_floor, time_delta_to_str
 
 
 dt_64 = np.datetime64
@@ -728,7 +728,7 @@ class Subtype(StrEnum):
                 params = [p.strip() for p in params_str.rstrip(")").split(",")]
                 match type_name.lower():
                     case Subtype.OHLC.value:
-                        return Subtype.OHLC, {"timeframe": params[0]}
+                        return Subtype.OHLC, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
                     case Subtype.ORDERBOOK.value:
                         return Subtype.ORDERBOOK, {"tick_size_pct": float(params[0]), "depth": int(params[1])}
                     case _:

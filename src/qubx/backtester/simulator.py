@@ -1,11 +1,11 @@
 import numpy as np
+import stackprinter
 import pandas as pd
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, TypeAlias, Callable, Literal
 from enum import Enum
 from tqdm.auto import tqdm
-from itertools import chain
 
 from qubx import lookup, logger, QubxLogConfig
 from qubx.core.account import AccountProcessor
@@ -113,9 +113,6 @@ class SimulationSetup:
     commissions: str
 
 
-import stackprinter
-
-
 class _SimulatedLogFormatter:
     def __init__(self, time_provider: ITimeProvider):
         self.time_provider = time_provider
@@ -149,7 +146,7 @@ class SimulatedTrading(ITradingServiceProvider):
     """
     First implementation of a simulated broker.
     TODO:
-        1. Add margin control
+        1. Add margin control (in account processor)
         2. Need to solve problem with _get_ohlcv_data_sync (actually this method must be removed from here) [DONE]
         3. Add support for stop orders (not urgent) [DONE]
     """
@@ -429,7 +426,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         logger.info(f"SimulatedData.{exchange_id} initialized")
 
     def subscribe(self, subscription_type: str, instruments: set[Instrument], reset: bool) -> None:
-        pass
+        print(f">>>> subscribe: {subscription_type} -> {instruments}")
         # units = kwargs.get("timestamp_units", "ns")
 
         # for inst in instruments:
@@ -491,13 +488,18 @@ class SimulatedExchange(IBrokerServiceProvider):
     def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
         # TODO: implement
         # return {k: v.params for k, v in self._loaders[instrument].items()}
+        print(f" >>> get_subscriptions {instrument}")
         return {}
+
+    def get_subscribed_instruments(self, subscription_type: str | None = None) -> list[Instrument]:
+        print(f" >> get_subscribed_instruments {subscription_type}")
+        return []
 
     def warmup(self, configs: Dict[Tuple[str, Instrument], str]) -> None:
         # - TODO:
         # 1. run warm up for each instrument
         # 2. provide initial "market quote" for each instrument
-        pass
+        print(f" ~~~ Warming up {configs}")
 
     def _try_add_process_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
         if self._pregenerated_signals:
