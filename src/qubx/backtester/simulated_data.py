@@ -203,18 +203,21 @@ class DataFetcher:
     def has_instrument(self, instrument: Instrument) -> bool:
         return self._make_request_id(instrument) in self._specs
 
+    def get_instruments_indices(self) -> list[str]:
+        return [self._fetcher_id + "." + i for i in self._specs]
+
     def load(
         self, reader: DataReader, start: str | pd.Timestamp, end: str | pd.Timestamp, to_load: list[Instrument] | None
     ) -> dict[str, Iterator]:
         # - iterate over all instruments if no indices specified
         _requests = self._specs if not to_load else set(self._make_request_id(i) for i in to_load)
-        _start = pd.Timestamp(start)
         _r_iters = {}
 
         # logger.debug(f"{self._fetcher_id} loading {_requests}")
 
         for _r in _requests:  # - TODO: replace this loop with multi-instrument request after DataReader refactoring
             if _r in self._specs:
+                _start = pd.Timestamp(start)
                 if self._warmup_period and not self._warmed.get(_r):
                     _start -= self._warmup_period
                     self._warmed[_r] = True
@@ -314,6 +317,12 @@ class IterableSimulatorData(Iterator):
                 self._stop,  # type: ignore
                 _instrs_to_preload,
             )
+
+    def get_instruments_for_subscription(self, subscription: str) -> list[Instrument]:
+        _subt_key, _, _ = self._parse_subscription_spec(subscription)
+        if (fetcher := self._subtyped_fetchers.get(_subt_key)) is not None:
+            return [self._instruments[k][0] for k in fetcher.get_instruments_indices()]
+        return []
 
     def remove_instruments_from_subscription(self, subscription: str, instruments: list[Instrument] | Instrument):
         def _remove_from_fetcher(_subt_key: str, instruments: list[Instrument]):

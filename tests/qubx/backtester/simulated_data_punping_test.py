@@ -1,6 +1,10 @@
 from dataclasses import dataclass
 import pandas as pd
-from qubx.backtester.simulated_data import IteratedDataStreamsSlicer
+
+from qubx import lookup
+from qubx.backtester.simulated_data import IterableSimulatorData, IteratedDataStreamsSlicer
+from qubx.core.basics import Subtype
+from qubx.data.helpers import loader
 
 
 @dataclass
@@ -204,3 +208,49 @@ class TestSimulatedDataStuff:
         ]
 
         # fmt: on
+
+    def test_iterable_simulation_data_management(self):
+        ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h", n_jobs=1)
+        isd = IterableSimulatorData(ld, open_close_time_indent_secs=300)
+
+        s1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        s2 = lookup.find_symbol("BINANCE.UM", "ETHUSDT")
+        s3 = lookup.find_symbol("BINANCE.UM", "LTCUSDT")
+        assert s1 is not None and s2 is not None and s3 is not None
+
+        isd.add_instruments_for_subscription(Subtype.OHLC["1h"], [s1, s2])
+        isd.add_instruments_for_subscription(Subtype.OHLC["1h"], s3)
+        isd.add_instruments_for_subscription(Subtype.OHLC["4h"], s3)
+        isd.add_instruments_for_subscription(Subtype.OHLC["1d"], s3)
+        isd.add_instruments_for_subscription(Subtype.OHLC_TICKS["4h"], s1)
+
+        assert isd.get_instruments_for_subscription(Subtype.OHLC["4h"]) == [s3]
+        assert isd.get_instruments_for_subscription(Subtype.OHLC["1h"]) == [s1, s2, s3]
+
+        isd.remove_instruments_from_subscription(Subtype.OHLC["1h"], s3)
+        assert isd.get_instruments_for_subscription(Subtype.OHLC["1h"]) == [s1, s2]
+
+        isd.remove_instruments_from_subscription(Subtype.OHLC["1h"], [s1, s2, s3])
+        assert isd.get_instruments_for_subscription(Subtype.OHLC["1h"]) == []
+
+    def test_iterable_simulation_data_queue_with_warmup(self):
+        ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h", n_jobs=1)
+        isd = IterableSimulatorData(ld, open_close_time_indent_secs=300)
+
+        s1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        s2 = lookup.find_symbol("BINANCE.UM", "ETHUSDT")
+        s3 = lookup.find_symbol("BINANCE.UM", "LTCUSDT")
+        assert s1 is not None and s2 is not None and s3 is not None
+
+        # set warmup period
+        isd.set_warmup_period(Subtype.OHLC["1d"], "24h")
+        isd.add_instruments_for_subscription(Subtype.OHLC["1d"], [s1, s2, s3])
+
+        _n_hist = 0
+        for d in isd.create_iterable("2023-07-01", "2023-07-02"):
+            t = pd.Timestamp(d[2].time, "ns")
+            data_type = d[1]
+            if data_type.startswith("hist"):
+                _n_hist += 1
+            print(t, d[0], d[1])
+        assert _n_hist == 3 * 4
