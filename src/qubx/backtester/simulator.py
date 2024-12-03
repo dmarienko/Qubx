@@ -8,6 +8,7 @@ from enum import Enum
 from tqdm.auto import tqdm
 
 from qubx import lookup, logger, QubxLogConfig
+from qubx.backtester.simulated_data import IterableSimulationData
 from qubx.core.account import AccountProcessor
 from qubx.core.helpers import BasicScheduler
 from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
@@ -388,8 +389,9 @@ class SimulatedExchange(IBrokerServiceProvider):
     _scheduler: BasicScheduler
     _current_time: dt_64
     _hist_data_type: str
-    _loaders: dict[Instrument, dict[str, DataLoader]]
+    # _loaders: dict[Instrument, dict[str, DataLoader]]
     _pregenerated_signals: Dict[Instrument, pd.Series]
+    _simulated_data_queue: IterableSimulationData
 
     def __init__(
         self,
@@ -406,7 +408,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         # - create exchange's instance
         self._last_quotes = defaultdict(lambda: None)
         self._current_time = self.trading_service.time()
-        self._loaders = defaultdict(dict)
+        # self._loaders = defaultdict(dict)
         self._symbol_to_instrument: dict[str, Instrument] = {}
 
         # - setup communication bus
@@ -421,7 +423,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         self._to_process = {}
 
         # - data queue
-        self._data_queue = SimulatedDataQueue()
+        self._simulated_data_queue = IterableSimulationData(self._reader)
 
         logger.info(f"SimulatedData.{exchange_id} initialized")
 
@@ -483,7 +485,8 @@ class SimulatedExchange(IBrokerServiceProvider):
         # return True
 
     def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
-        return instrument in self._loaders and subscription_type in self._loaders[instrument]
+        ...
+        # return instrument in self._loaders and subscription_type in self._loaders[instrument]
 
     def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
         # TODO: implement
@@ -519,7 +522,9 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         _run = self._run_generated_signals if self._pregenerated_signals else self._run_as_strategy
 
-        qiter = EventBatcher(self._data_queue.create_iterable(start, end), passthrough=not enable_event_batching)
+        qiter = EventBatcher(
+            self._simulated_data_queue.create_iterable(start, end), passthrough=not enable_event_batching
+        )
         start, end = pd.Timestamp(start), pd.Timestamp(end)
         total_duration = end - start
         update_delta = total_duration / 100

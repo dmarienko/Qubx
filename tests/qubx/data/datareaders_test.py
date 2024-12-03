@@ -78,7 +78,9 @@ class TestDataReaders:
     def test_simulated_quotes_trades(self):
         r = CsvStorageDataReader("tests/data/csv/")
 
-        tick_data = r.read("BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=True))
+        tick_data = r.read(
+            "BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=True, open_close_time_shift_secs=0)
+        )
         ohlc_data = r.read("BTCUSDT_ohlcv_M1", transform=AsOhlcvSeries())
 
         restored_ohlc = OHLCV("restored", "1Min")
@@ -92,7 +94,10 @@ class TestDataReaders:
 
         assert all((restored_ohlc.pd() - ohlc_data.pd()) < 1e-10)
 
-        d1 = r.read("SPY", transform=RestoreTicksFromOHLC(daily_session_start_end=STOCK_DAILY_SESSION))[:4]  # type: ignore
+        d1 = r.read(
+            "SPY",
+            transform=RestoreTicksFromOHLC(daily_session_start_end=STOCK_DAILY_SESSION, open_close_time_shift_secs=0),
+        )[:4]  # type: ignore
 
         assert d1[0].time == T("2000-01-03T09:30:00.100000000").item()
         assert d1[3].time == T("2000-01-03T15:59:59.900000000").item()

@@ -246,7 +246,19 @@ class DataFetcher:
         return f"{self._requested_data_type}({self._params}) (-{self._warmup_period if self._warmup_period else '--'}) [{','.join(self._specs)}] :-> {self._transformer.__class__.__name__}"
 
 
-class IterableSimulatorData(Iterator):
+class IterableSimulationData(Iterator):
+    """
+    This class is a crucial component for backtesting system.
+    It provides a flexible and efficient way to simulate market data feeds for strategy testing.
+
+    Key Features:
+        - Supports multiple data types (OHLC, trades, quotes) and instruments.
+        - Allows for dynamic addition and removal of instruments during simulation.
+        - Handles warmup periods for data preloading.
+        - Manages historical and current data distinction during iteration.
+        - Utilizes a data slicer (IteratedDataStreamsSlicer) to merge and order data from multiple sources.
+    """
+
     _reader: DataReader
     _subtyped_fetchers: dict[str, DataFetcher]
     _warmups: dict[str, pd.Timedelta]

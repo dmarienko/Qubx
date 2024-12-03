@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from qubx import lookup
-from qubx.backtester.simulated_data import IterableSimulatorData, IteratedDataStreamsSlicer
+from qubx.backtester.simulated_data import IterableSimulationData, IteratedDataStreamsSlicer
 from qubx.core.basics import Subtype
 from qubx.data.helpers import loader
 
@@ -211,7 +211,7 @@ class TestSimulatedDataStuff:
 
     def test_iterable_simulation_data_management(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h", n_jobs=1)
-        isd = IterableSimulatorData(ld, open_close_time_indent_secs=300)
+        isd = IterableSimulationData(ld, open_close_time_indent_secs=300)
 
         s1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         s2 = lookup.find_symbol("BINANCE.UM", "ETHUSDT")
@@ -243,7 +243,7 @@ class TestSimulatedDataStuff:
 
     def test_iterable_simulation_data_queue_with_warmup(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h", n_jobs=1)
-        isd = IterableSimulatorData(ld, open_close_time_indent_secs=300)
+        isd = IterableSimulationData(ld, open_close_time_indent_secs=300)
 
         s1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         s2 = lookup.find_symbol("BINANCE.UM", "ETHUSDT")
