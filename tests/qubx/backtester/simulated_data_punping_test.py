@@ -179,32 +179,12 @@ class TestSimulatedDataStuff:
         # fmt: off
         slicer = IteratedDataStreamsSlicer()
 
-        data1 = [
-            DummyTimeEvent.from_seq("2020-01-01 00:00", 10, "1Min", "A1"),
-        ]
-
-        data2 = [
-            DummyTimeEvent.from_seq("2020-01-01 00:00:00", 10, "1Min", "B1"),
-        ]
-
-        data3 = [
-            DummyTimeEvent.from_seq("2020-01-01 00:00:00", 10, "1Min", "C1"),
-        ]
-
-        data4 = [
-            DummyTimeEvent.from_seq("2020-01-01 00:00:00", 12, "1Min", "D1"),
-        ]
-
-        data5 = [
-            DummyTimeEvent.from_seq("2020-01-01 00:00:00", 12, "1Min", "E1"),
-        ]
-
         slicer += {
-            "it1": iter(data1),
-            "it2": iter(data2),
-            "it3": iter(data3),
-            "it4": iter(data4),
-            "it5": iter(data5),
+            "set.A": iter([DummyTimeEvent.from_seq("2020-01-01 00:00", 10, "1Min", "A1")]),
+            "set.B": iter([DummyTimeEvent.from_seq("2020-01-01 00:05", 10, "1Min", "B1")]),
+            "set.D": iter([DummyTimeEvent.from_seq("2020-01-01 00:03", 10, "1Min", "D1")]),
+            "set.E": iter([DummyTimeEvent.from_seq("2020-01-01 00:03", 10, "1Min", "E1")]),
+            "set.C": iter([DummyTimeEvent.from_seq("2020-01-01 00:01", 10, "1Min", "C1")]),
         }
 
         r = []
@@ -214,6 +194,13 @@ class TestSimulatedDataStuff:
             print(f"{pd.Timestamp(t[2].time, 'ns')} | id={t[0]} | {t[2].data}")
             r.append(t[2].data)
 
-        assert r[:4] == [ "A1", "B1", "C1", "D1", ]
+        assert r == [
+            'A1', 'A1', 
+            'C1', 'A1', 'C1', 'A1', 'C1', 'D1', 
+            'E1', 'A1', 'C1', 'D1', 'E1', 'A1', 'C1', 'D1', 'E1', 'B1', 'A1', 'C1', 'D1', 'E1', 
+            'B1', 'A1', 'C1', 'D1', 'E1', 'B1', 'A1', 'C1', 'D1', 'E1', 'B1', 'A1', 'C1', 'D1', 
+            'E1', 'B1', 'A1', 'C1', 'D1', 'E1', 'B1', 'C1', 'D1', 'E1', 'B1', 'D1', 'E1', 'B1', 'D1', 'E1', 
+            'B1', 'B1', 'B1'
+        ]
 
         # fmt: on

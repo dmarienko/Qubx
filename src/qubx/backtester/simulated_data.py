@@ -1,3 +1,4 @@
+import math
 import pandas as pd
 
 from collections import defaultdict, deque
@@ -25,22 +26,13 @@ class IteratedDataStreamsSlicer(Iterator[_D]):
 
     _iterators: dict[str, Iterator[list[_T]]]
     _buffers: dict[str, list[_T]]
-
     _keys: deque[str]
-    _r_keys: deque[str]
-    _init_k_maxes: list[int]
-    _init_k_idxs: list[str]
-    _k_max: int
     _iterating: bool
 
     def __init__(self):
         self._buffers = defaultdict(list)
         self._iterators = {}
         self._keys = deque()
-        self._r_keys = deque()
-        self._init_k_maxes = []
-        self._init_k_idxs = []
-        self._k_max = 0
         self._iterating = False
 
     def put(self, data: dict[str, Iterator[list[_T]]]):
@@ -48,13 +40,13 @@ class IteratedDataStreamsSlicer(Iterator[_D]):
         for k, vi in data.items():
             if k not in self._keys:
                 self._iterators[k] = vi
-                self._buffers[k] = self._get_next_chunk_to_buffer(k)  # do initial chunk fetching
+                self._buffers[k] = self._load_next_chunk_to_buffer(k)  # do initial chunk fetching
                 self._keys.append(k)
                 _rebuild = True
 
         # - rebuild strategy
         if _rebuild and self._iterating:
-            self._build_initial_iteration_strategy()
+            self._build_initial_iteration_seq()
 
     def __add__(self, data: dict[str, Iterator]) -> "IteratedDataStreamsSlicer":
         self.put(data)
@@ -76,73 +68,50 @@ class IteratedDataStreamsSlicer(Iterator[_D]):
 
         # - rebuild strategy
         if _rebuild and self._iterating:
-            self._build_initial_iteration_strategy()
+            self._build_initial_iteration_seq()
 
     def __iter__(self) -> Iterator:
-        # - for more than 1 iterator we need to build initial iteration strategy
-        self._build_initial_iteration_strategy()
+        self._build_initial_iteration_seq()
         self._iterating = True
         return self
 
-    def _build_initial_iteration_strategy(self):
-        self._k_max = 0
-        self._init_k_idxs = []
-        self._init_k_maxes = []
-        self._r_keys = deque(self._keys)
+    def _build_initial_iteration_seq(self):
+        _init_seq = {k: self._buffers[k][-1].time for k in self._keys}
+        _init_seq = dict(sorted(_init_seq.items(), key=lambda item: item[1]))
+        self._keys = deque(_init_seq.keys())
 
-        if len(self._buffers) > 1:
-            self._r_keys = deque()
-
-            _init_seq = {k: self._buffers[k][-1].time for k in self._keys}
-            _init_seq = dict(sorted(_init_seq.items(), key=lambda item: item[1]))
-
-            self._init_k_maxes = list(_init_seq.values())[1:]
-            self._init_k_idxs = list(_init_seq.keys())
-
-            self._k_max = self._init_k_maxes.pop(0)
-            self._r_keys.append(self._init_k_idxs.pop(0))
-
-    def _get_next_chunk_to_buffer(self, index: str) -> list[_T]:
+    def _load_next_chunk_to_buffer(self, index: str) -> list[_T]:
         return list(reversed(next(self._iterators[index])))
 
-    def __next__(self) -> _D:
-        if not self._r_keys:
-            self._iterating = False
-            raise StopIteration
-
-        k = self._r_keys[0]
-        data = self._buffers[k]
-
+    def _pop_top(self, k: str) -> _T:
+        v = (data := self._buffers[k]).pop()
         if not data:
             try:
                 # - get next chunk of data
-                data.extend(self._get_next_chunk_to_buffer(k))
+                data.extend(self._load_next_chunk_to_buffer(k))
             except StopIteration:
                 print(f" > Iterator[{k}] is empty")
-
                 # - remove iterable data
                 self._buffers.pop(k)
                 self._iterators.pop(k)
                 self._keys.remove(k)
-                self._r_keys.remove(k)
+        return v
 
-                return ()
+    def __next__(self) -> _D:
+        if not self._keys:
+            self._iterating = False
+            raise StopIteration
 
-        _last = data.pop()
-        value = (k, _t := _last.time, _last)
-        if self._init_k_idxs:
-            if _t >= self._k_max:
-                self._r_keys.append(self._init_k_idxs.pop(0))
+        _min_t = math.inf
+        _min_k = self._keys[0]
+        for i in self._keys:
+            _x = self._buffers[i][-1]
+            if _x.time < _min_t:
+                _min_t = _x.time
+                _min_k = i
 
-                if self._init_k_maxes:
-                    self._k_max = self._init_k_maxes.pop(0)
-
-            self._r_keys.rotate(-1)
-        else:
-            if _t >= self._k_max:
-                self._r_keys.rotate(-1)  # - switch to the next iterated data
-                self._k_max = _t
-        return value
+        _v = self._pop_top(_min_k)
+        return (_min_k, _v.time, _v)
 
 
 class DataFetcher:
