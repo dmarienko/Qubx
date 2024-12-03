@@ -224,6 +224,14 @@ class TestSimulatedDataStuff:
         isd.add_instruments_for_subscription(Subtype.OHLC["1d"], s3)
         isd.add_instruments_for_subscription(Subtype.OHLC_TICKS["4h"], s1)
 
+        # get all instruments for ANY subscription
+        assert set(isd.get_instruments_for_subscription(Subtype.ALL)) == set([s1, s2, s3])
+
+        # get subs for instrument
+        assert isd.get_subscriptions_for_instrument(s3) == list(
+            map(Subtype.from_str, [Subtype.OHLC["1h"], Subtype.OHLC["4h"], Subtype.OHLC["1d"]])
+        )
+
         assert isd.get_instruments_for_subscription(Subtype.OHLC["4h"]) == [s3]
         assert isd.get_instruments_for_subscription(Subtype.OHLC["1h"]) == [s1, s2, s3]
 

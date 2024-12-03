@@ -250,7 +250,7 @@ class IterableSimulatorData(Iterator):
     _reader: DataReader
     _subtyped_fetchers: dict[str, DataFetcher]
     _warmups: dict[str, pd.Timedelta]
-    _instruments: dict[str, tuple[Instrument, DataFetcher]]
+    _instruments: dict[str, tuple[Instrument, DataFetcher, Subtype]]
     _open_close_time_indent_secs: int | float
 
     _slicer_ctrl: IteratedDataStreamsSlicer | None = None
@@ -307,7 +307,7 @@ class IterableSimulatorData(Iterator):
         for i in instruments:
             if not fetcher.has_instrument(i):
                 idx = fetcher.attach_instrument(i)
-                self._instruments[idx] = (i, fetcher)  # type: ignore
+                self._instruments[idx] = (i, fetcher, subscription)  # type: ignore
                 _instrs_to_preload.append(i)
 
         if self.is_running and _instrs_to_preload:
@@ -319,10 +319,21 @@ class IterableSimulatorData(Iterator):
             )
 
     def get_instruments_for_subscription(self, subscription: str) -> list[Instrument]:
+        if subscription == Subtype.ALL:
+            return list((i for i, *_ in self._instruments.values()))
+
         _subt_key, _, _ = self._parse_subscription_spec(subscription)
         if (fetcher := self._subtyped_fetchers.get(_subt_key)) is not None:
             return [self._instruments[k][0] for k in fetcher.get_instruments_indices()]
+
         return []
+
+    def get_subscriptions_for_instrument(self, instrument: Instrument) -> list[Subtype]:
+        r = []
+        for i, f, s in self._instruments.values():
+            if i == instrument:
+                r.append(Subtype.from_str(s))
+        return r
 
     def remove_instruments_from_subscription(self, subscription: str, instruments: list[Instrument] | Instrument):
         def _remove_from_fetcher(_subt_key: str, instruments: list[Instrument]):
@@ -382,7 +393,7 @@ class IterableSimulatorData(Iterator):
         try:
             while data := next(self._slicing_iterator):  # type: ignore
                 k, t, v = data
-                instr, fetcher = self._instruments[k]
+                instr, fetcher, subt = self._instruments[k]
                 data_type = fetcher._producing_data_type
                 if t < self._current_time:  # type: ignore
                     data_type = f"hist_{data_type}"
