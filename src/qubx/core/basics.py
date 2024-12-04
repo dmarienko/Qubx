@@ -1,19 +1,18 @@
+from dataclasses import dataclass, field
 from datetime import datetime
+from enum import StrEnum
+from queue import Empty, Queue
+from threading import Event, Lock
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+
 import numpy as np
 import pandas as pd
-from dataclasses import dataclass, field
-
-from threading import Event, Lock
-from queue import Queue, Empty
-from enum import StrEnum
 
 from qubx import logger
 from qubx.core.exceptions import QueueTimeout
-from qubx.utils.misc import Stopwatch
 from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.core.utils import prec_ceil, prec_floor
-
+from qubx.utils.misc import Stopwatch
 
 dt_64 = np.datetime64
 td_64 = np.timedelta64
@@ -428,7 +427,7 @@ class Position:
             self.position_avg_price = pos_average_price
             self.r_pnl = r_pnl
 
-    def reset(self):
+    def reset(self) -> None:
         """
         Reset position to zero
         """
@@ -446,6 +445,21 @@ class Position:
         self.maint_margin = 0.0
         self.__pos_incr_qty = 0
         self._qty_multiplier = self.instrument.contract_size
+
+    def reset_by_position(self, pos: "Position") -> None:
+        self.quantity = pos.quantity
+        self.pnl = pos.pnl
+        self.r_pnl = pos.r_pnl
+        self.market_value = pos.market_value
+        self.market_value_funds = pos.market_value_funds
+        self.position_avg_price = pos.position_avg_price
+        self.position_avg_price_funds = pos.position_avg_price_funds
+        self.commissions = pos.commissions
+        self.last_update_time = pos.last_update_time
+        self.last_update_price = pos.last_update_price
+        self.last_update_conversion_rate = pos.last_update_conversion_rate
+        self.maint_margin = pos.maint_margin
+        self.__pos_incr_qty = pos.__pos_incr_qty
 
     @property
     def notional_value(self) -> float:

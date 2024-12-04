@@ -777,6 +777,18 @@ class IAccountViewer:
 
 
 class IAccountProcessor(IAccountViewer, ICommunicationManager):
+    def start(self):
+        """
+        Start the account processor.
+        """
+        ...
+
+    def stop(self):
+        """
+        Stop the account processor.
+        """
+        ...
+
     def set_subscription_manager(self, manager: ISubscriptionManager) -> None:
         """Set the subscription manager for the account processor.
 

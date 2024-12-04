@@ -141,7 +141,7 @@ def ccxt_convert_trade(trade: dict[str, Any]) -> Trade:
     return Trade(t_ns, price, amnt, int(not m), int(trade["id"]))
 
 
-def ccxt_restore_positions_from_info(
+def ccxt_convert_positions(
     pos_infos: list[dict], ccxt_exchange_name: str, markets: dict[str, dict[str, Any]]
 ) -> list[Position]:
     positions = []
@@ -269,16 +269,6 @@ def ccxt_convert_balance(d: dict[str, Any]) -> dict[str, AssetBalance]:
         locked = float(d["used"].get(currency, 0) or 0)
         balances[currency] = AssetBalance(free=total - locked, locked=locked, total=total)
     return balances
-
-
-def ccxt_convert_positions(
-    raw_positions: list[dict[str, Any]], markets: dict[str, dict[str, Any]]
-) -> dict[Instrument, Position]:
-    positions = {}
-    for raw_pos in raw_positions:
-        instr = ccxt_symbol_to_instrument(raw_pos["symbol"], markets)
-        pass
-    return positions
 
 
 def find_instrument_for_exch_symbol(exch_symbol: str, symbol_to_instrument: Dict[str, Instrument]) -> Instrument:

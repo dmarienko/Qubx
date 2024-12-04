@@ -47,10 +47,10 @@ class BasicAccountProcessor(IAccountProcessor):
         return _cash_amount + _positions_value
 
     def get_balances(self) -> dict[str, AssetBalance]:
-        return self._balances
+        return dict(self._balances)
 
     def get_positions(self) -> dict[Instrument, Position]:
-        return self._positions
+        return dict(self._positions)
 
     def get_orders(self, instrument: Instrument | None = None) -> list[Order]:
         ols = list(self._active_orders.values())
@@ -129,7 +129,10 @@ class BasicAccountProcessor(IAccountProcessor):
 
     def attach_positions(self, *position: Position) -> IAccountProcessor:
         for p in position:
-            self._positions[p.instrument] = p
+            if p.instrument not in self._positions:
+                self._positions[p.instrument] = p
+            else:
+                self._positions[p.instrument].reset_by_position(p)
         return self
 
     def add_active_orders(self, orders: dict[str, Order]):

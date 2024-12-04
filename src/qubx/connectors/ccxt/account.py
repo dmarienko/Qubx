@@ -1,6 +1,7 @@
 import asyncio
 import concurrent.futures
 from asyncio.exceptions import CancelledError
+from collections import defaultdict
 from typing import Awaitable, Callable
 
 import numpy as np
@@ -42,11 +43,15 @@ class CcxtAccountProcessor(BasicAccountProcessor):
     base_currency: str
     balance_interval: str
     position_interval: str
+    subscription_interval: str
     max_retries: int
 
     _loop: AsyncThreadLoop
     _polling_tasks: dict[str, concurrent.futures.Future]
     _subscription_manager: ISubscriptionManager | None
+    _polling_to_init: dict[str, bool]
+    _required_instruments: set[Instrument]
+    _latest_instruments: set[Instrument]
 
     _free_capital: float = np.nan
     _total_capital: float = np.nan
@@ -59,6 +64,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         base_currency: str,
         balance_interval: str = "10Sec",
         position_interval: str = "10Sec",
+        subscription_interval: str = "2Sec",
         max_retries: int = 10,
     ):
         super().__init__(account_id, base_currency, initial_capital=0)
@@ -66,19 +72,18 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         self.max_retries = max_retries
         self.balance_interval = balance_interval
         self.position_interval = position_interval
+        self.subscription_interval = subscription_interval
         self._loop = AsyncThreadLoop(exchange.asyncio_loop)
         self._is_running = False
         self._polling_tasks = {}
+        self._polling_to_init = defaultdict(bool)
         self._instrument_to_last_price = {}
+        self._required_instruments = set()
+        self._latest_instruments = set()
         self._subscription_manager = None
-
-    def set_communication_channel(self, channel: CtrlChannel):
-        super().set_communication_channel(channel)
-        self.start()
 
     def set_subscription_manager(self, manager: ISubscriptionManager) -> None:
         self._subscription_manager = manager
-        self.start()
 
     def start(self):
         """Start the balance and position polling tasks"""
@@ -94,9 +99,15 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         self._polling_tasks["balance"] = self._loop.submit(
             self._poller("balance", self._update_balance, self.balance_interval)
         )
-        # self._polling_tasks["position"] = self._loop.submit(
-        #     self._poller("position", self._update_positions(), self.position_interval)
-        # )
+        self._polling_tasks["position"] = self._loop.submit(
+            self._poller("position", self._update_positions, self.position_interval)
+        )
+        self._polling_tasks["subscription"] = self._loop.submit(
+            self._poller("subscription", self._update_subscriptions, self.subscription_interval)
+        )
+        logger.debug("Waiting for account polling tasks to be initialized")
+        _waiter = self._loop.submit(self._wait_for_init())
+        _waiter.result()
 
     def close(self):
         """Stop all polling tasks"""
@@ -159,6 +170,11 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         while channel.control.is_set():
             try:
                 await coroutine()
+
+                if not self._polling_to_init[name]:
+                    logger.debug(f"{name} polling task has been initialized")
+                    self._polling_to_init[name] = True
+
                 retries = 0  # Reset retry counter on success
             except CancelledError:
                 logger.info(f"{name} listening has been cancelled")
@@ -186,6 +202,20 @@ class CcxtAccountProcessor(BasicAccountProcessor):
 
         logger.debug(f"{name} polling task has been stopped")
 
+    async def _wait_for_init(self):
+        while not all(self._polling_to_init.values()):
+            await asyncio.sleep(0.1)
+
+    async def _update_subscriptions(self) -> None:
+        """Subscribe to required instruments"""
+        assert self._subscription_manager is not None
+        await asyncio.sleep(pd.Timedelta(self.subscription_interval).total_seconds())
+
+        # if required instruments have changed, subscribe to them
+        if not self._latest_instruments.issuperset(self._required_instruments):
+            await self._subscribe_instruments(list(self._required_instruments))
+            self._latest_instruments.update(self._required_instruments)
+
     async def _update_balance(self) -> None:
         """Fetch and update balances from exchange"""
         logger.debug("Updating account balances")
@@ -203,39 +233,23 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         for currency, data in balances.items():
             self.update_balance(currency=currency, total=data.total, locked=data.locked)
 
-        # subscribe to currencies in balance
+        # update required instruments that we need to subscribe to
         currencies = list(self.get_balances().keys())
         instruments = [
             self._get_instrument_for_currency(c) for c in currencies if c.upper() != self.base_currency.upper()
         ]
-        await self._subscribe_instruments(instruments)
+        self._required_instruments.update(instruments)
 
         # fetch tickers for instruments that don't have recent price updates
         await self._fetch_missing_tickers(instruments)
 
     async def _update_positions(self) -> None:
-        """Fetch and update positions from exchange"""
-        positions = await self.exchange.fetch_positions()
-        # TODO: implement
-        if not positions:
-            return
-
-        for pos in positions:
-            if not pos or pos.get("contracts") == 0:
-                continue
-
-            symbol = pos["symbol"]
-            instrument = self._get_instrument(symbol)
-
-            self.update_position(
-                Position(
-                    instrument=instrument,
-                    quantity=float(pos["contracts"]),
-                    price=float(pos.get("entryPrice", 0)),
-                    liquidation_price=float(pos.get("liquidationPrice", 0)),
-                    unrealized_pnl=float(pos.get("unrealizedPnl", 0)),
-                )
-            )
+        # fetch and update positions from exchange
+        ccxt_positions = await self.exchange.fetch_positions()
+        positions = ccxt_convert_positions(ccxt_positions, self.exchange.name, self.exchange.markets)
+        self.attach_positions(*positions)
+        # update required instruments that we need to subscribe to
+        self._required_instruments.update([p.instrument for p in positions])
 
     async def _subscribe_instruments(self, instruments: list[Instrument]) -> None:
         assert self._subscription_manager is not None
@@ -248,8 +262,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         if _add_instruments:
             # subscribe to instruments
             self._subscription_manager.subscribe(_base_sub, _add_instruments)
-
-        self._subscription_manager.commit()
+            self._subscription_manager.commit()
 
     async def _fetch_missing_tickers(self, instruments: list[Instrument]) -> None:
         _current_time = self.time()

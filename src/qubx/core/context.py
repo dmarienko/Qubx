@@ -76,7 +76,6 @@ class StrategyContext(IStrategyContext):
         self._logging = logging
         self._scheduler = broker.get_scheduler()
         self._trading_service = broker.get_trading_service()
-        self._trading_service.set_account(self.account)
         self._initial_instruments = instruments
 
         self._cache = CachedMarketDataHolder()
@@ -150,6 +149,9 @@ class StrategyContext(IStrategyContext):
         # - create incoming market data processing
         databus = self._broker.get_communication_channel()
         databus.register(self)
+
+        # - start account processing
+        self.account.start()
 
         # - update universe with initial instruments after the strategy is initialized
         self.set_universe(self._initial_instruments, skip_callback=True)

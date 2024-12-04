@@ -35,9 +35,9 @@ from .utils import (
     ccxt_build_qubx_exchange_name,
     ccxt_convert_deal_info,
     ccxt_convert_order_info,
+    ccxt_convert_positions,
     ccxt_extract_deals_from_exec,
     ccxt_restore_position_from_deals,
-    ccxt_restore_positions_from_info,
 )
 
 ORDERS_HISTORY_LOOKBACK_DAYS = 30
@@ -240,7 +240,7 @@ class CcxtTradingConnector(ITradingServiceProvider):
     async def _try_restore_futures_positions(self) -> bool:
         try:
             infos = await self.exchange.fetch_positions()
-            positions = ccxt_restore_positions_from_info(infos, self.ccxt_exchange_id.upper(), self.exchange.markets)
+            positions = ccxt_convert_positions(infos, self.ccxt_exchange_id.upper(), self.exchange.markets)
 
             async def get_orders_for_position(position: Position):
                 return (position, await self._get_open_orders_from_exchange(position.instrument))
