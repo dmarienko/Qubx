@@ -389,9 +389,8 @@ class SimulatedExchange(IBrokerServiceProvider):
     _scheduler: BasicScheduler
     _current_time: dt_64
     _hist_data_type: str
-    # _loaders: dict[Instrument, dict[str, DataLoader]]
     _pregenerated_signals: Dict[Instrument, pd.Series]
-    _simulated_data_queue: IterableSimulationData
+    _simulated_data_bus: IterableSimulationData
 
     def __init__(
         self,
@@ -423,7 +422,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         self._to_process = {}
 
         # - data queue
-        self._simulated_data_queue = IterableSimulationData(self._reader)
+        self._simulated_data_bus = IterableSimulationData(self._reader)
 
         logger.info(f"SimulatedData.{exchange_id} initialized")
 
@@ -523,7 +522,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         _run = self._run_generated_signals if self._pregenerated_signals else self._run_as_strategy
 
         qiter = EventBatcher(
-            self._simulated_data_queue.create_iterable(start, end), passthrough=not enable_event_batching
+            self._simulated_data_bus.create_iterable(start, end), passthrough=not enable_event_batching
         )
         start, end = pd.Timestamp(start), pd.Timestamp(end)
         total_duration = end - start

@@ -2,9 +2,14 @@ from dataclasses import dataclass
 import pandas as pd
 
 from qubx import lookup
+from qubx.backtester.queue import EventBatcher
 from qubx.backtester.simulated_data import IterableSimulationData, IteratedDataStreamsSlicer
-from qubx.core.basics import Subtype
+from qubx.core.basics import BatchEvent, Subtype
 from qubx.data.helpers import loader
+
+
+def get_event_dt(i: float, base: pd.Timestamp = pd.Timestamp("2021-01-01"), offset: str = "D") -> int:
+    return (base + pd.Timedelta(i, offset)).as_unit("ns").asm8.item()  # type: ignore
 
 
 @dataclass
@@ -262,3 +267,93 @@ class TestSimulatedDataStuff:
                 _n_hist += 1
             print(t, d[0], d[1])
         assert _n_hist == 3 * 4
+
+    def test_batching_basic(self):
+        events = [
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(1, offset="ms"), "data1")),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(2, offset="ms"), "data2")),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(5, offset="ms"), "data3")),
+            ("ETHUSDT", "trade", DummyTimeEvent(get_event_dt(7, offset="s"), "data4")),
+            ("ETHUSDT", "trade", DummyTimeEvent(get_event_dt(7.9, offset="s"), "data4")),
+            ("BTCUSDT", "ohlc", DummyTimeEvent(get_event_dt(9, offset="s"), "data5")),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(11, offset="s"), "data6")),
+        ]
+
+        # test 1
+        batched_events = list(EventBatcher(events))
+        expected_events = [
+            (
+                "BTCUSDT",
+                "trade",
+                BatchEvent(
+                    get_event_dt(5, offset="ms"),  # type: ignore
+                    [
+                        DummyTimeEvent(get_event_dt(1, offset="ms"), "data1"),
+                        DummyTimeEvent(get_event_dt(2, offset="ms"), "data2"),
+                        DummyTimeEvent(get_event_dt(5, offset="ms"), "data3"),
+                    ],
+                ),
+            ),
+            (
+                "ETHUSDT",
+                "trade",
+                BatchEvent(
+                    get_event_dt(7.9, offset="s"),  # type: ignore
+                    [
+                        DummyTimeEvent(get_event_dt(7, offset="s"), "data4"),
+                        DummyTimeEvent(get_event_dt(7.9, offset="s"), "data4"),
+                    ],
+                ),
+            ),
+            ("BTCUSDT", "ohlc", DummyTimeEvent(get_event_dt(9, offset="s"), "data5")),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(11, offset="s"), "data6")),
+        ]
+        assert expected_events == batched_events
+
+        # test 2 (check if batcher is disabled)
+        nobatched_events = list(EventBatcher(events, passthrough=True))
+        assert events == nobatched_events
+
+    def test_batching_leftover_trades(self):
+        events = [
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(1, offset="ms"), "data1")),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(2, offset="ms"), "data2")),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(5, offset="ms"), "data3")),
+            ("ETHUSDT", "trade", DummyTimeEvent(get_event_dt(7, offset="s"), "data4")),
+            ("ETHUSDT", "trade", DummyTimeEvent(get_event_dt(7.9, offset="s"), "data4")),
+            ("BTCUSDT", "ohlc", DummyTimeEvent(get_event_dt(9, offset="s"), "data5")),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(11, offset="s"), "data6")),
+            ("ETHUSDT", "ohlc", DummyTimeEvent(get_event_dt(12, offset="s"), "data5")),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(13, offset="s"), "data6")),
+        ]
+        expected_events = [
+            (
+                "BTCUSDT",
+                "trade",
+                BatchEvent(
+                    get_event_dt(5, offset="ms"),  # type: ignore
+                    [
+                        DummyTimeEvent(get_event_dt(1, offset="ms"), "data1"),
+                        DummyTimeEvent(get_event_dt(2, offset="ms"), "data2"),
+                        DummyTimeEvent(get_event_dt(5, offset="ms"), "data3"),
+                    ],
+                ),
+            ),
+            (
+                "ETHUSDT",
+                "trade",
+                BatchEvent(
+                    get_event_dt(7.9, offset="s"),  # type: ignore
+                    [
+                        DummyTimeEvent(get_event_dt(7, offset="s"), "data4"),
+                        DummyTimeEvent(get_event_dt(7.9, offset="s"), "data4"),
+                    ],
+                ),
+            ),
+            ("BTCUSDT", "ohlc", DummyTimeEvent(get_event_dt(9, offset="s"), "data5")),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(11, offset="s"), "data6")),
+            ("ETHUSDT", "ohlc", DummyTimeEvent(get_event_dt(12, offset="s"), "data5")),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(13, offset="s"), "data6")),
+        ]
+        actual_output = list(EventBatcher(events))
+        assert expected_events == actual_output
