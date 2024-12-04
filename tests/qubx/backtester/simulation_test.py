@@ -21,7 +21,7 @@ class Issue1(IStrategy):
     _to_test: List[List[Instrument]] = []
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(Subtype.OHLC, timeframe="1h")
+        ctx.set_base_subscription(Subtype.OHLC["1h"])
         ctx.set_fit_schedule("59 22 * */1 L7")  # Run at 22:59 every month on Sunday
         ctx.set_event_schedule("55 23 * * *")  # Run at 23:55 every day
         self._to_test = [
@@ -59,7 +59,7 @@ class Issue2(IStrategy):
     _events_called = 0
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(Subtype.OHLC, timeframe="1h")
+        ctx.set_base_subscription(Subtype.OHLC["1h"])
         ctx.set_fit_schedule("59 22 * * *")  # Run at 22:59 every month on Sunday
         ctx.set_event_schedule("55 23 * * *")  # Run at 23:55 every day
         self._fits_called = 0
@@ -84,7 +84,7 @@ class Issue3(IStrategy):
     _market_events: list[MarketEvent]
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(Subtype.OHLC, timeframe="1h")
+        ctx.set_base_subscription(Subtype.OHLC["1h"])
         self._fits_called = 0
         self._triggers_called = 0
         self._market_events = []
@@ -103,7 +103,7 @@ class Issue4(IStrategy):
     _issues = 0
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(Subtype.OHLC, timeframe="1h")
+        ctx.set_base_subscription(Subtype.OHLC["1h"])
 
     def on_market_data(self, ctx: IStrategyContext, event: MarketEvent):
         try:
@@ -123,7 +123,7 @@ class Issue5(IStrategy):
     _out: OHLCV | None = None
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1d")
+        ctx.set_base_subscription(Subtype.OHLC["1d"])
         ctx.set_event_schedule("0 0 * * *")  # Run at 00:00 every day
 
     def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
@@ -151,7 +151,7 @@ class Test6_HistOHLC(IStrategy):
     _out_fit: Dict[Any, Any] = {}
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1d")
+        ctx.set_base_subscription(Subtype.OHLC["1d"])
         # ctx.set_fit_schedule("59 22 * */1 L7")
         # ctx.set_event_schedule("55 23 * * *")
         # ctx.set_fit_schedule("0 0 * */1 L1")

@@ -2,8 +2,8 @@ from dataclasses import dataclass
 import pandas as pd
 
 from qubx import lookup
-from qubx.backtester.queue import EventBatcher
-from qubx.backtester.simulated_data import IterableSimulationData, IteratedDataStreamsSlicer
+from qubx.backtester.simulated_data import IterableSimulationData, IteratedDataStreamsSlicer, EventBatcher
+
 from qubx.core.basics import BatchEvent, Subtype
 from qubx.data.helpers import loader
 
@@ -229,12 +229,18 @@ class TestSimulatedDataStuff:
         isd.add_instruments_for_subscription(Subtype.OHLC["1d"], s3)
         isd.add_instruments_for_subscription(Subtype.OHLC_TICKS["4h"], s1)
 
+        # has subscription
+        assert isd.has_subscription(s3, "ohlc(4h)")
+
+        # has subscription
+        assert not isd.has_subscription(s1, "ohlc(1d)")
+
         # get all instruments for ANY subscription
         assert set(isd.get_instruments_for_subscription(Subtype.ALL)) == set([s1, s2, s3])
 
         # get subs for instrument
         assert isd.get_subscriptions_for_instrument(s3) == list(
-            map(Subtype.from_str, [Subtype.OHLC["1h"], Subtype.OHLC["4h"], Subtype.OHLC["1d"]])
+            set([Subtype.OHLC["1h"], Subtype.OHLC["4h"], Subtype.OHLC["1d"]])
         )
 
         assert isd.get_instruments_for_subscription(Subtype.OHLC["4h"]) == [s3]
@@ -245,6 +251,10 @@ class TestSimulatedDataStuff:
 
         isd.remove_instruments_from_subscription(Subtype.OHLC["1h"], [s1, s2, s3])
         assert isd.get_instruments_for_subscription(Subtype.OHLC["1h"]) == []
+
+        assert isd.get_subscriptions_for_instrument(None) == list(
+            set([Subtype.OHLC["4h"], Subtype.OHLC_TICKS["4h"], Subtype.OHLC["1d"]])
+        )
 
     def test_iterable_simulation_data_queue_with_warmup(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h", n_jobs=1)

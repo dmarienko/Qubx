@@ -1,6 +1,7 @@
 from typing import Any, Optional, List
 
 from pandas import Timestamp
+import pandas as pd
 
 from qubx import QubxLogConfig, lookup, logger
 from qubx.core.account import AccountProcessor
@@ -143,7 +144,7 @@ class GuineaPig(IStrategy):
     tests = {}
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(Subtype.OHLC, timeframe="1Min")
+        ctx.set_base_subscription(Subtype.OHLC["1Min"])
 
     def on_fit(self, ctx: IStrategyContext):
         self.tests = {recognize_time(k): v for k, v in self.tests.items()}
@@ -157,7 +158,6 @@ class GuineaPig(IStrategy):
 
 
 class TestTrackersAndGatherers:
-
     def test_simple_tracker_sizer(self):
         ctx = DebugStratageyCtx(instrs := [lookup.find_symbol("BINANCE.UM", "BTCUSDT")], 10000)
         tracker = PositionsTracker(FixedSizer(1000.0, amount_in_quote=False))
@@ -184,7 +184,6 @@ class TestTrackersAndGatherers:
         assert s[0].target_position_size == i.round_size_down((_cap_in_risk / ((_entry - _stop) / _entry)) / _entry)
 
     def test_atr_tracker(self):
-
         I = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         assert I is not None
 
@@ -196,7 +195,7 @@ class TestTrackersAndGatherers:
             slow_period = 12
 
             def on_init(self, ctx: IStrategyContext) -> None:
-                ctx.set_base_subscription(Subtype.OHLC, timeframe=self.timeframe)
+                ctx.set_base_subscription(Subtype.OHLC[self.timeframe])
 
             def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
                 signals = []

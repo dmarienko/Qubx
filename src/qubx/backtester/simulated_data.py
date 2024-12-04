@@ -2,13 +2,12 @@ import math
 import pandas as pd
 
 from collections import defaultdict, deque
-from typing import Any, Iterator, TypeAlias
+from typing import Any, Iterable, Iterator, TypeAlias
 
 from qubx import logger
-from qubx.core.basics import Instrument, Subtype
+from qubx.core.basics import Instrument, Subtype, dt_64, BatchEvent
 from qubx.core.series import Quote, Trade, Bar, OrderBook
 from qubx.data.readers import (
-    AsTimestampedRecords,
     DataReader,
     DataTransformer,
     RestoreTicksFromOHLC,
@@ -257,6 +256,10 @@ class IterableSimulationData(Iterator):
         - Handles warmup periods for data preloading.
         - Manages historical and current data distinction during iteration.
         - Utilizes a data slicer (IteratedDataStreamsSlicer) to merge and order data from multiple sources.
+
+    TODO:
+        1. think how to provide initial "market quote" for each instrument
+        2. optimization for historical data (return bunch of history instead of each bar in next(...))
     """
 
     _reader: DataReader
@@ -340,12 +343,21 @@ class IterableSimulationData(Iterator):
 
         return []
 
-    def get_subscriptions_for_instrument(self, instrument: Instrument) -> list[Subtype]:
+    def get_subscriptions_for_instrument(self, instrument: Instrument | None) -> list[str]:
         r = []
         for i, f, s in self._instruments.values():
-            if i == instrument:
-                r.append(Subtype.from_str(s))
-        return r
+            if instrument is not None:
+                if i == instrument:
+                    r.append(s)
+            else:
+                r.append(s)
+        return list(set(r))
+
+    def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
+        for i, f, s in self._instruments.values():
+            if i == instrument and s == subscription_type:
+                return True
+        return False
 
     def remove_instruments_from_subscription(self, subscription: str, instruments: list[Instrument] | Instrument):
         def _remove_from_fetcher(_subt_key: str, instruments: list[Instrument]):
@@ -416,3 +428,63 @@ class IterableSimulationData(Iterator):
                 return instr, data_type, v
         except StopIteration as e:
             raise StopIteration
+
+
+class EventBatcher:
+    _BATCH_SETTINGS = {
+        "trade": "1Sec",
+        "orderbook": "1Sec",
+    }
+
+    def __init__(self, source_iterator: Iterator | Iterable, passthrough: bool = False, **kwargs):
+        self.source_iterator = source_iterator
+        self._passthrough = passthrough
+        self._batch_settings = {**self._BATCH_SETTINGS, **kwargs}
+        self._batch_settings = {k: pd.Timedelta(v) for k, v in self._batch_settings.items()}
+
+    def __iter__(self) -> Iterator[tuple[Instrument, str, Any]]:
+        if self._passthrough:
+            _iter = iter(self.source_iterator) if isinstance(self.source_iterator, Iterable) else self.source_iterator
+            yield from _iter
+            return
+
+        last_instrument: Instrument = None  # type: ignore
+        last_data_type: str = None  # type: ignore
+        buffer = []
+        for instrument, data_type, event in self.source_iterator:
+            time: dt_64 = event.time  # type: ignore
+
+            if data_type not in self._batch_settings:
+                if buffer:
+                    yield last_instrument, last_data_type, self._batch_event(buffer)
+                    buffer = []
+                yield instrument, data_type, event
+                last_instrument, last_data_type = instrument, data_type
+                continue
+
+            if instrument != last_instrument:
+                if buffer:
+                    yield last_instrument, last_data_type, self._batch_event(buffer)
+                last_instrument, last_data_type = instrument, data_type
+                buffer = [event]
+                continue
+
+            if buffer and data_type != last_data_type:
+                yield instrument, last_data_type, buffer
+                buffer = [event]
+                last_instrument, last_data_type = instrument, data_type
+                continue
+
+            last_instrument, last_data_type = instrument, data_type
+            buffer.append(event)
+            if pd.Timedelta(time - buffer[0].time) >= self._batch_settings[data_type]:
+                yield instrument, data_type, self._batch_event(buffer)
+                buffer = []
+                last_instrument, last_data_type = None, None  # type: ignore
+
+        if buffer:
+            yield last_instrument, last_data_type, self._batch_event(buffer)
+
+    @staticmethod
+    def _batch_event(buffer: list[Any]) -> Any:
+        return BatchEvent(buffer[-1].time, buffer) if len(buffer) > 1 else buffer[0]

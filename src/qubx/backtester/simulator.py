@@ -1,59 +1,51 @@
-import numpy as np
-import stackprinter
-import pandas as pd
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, TypeAlias, Callable, Literal
 from enum import Enum
+from typing import Any, Dict, List, Literal, Optional, Tuple, TypeAlias
+
+import numpy as np
+import pandas as pd
+import stackprinter
+from joblib import delayed
 from tqdm.auto import tqdm
 
-from qubx import lookup, logger, QubxLogConfig
-from qubx.backtester.simulated_data import IterableSimulationData
+from qubx import QubxLogConfig, logger, lookup
+from qubx.backtester.ome import OmeReport, OrdersManagementEngine
+from qubx.backtester.simulated_data import EventBatcher, IterableSimulationData
 from qubx.core.account import AccountProcessor
-from qubx.core.helpers import BasicScheduler
-from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
-from qubx.core.series import Quote, time_as_nsec
 from qubx.core.basics import (
-    ITimeProvider,
-    Instrument,
     Deal,
+    Instrument,
+    ITimeProvider,
     Order,
+    Position,
     Signal,
     SimulatedCtrlChannel,
-    Position,
+    Subtype,
     TradingSessionResult,
     TransactionCostsCalculator,
     dt_64,
-    Subtype,
 )
-from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
+from qubx.core.context import StrategyContext
+from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import (
-    IStrategy,
     IBrokerServiceProvider,
+    IStrategy,
+    IStrategyContext,
     ITradingServiceProvider,
     PositionsTracker,
-    IStrategyContext,
     TriggerEvent,
 )
-
-from qubx.core.context import StrategyContext
-from qubx.backtester.ome import OrdersManagementEngine, OmeReport
-
+from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
+from qubx.core.series import OHLCV, Bar, Quote, TimeSeries, Trade, time_as_nsec
 from qubx.data.helpers import InMemoryCachedReader, TimeGuardedWrapper
 from qubx.data.readers import (
-    AsTrades,
-    DataReader,
-    DataTransformer,
-    RestoreTicksFromOHLC,
-    AsQuotes,
     AsTimestampedRecords,
+    DataReader,
     InMemoryDataFrameReader,
 )
-from qubx.pandaz.utils import scols
 from qubx.utils.misc import ProgressParallel
 from qubx.utils.time import infer_series_frequency
-from joblib import delayed
-from .queue import DataLoader, SimulatedDataQueue, EventBatcher
 
 StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
 
@@ -390,7 +382,7 @@ class SimulatedExchange(IBrokerServiceProvider):
     _current_time: dt_64
     _hist_data_type: str
     _pregenerated_signals: Dict[Instrument, pd.Series]
-    _simulated_data_bus: IterableSimulationData
+    _data_src: IterableSimulationData
 
     def __init__(
         self,
@@ -421,87 +413,39 @@ class SimulatedExchange(IBrokerServiceProvider):
         self._pregenerated_signals = dict()
         self._to_process = {}
 
-        # - data queue
-        self._simulated_data_bus = IterableSimulationData(self._reader)
+        # - simulation data source
+        self._data_src = IterableSimulationData(self._reader)
 
         logger.info(f"SimulatedData.{exchange_id} initialized")
 
     def subscribe(self, subscription_type: str, instruments: set[Instrument], reset: bool) -> None:
-        print(f">>>> subscribe: {subscription_type} -> {instruments}")
-        # units = kwargs.get("timestamp_units", "ns")
+        logger.debug(f" | subscribe: {subscription_type} -> {instruments}")
+        self._data_src.add_instruments_for_subscription(subscription_type, list(instruments))
 
-        # for inst in instruments:
-        #     logger.debug(
-        #         f"SimulatedExchangeService :: subscribe :: {instr.symbol}({subscription_type}, {warmup_period}, {timeframe})"
-        #     )
-        #     self._symbol_to_instrument[instr.symbol] = instr
-
-        #     _params: Dict[str, Any] = dict(
-        #         reader=self._reader,
-        #         instrument=instr,
-        #         warmup_period=warmup_period,
-        #         timeframe=timeframe,
-        #     )
-
-        #     # - for ohlc data we need to restore ticks from OHLC bars
-        #     if subscription_type == Subtype.OHLC:
-        #         _params["transformer"] = RestoreTicksFromOHLC(
-        #             trades="trades" in subscription_type,
-        #             spread=instr.min_tick,
-        #             timestamp_units=units,
-        #         )
-        #         _params["output_type"] = Subtype.QUOTE
-        #     elif subscription_type == Subtype.QUOTE:
-        #         _params["transformer"] = AsQuotes()
-        #     elif subscription_type == Subtype.TRADE:
-        #         _params["transformer"] = AsTrades()
-        #     else:
-        #         raise ValueError(f"Unknown subscription type: {subscription_type}")
-
-        #     _params["data_type"] = subscription_type
-
-        #     # - add loader for this instrument
-        #     ldr = DataLoader(**_params)
-        #     self._loaders[instr][subscription_type] = ldr
-        #     self._data_queue += ldr
-
-        # return True
-
-    def unsubscribe(self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None) -> None:
-        pass
-        # for instr in instruments:
-        #     if instr.symbol in self._loaders:
-        #         if subscription_type:
-        #             logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol} :: {subscription_type}")
-        #             self._data_queue -= self._loaders[instr].pop(subscription_type)
-        #             if not self._loaders[instr]:
-        #                 self._loaders.pop(instr)
-        #         else:
-        #             logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol}")
-        #             for ldr in self._loaders[instr].values():
-        #                 self._data_queue -= ldr
-        #             self._loaders.pop(instr)
-        # return True
+    def unsubscribe(self, subscription_type: str, instruments: set[Instrument] | Instrument | None = None) -> None:
+        logger.debug(f" | unsubscribe: {subscription_type} -> {instruments}")
+        if instruments is not None:
+            self._data_src.remove_instruments_from_subscription(
+                subscription_type, [instruments] if isinstance(instruments, Instrument) else list(instruments)
+            )
 
     def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
-        ...
-        # return instrument in self._loaders and subscription_type in self._loaders[instrument]
+        return self._data_src.has_subscription(instrument, subscription_type)
 
-    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
-        # TODO: implement
-        # return {k: v.params for k, v in self._loaders[instrument].items()}
-        print(f" >>> get_subscriptions {instrument}")
-        return {}
+    def get_subscriptions(self, instrument: Instrument) -> list[str]:
+        _s_lst = self._data_src.get_subscriptions_for_instrument(instrument)
+        logger.debug(f" | get_subscriptions {instrument} -> {_s_lst}")
+        return _s_lst
 
     def get_subscribed_instruments(self, subscription_type: str | None = None) -> list[Instrument]:
-        print(f" >> get_subscribed_instruments {subscription_type}")
-        return []
+        _in_lst = self._data_src.get_instruments_for_subscription(subscription_type or Subtype.ALL)
+        logger.debug(f" | get_subscribed_instruments {subscription_type} -> {_in_lst}")
+        return _in_lst
 
-    def warmup(self, configs: Dict[Tuple[str, Instrument], str]) -> None:
-        # - TODO:
-        # 1. run warm up for each instrument
-        # 2. provide initial "market quote" for each instrument
-        print(f" ~~~ Warming up {configs}")
+    def warmup(self, configs: dict[tuple[str, Instrument], str]) -> None:
+        for si, warm_period in configs.items():
+            logger.debug(f" | Warming up {si} -> {warm_period}")
+            self._data_src.set_warmup_period(si[0], warm_period)
 
     def _try_add_process_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
         if self._pregenerated_signals:
@@ -521,9 +465,7 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         _run = self._run_generated_signals if self._pregenerated_signals else self._run_as_strategy
 
-        qiter = EventBatcher(
-            self._simulated_data_bus.create_iterable(start, end), passthrough=not enable_event_batching
-        )
+        qiter = EventBatcher(self._data_src.create_iterable(start, end), passthrough=not enable_event_batching)
         start, end = pd.Timestamp(start), pd.Timestamp(end)
         total_duration = end - start
         update_delta = total_duration / 100
@@ -929,7 +871,7 @@ class SignalsProxy(IStrategy):
     timeframe: str = "1m"
 
     def on_init(self, ctx: IStrategyContext):
-        ctx.set_base_subscription(Subtype.OHLC, timeframe=self.timeframe)
+        ctx.set_base_subscription(Subtype.OHLC[self.timeframe])
 
     def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
         if event.data and event.type == "event":
