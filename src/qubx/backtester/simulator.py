@@ -384,7 +384,9 @@ class SimulatedExchange(IBrokerServiceProvider):
     _to_process: dict[Instrument, list]
     _data_source: IterableSimulationData
 
-    def __init__(self, exchange_id: str, trading_service: SimulatedTrading, reader: DataReader):
+    def __init__(
+        self, exchange_id: str, trading_service: SimulatedTrading, reader: DataReader, open_close_time_indent_secs=1
+    ):
         super().__init__(exchange_id, trading_service)
         self._reader = reader
         exchange_id = exchange_id.lower()
@@ -405,7 +407,9 @@ class SimulatedExchange(IBrokerServiceProvider):
         self._to_process = {}
 
         # - simulation data source
-        self._data_source = IterableSimulationData(self._reader)
+        self._data_source = IterableSimulationData(
+            self._reader, open_close_time_indent_secs=open_close_time_indent_secs
+        )
 
         logger.info(f"{self.__class__.__name__}.{exchange_id} is initialized")
 
@@ -712,6 +716,7 @@ def simulate(
     enable_event_batching: bool = True,
     accurate_stop_orders_execution: bool = False,
     aux_data: DataReader | None = None,
+    open_close_time_indent_secs=1,
     debug: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None = "WARNING",
 ) -> list[TradingSessionResult]:
     """
@@ -826,6 +831,7 @@ def simulate(
         accurate_stop_orders_execution=accurate_stop_orders_execution,
         aux_data=aux_data,
         signal_timeframe=signal_timeframe,
+        open_close_time_indent_secs=open_close_time_indent_secs,
     )
 
 
@@ -888,6 +894,7 @@ def _run_setups(
     enable_event_batching: bool = True,
     accurate_stop_orders_execution: bool = False,
     aux_data: DataReader | None = None,
+    open_close_time_indent_secs=1,
     **kwargs,
 ) -> List[TradingSessionResult]:
     # loggers don't work well with joblib and multiprocessing in general because they contain
@@ -909,6 +916,7 @@ def _run_setups(
             enable_event_batching=enable_event_batching,
             accurate_stop_orders_execution=accurate_stop_orders_execution,
             aux_data_provider=aux_data,
+            open_close_time_indent_secs=open_close_time_indent_secs,
             **kwargs,
         )
         for id, s in enumerate(setups)
@@ -927,6 +935,7 @@ def _run_setup(
     accurate_stop_orders_execution: bool = False,
     aux_data_provider: InMemoryCachedReader | None = None,
     signal_timeframe: str = "1Min",
+    open_close_time_indent_secs=1,
 ) -> TradingSessionResult:
     _stop = stop
     logger.debug(
@@ -938,7 +947,9 @@ def _run_setup(
         np.datetime64(start, "ns"),
         accurate_stop_orders_execution=accurate_stop_orders_execution,
     )
-    broker = SimulatedExchange(setup.exchange, trading_service, data_reader)
+    broker = SimulatedExchange(
+        setup.exchange, trading_service, data_reader, open_close_time_indent_secs=open_close_time_indent_secs
+    )
 
     # - it will store simulation results into memory
     logs_writer = InMemoryLogsWriter("test", setup.name, "0")
