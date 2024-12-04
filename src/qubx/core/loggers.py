@@ -1,19 +1,26 @@
-import csv, os
+import csv
+import os
+from multiprocessing.pool import ThreadPool
+from typing import Any, Dict, List, Tuple
+
 import numpy as np
 import pandas as pd
 
-from typing import Any, Dict, List, Tuple
-from multiprocessing.pool import ThreadPool
-
 from qubx import logger
-from qubx.core.basics import Deal, Position, Signal, TargetPosition, Instrument, AssetBalance
-
+from qubx.core.basics import (
+    AssetBalance,
+    Deal,
+    Instrument,
+    Position,
+    Signal,
+    TargetPosition,
+)
 from qubx.core.metrics import split_cumulative_pnl
 from qubx.core.series import time_as_nsec
-from qubx.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
-from qubx.utils.time import floor_t64, convert_tf_str_td64
+from qubx.core.utils import recognize_timeframe, time_delta_to_str, time_to_str
 from qubx.pandaz.utils import scols
-from qubx.utils.misc import makedirs, Stopwatch
+from qubx.utils.misc import Stopwatch, makedirs
+from qubx.utils.time import convert_tf_str_td64, floor_t64
 
 _SW = Stopwatch()
 
@@ -130,7 +137,6 @@ class CsvFileLogsWriter(LogsWriter):
 
     def _do_write(self, log_type, data):
         match log_type:
-
             case "positions":
                 with open(self._pos_file_path, "w", newline="") as f:
                     w = csv.writer(f)
@@ -298,6 +304,7 @@ class ExecutionsLogger(_BaseIntervalDumper):
                 {
                     "timestamp": d.time,
                     "instrument_id": i.symbol,
+                    "exchange_id": i.exchange,
                     "side": "buy" if d.amount > 0 else "sell",
                     "filled_qty": d.amount,
                     "price": d.price,

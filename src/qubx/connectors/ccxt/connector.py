@@ -187,7 +187,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
             return await asyncio.gather(*_coros)
 
         if _coros:
-            asyncio.run_coroutine_threadsafe(gather_coros(), self._loop).result(self._warmup_timeout)
+            self._loop.submit(gather_coros()).result(self._warmup_timeout)
 
     def get_quote(self, instrument: Instrument) -> Quote | None:
         return self._last_quotes[instrument]
@@ -205,8 +205,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
                 symbol, self._get_exch_timeframe(timeframe), since=since, limit=nbarsback + 1
             )  # type: ignore
 
-        fut = asyncio.run_coroutine_threadsafe(_get(), self._loop)
-        res = fut.result(60)
+        res = self._loop.submit(_get()).result(60)
 
         _arr = []
         for oh in res:  # type: ignore

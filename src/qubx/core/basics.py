@@ -8,10 +8,9 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
-from qubx import logger
 from qubx.core.exceptions import QueueTimeout
 from qubx.core.series import Quote, Trade, time_as_nsec
-from qubx.core.utils import prec_ceil, prec_floor
+from qubx.core.utils import prec_ceil, prec_floor, time_delta_to_str
 from qubx.utils.misc import Stopwatch
 
 dt_64 = np.datetime64
@@ -226,11 +225,9 @@ class Instrument:
         return hash((self.symbol, self.exchange, self.market_type))
 
     def __eq__(self, other: Any) -> bool:
-        if other is None:
+        if other is None or not isinstance(other, Instrument):
             return False
-        if type(other) != type(self):
-            return False
-        return self.symbol == other.symbol and self.exchange == other.exchange and self.market_type == other.market_type
+        return str(self) == str(other)
 
     def __str__(self) -> str:
         return ":".join([self.exchange, self.market_type, self.symbol])
@@ -401,7 +398,7 @@ class Position:
     position_avg_price_funds: float = 0.0  # average position price
     commissions: float = 0.0  # cumulative commissions paid for this position
 
-    last_update_time: int = np.nan  # when price updated or position changed
+    last_update_time: int = np.nan  # when price updated or position changed    # type: ignore
     last_update_price: float = np.nan  # last update price (actually instrument's price) in quoted currency
     last_update_conversion_rate: float = np.nan  # last update conversion rate
 
@@ -675,30 +672,6 @@ class CtrlChannel:
             raise QueueTimeout(f"Timeout waiting for data on {self.name} channel")
 
 
-class SimulatedCtrlChannel(CtrlChannel):
-    """
-    Simulated communication channel. Here we don't use queue but it invokes callback directly
-    """
-
-    _callback: Callable[[Tuple], bool]
-
-    def register(self, callback):
-        self._callback = callback
-
-    def send(self, data):
-        # - when data is sent, invoke callback
-        return self._callback.process_data(*data)
-
-    def receive(self, timeout: int | None = None) -> Any:
-        raise ValueError("This method should not be called in a simulated environment.")
-
-    def stop(self):
-        self.control.clear()
-
-    def start(self):
-        self.control.set()
-
-
 class ICommunicationManager:
     databus: CtrlChannel
 
@@ -736,6 +709,7 @@ class Subtype(StrEnum):
     ORDERBOOK = "orderbook"
     LIQUIDATION = "liquidation"
     FUNDING_RATE = "funding_rate"
+    OHLC_TICKS = "ohlc_ticks"  # when we want to emulate ticks from OHLC data
 
     def __repr__(self) -> str:
         return self.value
@@ -753,7 +727,7 @@ class Subtype(StrEnum):
 
     def __getitem__(self, *args, **kwargs) -> str:
         match self:
-            case Subtype.OHLC:
+            case Subtype.OHLC | Subtype.OHLC_TICKS:
                 tf = args[0] if args else kwargs.get("timeframe")
                 if not tf:
                     raise ValueError("Timeframe is not provided for OHLC subscription")
@@ -800,9 +774,14 @@ class Subtype(StrEnum):
                 params = [p.strip() for p in params_str.rstrip(")").split(",")]
                 match type_name.lower():
                     case Subtype.OHLC.value:
-                        return Subtype.OHLC, {"timeframe": params[0]}
+                        return Subtype.OHLC, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
+
+                    case Subtype.OHLC_TICKS.value:
+                        return Subtype.OHLC_TICKS, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
+
                     case Subtype.ORDERBOOK.value:
                         return Subtype.ORDERBOOK, {"tick_size_pct": float(params[0]), "depth": int(params[1])}
+
                     case _:
                         return Subtype.NONE, {}
         except IndexError:
@@ -819,7 +798,7 @@ class TradingSessionResult:
     start: str | pd.Timestamp
     stop: str | pd.Timestamp
     exchange: str
-    instruments: List[Instrument]
+    instruments: list[Instrument]
     capital: float
     leverage: float
     base_currency: str
@@ -836,7 +815,7 @@ class TradingSessionResult:
         start: str | pd.Timestamp,
         stop: str | pd.Timestamp,
         exchange: str,
-        instruments: List[Instrument],
+        instruments: list[Instrument],
         capital: float,
         leverage: float,
         base_currency: str,
