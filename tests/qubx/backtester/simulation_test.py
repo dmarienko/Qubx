@@ -78,13 +78,15 @@ class Issue2(IStrategy):
 class Issue3(IStrategy):
     _fits_called = 0
     _triggers_called = 0
-    _market_called = 0
+    _market_quotes_called = 0
+    _market_ohlc_called = 0
     _last_trigger_event: TriggerEvent | None = None
     _last_market_event: MarketEvent | None = None
     _market_events: list[MarketEvent]
 
     def on_init(self, ctx: IStrategyContext) -> None:
         ctx.set_base_subscription(Subtype.OHLC["1h"])
+        # ctx.set_base_subscription(Subtype.OHLC_TICKS["1h"])
         self._fits_called = 0
         self._triggers_called = 0
         self._market_events = []
@@ -94,9 +96,50 @@ class Issue3(IStrategy):
         self._last_trigger_event = event
 
     def on_market_data(self, ctx: IStrategyContext, event: MarketEvent):
-        self._market_called += 1
-        self._last_market_event = event
+        print(event.type)
+        if event.type == Subtype.QUOTE:
+            self._market_quotes_called += 1
+
+        if event.type == Subtype.OHLC:
+            self._market_ohlc_called += 1
+
         self._market_events.append(event)
+        self._last_market_event = event
+
+
+class Issue3_OHLC_TICKS(IStrategy):
+    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    # TODO: need to check how it's passed in simulator
+    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    _fits_called = 0
+    _triggers_called = 0
+    _market_quotes_called = 0
+    _market_ohlc_called = 0
+    _last_trigger_event: TriggerEvent | None = None
+    _last_market_event: MarketEvent | None = None
+    _market_events: list[MarketEvent]
+
+    def on_init(self, ctx: IStrategyContext) -> None:
+        # - this will creates quotes from OHLC
+        ctx.set_base_subscription(Subtype.OHLC_TICKS["1h"])
+        self._fits_called = 0
+        self._triggers_called = 0
+        self._market_events = []
+
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent):
+        self._triggers_called += 1
+        self._last_trigger_event = event
+
+    def on_market_data(self, ctx: IStrategyContext, event: MarketEvent):
+        print(event.type)
+        if event.type == Subtype.QUOTE:
+            self._market_quotes_called += 1
+
+        if event.type == Subtype.OHLC:
+            self._market_ohlc_called += 1
+
+        self._market_events.append(event)
+        self._last_market_event = event
 
 
 class Issue4(IStrategy):
@@ -250,7 +293,7 @@ class TestSimulator:
         )
 
         # +1 because first event is used for on_fit and skipped for on_market_data
-        assert stg._triggers_called * 4 == stg._market_called + 1, "Got Errors during the simulation"
+        assert stg._triggers_called * 4 == stg._market_quotes_called + 1, "Got Errors during the simulation"
 
     def test_ohlc_quote_update(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
@@ -311,3 +354,18 @@ class TestSimulator:
 
         r = ld_test[["BTCUSDT", "ETHUSDT"], "2023-07-01":"2023-07-03 23:59:59"]("1d")  # type: ignore
         assert all(pd.DataFrame.from_dict(stg._out, orient="index") == r.close)
+
+    def test_ohlc_tick_data_subscription(self):
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        # TODO: need to check how it's passed in simulator
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
+        # fmt: off
+        simulate(
+            { "fail3_ohlc_ticks": (stg := Issue3_OHLC_TICKS()), },
+            ld, aux_data=ld, capital=100_000, debug="DEBUG", n_jobs=1, instruments=["BINANCE.UM:BTCUSDT"], commissions="vip0_usdt",
+            start="2023-06-01", stop="2023-06-10",
+        )
+        # fmt: on
+
+        assert stg._triggers_called * 4 == stg._market_quotes_called + 1, "Got Errors during the simulation"

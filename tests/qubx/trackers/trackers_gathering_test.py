@@ -390,24 +390,23 @@ class TestTrackersAndGatherers:
         assert not t2.is_active(I)
 
     def test_stop_loss_broker_side(self):
+        T = pd.Timestamp
         reader = CsvStorageDataReader("tests/data/csv")
-        ohlc = reader.read("BTCUSDT_ohlcv_M1", transform=AsPandasFrame())
-        assert isinstance(ohlc, pd.DataFrame)
-        i1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
-        assert i1 is not None
+        assert isinstance(ohlc := reader.read("BTCUSDT_ohlcv_M1", transform=AsPandasFrame()), pd.DataFrame)
+        assert (i1 := lookup.find_symbol("BINANCE.UM", "BTCUSDT")) is not None
 
-        S = pd.DataFrame(
-            {
-                i1: {
-                    pd.Timestamp("2024-01-10 15:08:59.716000"): 1,
-                    pd.Timestamp("2024-01-10 15:10:52.679000"): 1,
-                    pd.Timestamp("2024-01-10 15:32:44.798000"): 1,
-                    pd.Timestamp("2024-01-10 15:59:55.303000"): 1,
-                    pd.Timestamp("2024-01-10 16:09:00.970000"): 1,
-                    pd.Timestamp("2024-01-10 16:12:34.233000"): 1,
-                    pd.Timestamp("2024-01-10 19:16:00.905000"): 1,
-                    pd.Timestamp("2024-01-10 19:44:37.785000"): 1,
-                    pd.Timestamp("2024-01-10 20:06:00.322000"): 1,
+        # fmt: off
+        S = pd.DataFrame({ 
+            i1: {
+                    T("2024-01-10 15:08:59.716000"): 1,
+                    T("2024-01-10 15:10:52.679000"): 1,
+                    T("2024-01-10 15:32:44.798000"): 1,
+                    T("2024-01-10 15:59:55.303000"): 1,
+                    T("2024-01-10 16:09:00.970000"): 1,
+                    T("2024-01-10 16:12:34.233000"): 1,
+                    T("2024-01-10 19:16:00.905000"): 1,
+                    T("2024-01-10 19:44:37.785000"): 1,
+                    T("2024-01-10 20:06:00.322000"): 1,
                 }
             }
         )
@@ -417,14 +416,9 @@ class TestTrackersAndGatherers:
                 "liq_buy_bounces_c": [S, StopTakePositionTracker(2.5, 0.5, FixedLeverageSizer(0.1), "client")],
                 "liq_buy_bounces_b": [S, StopTakePositionTracker(2.5, 0.5, FixedLeverageSizer(0.1), "broker")],
             },
-            {f"BINANCE.UM:BTCUSDT": ohlc},
-            10000,
-            ["BINANCE.UM:BTCUSDT"],
-            "vip9_usdt",
-            S.index[0] - pd.Timedelta("5Min"),
-            S.index[-1] + pd.Timedelta("5Min"),
-            signal_timeframe="1Min",
-            debug="DEBUG",
+            {"BINANCE.UM:BTCUSDT": ohlc}, 10000, ["BINANCE.UM:BTCUSDT"], "vip9_usdt",
+            S.index[0] - pd.Timedelta("5Min"), S.index[-1] + pd.Timedelta("5Min"),
+            signal_timeframe="1Min", debug="DEBUG"
         )
         assert len(rep[0].executions_log) == len(rep[1].executions_log)
 
@@ -436,3 +430,5 @@ class TestTrackersAndGatherers:
         )
         assert N(mtrx0["gain"]) == 23.87925
         assert N(mtrx1["gain"]) == 23.36390
+
+        # fmt: on

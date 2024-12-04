@@ -93,7 +93,7 @@ class IteratedDataStreamsSlicer(Iterator[_D]):
                 # - get next chunk of data
                 data.extend(self._load_next_chunk_to_buffer(k))
             except StopIteration:
-                print(f" > Iterator[{k}] is empty")
+                # print(f" > Iterator[{k}] is empty")
                 # - remove iterable data
                 self._buffers.pop(k)
                 self._iterators.pop(k)

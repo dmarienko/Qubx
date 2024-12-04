@@ -380,27 +380,18 @@ class SimulatedExchange(IBrokerServiceProvider):
     _last_quotes: Dict[Instrument, Optional[Quote]]
     _scheduler: BasicScheduler
     _current_time: dt_64
-    _hist_data_type: str
-    _pregenerated_signals: Dict[Instrument, pd.Series]
-    _data_src: IterableSimulationData
+    _pregenerated_signals: dict[Instrument, pd.Series]
+    _to_process: dict[Instrument, list]
+    _data_source: IterableSimulationData
 
-    def __init__(
-        self,
-        exchange_id: str,
-        trading_service: SimulatedTrading,
-        reader: DataReader,
-        hist_data_type: str = "ohlc",
-    ):
+    def __init__(self, exchange_id: str, trading_service: SimulatedTrading, reader: DataReader):
         super().__init__(exchange_id, trading_service)
         self._reader = reader
-        self._hist_data_type = hist_data_type
         exchange_id = exchange_id.lower()
 
         # - create exchange's instance
         self._last_quotes = defaultdict(lambda: None)
         self._current_time = self.trading_service.time()
-        # self._loaders = defaultdict(dict)
-        self._symbol_to_instrument: dict[str, Instrument] = {}
 
         # - setup communication bus
         self.set_communication_channel(bus := SimulatedCtrlChannel("databus", sentinel=(None, None, None)))
@@ -414,44 +405,43 @@ class SimulatedExchange(IBrokerServiceProvider):
         self._to_process = {}
 
         # - simulation data source
-        self._data_src = IterableSimulationData(self._reader)
+        self._data_source = IterableSimulationData(self._reader)
 
-        logger.info(f"SimulatedData.{exchange_id} initialized")
+        logger.info(f"{self.__class__.__name__}.{exchange_id} is initialized")
 
     def subscribe(self, subscription_type: str, instruments: set[Instrument], reset: bool) -> None:
         logger.debug(f" | subscribe: {subscription_type} -> {instruments}")
-        self._data_src.add_instruments_for_subscription(subscription_type, list(instruments))
+        self._data_source.add_instruments_for_subscription(subscription_type, list(instruments))
 
     def unsubscribe(self, subscription_type: str, instruments: set[Instrument] | Instrument | None = None) -> None:
         logger.debug(f" | unsubscribe: {subscription_type} -> {instruments}")
         if instruments is not None:
-            self._data_src.remove_instruments_from_subscription(
+            self._data_source.remove_instruments_from_subscription(
                 subscription_type, [instruments] if isinstance(instruments, Instrument) else list(instruments)
             )
 
     def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
-        return self._data_src.has_subscription(instrument, subscription_type)
+        return self._data_source.has_subscription(instrument, subscription_type)
 
     def get_subscriptions(self, instrument: Instrument) -> list[str]:
-        _s_lst = self._data_src.get_subscriptions_for_instrument(instrument)
+        _s_lst = self._data_source.get_subscriptions_for_instrument(instrument)
         logger.debug(f" | get_subscriptions {instrument} -> {_s_lst}")
         return _s_lst
 
     def get_subscribed_instruments(self, subscription_type: str | None = None) -> list[Instrument]:
-        _in_lst = self._data_src.get_instruments_for_subscription(subscription_type or Subtype.ALL)
+        _in_lst = self._data_source.get_instruments_for_subscription(subscription_type or Subtype.ALL)
         logger.debug(f" | get_subscribed_instruments {subscription_type} -> {_in_lst}")
         return _in_lst
 
     def warmup(self, configs: dict[tuple[str, Instrument], str]) -> None:
         for si, warm_period in configs.items():
             logger.debug(f" | Warming up {si} -> {warm_period}")
-            self._data_src.set_warmup_period(si[0], warm_period)
+            self._data_source.set_warmup_period(si[0], warm_period)
 
-    def _try_add_process_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
-        if self._pregenerated_signals:
-            for s, v in self._pregenerated_signals.items():
-                sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
-                self._to_process[s] = list(zip(sel.index, sel.values))
+    def _prepare_generated_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
+        for s, v in self._pregenerated_signals.items():
+            sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
+            self._to_process[s] = list(zip(sel.index, sel.values))
 
     def run(
         self,
@@ -460,12 +450,16 @@ class SimulatedExchange(IBrokerServiceProvider):
         silent: bool = False,
         enable_event_batching: bool = True,
     ) -> None:
-        logger.info(f"SimulatedExchangeService :: run :: Simulation started at {start}")
-        self._try_add_process_signals(start, end)
+        logger.info(f"{self.__class__.__name__} ::: Simulation started at {start} :::")
 
-        _run = self._run_generated_signals if self._pregenerated_signals else self._run_as_strategy
+        if self._pregenerated_signals:
+            self._prepare_generated_signals(start, end)
+            _run = self._run_generated_signals
+            enable_event_batching = False  # no batching for pre-generated signals
+        else:
+            _run = self._run_as_strategy
 
-        qiter = EventBatcher(self._data_src.create_iterable(start, end), passthrough=not enable_event_batching)
+        qiter = EventBatcher(self._data_source.create_iterable(start, end), passthrough=not enable_event_batching)
         start, end = pd.Timestamp(start), pd.Timestamp(end)
         total_duration = end - start
         update_delta = total_duration / 100
@@ -476,20 +470,22 @@ class SimulatedExchange(IBrokerServiceProvider):
                 if not _run(instrument, data_type, event):
                     break
         else:
-            with tqdm(total=total_duration.total_seconds(), desc="Simulating", unit="s", leave=False) as pbar:
+            _p = 0
+            with tqdm(total=100, desc="Simulating", unit="%", leave=False) as pbar:
                 for instrument, data_type, event in qiter:
                     if not _run(instrument, data_type, event):
                         break
                     dt = pd.Timestamp(event.time)
                     # update only if date has changed
                     if dt - prev_dt > update_delta:
-                        pbar.n = (dt - start).total_seconds()
+                        _p += 1
+                        pbar.n = _p
                         pbar.refresh()
                         prev_dt = dt
-                pbar.n = total_duration.total_seconds()
+                pbar.n = 100
                 pbar.refresh()
 
-        logger.info(f"SimulatedExchangeService :: run :: Simulation finished at {end}")
+        logger.info(f"{self.__class__.__name__} ::: Simulation finished at {end} :::")
 
     def _run_generated_signals(self, instrument: Instrument, data_type: str, data: Any) -> bool:
         is_hist = data_type.startswith("hist")
@@ -503,7 +499,6 @@ class SimulatedExchange(IBrokerServiceProvider):
         self.trading_service.update_position_price(instrument, self._current_time, data)
 
         # - we need to send quotes for invoking portfolio logging etc
-        # match event type
         cc.send((instrument, data_type, data))
         sigs = self._to_process[instrument]
         while sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
@@ -530,6 +525,7 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         cc.send((instrument, data_type, data))
 
+        # - TODO: not sure why we need it here ???
         if not is_hist:
             if q is not None and data_type != "quote":
                 cc.send((instrument, "quote", q))

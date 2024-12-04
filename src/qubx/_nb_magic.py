@@ -1,4 +1,4 @@
-""""
+""" "
 Here stuff we want to have in every Jupyter notebook after calling %qubx magic
 """
 
@@ -27,7 +27,6 @@ def np_fmt_reset():
 
 
 if runtime_env() in ["notebook", "shell"]:
-
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     # -- all imports below will appear in notebook after calling %%qubx magic ---
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
