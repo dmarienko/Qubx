@@ -603,30 +603,6 @@ class CtrlChannel:
             raise QueueTimeout(f"Timeout waiting for data on {self.name} channel")
 
 
-class SimulatedCtrlChannel(CtrlChannel):
-    """
-    Simulated communication channel. Here we don't use queue but it invokes callback directly
-    """
-
-    _callback: Callable[[tuple], bool]
-
-    def register(self, callback):
-        self._callback = callback
-
-    def send(self, data):
-        # - when data is sent, invoke callback
-        return self._callback.process_data(*data)
-
-    def receive(self, timeout: int | None = None) -> Any:
-        raise ValueError("This method should not be called in a simulated environment.")
-
-    def stop(self):
-        self.control.clear()
-
-    def start(self):
-        self.control.set()
-
-
 class IComminucationManager:
     databus: CtrlChannel
 
