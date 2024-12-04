@@ -1,58 +1,51 @@
-import numpy as np
-import pandas as pd
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, TypeAlias, Callable, Literal
 from enum import Enum
-from tqdm.auto import tqdm
-from itertools import chain
+from typing import Any, Dict, List, Literal, Optional, Tuple, TypeAlias
 
-from qubx import lookup, logger, QubxLogConfig
+import numpy as np
+import pandas as pd
+import stackprinter
+from joblib import delayed
+from tqdm.auto import tqdm
+
+from qubx import QubxLogConfig, logger, lookup
+from qubx.backtester.ome import OmeReport, OrdersManagementEngine
+from qubx.backtester.simulated_data import EventBatcher, IterableSimulationData
 from qubx.core.account import AccountProcessor
-from qubx.core.helpers import BasicScheduler
-from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
-from qubx.core.series import Quote, time_as_nsec
 from qubx.core.basics import (
-    ITimeProvider,
-    Instrument,
     Deal,
+    Instrument,
+    ITimeProvider,
     Order,
+    Position,
     Signal,
     SimulatedCtrlChannel,
-    Position,
+    Subtype,
     TradingSessionResult,
     TransactionCostsCalculator,
     dt_64,
-    Subtype,
 )
-from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV
+from qubx.core.context import StrategyContext
+from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import (
-    IStrategy,
     IBrokerServiceProvider,
+    IStrategy,
+    IStrategyContext,
     ITradingServiceProvider,
     PositionsTracker,
-    IStrategyContext,
     TriggerEvent,
 )
-
-from qubx.core.context import StrategyContext
-from qubx.backtester.ome import OrdersManagementEngine, OmeReport
-
+from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
+from qubx.core.series import OHLCV, Bar, Quote, TimeSeries, Trade, time_as_nsec
 from qubx.data.helpers import InMemoryCachedReader, TimeGuardedWrapper
 from qubx.data.readers import (
-    AsTrades,
-    DataReader,
-    DataTransformer,
-    RestoreTicksFromOHLC,
-    AsQuotes,
     AsTimestampedRecords,
+    DataReader,
     InMemoryDataFrameReader,
 )
-from qubx.pandaz.utils import scols
 from qubx.utils.misc import ProgressParallel
 from qubx.utils.time import infer_series_frequency
-from joblib import delayed
-from .queue import DataLoader, SimulatedDataQueue, EventBatcher
 
 StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
 
@@ -113,9 +106,6 @@ class SimulationSetup:
     commissions: str
 
 
-import stackprinter
-
-
 class _SimulatedLogFormatter:
     def __init__(self, time_provider: ITimeProvider):
         self.time_provider = time_provider
@@ -149,7 +139,7 @@ class SimulatedTrading(ITradingServiceProvider):
     """
     First implementation of a simulated broker.
     TODO:
-        1. Add margin control
+        1. Add margin control (in account processor)
         2. Need to solve problem with _get_ohlcv_data_sync (actually this method must be removed from here) [DONE]
         3. Add support for stop orders (not urgent) [DONE]
     """
@@ -390,27 +380,20 @@ class SimulatedExchange(IBrokerServiceProvider):
     _last_quotes: Dict[Instrument, Optional[Quote]]
     _scheduler: BasicScheduler
     _current_time: dt_64
-    _hist_data_type: str
-    _loaders: dict[Instrument, dict[str, DataLoader]]
-    _pregenerated_signals: Dict[Instrument, pd.Series]
+    _pregenerated_signals: dict[Instrument, pd.Series]
+    _to_process: dict[Instrument, list]
+    _data_source: IterableSimulationData
 
     def __init__(
-        self,
-        exchange_id: str,
-        trading_service: SimulatedTrading,
-        reader: DataReader,
-        hist_data_type: str = "ohlc",
+        self, exchange_id: str, trading_service: SimulatedTrading, reader: DataReader, open_close_time_indent_secs=1
     ):
         super().__init__(exchange_id, trading_service)
         self._reader = reader
-        self._hist_data_type = hist_data_type
         exchange_id = exchange_id.lower()
 
         # - create exchange's instance
         self._last_quotes = defaultdict(lambda: None)
         self._current_time = self.trading_service.time()
-        self._loaders = defaultdict(dict)
-        self._symbol_to_instrument: dict[str, Instrument] = {}
 
         # - setup communication bus
         self.set_communication_channel(bus := SimulatedCtrlChannel("databus", sentinel=(None, None, None)))
@@ -423,86 +406,46 @@ class SimulatedExchange(IBrokerServiceProvider):
         self._pregenerated_signals = dict()
         self._to_process = {}
 
-        # - data queue
-        self._data_queue = SimulatedDataQueue()
+        # - simulation data source
+        self._data_source = IterableSimulationData(
+            self._reader, open_close_time_indent_secs=open_close_time_indent_secs
+        )
 
-        logger.info(f"SimulatedData.{exchange_id} initialized")
+        logger.info(f"{self.__class__.__name__}.{exchange_id} is initialized")
 
-    def subscribe(
-        self,
-        instruments: list[Instrument],
-        subscription_type: str,
-        warmup_period: str | None = None,
-        timeframe: str | None = None,
-        **kwargs,
-    ) -> bool:
-        units = kwargs.get("timestamp_units", "ns")
+    def subscribe(self, subscription_type: str, instruments: set[Instrument], reset: bool) -> None:
+        logger.debug(f" | subscribe: {subscription_type} -> {instruments}")
+        self._data_source.add_instruments_for_subscription(subscription_type, list(instruments))
 
-        for instr in instruments:
-            logger.debug(
-                f"SimulatedExchangeService :: subscribe :: {instr.symbol}({subscription_type}, {warmup_period}, {timeframe})"
+    def unsubscribe(self, subscription_type: str, instruments: set[Instrument] | Instrument | None = None) -> None:
+        logger.debug(f" | unsubscribe: {subscription_type} -> {instruments}")
+        if instruments is not None:
+            self._data_source.remove_instruments_from_subscription(
+                subscription_type, [instruments] if isinstance(instruments, Instrument) else list(instruments)
             )
-            self._symbol_to_instrument[instr.symbol] = instr
-
-            _params: Dict[str, Any] = dict(
-                reader=self._reader,
-                instrument=instr,
-                warmup_period=warmup_period,
-                timeframe=timeframe,
-            )
-
-            # - for ohlc data we need to restore ticks from OHLC bars
-            if subscription_type == Subtype.OHLC:
-                _params["transformer"] = RestoreTicksFromOHLC(
-                    trades="trades" in subscription_type,
-                    spread=instr.min_tick,
-                    timestamp_units=units,
-                )
-                _params["output_type"] = Subtype.QUOTE
-            elif subscription_type == Subtype.QUOTE:
-                _params["transformer"] = AsQuotes()
-            elif subscription_type == Subtype.TRADE:
-                _params["transformer"] = AsTrades()
-            else:
-                raise ValueError(f"Unknown subscription type: {subscription_type}")
-
-            _params["data_type"] = subscription_type
-
-            # - add loader for this instrument
-            ldr = DataLoader(**_params)
-            self._loaders[instr][subscription_type] = ldr
-            self._data_queue += ldr
-
-        return True
-
-    def unsubscribe(self, instruments: List[Instrument], subscription_type: str | None) -> bool:
-        for instr in instruments:
-            if instr.symbol in self._loaders:
-                if subscription_type:
-                    logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol} :: {subscription_type}")
-                    self._data_queue -= self._loaders[instr].pop(subscription_type)
-                    if not self._loaders[instr]:
-                        self._loaders.pop(instr)
-                else:
-                    logger.debug(f"SimulatedExchangeService :: unsubscribe :: {instr.symbol}")
-                    for ldr in self._loaders[instr].values():
-                        self._data_queue -= ldr
-                    self._loaders.pop(instr)
-        return True
 
     def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
-        return instrument in self._loaders and subscription_type in self._loaders[instrument]
+        return self._data_source.has_subscription(instrument, subscription_type)
 
-    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
-        # TODO: implement
-        # return {k: v.params for k, v in self._loaders[instrument].items()}
-        return {}
+    def get_subscriptions(self, instrument: Instrument) -> list[str]:
+        _s_lst = self._data_source.get_subscriptions_for_instrument(instrument)
+        logger.debug(f" | get_subscriptions {instrument} -> {_s_lst}")
+        return _s_lst
 
-    def _try_add_process_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
-        if self._pregenerated_signals:
-            for s, v in self._pregenerated_signals.items():
-                sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
-                self._to_process[s] = list(zip(sel.index, sel.values))
+    def get_subscribed_instruments(self, subscription_type: str | None = None) -> list[Instrument]:
+        _in_lst = self._data_source.get_instruments_for_subscription(subscription_type or Subtype.ALL)
+        logger.debug(f" | get_subscribed_instruments {subscription_type} -> {_in_lst}")
+        return _in_lst
+
+    def warmup(self, configs: dict[tuple[str, Instrument], str]) -> None:
+        for si, warm_period in configs.items():
+            logger.debug(f" | Warming up {si} -> {warm_period}")
+            self._data_source.set_warmup_period(si[0], warm_period)
+
+    def _prepare_generated_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
+        for s, v in self._pregenerated_signals.items():
+            sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
+            self._to_process[s] = list(zip(sel.index, sel.values))
 
     def run(
         self,
@@ -511,12 +454,16 @@ class SimulatedExchange(IBrokerServiceProvider):
         silent: bool = False,
         enable_event_batching: bool = True,
     ) -> None:
-        logger.info(f"SimulatedExchangeService :: run :: Simulation started at {start}")
-        self._try_add_process_signals(start, end)
+        logger.info(f"{self.__class__.__name__} ::: Simulation started at {start} :::")
 
-        _run = self._run_generated_signals if self._pregenerated_signals else self._run_as_strategy
+        if self._pregenerated_signals:
+            self._prepare_generated_signals(start, end)
+            _run = self._run_generated_signals
+            enable_event_batching = False  # no batching for pre-generated signals
+        else:
+            _run = self._run_as_strategy
 
-        qiter = EventBatcher(self._data_queue.create_iterable(start, end), passthrough=not enable_event_batching)
+        qiter = EventBatcher(self._data_source.create_iterable(start, end), passthrough=not enable_event_batching)
         start, end = pd.Timestamp(start), pd.Timestamp(end)
         total_duration = end - start
         update_delta = total_duration / 100
@@ -527,20 +474,22 @@ class SimulatedExchange(IBrokerServiceProvider):
                 if not _run(instrument, data_type, event):
                     break
         else:
-            with tqdm(total=total_duration.total_seconds(), desc="Simulating", unit="s", leave=False) as pbar:
+            _p = 0
+            with tqdm(total=100, desc="Simulating", unit="%", leave=False) as pbar:
                 for instrument, data_type, event in qiter:
                     if not _run(instrument, data_type, event):
                         break
                     dt = pd.Timestamp(event.time)
                     # update only if date has changed
                     if dt - prev_dt > update_delta:
-                        pbar.n = (dt - start).total_seconds()
+                        _p += 1
+                        pbar.n = _p
                         pbar.refresh()
                         prev_dt = dt
-                pbar.n = total_duration.total_seconds()
+                pbar.n = 100
                 pbar.refresh()
 
-        logger.info(f"SimulatedExchangeService :: run :: Simulation finished at {end}")
+        logger.info(f"{self.__class__.__name__} ::: Simulation finished at {end} :::")
 
     def _run_generated_signals(self, instrument: Instrument, data_type: str, data: Any) -> bool:
         is_hist = data_type.startswith("hist")
@@ -554,7 +503,6 @@ class SimulatedExchange(IBrokerServiceProvider):
         self.trading_service.update_position_price(instrument, self._current_time, data)
 
         # - we need to send quotes for invoking portfolio logging etc
-        # match event type
         cc.send((instrument, data_type, data))
         sigs = self._to_process[instrument]
         while sigs and sigs[0][0].as_unit("ns").asm8 <= self._current_time:
@@ -581,6 +529,7 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         cc.send((instrument, data_type, data))
 
+        # - TODO: not sure why we need it here ???
         if not is_hist:
             if q is not None and data_type != "quote":
                 cc.send((instrument, "quote", q))
@@ -607,9 +556,9 @@ class SimulatedExchange(IBrokerServiceProvider):
         end = start - nbarsback * (_timeframe := pd.Timedelta(timeframe))
         _spec = f"{instrument.exchange}:{instrument.symbol}"
         return self._convert_records_to_bars(
-            self._reader.read(data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()), 
-            time_as_nsec(self.time()), 
-            _timeframe.asm8.item()
+            self._reader.read(data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()),
+            time_as_nsec(self.time()),
+            _timeframe.asm8.item(),
         )
 
     def _convert_records_to_bars(self, records: List[Dict[str, Any]], cut_time_ns: int, timeframe_ns: int) -> List[Bar]:
@@ -618,7 +567,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         """
         bars = []
 
-        _data_tf = infer_series_frequency([r['timestamp_ns'] for r in records[:100]])
+        _data_tf = infer_series_frequency([r["timestamp_ns"] for r in records[:100]])
         timeframe_ns = _data_tf.item()
 
         if records is not None:
@@ -767,6 +716,7 @@ def simulate(
     enable_event_batching: bool = True,
     accurate_stop_orders_execution: bool = False,
     aux_data: DataReader | None = None,
+    open_close_time_indent_secs=1,
     debug: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None = "WARNING",
 ) -> list[TradingSessionResult]:
     """
@@ -881,6 +831,7 @@ def simulate(
         accurate_stop_orders_execution=accurate_stop_orders_execution,
         aux_data=aux_data,
         signal_timeframe=signal_timeframe,
+        open_close_time_indent_secs=open_close_time_indent_secs,
     )
 
 
@@ -922,7 +873,7 @@ class SignalsProxy(IStrategy):
     timeframe: str = "1m"
 
     def on_init(self, ctx: IStrategyContext):
-        ctx.set_base_subscription(Subtype.OHLC, timeframe=self.timeframe)
+        ctx.set_base_subscription(Subtype.OHLC[self.timeframe])
 
     def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
         if event.data and event.type == "event":
@@ -943,6 +894,7 @@ def _run_setups(
     enable_event_batching: bool = True,
     accurate_stop_orders_execution: bool = False,
     aux_data: DataReader | None = None,
+    open_close_time_indent_secs=1,
     **kwargs,
 ) -> List[TradingSessionResult]:
     # loggers don't work well with joblib and multiprocessing in general because they contain
@@ -964,6 +916,7 @@ def _run_setups(
             enable_event_batching=enable_event_batching,
             accurate_stop_orders_execution=accurate_stop_orders_execution,
             aux_data_provider=aux_data,
+            open_close_time_indent_secs=open_close_time_indent_secs,
             **kwargs,
         )
         for id, s in enumerate(setups)
@@ -982,6 +935,7 @@ def _run_setup(
     accurate_stop_orders_execution: bool = False,
     aux_data_provider: InMemoryCachedReader | None = None,
     signal_timeframe: str = "1Min",
+    open_close_time_indent_secs=1,
 ) -> TradingSessionResult:
     _stop = stop
     logger.debug(
@@ -993,7 +947,9 @@ def _run_setup(
         np.datetime64(start, "ns"),
         accurate_stop_orders_execution=accurate_stop_orders_execution,
     )
-    broker = SimulatedExchange(setup.exchange, trading_service, data_reader)
+    broker = SimulatedExchange(
+        setup.exchange, trading_service, data_reader, open_close_time_indent_secs=open_close_time_indent_secs
+    )
 
     # - it will store simulation results into memory
     logs_writer = InMemoryLogsWriter("test", setup.name, "0")

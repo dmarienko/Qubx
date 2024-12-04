@@ -44,7 +44,6 @@ EXCH_SYMBOL_PATTERN = re.compile(r"(?P<base>[^/]+)/(?P<quote>[^:]+)(?::(?P<margi
 
 
 class CCXTExchangesConnector(IBrokerServiceProvider):
-
     _exchange: Exchange
     _scheduler: BasicScheduler | None = None
 

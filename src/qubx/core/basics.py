@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Callable, Literal, Optional, Union
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
@@ -8,11 +8,10 @@ from threading import Event, Lock
 from queue import Queue, Empty
 from enum import StrEnum
 
-from qubx import logger
 from qubx.core.exceptions import QueueTimeout
 from qubx.utils.misc import Stopwatch
 from qubx.core.series import Quote, Trade, time_as_nsec
-from qubx.core.utils import prec_ceil, prec_floor
+from qubx.core.utils import prec_ceil, prec_floor, time_delta_to_str
 
 
 dt_64 = np.datetime64
@@ -137,13 +136,16 @@ class Instrument:
     min_size: float = 0.0  # minimal allowed position size
 
     # - futures section
-    futures_info: Optional[FuturesInfo] = None
+    futures_info: FuturesInfo | None = None
 
     _aux_instrument: Optional["Instrument"] = None  # instrument used for conversion to main asset basis
     #  | let's say we trade BTC/ETH with main account in USDT
     #  | so we need to use ETH/USDT for convert profits/losses to USDT
     _tick_precision: int = field(repr=False, default=-1)  # type: check
     _size_precision: int = field(repr=False, default=-1)
+
+    # - cached id to speed up
+    _id: str | None = field(repr=False, default=None)
 
     @property
     def is_futures(self) -> bool:
@@ -221,21 +223,20 @@ class Instrument:
 
     @property
     def id(self) -> str:
-        # TODO: maybe change this later to include exchange and market type
-        return self.symbol
+        if not self._id:
+            self._id = f"{self.market_type}:{self.exchange}:{self.symbol}"
+        return self._id
 
     def __hash__(self) -> int:
         return hash((self.symbol, self.exchange, self.market_type))
 
     def __eq__(self, other: Any) -> bool:
-        if other is None:
+        if other is None or not isinstance(other, Instrument):
             return False
-        if type(other) != type(self):
-            return False
-        return self.symbol == other.symbol and self.exchange == other.exchange and self.market_type == other.market_type
+        return self.id == other.id
 
     def __str__(self) -> str:
-        return f"{self.exchange}:{self.market_type}:{self.symbol}"
+        return self.id
 
     def __repr__(self) -> str:
         return self.__str__()
@@ -607,7 +608,7 @@ class SimulatedCtrlChannel(CtrlChannel):
     Simulated communication channel. Here we don't use queue but it invokes callback directly
     """
 
-    _callback: Callable[[Tuple], bool]
+    _callback: Callable[[tuple], bool]
 
     def register(self, callback):
         self._callback = callback
@@ -663,6 +664,7 @@ class Subtype(StrEnum):
     ORDERBOOK = "orderbook"
     LIQUIDATION = "liquidation"
     FUNDING_RATE = "funding_rate"
+    OHLC_TICKS = "ohlc_ticks"  # when we want to emulate ticks from OHLC data
 
     def __repr__(self) -> str:
         return self.value
@@ -680,7 +682,7 @@ class Subtype(StrEnum):
 
     def __getitem__(self, *args, **kwargs) -> str:
         match self:
-            case Subtype.OHLC:
+            case Subtype.OHLC | Subtype.OHLC_TICKS:
                 tf = args[0] if args else kwargs.get("timeframe")
                 if not tf:
                     raise ValueError("Timeframe is not provided for OHLC subscription")
@@ -727,9 +729,14 @@ class Subtype(StrEnum):
                 params = [p.strip() for p in params_str.rstrip(")").split(",")]
                 match type_name.lower():
                     case Subtype.OHLC.value:
-                        return Subtype.OHLC, {"timeframe": params[0]}
+                        return Subtype.OHLC, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
+
+                    case Subtype.OHLC_TICKS.value:
+                        return Subtype.OHLC_TICKS, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
+
                     case Subtype.ORDERBOOK.value:
                         return Subtype.ORDERBOOK, {"tick_size_pct": float(params[0]), "depth": int(params[1])}
+
                     case _:
                         return Subtype.NONE, {}
         except IndexError:
@@ -746,7 +753,7 @@ class TradingSessionResult:
     start: str | pd.Timestamp
     stop: str | pd.Timestamp
     exchange: str
-    instruments: List[Instrument]
+    instruments: list[Instrument]
     capital: float
     leverage: float
     base_currency: str
@@ -763,7 +770,7 @@ class TradingSessionResult:
         start: str | pd.Timestamp,
         stop: str | pd.Timestamp,
         exchange: str,
-        instruments: List[Instrument],
+        instruments: list[Instrument],
         capital: float,
         leverage: float,
         base_currency: str,

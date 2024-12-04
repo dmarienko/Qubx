@@ -130,7 +130,6 @@ class CsvFileLogsWriter(LogsWriter):
 
     def _do_write(self, log_type, data):
         match log_type:
-
             case "positions":
                 with open(self._pos_file_path, "w", newline="") as f:
                     w = csv.writer(f)
@@ -226,7 +225,7 @@ class PositionsDumper(_BaseIntervalDumper):
             data.append(
                 {
                     "timestamp": str(actual_timestamp),
-                    "instrument_id": i.id,
+                    "instrument_id": i.symbol,
                     "pnl_quoted": p.total_pnl(),
                     "quantity": p.quantity,
                     "realized_pnl_quoted": p.r_pnl,
@@ -252,7 +251,7 @@ class PortfolioLogger(PositionsDumper):
             data.append(
                 {
                     "timestamp": str(interval_start_time),
-                    "instrument_id": i.id,
+                    "instrument_id": i.symbol,
                     "pnl_quoted": p.total_pnl(),
                     "quantity": p.quantity,
                     "realized_pnl_quoted": p.r_pnl,
@@ -297,7 +296,8 @@ class ExecutionsLogger(_BaseIntervalDumper):
             data.append(
                 {
                     "timestamp": d.time,
-                    "instrument_id": i.id,
+                    "instrument_id": i.symbol,
+                    "exchange_id": i.exchange,
                     "side": "buy" if d.amount > 0 else "sell",
                     "filled_qty": d.amount,
                     "price": d.price,
@@ -344,7 +344,7 @@ class SignalsLogger(_BaseIntervalDumper):
             data.append(
                 {
                     "timestamp": s.time,
-                    "instrument_id": s.instrument.id,
+                    "instrument_id": s.instrument.symbol,
                     "exchange_id": s.instrument.exchange,
                     "signal": s.signal.signal,
                     "target_position": s.target_position_size,

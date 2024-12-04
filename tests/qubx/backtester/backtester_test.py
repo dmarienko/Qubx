@@ -1,7 +1,9 @@
 from typing import Any, Optional, List
+import pandas as pd
+import numpy as np
 
 from qubx import lookup, logger
-from qubx.pandaz.utils import *
+from qubx.pandaz.utils import shift_series
 
 from qubx.core.series import Quote
 from qubx.core.utils import recognize_time
@@ -31,7 +33,6 @@ def Q(time: str, bid: float, ask: float) -> Quote:
 
 
 class TestBacktesterStuff:
-
     def test_basic_ome(self):
         instr = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         assert instr
@@ -145,14 +146,13 @@ class TestBacktesterStuff:
         assert execs[1].price == 52000.0
 
     def test_simulator(self):
-
         class CrossOver(IStrategy):
             timeframe: str = "1Min"
             fast_period = 5
             slow_period = 12
 
             def on_init(self, ctx: IStrategyContext):
-                ctx.set_base_subscription(Subtype.OHLC, timeframe=self.timeframe)
+                ctx.set_base_subscription(Subtype.OHLC[self.timeframe])
 
             def on_event(self, ctx: IStrategyContext, event: TriggerEvent):
                 for i in ctx.instruments:
@@ -168,7 +168,7 @@ class TestBacktesterStuff:
                             ctx.trade(i, -pos - i.min_size * 10)
                 return None
 
-            def ohlcs(self, timeframe: str) -> Dict[str, pd.DataFrame]:
+            def ohlcs(self, timeframe: str) -> dict[str, pd.DataFrame]:
                 return {s.symbol: self.ctx.ohlc(s, timeframe).pd() for s in self.ctx.instruments}
 
         r = CsvStorageDataReader("tests/data/csv")

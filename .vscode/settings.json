@@ -12,6 +12,7 @@
         "--line-length",
         "120"
     ],
+    "ruff.lineLength": 120,
     "editor.formatOnSave": true,
     "python.analysis.diagnosticSeverityOverrides": {
         "reportMissingImports": "none",
@@ -20,7 +21,8 @@
     },
     "python.analysis.typeCheckingMode": "basic",
     "[python]": {
-        "editor.defaultFormatter": "ms-python.black-formatter",
+        // "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.defaultFormatter": "charliermarsh.ruff",
         "editor.formatOnSave": true
     },
     "[yaml]": {
