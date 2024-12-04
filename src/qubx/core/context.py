@@ -190,6 +190,9 @@ class StrategyContext(IStrategyContext):
                 logger.opt(colors=False).error(traceback.format_exc())
             self._thread_data_loop = None
 
+        # - stop account processing
+        self.account.stop()
+
         # - close logging
         self._logging.close()
 
