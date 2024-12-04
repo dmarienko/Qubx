@@ -1,17 +1,36 @@
 import asyncio
-import pandas as pd
+import concurrent.futures
+from asyncio.exceptions import CancelledError
+from typing import Awaitable, Callable
+
 import numpy as np
+import pandas as pd
 
 import ccxt.pro as cxp
-import concurrent.futures
-from ccxt import NetworkError, ExchangeError, ExchangeNotAvailable, ExchangeClosedByUser
-from typing import Awaitable
-from asyncio.exceptions import CancelledError
+from ccxt import ExchangeClosedByUser, ExchangeError, ExchangeNotAvailable, NetworkError
 from qubx import logger
 from qubx.core.account import BasicAccountProcessor
-from qubx.core.basics import Instrument, Position, dt_64, Deal, Order, AssetBalance
+from qubx.core.basics import (
+    AssetBalance,
+    CtrlChannel,
+    Deal,
+    Instrument,
+    Order,
+    Position,
+    Subtype,
+    dt_64,
+)
+from qubx.core.interfaces import ISubscriptionManager
+from qubx.utils.marketdata.ccxt import ccxt_symbol_to_instrument
 from qubx.utils.misc import AsyncThreadLoop
-from .utils import ccxt_convert_balance, ccxt_convert_positions
+from qubx.utils.ntp import time_now
+
+from .utils import (
+    ccxt_convert_balance,
+    ccxt_convert_positions,
+    ccxt_convert_ticker,
+    instrument_to_ccxt_symbol,
+)
 
 
 class CcxtAccountProcessor(BasicAccountProcessor):
@@ -27,32 +46,78 @@ class CcxtAccountProcessor(BasicAccountProcessor):
 
     _loop: AsyncThreadLoop
     _polling_tasks: dict[str, concurrent.futures.Future]
+    _subscription_manager: ISubscriptionManager | None
 
     _free_capital: float = np.nan
     _total_capital: float = np.nan
+    _instrument_to_last_price: dict[Instrument, tuple[dt_64, float]]
 
     def __init__(
         self,
+        account_id: str,
         exchange: cxp.Exchange,
         base_currency: str,
         balance_interval: str = "10Sec",
         position_interval: str = "10Sec",
         max_retries: int = 10,
     ):
+        super().__init__(account_id, base_currency, initial_capital=0)
         self.exchange = exchange
-        self.base_currency = base_currency
         self.max_retries = max_retries
         self.balance_interval = balance_interval
         self.position_interval = position_interval
         self._loop = AsyncThreadLoop(exchange.asyncio_loop)
+        self._is_running = False
         self._polling_tasks = {}
+        self._instrument_to_last_price = {}
+        self._subscription_manager = None
+
+    def set_communication_channel(self, channel: CtrlChannel):
+        super().set_communication_channel(channel)
         self.start()
 
-    def get_capital(self) -> float:
-        pass
+    def set_subscription_manager(self, manager: ISubscriptionManager) -> None:
+        self._subscription_manager = manager
+        self.start()
+
+    def start(self):
+        """Start the balance and position polling tasks"""
+        channel = self.get_communication_channel()
+        if channel is None or not channel.control.is_set():
+            return
+        if self._subscription_manager is None:
+            return
+        if self._is_running:
+            logger.debug("Account polling is already running")
+            return
+        self._is_running = True
+        self._polling_tasks["balance"] = self._loop.submit(
+            self._poller("balance", self._update_balance, self.balance_interval)
+        )
+        # self._polling_tasks["position"] = self._loop.submit(
+        #     self._poller("position", self._update_positions(), self.position_interval)
+        # )
+
+    def close(self):
+        """Stop all polling tasks"""
+        for task in self._polling_tasks.values():
+            if not task.done():
+                task.cancel()
+        self._polling_tasks.clear()
+        self._is_running = False
+
+    def time(self) -> dt_64:
+        return time_now()
+
+    def update_position_price(self, time: dt_64, instrument: Instrument, price: float) -> None:
+        self._instrument_to_last_price[instrument] = (time, price)
+        super().update_position_price(time, instrument, price)
 
     def get_total_capital(self) -> float:
-        pass
+        # sum of balances + market value of all positions on non spot/margin
+        _currency_to_value = {c: self._get_currency_value(b.total, c) for c, b in self._balances.items()}
+        _positions_value = sum([p.market_value_funds for p in self._positions.values() if p.instrument.is_futures()])
+        return sum(_currency_to_value.values()) + _positions_value
 
     def process_deals(self, instrument: Instrument, deals: list[Deal]) -> None:
         # do nothing on deal updates, because we are updating balances directly from exchange
@@ -62,36 +127,38 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         # don't update locked value, because we are updating balances directly from exchange
         super().process_order(order, update_locked_value=False)
 
-    def start(self):
-        """Start the balance and position polling tasks"""
-        self._polling_tasks["balance"] = self._loop.submit(
-            self._poller("balance", self._update_balance(), self.balance_interval)
-        )
-        self._polling_tasks["position"] = self._loop.submit(
-            self._poller("position", self._update_positions(), self.position_interval)
-        )
+    def _get_instrument_for_currency(self, currency: str) -> Instrument:
+        symbol = f"{currency}/{self.base_currency}"
+        market = self.exchange.market(symbol)
+        exchange_name = self.exchange.name
+        assert exchange_name is not None
+        return ccxt_symbol_to_instrument(exchange_name, market)
 
-    def close(self):
-        """Stop all polling tasks"""
-        for task in self._polling_tasks.values():
-            if not task.done():
-                task.cancel()
-        self._polling_tasks.clear()
+    def _get_currency_value(self, amount: float, currency: str) -> float:
+        if not amount:
+            return 0.0
+        if currency == self.base_currency:
+            return amount
+        instr = self._get_instrument_for_currency(currency)
+        _dt, _price = self._instrument_to_last_price.get(instr, (None, None))
+        if not _dt or not _price:
+            logger.warning(f"Price for {instr} not available. Using 0.")
+            return 0.0
+        return amount * _price
 
     async def _poller(
         self,
         name: str,
-        coroutine: Awaitable,
+        coroutine: Callable[[], Awaitable],
         interval: str,
     ):
-
         channel = self.get_communication_channel()
         sleep_time = pd.Timedelta(interval).total_seconds()
         retries = 0
 
         while channel.control.is_set():
             try:
-                await coroutine
+                await coroutine()
                 retries = 0  # Reset retry counter on success
             except CancelledError:
                 logger.info(f"{name} listening has been cancelled")
@@ -117,8 +184,12 @@ class CcxtAccountProcessor(BasicAccountProcessor):
                     break
                 await asyncio.sleep(min(sleep_time * (2 ** (retries)), 60))  # Exponential backoff capped at 60s
 
+        logger.debug(f"{name} polling task has been stopped")
+
     async def _update_balance(self) -> None:
         """Fetch and update balances from exchange"""
+        logger.debug("Updating account balances")
+        await self.exchange.load_markets()
         balances_raw = await self.exchange.fetch_balance()
         balances = ccxt_convert_balance(balances_raw)
         current_balances = self.get_balances()
@@ -131,6 +202,16 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         # update current balances
         for currency, data in balances.items():
             self.update_balance(currency=currency, total=data.total, locked=data.locked)
+
+        # subscribe to currencies in balance
+        currencies = list(self.get_balances().keys())
+        instruments = [
+            self._get_instrument_for_currency(c) for c in currencies if c.upper() != self.base_currency.upper()
+        ]
+        await self._subscribe_instruments(instruments)
+
+        # fetch tickers for instruments that don't have recent price updates
+        await self._fetch_missing_tickers(instruments)
 
     async def _update_positions(self) -> None:
         """Fetch and update positions from exchange"""
@@ -156,8 +237,35 @@ class CcxtAccountProcessor(BasicAccountProcessor):
                 )
             )
 
-    def _get_instrument(self, symbol: str) -> Instrument:
-        """Helper method to get instrument from symbol"""
-        # You'll need to implement this based on your instrument mapping logic
-        # This could be part of a shared utility or injected dependency
-        raise NotImplementedError("Implement _get_instrument method")
+    async def _subscribe_instruments(self, instruments: list[Instrument]) -> None:
+        assert self._subscription_manager is not None
+
+        # find missing subscriptions
+        _base_sub = self._subscription_manager.get_base_subscription()
+        _subscribed_instruments = self._subscription_manager.get_subscribed_instruments(_base_sub)
+        _add_instruments = list(set(instruments) - set(_subscribed_instruments))
+
+        if _add_instruments:
+            # subscribe to instruments
+            self._subscription_manager.subscribe(_base_sub, _add_instruments)
+
+        self._subscription_manager.commit()
+
+    async def _fetch_missing_tickers(self, instruments: list[Instrument]) -> None:
+        _current_time = self.time()
+        _fetch_instruments: list[Instrument] = []
+        for instr in instruments:
+            _dt, _ = self._instrument_to_last_price.get(instr, (None, None))
+            if _dt is None or pd.Timedelta(_current_time - _dt) > pd.Timedelta(self.balance_interval):
+                _fetch_instruments.append(instr)
+
+        _symbol_to_instrument = {instr.symbol: instr for instr in instruments}
+        if _fetch_instruments:
+            logger.debug(f"Fetching missing tickers for {_fetch_instruments}")
+            _fetch_symbols = [instrument_to_ccxt_symbol(instr) for instr in _fetch_instruments]
+            tickers: dict[str, dict] = await self.exchange.fetch_tickers(_fetch_symbols)
+            for symbol, ticker in tickers.items():
+                instr = _symbol_to_instrument.get(symbol)
+                if instr is not None:
+                    quote = ccxt_convert_ticker(ticker)
+                    self.update_position_price(_current_time, instr, quote.mid_price())

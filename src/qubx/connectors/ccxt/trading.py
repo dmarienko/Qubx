@@ -1,31 +1,44 @@
-import stackprinter
-import traceback
-import ccxt
-import ccxt.pro as cxp
-import numpy as np
-import pandas as pd
 import asyncio
 import concurrent.futures
-
-from ccxt.base.errors import ExchangeError, NotSupported
+import traceback
 from collections import defaultdict
-from typing import Any, Coroutine, Dict, List, Optional, Callable, Awaitable, Tuple, Set
+from typing import Any, Awaitable, Callable, Coroutine, Dict, List, Optional, Set, Tuple
+
+import numpy as np
+import pandas as pd
+import stackprinter
+
+import ccxt
+import ccxt.pro as cxp
+from ccxt.base.errors import ExchangeError, NotSupported
 from qubx import logger, lookup
-from qubx.core.basics import Instrument, Position, Order, TransactionCostsCalculator, dt_64, Deal, CtrlChannel
-from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider, IAccountProcessor
-from qubx.core.series import TimeSeries, Bar, Trade, Quote
-from qubx.utils.ntp import time_now
+from qubx.core.basics import (
+    CtrlChannel,
+    Deal,
+    Instrument,
+    Order,
+    Position,
+    TransactionCostsCalculator,
+    dt_64,
+)
+from qubx.core.interfaces import (
+    IAccountProcessor,
+    IBrokerServiceProvider,
+    ITradingServiceProvider,
+)
+from qubx.core.series import Bar, Quote, TimeSeries, Trade
 from qubx.utils.misc import AsyncThreadLoop
+from qubx.utils.ntp import time_now
+
 from .exceptions import CcxtPositionRestoreError
 from .utils import (
-    ccxt_convert_order_info,
+    ccxt_build_qubx_exchange_name,
     ccxt_convert_deal_info,
+    ccxt_convert_order_info,
     ccxt_extract_deals_from_exec,
     ccxt_restore_position_from_deals,
     ccxt_restore_positions_from_info,
-    ccxt_build_qubx_exchange_name,
 )
-
 
 ORDERS_HISTORY_LOOKBACK_DAYS = 30
 
@@ -40,27 +53,27 @@ class CcxtTradingConnector(ITradingServiceProvider):
     def __init__(
         self,
         exchange: cxp.Exchange,
-        account_id: str,
+        account_processor: IAccountProcessor,
         commissions: str | None = None,
     ):
         self.exchange = exchange
         self.ccxt_exchange_id = str(exchange.name)
         self.balance_exchange_id = ccxt_build_qubx_exchange_name(
-            self.ccxt_exchange_id, self.exchange.options["defaultType"]  # type: ignore
+            self.ccxt_exchange_id,
+            self.exchange.options["defaultType"],  # type: ignore
         )
-        self.account_id = account_id
+        self.acc = account_processor
+        self.account_id = account_processor.account_id
         self.commissions = commissions
         self._loop = AsyncThreadLoop(exchange.asyncio_loop)
 
     def set_communication_channel(self, channel: CtrlChannel):
-        self.acc.set_communication_channel(channel)
-        return super().set_communication_channel(channel)
-
-    def set_account(self, acc: IAccountProcessor):
-        super().set_account(acc)
-        self._loop.submit(self._sync_account_info(self.commissions)).result()
-        self._positions = self.acc.get_positions()
-        self._log_reserved()
+        super().set_communication_channel(channel)
+        # TODO: add back
+        # self._loop.submit(self._sync_account_info(self.commissions)).result()
+        # self._positions = self.acc.get_positions()
+        # self._log_reserved()
+        self.acc.set_communication_channel(self.get_communication_channel())
 
     def get_position(self, instrument: Instrument) -> Position:
         if instrument not in self._positions:
@@ -95,7 +108,12 @@ class CcxtTradingConnector(ITradingServiceProvider):
         try:
             r = self._loop.submit(
                 self.exchange.create_order(
-                    symbol=instrument.symbol, type=order_type, side=order_side, amount=amount, price=price, params=params  # type: ignore
+                    symbol=instrument.symbol,
+                    type=order_type,  # type: ignore
+                    side=order_side,  # type: ignore
+                    amount=amount,
+                    price=price,
+                    params=params,
                 )
             ).result()
         except ccxt.BadRequest as exc:

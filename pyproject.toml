@@ -52,6 +52,9 @@ twine = "^5.1.1"
 #[project.optional-dependencies]
 #numba = "^0.57.1"
 ipykernel = "^6.29.4"
+iprogress = "^0.4"
+click = "^8.1.7"
+ipywidgets = "^8.1.5"
 
 [build-system]
 requires = ["poetry-core", "setuptools", "numpy>=1.26.3", "cython==3.0.8", "toml>=0.10.2"]

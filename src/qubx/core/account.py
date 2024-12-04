@@ -1,9 +1,10 @@
+from collections import defaultdict
+
 import numpy as np
 
-from collections import defaultdict
 from qubx import logger
+from qubx.core.basics import AssetBalance, Deal, Instrument, Order, Position, dt_64
 from qubx.core.interfaces import IAccountProcessor
-from qubx.core.basics import Instrument, Position, dt_64, Deal, Order, AssetBalance
 
 
 class BasicAccountProcessor(IAccountProcessor):
@@ -56,6 +57,10 @@ class BasicAccountProcessor(IAccountProcessor):
         if instrument is not None:
             ols = list(filter(lambda x: x.instrument == instrument, ols))
         return ols
+
+    @property
+    def reserved(self) -> dict[Instrument, float]:
+        return {}
 
     def get_reserved(self, instrument: Instrument) -> float:
         # TODO: reimplement reserved logic if needed
@@ -132,8 +137,9 @@ class BasicAccountProcessor(IAccountProcessor):
             self._active_orders[oid] = od
 
     def update_position_price(self, time: dt_64, instrument: Instrument, price: float) -> None:
-        p = self._positions[instrument]
-        p.update_market_price(time, price, 1)
+        if instrument in self._positions:
+            p = self._positions[instrument]
+            p.update_market_price(time, price, 1)
 
     def process_deals(self, instrument: Instrument, deals: list[Deal]) -> None:
         pos = self._positions.get(instrument)
@@ -183,9 +189,10 @@ class BasicAccountProcessor(IAccountProcessor):
         if _cancel and update_locked_value and order.type == "LIMIT":
             self._unlock_limit_order_value(order)
 
-        logger.debug(
-            f"Order {order.id} {order.type} {order.side} {order.quantity} of {order.instrument} -> {order.status}"
-        )
+        # TODO: add back
+        # logger.debug(
+        #     f"Order {order.id} {order.type} {order.side} {order.quantity} of {order.instrument} -> {order.status}"
+        # )
 
     def _lock_limit_order_value(self, order: Order) -> float:
         pos = self._positions.get(order.instrument)

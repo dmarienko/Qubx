@@ -10,29 +10,30 @@ This module includes:
 """
 
 import traceback
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+
 import pandas as pd
 
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Set
-from qubx import lookup, logger
-from qubx.core.helpers import BasicScheduler, set_parameters_to_object
+from qubx import logger, lookup
 from qubx.core.basics import (
-    MarketEvent,
-    TargetPosition,
-    TriggerEvent,
+    SW,
+    AssetBalance,
     Deal,
+    ICommunicationManager,
     Instrument,
+    ITimeProvider,
+    MarketEvent,
     Order,
     Position,
     Signal,
+    Subtype,
+    TargetPosition,
+    TriggerEvent,
     dt_64,
     td_64,
-    ITimeProvider,
-    ICommunicationManager,
-    SW,
-    Subtype,
-    AssetBalance,
 )
-from qubx.core.series import OrderBook, Trade, Quote, Bar, OHLCV
+from qubx.core.helpers import BasicScheduler, set_parameters_to_object
+from qubx.core.series import OHLCV, Bar, OrderBook, Quote, Trade
 
 
 class ITradingServiceProvider(ITimeProvider, ICommunicationManager):
@@ -42,14 +43,6 @@ class ITradingServiceProvider(ITimeProvider, ICommunicationManager):
     """
 
     acc: "IAccountProcessor"
-
-    def set_account(self, account: "IAccountProcessor"):
-        """Sets the account processor for the trading service provider.
-
-        Args:
-            account: "IAccountProcessor" instance to be set.
-        """
-        self.acc = account
 
     def get_account(self) -> "IAccountProcessor":
         """Retrieve the current account processor.
@@ -498,6 +491,18 @@ class ISubscriptionManager:
         """
         ...
 
+    def get_subscribed_instruments(self, subscription_type: str | None = None) -> List[Instrument]:
+        """
+        Get a list of instruments that are subscribed to a specific subscription type.
+
+        Args:
+            subscription_type: Type of subscription to filter by (optional)
+
+        Returns:
+            List[Instrument]: List of subscribed instruments
+        """
+        ...
+
     def get_warmup(self, subscription_type: str) -> str:
         """
         Get the warmup period for a subscription type.
@@ -594,6 +599,7 @@ class IProcessingManager:
 
 
 class IAccountViewer:
+    account_id: str
 
     def get_base_currency(self) -> str:
         """Get the base currency for the account.
@@ -771,6 +777,13 @@ class IAccountViewer:
 
 
 class IAccountProcessor(IAccountViewer, ICommunicationManager):
+    def set_subscription_manager(self, manager: ISubscriptionManager) -> None:
+        """Set the subscription manager for the account processor.
+
+        Args:
+            manager: ISubscriptionManager instance to set
+        """
+        ...
 
     def update_balance(self, currency: str, total: float, locked: float):
         """Update balance for a specific currency.

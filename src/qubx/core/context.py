@@ -1,31 +1,40 @@
 import traceback
-
-from typing import Any, Callable, List, Dict, Union
 from threading import Thread
+from typing import Any, Callable, Dict, List, Union
 
 from qubx import logger
-from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, set_parameters_to_object
-from qubx.core.loggers import StrategyLogging
-from qubx.core.basics import Instrument, dt_64, SW, CtrlChannel, Subtype
+from qubx.core.basics import SW, CtrlChannel, Instrument, Subtype, dt_64
+from qubx.core.helpers import (
+    BasicScheduler,
+    CachedMarketDataHolder,
+    set_parameters_to_object,
+)
+from qubx.core.interfaces import (
+    IAccountProcessor,
+    IBrokerServiceProvider,
+    IMarketDataProvider,
+    IPositionGathering,
+    IProcessingManager,
+    IStrategy,
+    IStrategyContext,
+    ISubscriptionManager,
+    ITradingManager,
+    ITradingServiceProvider,
+    IUniverseManager,
+    PositionsTracker,
+)
 from qubx.core.loggers import StrategyLogging
 from qubx.data.readers import DataReader
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.trackers.sizers import FixedSizer
-from qubx.core.interfaces import (
-    IBrokerServiceProvider,
-    IMarketDataProvider,
-    IPositionGathering,
-    IStrategy,
-    ITradingServiceProvider,
-    IStrategyContext,
-    IUniverseManager,
-    ISubscriptionManager,
-    ITradingManager,
-    IProcessingManager,
-    PositionsTracker,
-    IAccountProcessor,
+
+from .mixins import (
+    MarketDataProvider,
+    ProcessingManager,
+    SubscriptionManager,
+    TradingManager,
+    UniverseManager,
 )
-from .mixins import ProcessingManager, SubscriptionManager, TradingManager, UniverseManager, MarketDataProvider
 
 
 class StrategyContext(IStrategyContext):
@@ -78,6 +87,9 @@ class StrategyContext(IStrategyContext):
 
         __position_gathering = position_gathering if position_gathering is not None else SimplePositionGatherer()
 
+        self._subscription_manager = SubscriptionManager(broker=self._broker)
+        self.account.set_subscription_manager(self._subscription_manager)
+
         self._market_data_provider = MarketDataProvider(
             cache=self._cache,
             broker=self._broker,
@@ -97,7 +109,6 @@ class StrategyContext(IStrategyContext):
             account_processor=self.account,
             position_gathering=__position_gathering,
         )
-        self._subscription_manager = SubscriptionManager(broker=self._broker)
         self._trading_manager = TradingManager(
             time_provider=self,
             trading_service=self._trading_service,
