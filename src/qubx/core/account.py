@@ -192,10 +192,9 @@ class BasicAccountProcessor(IAccountProcessor):
         if _cancel and update_locked_value and order.type == "LIMIT":
             self._unlock_limit_order_value(order)
 
-        # TODO: add back
-        # logger.debug(
-        #     f"Order {order.id} {order.type} {order.side} {order.quantity} of {order.instrument} -> {order.status}"
-        # )
+        logger.debug(
+            f"[{order.instrument}] [{order.id}] Order {order.type} {order.side} {order.quantity} at {order.price} -> {order.status}"
+        )
 
     def _lock_limit_order_value(self, order: Order) -> float:
         pos = self._positions.get(order.instrument)

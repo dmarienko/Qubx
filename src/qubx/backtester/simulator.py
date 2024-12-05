@@ -34,6 +34,7 @@ from qubx.core.basics import (
 from qubx.core.context import StrategyContext
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import (
+    IAccountProcessor,
     IBrokerServiceProvider,
     IStrategy,
     IStrategyContext,
@@ -72,7 +73,8 @@ class SimulatedTrading(ITradingServiceProvider):
 
     def __init__(
         self,
-        name: str,
+        account_processor: IAccountProcessor,
+        exchange_name: str,
         commissions: str | None = None,
         simulation_initial_time: dt_64 | str = np.datetime64(0, "ns"),
         accurate_stop_orders_execution: bool = False,
@@ -82,7 +84,9 @@ class SimulatedTrading(ITradingServiceProvider):
 
         Parameters:
         -----------
-        name : str
+        account_processor: IAccountProcessor
+            The account processor to be used for the simulation.
+        exchange_name : str
             The name of the simulated trading environment.
         commissions : str | None, optional
             The commission structure to be used. If None, no commissions will be applied.
@@ -102,21 +106,22 @@ class SimulatedTrading(ITradingServiceProvider):
             If the fees configuration is not found for the given name.
 
         """
+        self.acc = account_processor
         self._current_time = (
             np.datetime64(simulation_initial_time, "ns")
             if isinstance(simulation_initial_time, str)
             else simulation_initial_time
         )
-        self._name = name
+        self._name = exchange_name
         self._ome = {}
-        self._fees_calculator = lookup.fees.find(name.lower(), commissions)
+        self._fees_calculator = lookup.fees.find(exchange_name.lower(), commissions)
         self._half_tick_size = {}
         self._fill_stop_order_at_price = accurate_stop_orders_execution
 
         self._order_to_instrument = {}
         if self._fees_calculator is None:
             raise ValueError(
-                f"SimulatedExchangeService :: Fees configuration '{commissions}' is not found for '{name}' !"
+                f"SimulatedExchangeService :: Fees configuration '{commissions}' is not found for '{exchange_name}' !"
             )
 
         # - we want to see simulate time in log messages
@@ -223,7 +228,7 @@ class SimulatedTrading(ITradingServiceProvider):
         return self._name
 
     def get_account_id(self) -> str:
-        return "Simulated0"
+        return self.acc.account_id
 
     def process_execution_report(self, instrument: Instrument, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
         order = report["order"]
@@ -712,12 +717,19 @@ def _run_setup(
     aux_data_provider: InMemoryCachedReader | None = None,
     signal_timeframe: str = "1Min",
     open_close_time_indent_secs=1,
+    account_id: str = "Simulated0",
 ) -> TradingSessionResult:
     _stop = stop
     logger.debug(
         f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {setup.exchange} for {setup.capital} x {setup.leverage} in {setup.base_currency}..."
     )
+    account = BasicAccountProcessor(
+        account_id=account_id,
+        base_currency=setup.base_currency,
+        initial_capital=setup.capital,
+    )
     trading_service = SimulatedTrading(
+        account,
         setup.exchange,
         setup.commissions,
         np.datetime64(start, "ns"),
@@ -767,12 +779,6 @@ def _run_setup(
         if not isinstance(aux_data_provider, InMemoryCachedReader):
             logger.error("Aux data provider should be an instance of InMemoryCachedReader! Skipping it.")
         _aux_data = TimeGuardedWrapper(aux_data_provider, trading_service)
-
-    account = BasicAccountProcessor(
-        account_id=trading_service.get_account_id(),
-        base_currency=setup.base_currency,
-        initial_capital=setup.capital,
-    )
 
     ctx = StrategyContext(
         strategy=strat,  # type: ignore

@@ -1,10 +1,11 @@
-import ccxt
 import asyncio
-import ccxt.pro as cxp
 from threading import Thread
 from typing import Any
-from .customizations import BinanceQV, BinanceQVUSDM, BinancePortfolioMargin
 
+import ccxt
+import ccxt.pro as cxp
+
+from .customizations import BinancePortfolioMargin, BinanceQV, BinanceQVUSDM
 
 EXCHANGE_ALIASES = {
     "binance": "binanceqv",
@@ -58,6 +59,7 @@ def get_ccxt_exchange(
         options["thread_asyncio_loop"] = thread
         options["asyncio_loop"] = loop
 
+    api_key, secret = _get_api_credentials(api_key, secret, kwargs)
     if api_key and secret:
         options["apiKey"] = api_key
         options["secret"] = secret
@@ -68,3 +70,25 @@ def get_ccxt_exchange(
         ccxt_exchange.set_sandbox_mode(True)
 
     return ccxt_exchange
+
+
+def _get_api_credentials(
+    api_key: str | None, secret: str | None, kwargs: dict[str, Any]
+) -> tuple[str | None, str | None]:
+    if api_key is None:
+        if "apiKey" in kwargs:
+            api_key = kwargs.pop("apiKey")
+        elif "key" in kwargs:
+            api_key = kwargs.pop("key")
+        elif "API_KEY" in kwargs:
+            api_key = kwargs.get("API_KEY")
+    if secret is None:
+        if "secret" in kwargs:
+            secret = kwargs.pop("secret")
+        elif "apiSecret" in kwargs:
+            secret = kwargs.pop("apiSecret")
+        elif "API_SECRET" in kwargs:
+            secret = kwargs.get("API_SECRET")
+        elif "SECRET" in kwargs:
+            secret = kwargs.get("SECRET")
+    return api_key, secret

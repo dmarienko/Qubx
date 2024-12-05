@@ -510,4 +510,4 @@ class StrategyLogging:
         _floored_ts = floor_t64(timestamp, self.heartbeat_freq)
         if not self._last_heartbeat_ts or _floored_ts - self._last_heartbeat_ts >= self.heartbeat_freq:
             self._last_heartbeat_ts = _floored_ts
-            logger.debug(f"Heartbeat at {_floored_ts.astype('datetime64[s]')}")
+            logger.info(f"Heartbeat at {_floored_ts.astype('datetime64[s]')}")

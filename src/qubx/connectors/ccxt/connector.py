@@ -340,7 +340,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         name: str,
         unsubscriber: Callable[[], Awaitable[None]] | None = None,
     ):
-        logger.debug(f"Listening to {name}")
+        logger.info(f"Listening to {name}")
         self._is_sub_name_enabled[name] = True
         n_retry = 0
         while channel.control.is_set():

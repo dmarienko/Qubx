@@ -105,7 +105,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         self._polling_tasks["subscription"] = self._loop.submit(
             self._poller("subscription", self._update_subscriptions, self.subscription_interval)
         )
-        logger.debug("Waiting for account polling tasks to be initialized")
+        logger.info("Waiting for account polling tasks to be initialized")
         _waiter = self._loop.submit(self._wait_for_init())
         _waiter.result()
 
@@ -172,7 +172,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
                 await coroutine()
 
                 if not self._polling_to_init[name]:
-                    logger.debug(f"{name} polling task has been initialized")
+                    logger.info(f"{name} polling task has been initialized")
                     self._polling_to_init[name] = True
 
                 retries = 0  # Reset retry counter on success
@@ -189,6 +189,9 @@ class CcxtAccountProcessor(BasicAccountProcessor):
                     logger.error(f"Max retries ({self.max_retries}) reached. Stopping poller.")
                     break
             except Exception as e:
+                if not channel.control.is_set():
+                    # If the channel is closed, then ignore all exceptions and exit
+                    break
                 logger.error(f"Unexpected error during account polling: {e}")
                 logger.exception(e)
                 retries += 1
@@ -218,7 +221,6 @@ class CcxtAccountProcessor(BasicAccountProcessor):
 
     async def _update_balance(self) -> None:
         """Fetch and update balances from exchange"""
-        logger.debug("Updating account balances")
         await self.exchange.load_markets()
         balances_raw = await self.exchange.fetch_balance()
         balances = ccxt_convert_balance(balances_raw)

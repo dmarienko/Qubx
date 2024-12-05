@@ -81,5 +81,8 @@ filterwarnings = [
     "ignore:.*Jupyter is migrating.*:DeprecationWarning",
 ]
 
+[tool.ruff]
+line-length = 120
+
 [tool.ruff.lint.extend-per-file-ignores]
 "*.ipynb" = ["F405", "F401", "E701", "E402", "F403", "E401", "E702"]

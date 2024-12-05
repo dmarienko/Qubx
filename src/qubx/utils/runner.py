@@ -1,20 +1,25 @@
 import asyncio
-import pandas as pd
-import click, sys, yaml, sys, time
-import yaml, configparser, socket
-
+import configparser
+import socket
+import sys
+import time
 from os.path import exists, expanduser
-from qubx import lookup, logger, formatter
-from qubx.core.interfaces import IStrategyContext, IStrategy
+
+import click
+import pandas as pd
+import yaml
+
+from qubx import formatter, logger, lookup
+from qubx.backtester.simulator import SimulatedTrading
+from qubx.connectors.ccxt.account import CcxtAccountProcessor
+from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
+from qubx.connectors.ccxt.factory import get_ccxt_exchange
+from qubx.connectors.ccxt.trading import CcxtTradingConnector
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.context import StrategyContext
-from qubx.core.loggers import LogsWriter, InMemoryLogsWriter, StrategyLogging
-from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
-from qubx.connectors.ccxt.trading import CcxtTradingConnector
-from qubx.utils.misc import add_project_to_system_path, Struct, logo, version
-from qubx.backtester.simulator import SimulatedTrading
-from qubx.connectors.ccxt.factory import get_ccxt_exchange
-
+from qubx.core.interfaces import IStrategy, IStrategyContext
+from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging
+from qubx.utils.misc import Struct, add_project_to_system_path, logo, version
 
 LOGFILE = "logs/"
 
@@ -100,7 +105,6 @@ def run_ccxt_trading(
     blocking: bool = True,
     account_id: str = "main",
     base_currency: str = "USDT",
-    capital: float = 100_000,
     commissions: str | None = None,
     use_testnet: bool = False,
     loop: asyncio.AbstractEventLoop | None = None,
@@ -110,17 +114,11 @@ def run_ccxt_trading(
     instruments = [i for i in instruments if i is not None]
 
     logs_writer = InMemoryLogsWriter("test", "test", "0")
+    stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
 
     _exchange = get_ccxt_exchange(exchange, use_testnet=use_testnet, loop=loop, **credentials)
-
-    trading_service = CcxtTradingConnector(_exchange, account_id, commissions)
-
-    account = BasicAccountProcessor(
-        account_id=trading_service.get_account_id(),
-        base_currency=base_currency,
-        initial_capital=capital,
-    )
-
+    account = CcxtAccountProcessor(account_id, _exchange, base_currency)
+    trading_service = CcxtTradingConnector(_exchange, account, commissions)
     broker = CcxtBrokerServiceProvider(_exchange, trading_service)
 
     ctx = StrategyContext(
@@ -128,7 +126,7 @@ def run_ccxt_trading(
         broker=broker,
         account=account,
         instruments=instruments,
-        logging=StrategyLogging(logs_writer, heartbeat_freq="1m"),
+        logging=stg_logging,
         config=strategy_config,
     )
 
