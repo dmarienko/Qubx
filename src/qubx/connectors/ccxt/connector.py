@@ -76,8 +76,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         self.max_ws_retries = max_ws_retries
         self._warmup_timeout = warmup_timeout
 
-        # - start NTP thread
-        start_ntp_thread()
+        self._start_ntp_thread()
 
         # - setup communication bus
         self.set_communication_channel(bus := CtrlChannel("databus", sentinel=(None, None, None)))
@@ -238,6 +237,9 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
     def is_read_only(self) -> bool:
         _key = self._exchange.apiKey
         return _key is None or _key == ""
+
+    def _start_ntp_thread(self):
+        start_ntp_thread()
 
     def _subscribe(
         self,

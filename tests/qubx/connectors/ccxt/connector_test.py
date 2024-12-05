@@ -1,14 +1,17 @@
 import asyncio
-import pytest
-import numpy as np
 import time
 from pprint import pprint
-from unittest.mock import MagicMock, AsyncMock, patch
-from qubx import lookup
-from qubx.core.basics import Instrument, CtrlChannel
-from qubx.core.exceptions import QueueTimeout
-from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import numpy as np
+import pytest
+from ccxt.pro import Exchange
+
+from qubx import lookup
+from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
+from qubx.core.basics import CtrlChannel, Instrument, Subtype
+from qubx.core.exceptions import QueueTimeout
+from qubx.core.mixins.subscription import SubscriptionManager
 
 OHLCV_RESPONSE = {"ETH/USDT": {"5m": [[1731239700000, 3222.69, 3227.58, 3218.18, 3220.01, 2866.3094, 10000.0, 5000.0]]}}
 
@@ -22,9 +25,10 @@ async def return_ohlcv(*args, **kwargs):
     return OHLCV_RESPONSE
 
 
-class MockExchange:
+class MockExchange(Exchange):
     def __init__(self):
         self.name = "mock_exchange"
+        self.asyncio_loop = asyncio.get_event_loop()
         self.watch_ohlcv_for_symbols = AsyncMock()
         self.watch_ohlcv_for_symbols.side_effect = return_ohlcv
         self.watch_trades_for_symbols = AsyncMock()
@@ -51,13 +55,13 @@ class TestCcxtExchangeConnector:
 
         # Patch NTP functions and exchange
         with (
-            patch("qubx.utils.ntp.start_ntp_thread"),
             patch("qubx.utils.ntp.time_now", return_value=self.fixed_time),
-            patch("ccxt.pro.binanceqv", return_value=self.mock_exchange),
+            patch("qubx.connectors.ccxt.connector.CcxtBrokerServiceProvider._start_ntp_thread", return_value=None),
         ):
             self.connector = CcxtBrokerServiceProvider(
-                exchange_id="binanceqv", trading_service=self.mock_trading_service, loop=self.loop
+                exchange=self.mock_exchange, trading_service=self.mock_trading_service
             )
+            self.sub_manager = SubscriptionManager(self.connector)
 
         # return from setup
         yield
@@ -74,16 +78,16 @@ class TestCcxtExchangeConnector:
         # self.connector.subscribe([i1, i2], "trade", warmup_period="1m")
         # self.connector.subscribe([i1], "orderbook", warmup_period="1m")
         # self.connector.subscribe([i2], "orderbook", warmup_period="1m")
-        self.connector.subscribe([i2], "ohlc", warmup_period="24h", timeframe="15Min")
-        self.connector.subscribe([i1], "ohlc", warmup_period="24h", timeframe="15Min")
+        self.sub_manager.subscribe(Subtype.OHLC["15Min"], [i2])
+        self.sub_manager.subscribe(Subtype.OHLC["15Min"], [i1])
 
         # Commit subscriptions
-        self.connector.commit()
+        self.sub_manager.commit()
 
         # Verify subscriptions were added
         # assert i1 in self.connector._subscriptions["trade"]
         # assert i1 in self.connector._subscriptions["orderbook"]
-        assert i1 in self.connector._subscriptions["ohlc"]
+        assert i1 in self.connector._subscriptions[Subtype.OHLC["15Min"]]
 
         channel = self.connector.get_communication_channel()
         events = []
@@ -98,6 +102,7 @@ class TestCcxtExchangeConnector:
             if count > max_count:
                 break
 
+        assert len(events) > 0
         pprint(events)
 
         # Verify exchange methods were called
