@@ -1,20 +1,20 @@
-import pytest
-import json
 import gzip
+import json
+
+import pytest
+from data.ccxt_responses import *
 
 from qubx import lookup
-from data.ccxt_responses import *
 from qubx.connectors.ccxt.utils import (
-    ccxt_convert_orderbook,
-    ccxt_convert_liquidation,
-    ccxt_symbol_to_instrument,
     ccxt_convert_balance,
+    ccxt_convert_liquidation,
+    ccxt_convert_orderbook,
     ccxt_convert_positions,
+    ccxt_symbol_to_instrument,
 )
 
 
 class TestCcxtOrderbookRelatedStuff:
-
     def test_ccxt_orderbook_conversion(self):
         i1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         assert i1 is not None
@@ -56,5 +56,5 @@ class TestCcxtOrderbookRelatedStuff:
         assert balances["ETH"].total == pytest.approx(0.10989)
 
     def test_ccxt_position_conversion(self):
-        positions = ccxt_convert_positions(POSITIONS_BINANCE_UM)
-        pass
+        positions = ccxt_convert_positions(POSITIONS_BINANCE_UM, "BINANCE.UM", BINANCE_MARKETS)
+        assert len(positions) > 0

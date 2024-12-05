@@ -47,10 +47,10 @@ class BasicAccountProcessor(IAccountProcessor):
         return _cash_amount + _positions_value
 
     def get_balances(self) -> dict[str, AssetBalance]:
-        return dict(self._balances)
+        return self._balances
 
     def get_positions(self) -> dict[Instrument, Position]:
-        return dict(self._positions)
+        return self._positions
 
     def get_orders(self, instrument: Instrument | None = None) -> list[Order]:
         ols = list(self._active_orders.values())
