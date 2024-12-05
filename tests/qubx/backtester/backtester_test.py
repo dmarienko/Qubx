@@ -1,20 +1,18 @@
-from typing import Any, Optional, List
-import pandas as pd
+from typing import Any, List, Optional
+
 import numpy as np
+import pandas as pd
 
-from qubx import lookup, logger
-from qubx.pandaz.utils import shift_series
-
+from qubx import logger, lookup
+from qubx.backtester.ome import OrdersManagementEngine
+from qubx.backtester.simulator import simulate
+from qubx.core.basics import ZERO_COSTS, Deal, Instrument, ITimeProvider, Order, Subtype
+from qubx.core.interfaces import IStrategy, IStrategyContext, TriggerEvent
 from qubx.core.series import Quote
 from qubx.core.utils import recognize_time
-from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider, Subtype
-from qubx.core.interfaces import IStrategy, IStrategyContext, TriggerEvent
-from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsTimestampedRecords, AsQuotes, RestoreTicksFromOHLC
-
-from qubx.backtester.ome import OrdersManagementEngine
-
-from qubx.ta.indicators import sma, ema
-from qubx.backtester.simulator import simulate
+from qubx.data.readers import AsOhlcvSeries, AsQuotes, AsTimestampedRecords, CsvStorageDataReader, RestoreTicksFromOHLC
+from qubx.pandaz.utils import shift_series
+from qubx.ta.indicators import ema, sma
 
 
 class _TimeService(ITimeProvider):
@@ -126,7 +124,7 @@ class TestBacktesterStuff:
         instr = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         assert instr is not None
         r = CsvStorageDataReader("tests/data/csv")
-        stream = r.read("BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=False, spread=instr.min_tick))
+        stream = r.read("BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=False, spread=instr.tick_size))
         assert isinstance(stream, List)
 
         ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
@@ -212,7 +210,7 @@ class TestBacktesterStuff:
             "BTCUSDT_ohlcv_M1",
             start="2024-01-01",
             stop="2024-01-15",
-            transform=RestoreTicksFromOHLC(trades=False, spread=instr.min_tick),
+            transform=RestoreTicksFromOHLC(trades=False, spread=instr.tick_size),
         )
         assert isinstance(stream, List)
 

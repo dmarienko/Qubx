@@ -1,52 +1,48 @@
-from typing import Any, Optional, List
+from typing import Any, List, Optional
 
-from pandas import Timestamp
 import pandas as pd
+import pytest
+from pandas import Timestamp
 
-from qubx import QubxLogConfig, lookup, logger
-from qubx.core.account import AccountProcessor
-from qubx.gathering.simplest import SimplePositionGatherer
-from qubx.pandaz.utils import *
-from qubx.core.utils import recognize_time, time_to_str
-
-from qubx.core.series import OHLCV, Quote
-from qubx.core.interfaces import (
-    IPositionGathering,
-    IStrategy,
-    PositionsTracker,
-    IStrategyContext,
-    TriggerEvent,
-)
-from qubx.data.readers import (
-    AsOhlcvSeries,
-    CsvStorageDataReader,
-    AsTimestampedRecords,
-    AsQuotes,
-    RestoreTicksFromOHLC,
-    AsPandasFrame,
-)
+from qubx import QubxLogConfig, logger, lookup
+from qubx.backtester.simulator import simulate
+from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
     ZERO_COSTS,
     Deal,
     Instrument,
-    Order,
     ITimeProvider,
+    Order,
     Position,
     Signal,
-    TargetPosition,
     Subtype,
+    TargetPosition,
 )
-
-
+from qubx.core.interfaces import (
+    IPositionGathering,
+    IStrategy,
+    IStrategyContext,
+    PositionsTracker,
+    TriggerEvent,
+)
 from qubx.core.metrics import portfolio_metrics
-from qubx.ta.indicators import sma, ema
-from qubx.backtester.simulator import simulate
+from qubx.core.series import OHLCV, Quote
+from qubx.core.utils import recognize_time, time_to_str
+from qubx.data.readers import (
+    AsOhlcvSeries,
+    AsPandasFrame,
+    AsQuotes,
+    AsTimestampedRecords,
+    CsvStorageDataReader,
+    RestoreTicksFromOHLC,
+)
+from qubx.gathering.simplest import SimplePositionGatherer
+from qubx.pandaz.utils import *
+from qubx.ta.indicators import ema, sma
 from qubx.trackers.composite import CompositeTracker, CompositeTrackerPerSide, LongTracker
 from qubx.trackers.rebalancers import PortfolioRebalancerTracker
 from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
 from qubx.trackers.sizers import FixedLeverageSizer, FixedRiskSizer, FixedSizer
-
-from pytest import approx
 
 N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
 
@@ -85,7 +81,7 @@ class DebugStratageyCtx(IStrategyContext):
         self.capital = capital
 
         positions = {i: Position(i) for i in instrs}
-        self.account = AccountProcessor("test", "USDT", reserves={})  # , initial_capital=10000.0)
+        self.account = BasicAccountProcessor("test", "USDT")  # , initial_capital=10000.0)
         self.account.update_balance("USDT", capital, 0)
         self.account.attach_positions(*positions.values())
         self._n_orders = 0

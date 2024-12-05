@@ -1,6 +1,6 @@
 import asyncio
 import pytest
-from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
+from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
 
 import time
 import pandas as pd
@@ -12,8 +12,8 @@ from collections import defaultdict
 from qubx import lookup, logger, QubxLogConfig
 from qubx.core.basics import TriggerEvent, Trade, MarketEvent, Instrument, Subtype
 from qubx.core.interfaces import IStrategyContext, IStrategy, Position
-from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
-from qubx.connectors.ccxt.ccxt_trading import CCXTTradingConnector
+from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
+from qubx.connectors.ccxt.trading import CcxtTradingConnector
 from qubx.utils.runner import get_account_config
 from qubx.pandaz import scols
 from qubx.backtester.simulator import SimulatedTrading

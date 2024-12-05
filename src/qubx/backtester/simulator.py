@@ -9,7 +9,17 @@ from tqdm.auto import tqdm
 from qubx import QubxLogConfig, logger, lookup
 from qubx.backtester.ome import OmeReport, OrdersManagementEngine
 from qubx.backtester.simulated_data import EventBatcher, IterableSimulationData
-from qubx.core.account import AccountProcessor
+from qubx.backtester.utils import (
+    SimulatedCtrlChannel,
+    SimulatedLogFormatter,
+    SimulatedScheduler,
+    SimulationSetup,
+    StrategyOrSignals,
+    _Types,
+    find_instruments_and_exchanges,
+    recognize_simulation_setups,
+)
+from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
     Deal,
     Instrument,
@@ -24,6 +34,7 @@ from qubx.core.basics import (
 from qubx.core.context import StrategyContext
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import (
+    IAccountProcessor,
     IBrokerServiceProvider,
     IStrategy,
     IStrategyContext,
@@ -41,17 +52,6 @@ from qubx.data.readers import (
 )
 from qubx.utils.misc import ProgressParallel
 from qubx.utils.time import infer_series_frequency
-
-from qubx.backtester.utils import (
-    SimulatedScheduler,
-    _Types,
-    SimulatedCtrlChannel,
-    SimulatedLogFormatter,
-    SimulationSetup,
-    StrategyOrSignals,
-    recognize_simulation_setups,
-    find_instruments_and_exchanges,
-)
 
 
 class SimulatedTrading(ITradingServiceProvider):
@@ -73,7 +73,8 @@ class SimulatedTrading(ITradingServiceProvider):
 
     def __init__(
         self,
-        name: str,
+        account_processor: IAccountProcessor,
+        exchange_name: str,
         commissions: str | None = None,
         simulation_initial_time: dt_64 | str = np.datetime64(0, "ns"),
         accurate_stop_orders_execution: bool = False,
@@ -83,7 +84,9 @@ class SimulatedTrading(ITradingServiceProvider):
 
         Parameters:
         -----------
-        name : str
+        account_processor: IAccountProcessor
+            The account processor to be used for the simulation.
+        exchange_name : str
             The name of the simulated trading environment.
         commissions : str | None, optional
             The commission structure to be used. If None, no commissions will be applied.
@@ -103,21 +106,22 @@ class SimulatedTrading(ITradingServiceProvider):
             If the fees configuration is not found for the given name.
 
         """
+        self.acc = account_processor
         self._current_time = (
             np.datetime64(simulation_initial_time, "ns")
             if isinstance(simulation_initial_time, str)
             else simulation_initial_time
         )
-        self._name = name
+        self._name = exchange_name
         self._ome = {}
-        self._fees_calculator = lookup.fees.find(name.lower(), commissions)
+        self._fees_calculator = lookup.fees.find(exchange_name.lower(), commissions)
         self._half_tick_size = {}
         self._fill_stop_order_at_price = accurate_stop_orders_execution
 
         self._order_to_instrument = {}
         if self._fees_calculator is None:
             raise ValueError(
-                f"SimulatedExchangeService :: Fees configuration '{commissions}' is not found for '{name}' !"
+                f"SimulatedExchangeService :: Fees configuration '{commissions}' is not found for '{exchange_name}' !"
             )
 
         # - we want to see simulate time in log messages
@@ -156,7 +160,7 @@ class SimulatedTrading(ITradingServiceProvider):
         if report.exec is not None:
             self.process_execution_report(instrument, {"order": order, "deals": [report.exec]})
         else:
-            self.acc.add_active_orders({order.id: order})
+            self.acc.process_order(order)
 
         # - send reports to channel
         self.send_execution_report(instrument, report)
@@ -210,21 +214,21 @@ class SimulatedTrading(ITradingServiceProvider):
 
         # - initiolize empty position
         position = Position(instrument)  # type: ignore
-        self._half_tick_size[instrument] = instrument.min_tick / 2  # type: ignore
+        self._half_tick_size[instrument] = instrument.tick_size / 2  # type: ignore
         self.acc.attach_positions(position)
-        return self.acc._positions[instrument]
+        return self.acc.positions[instrument]
 
     def time(self) -> dt_64:
         return self._current_time
 
     def get_base_currency(self) -> str:
-        return self.acc.base_currency
+        return self.acc.get_base_currency()
 
     def get_name(self) -> str:
         return self._name
 
     def get_account_id(self) -> str:
-        return "Simulated0"
+        return self.acc.account_id
 
     def process_execution_report(self, instrument: Instrument, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
         order = report["order"]
@@ -236,6 +240,9 @@ class SimulatedTrading(ITradingServiceProvider):
     def emulate_quote_from_data(
         self, instrument: Instrument, timestamp: dt_64, data: float | Trade | Bar
     ) -> Quote | None:
+        if instrument not in self._half_tick_size:
+            _ = self.get_position(instrument)
+
         _ts2 = self._half_tick_size[instrument]
         if isinstance(data, Quote):
             return data
@@ -466,7 +473,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         end = start - nbarsback * (_timeframe := pd.Timedelta(timeframe))
         _spec = f"{instrument.exchange}:{instrument.symbol}"
         return self._convert_records_to_bars(
-            self._reader.read(data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()),
+            self._reader.read(data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()),  # type: ignore
             time_as_nsec(self.time()),
             _timeframe.asm8.item(),
         )
@@ -498,11 +505,11 @@ class SimulatedExchange(IBrokerServiceProvider):
         signals.index = pd.DatetimeIndex(signals.index)
 
         if isinstance(signals, pd.Series):
-            self._pregenerated_signals[signals.name] = signals
+            self._pregenerated_signals[signals.name] = signals  # type: ignore
 
         elif isinstance(signals, pd.DataFrame):
             for col in signals.columns:
-                self._pregenerated_signals[col] = signals[col]
+                self._pregenerated_signals[col] = signals[col]  # type: ignore
         else:
             raise ValueError("Invalid signals or strategy configuration")
 
@@ -710,12 +717,19 @@ def _run_setup(
     aux_data_provider: InMemoryCachedReader | None = None,
     signal_timeframe: str = "1Min",
     open_close_time_indent_secs=1,
+    account_id: str = "Simulated0",
 ) -> TradingSessionResult:
     _stop = stop
     logger.debug(
         f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {setup.exchange} for {setup.capital} x {setup.leverage} in {setup.base_currency}..."
     )
+    account = BasicAccountProcessor(
+        account_id=account_id,
+        base_currency=setup.base_currency,
+        initial_capital=setup.capital,
+    )
     trading_service = SimulatedTrading(
+        account,
         setup.exchange,
         setup.commissions,
         np.datetime64(start, "ns"),
@@ -765,12 +779,6 @@ def _run_setup(
         if not isinstance(aux_data_provider, InMemoryCachedReader):
             logger.error("Aux data provider should be an instance of InMemoryCachedReader! Skipping it.")
         _aux_data = TimeGuardedWrapper(aux_data_provider, trading_service)
-
-    account = AccountProcessor(
-        account_id=trading_service.get_account_id(),
-        base_currency=setup.base_currency,
-        initial_capital=setup.capital,
-    )
 
     ctx = StrategyContext(
         strategy=strat,  # type: ignore

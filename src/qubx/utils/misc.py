@@ -2,8 +2,10 @@ import os
 import time
 import joblib
 import pandas as pd
+import asyncio
+import concurrent.futures
 from pathlib import Path
-from typing import Any, Dict, Set, Union, List
+from typing import Any, Dict, Set, Union, List, Awaitable
 from collections import OrderedDict, defaultdict, namedtuple
 from os.path import basename, exists, dirname, join, expanduser
 from tqdm.auto import tqdm
@@ -391,3 +393,15 @@ class ProgressParallel(joblib.Parallel):
             return
         self._pbar.n = self.n_completed_tasks
         self._pbar.refresh()
+
+
+class AsyncThreadLoop:
+    """
+    Helper class to submit coroutines to asyncio loop from separate thread.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop):
+        self.loop = loop
+
+    def submit(self, coro: Awaitable) -> concurrent.futures.Future:
+        return asyncio.run_coroutine_threadsafe(coro, self.loop)

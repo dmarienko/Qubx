@@ -1,19 +1,38 @@
-import pandas as pd
-import numpy as np
-import ccxt
-
+import asyncio
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
+import pandas as pd
+
+import ccxt
+import ccxt.pro as cxp
 from qubx import logger, lookup
-from qubx.core.basics import Order, Deal, Position, Instrument, Liquidation, FundingRate, FuturesInfo
-from qubx.core.series import TimeSeries, Bar, Trade, Quote, OrderBook, time_as_nsec
+from qubx.core.basics import (
+    AssetBalance,
+    AssetType,
+    Deal,
+    FundingRate,
+    Instrument,
+    Liquidation,
+    MarketType,
+    Order,
+    Position,
+)
+from qubx.core.series import Bar, OrderBook, Quote, TimeSeries, Trade, time_as_nsec
+from qubx.utils.marketdata.ccxt import (
+    ccxt_build_qubx_exchange_name,
+    ccxt_symbol_to_instrument,
+)
 from qubx.utils.orderbook import build_orderbook_snapshots
-from .ccxt_exceptions import CcxtOrderBookParsingError, CcxtLiquidationParsingError
 
+from .exceptions import (
+    CcxtLiquidationParsingError,
+    CcxtOrderBookParsingError,
+    CcxtSymbolNotRecognized,
+)
 
-EXCHANGE_ALIASES = {"binance.um": "binanceusdm", "binance.cm": "binancecoinm", "kraken.f": "krakenfutures"}
-
-DATA_PROVIDERS_ALIASES = EXCHANGE_ALIASES | {"binance": "binanceqv", "binance.um": "binanceqv_usdm"}
+EXCH_SYMBOL_PATTERN = re.compile(r"(?P<base>[^/]+)/(?P<quote>[^:]+)(?::(?P<margin>.+))?")
 
 
 def ccxt_convert_order_info(instrument: Instrument, raw: dict[str, Any]) -> Order:
@@ -92,13 +111,13 @@ def ccxt_restore_position_from_deals(
             _last_deals.insert(0, d)
 
             # - take in account reserves
-            if abs(current_volume) - abs(reserved_amount) < instr.min_size_step:
+            if abs(current_volume) - abs(reserved_amount) < instr.lot_size:
                 break
 
         # - reset to 0
         pos.reset()
 
-        if abs(current_volume) - abs(reserved_amount) > instr.min_size_step:
+        if abs(current_volume) - abs(reserved_amount) > instr.lot_size:
             # - - - TODO - - - !!!!
             logger.warning(
                 f"Couldn't restore full deals history for {instr.symbol} symbol. Qubx will use zero position !"
@@ -122,14 +141,19 @@ def ccxt_convert_trade(trade: dict[str, Any]) -> Trade:
     return Trade(t_ns, price, amnt, int(not m), int(trade["id"]))
 
 
-def ccxt_restore_positions_from_info(pos_infos: dict, exchange: str) -> list[Position]:
+def ccxt_convert_positions(
+    pos_infos: list[dict], ccxt_exchange_name: str, markets: dict[str, dict[str, Any]]
+) -> list[Position]:
     positions = []
     for info in pos_infos:
-        symbol = info["info"]["symbol"]
-        instr = lookup.find_symbol(exchange, symbol)
-        if instr is None:
+        symbol = info["symbol"]
+        if symbol not in markets:
             logger.warning(f"Could not find symbol {symbol}, skipping position...")
             continue
+        instr = ccxt_symbol_to_instrument(
+            ccxt_exchange_name,
+            markets[symbol],
+        )
         pos = Position(
             instrument=instr,
             quantity=info["contracts"] * (-1 if info["side"] == "short" else 1),
@@ -169,8 +193,8 @@ def ccxt_convert_orderbook(
             updates,
             levels=levels,
             tick_size_pct=tick_size_pct,
-            min_tick_size=instr.min_tick,
-            min_size_step=instr.min_size_step,
+            min_tick_size=instr.tick_size,
+            min_size_step=instr.lot_size,
             sizes_in_quoted=sizes_in_quoted,
         )
     except Exception as e:
@@ -207,6 +231,24 @@ def ccxt_convert_liquidation(liq: dict[str, Any]) -> Liquidation:
         raise CcxtLiquidationParsingError(f"Failed to parse liquidation: {e}")
 
 
+def ccxt_convert_ticker(ticker: dict[str, Any]) -> Quote:
+    """
+    Convert a ccxt ticker to a Quote object.
+    Parameters:
+        ticker (dict): The ticker dictionary from ccxt.
+        instr (Instrument): The instrument object containing market-specific details.
+    Returns:
+        Quote: The converted Quote object.
+    """
+    return Quote(
+        time=pd.Timestamp(ticker["datetime"]).replace(tzinfo=None).asm8,
+        bid=ticker["bid"],
+        ask=ticker["ask"],
+        bid_size=ticker["bidVolume"],
+        ask_size=ticker["askVolume"],
+    )
+
+
 def ccxt_convert_funding_rate(info: dict[str, Any]) -> FundingRate:
     return FundingRate(
         time=pd.Timestamp(info["timestamp"], unit="ms").asm8,
@@ -218,34 +260,28 @@ def ccxt_convert_funding_rate(info: dict[str, Any]) -> FundingRate:
     )
 
 
-def ccxt_symbol_info_to_instrument(exchange: str, symbol_info: dict[str, Any]) -> Instrument:
-    inner_info = symbol_info["info"]
-    maint_margin = 0
-    required_margin = 0
-    if "marginLevels" in inner_info:
-        margins = inner_info["marginLevels"][0]
-        maint_margin = float(margins["maintenanceMargin"])
-        required_margin = float(margins["initialMargin"])
-    return Instrument(
-        symbol_info["id"],
-        "CRYPTO",
-        exchange.upper(),
-        symbol_info["base"],
-        symbol_info["quote"],
-        symbol_info["settle"],
-        min_tick=float(symbol_info["precision"]["price"]),
-        min_size_step=float(symbol_info["precision"]["amount"]),
-        min_size=symbol_info["precision"]["amount"],
-        futures_info=FuturesInfo(
-            contract_type=symbol_info["type"],
-            contract_size=float(symbol_info["contractSize"]),
-            onboard_date=pd.Timestamp(int(inner_info["onboardDate"]), unit="ms"),
-            delivery_date=(
-                pd.Timestamp(int(symbol_info["expiryDatetime"]), unit="ms")
-                if "expiryDatetime" in inner_info
-                else pd.Timestamp("2100-01-01T00:00:00")
-            ),
-            maint_margin=maint_margin,
-            required_margin=required_margin,
-        ),
-    )
+def ccxt_convert_balance(d: dict[str, Any]) -> dict[str, AssetBalance]:
+    balances = {}
+    for currency, data in d["total"].items():
+        if not data:
+            continue
+        total = float(d["total"].get(currency, 0) or 0)
+        locked = float(d["used"].get(currency, 0) or 0)
+        balances[currency] = AssetBalance(free=total - locked, locked=locked, total=total)
+    return balances
+
+
+def find_instrument_for_exch_symbol(exch_symbol: str, symbol_to_instrument: Dict[str, Instrument]) -> Instrument:
+    match = EXCH_SYMBOL_PATTERN.match(exch_symbol)
+    if not match:
+        raise CcxtSymbolNotRecognized(f"Invalid exchange symbol {exch_symbol}")
+    base = match.group("base")
+    quote = match.group("quote")
+    symbol = f"{base}{quote}"
+    if symbol not in symbol_to_instrument:
+        raise CcxtSymbolNotRecognized(f"Unknown symbol {symbol}")
+    return symbol_to_instrument[symbol]
+
+
+def instrument_to_ccxt_symbol(instr: Instrument) -> str:
+    return f"{instr.base}/{instr.quote}:{instr.settle}" if instr.is_futures() else f"{instr.base}/{instr.quote}"

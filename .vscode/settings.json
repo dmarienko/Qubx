@@ -8,11 +8,6 @@
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
-    "black-formatter.args": [
-        "--line-length",
-        "120"
-    ],
-    "ruff.lineLength": 120,
     "editor.formatOnSave": true,
     "python.analysis.diagnosticSeverityOverrides": {
         "reportMissingImports": "none",
@@ -20,12 +15,17 @@
         "reportMissingModuleSource": "none"
     },
     "python.analysis.typeCheckingMode": "basic",
-    "[python]": {
-        // "editor.defaultFormatter": "ms-python.black-formatter",
-        "editor.defaultFormatter": "charliermarsh.ruff",
-        "editor.formatOnSave": true
-    },
     "[yaml]": {
         "editor.defaultFormatter": "redhat.vscode-yaml"
     },
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        }
+    },
+    "ruff.format.args": [
+        "--line-length=120"
+    ],
 }

@@ -1,31 +1,40 @@
 import traceback
-
-from typing import Any, Callable, List, Dict, Union
 from threading import Thread
+from typing import Any, Callable, Dict, List, Union
 
 from qubx import logger
-from qubx.core.account import AccountProcessor
-from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, set_parameters_to_object
-from qubx.core.loggers import StrategyLogging
-from qubx.core.basics import Instrument, dt_64, SW, CtrlChannel, Subtype
+from qubx.core.basics import SW, CtrlChannel, Instrument, Subtype, dt_64
+from qubx.core.helpers import (
+    BasicScheduler,
+    CachedMarketDataHolder,
+    set_parameters_to_object,
+)
+from qubx.core.interfaces import (
+    IAccountProcessor,
+    IBrokerServiceProvider,
+    IMarketDataProvider,
+    IPositionGathering,
+    IProcessingManager,
+    IStrategy,
+    IStrategyContext,
+    ISubscriptionManager,
+    ITradingManager,
+    ITradingServiceProvider,
+    IUniverseManager,
+    PositionsTracker,
+)
 from qubx.core.loggers import StrategyLogging
 from qubx.data.readers import DataReader
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.trackers.sizers import FixedSizer
-from qubx.core.interfaces import (
-    IBrokerServiceProvider,
-    IMarketDataProvider,
-    IPositionGathering,
-    IStrategy,
-    ITradingServiceProvider,
-    IStrategyContext,
-    IUniverseManager,
-    ISubscriptionManager,
-    ITradingManager,
-    IProcessingManager,
-    PositionsTracker,
+
+from .mixins import (
+    MarketDataProvider,
+    ProcessingManager,
+    SubscriptionManager,
+    TradingManager,
+    UniverseManager,
 )
-from .mixins import ProcessingManager, SubscriptionManager, TradingManager, UniverseManager, MarketDataProvider
 
 
 class StrategyContext(IStrategyContext):
@@ -53,7 +62,7 @@ class StrategyContext(IStrategyContext):
         self,
         strategy: IStrategy,
         broker: IBrokerServiceProvider,
-        account: AccountProcessor,
+        account: IAccountProcessor,
         instruments: list[Instrument],
         logging: StrategyLogging,
         config: dict[str, Any] | None = None,
@@ -67,7 +76,6 @@ class StrategyContext(IStrategyContext):
         self._logging = logging
         self._scheduler = broker.get_scheduler()
         self._trading_service = broker.get_trading_service()
-        self._trading_service.set_account(self.account)
         self._initial_instruments = instruments
 
         self._cache = CachedMarketDataHolder()
@@ -77,6 +85,9 @@ class StrategyContext(IStrategyContext):
             __position_tracker = StrategyContext.DEFAULT_POSITION_TRACKER()
 
         __position_gathering = position_gathering if position_gathering is not None else SimplePositionGatherer()
+
+        self._subscription_manager = SubscriptionManager(broker=self._broker)
+        self.account.set_subscription_manager(self._subscription_manager)
 
         self._market_data_provider = MarketDataProvider(
             cache=self._cache,
@@ -97,7 +108,6 @@ class StrategyContext(IStrategyContext):
             account_processor=self.account,
             position_gathering=__position_gathering,
         )
-        self._subscription_manager = SubscriptionManager(broker=self._broker)
         self._trading_manager = TradingManager(
             time_provider=self,
             trading_service=self._trading_service,
@@ -140,6 +150,9 @@ class StrategyContext(IStrategyContext):
         databus = self._broker.get_communication_channel()
         databus.register(self)
 
+        # - start account processing
+        self.account.start()
+
         # - update universe with initial instruments after the strategy is initialized
         self.set_universe(self._initial_instruments, skip_callback=True)
 
@@ -176,6 +189,9 @@ class StrategyContext(IStrategyContext):
                 )
                 logger.opt(colors=False).error(traceback.format_exc())
             self._thread_data_loop = None
+
+        # - stop account processing
+        self.account.stop()
 
         # - close logging
         self._logging.close()

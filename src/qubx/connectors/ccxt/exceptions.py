@@ -11,3 +11,7 @@ class CcxtSymbolNotRecognized(BaseError):
 
 class CcxtLiquidationParsingError(BaseError):
     pass
+
+
+class CcxtPositionRestoreError(BaseError):
+    pass

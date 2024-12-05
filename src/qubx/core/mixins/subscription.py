@@ -1,5 +1,6 @@
-from typing import Any, List, Dict, Set, Tuple, Union
 from collections import defaultdict
+from typing import Any, Dict, List, Set, Tuple, Union
+
 from qubx.core.basics import Instrument, Subtype
 from qubx.core.interfaces import IBrokerServiceProvider, ISubscriptionManager
 from qubx.utils.threading import synchronized
@@ -108,6 +109,9 @@ class SubscriptionManager(ISubscriptionManager):
             | {self.get_base_subscription()}
             | self._pending_global_subscriptions
         )
+
+    def get_subscribed_instruments(self, subscription_type: str | None = None) -> List[Instrument]:
+        return self._broker.get_subscribed_instruments(subscription_type)
 
     def get_base_subscription(self) -> str:
         return self._base_sub

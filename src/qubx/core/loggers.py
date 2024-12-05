@@ -1,19 +1,26 @@
-from typing import Any, Dict, List, Tuple
+import csv
+import os
 from multiprocessing.pool import ThreadPool
-import numpy as np
-import csv, os
+from typing import Any, Dict, List, Tuple
 
+import numpy as np
 import pandas as pd
 
 from qubx import logger
-from qubx.core.basics import Deal, Position, Signal, TargetPosition, Instrument
-
+from qubx.core.basics import (
+    AssetBalance,
+    Deal,
+    Instrument,
+    Position,
+    Signal,
+    TargetPosition,
+)
 from qubx.core.metrics import split_cumulative_pnl
 from qubx.core.series import time_as_nsec
-from qubx.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
-from qubx.utils.time import floor_t64, convert_tf_str_td64
+from qubx.core.utils import recognize_timeframe, time_delta_to_str, time_to_str
 from qubx.pandaz.utils import scols
-from qubx.utils.misc import makedirs, Stopwatch
+from qubx.utils.misc import Stopwatch, makedirs
+from qubx.utils.time import convert_tf_str_td64, floor_t64
 
 _SW = Stopwatch()
 
@@ -380,7 +387,7 @@ class BalanceLogger(_BaseIntervalDumper):
         super().__init__(None)  # no intervals
         self._writer = writer
 
-    def record_balance(self, timestamp: np.datetime64, balance: Dict[str, Tuple[float, float]]):
+    def record_balance(self, timestamp: np.datetime64, balance: Dict[str, AssetBalance]):
         if balance:
             data = []
             for s, d in balance.items():
@@ -388,8 +395,8 @@ class BalanceLogger(_BaseIntervalDumper):
                     {
                         "timestamp": timestamp,
                         "instrument_id": s,
-                        "total": d[0],
-                        "locked": d[1],
+                        "total": d.total,
+                        "locked": d.locked,
                     }
                 )
             self._writer.write_data("balance", data)
@@ -450,7 +457,10 @@ class StrategyLogging:
         self.heartbeat_freq = convert_tf_str_td64(heartbeat_freq) if heartbeat_freq else None
 
     def initialize(
-        self, timestamp: np.datetime64, positions: Dict[Instrument, Position], balances: Dict[str, Tuple[float, float]]
+        self,
+        timestamp: np.datetime64,
+        positions: dict[Instrument, Position],
+        balances: dict[str, AssetBalance],
     ) -> None:
         # - attach positions to loggers
         if self.positions_dumper:
@@ -500,4 +510,4 @@ class StrategyLogging:
         _floored_ts = floor_t64(timestamp, self.heartbeat_freq)
         if not self._last_heartbeat_ts or _floored_ts - self._last_heartbeat_ts >= self.heartbeat_freq:
             self._last_heartbeat_ts = _floored_ts
-            logger.debug(f"Heartbeat at {_floored_ts.astype('datetime64[s]')}")
+            logger.info(f"Heartbeat at {_floored_ts.astype('datetime64[s]')}")
