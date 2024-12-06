@@ -1,36 +1,36 @@
 import traceback
+from multiprocessing.pool import ThreadPool
+from types import FunctionType
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
 import pandas as pd
 
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-from types import FunctionType
-from multiprocessing.pool import ThreadPool
-
 from qubx import logger
-from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, process_schedule_spec
-from qubx.core.loggers import StrategyLogging
-from qubx.core.series import Trade, Quote, Bar, OrderBook
 from qubx.core.basics import (
     SW,
     Deal,
+    Instrument,
     MarketEvent,
     Order,
-    dt_64,
     Signal,
-    Instrument,
-    TriggerEvent,
-    TargetPosition,
     Subtype,
+    TargetPosition,
+    TriggerEvent,
+    dt_64,
 )
+from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, process_schedule_spec
 from qubx.core.interfaces import (
     IMarketDataProvider,
     IPositionGathering,
-    IStrategy,
-    ISubscriptionManager,
-    PositionsTracker,
-    IStrategyContext,
     IProcessingManager,
+    IStrategy,
+    IStrategyContext,
+    ISubscriptionManager,
     ITimeProvider,
+    PositionsTracker,
 )
+from qubx.core.loggers import StrategyLogging
+from qubx.core.series import Bar, OrderBook, Quote, Trade
 
 
 class ProcessingManager(IProcessingManager):
@@ -124,7 +124,7 @@ class ProcessingManager(IProcessingManager):
             self._handle_fit(None, "fit", (None, self._time_provider.time()))
             return False
 
-        if not event or event.data is None:
+        if not event:
             return False
 
         # - if fit was not called - skip on_event call
@@ -149,6 +149,10 @@ class ProcessingManager(IProcessingManager):
                 if isinstance(event, TriggerEvent) or (isinstance(event, MarketEvent) and event.is_trigger):
                     _trigger_event = event.to_trigger() if isinstance(event, MarketEvent) else event
                     _signals = self._wrap_signal_list(self._strategy.on_event(self._context, _trigger_event))
+                    signals.extend(_signals)
+
+                if isinstance(event, Order):
+                    _signals = self._wrap_signal_list(self._strategy.on_order_update(self._context, event))
                     signals.extend(_signals)
 
                 self._subscription_manager.commit()  # apply pending operations
@@ -382,13 +386,8 @@ class ProcessingManager(IProcessingManager):
         return MarketEvent(self._time_provider.time(), event_type, instrument, quote, is_trigger=base_update)
 
     @SW.watch("StrategyContext.order")
-    def _handle_order(self, instrument: Instrument, event_type: str, order: Order) -> TriggerEvent | None:
-        logger.debug(
-            f"[<red>{order.id}</red> / {order.client_id}] : {order.type} {order.side} {order.quantity} "
-            f"of {instrument.symbol} { (' @ ' + str(order.price)) if order.price else '' } -> [{order.status}]"
-        )
-        # - check if we want to trigger any strat's logic on order
-        return None
+    def _handle_order(self, instrument: Instrument, event_type: str, order: Order) -> Order:
+        return order
 
     @SW.watch("StrategyContext")
     def _handle_deals(self, instrument: Instrument, event_type: str, deals: list[Deal]) -> TriggerEvent | None:

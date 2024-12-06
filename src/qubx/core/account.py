@@ -52,6 +52,13 @@ class BasicAccountProcessor(IAccountProcessor):
     def get_positions(self) -> dict[Instrument, Position]:
         return self._positions
 
+    def get_position(self, instrument: Instrument) -> Position:
+        _pos = self._positions.get(instrument)
+        if _pos is None:
+            _pos = Position(instrument)
+            self._positions[instrument] = _pos
+        return _pos
+
     def get_orders(self, instrument: Instrument | None = None) -> list[Order]:
         ols = list(self._active_orders.values())
         if instrument is not None:
@@ -193,7 +200,8 @@ class BasicAccountProcessor(IAccountProcessor):
             self._unlock_limit_order_value(order)
 
         logger.debug(
-            f"[{order.instrument}] [{order.id}] Order {order.type} {order.side} {order.quantity} at {order.price} -> {order.status}"
+            f"[{order.instrument}] [{order.id}] Order {order.type} {order.side} {order.quantity} "
+            f"{ (' @ ' + str(order.price)) if order.price else '' } -> {order.status}"
         )
 
     def _lock_limit_order_value(self, order: Order) -> float:

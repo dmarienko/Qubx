@@ -1,12 +1,13 @@
 import asyncio
 import concurrent.futures
 import re
+import time
 from asyncio.exceptions import CancelledError
 from collections import defaultdict
 from functools import partial
 from threading import Thread
 from types import FunctionType
-from typing import Awaitable, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Awaitable, Callable, Coroutine, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -19,7 +20,7 @@ from ccxt import (
     ExchangeNotAvailable,
     NetworkError,
 )
-from ccxt.base.exchange import Exchange
+from ccxt.pro import Exchange
 from qubx import logger
 from qubx.core.basics import CtrlChannel, Deal, Instrument, Position, Subtype, dt_64
 from qubx.core.helpers import BasicScheduler
@@ -53,6 +54,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
     _subscriptions: Dict[str, Set[Instrument]]
     _sub_to_coro: Dict[str, concurrent.futures.Future]
     _sub_to_name: Dict[str, str]
+    _sub_to_unsubscribe: Dict[str, Callable[[], Awaitable[None]]]
     _is_sub_name_enabled: Dict[str, bool]
 
     _sub_instr_to_time: Dict[Tuple[str, Instrument], dt_64]
@@ -90,6 +92,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         self._subscriptions = defaultdict(set)
         self._sub_to_coro = {}
         self._sub_to_name = {}
+        self._sub_to_unsubscribe = {}
         self._is_sub_name_enabled = defaultdict(lambda: False)
         self._symbol_to_instrument = {}
 
@@ -259,23 +262,14 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
     ) -> None:
         if sub_type in self._sub_to_coro:
             logger.debug(f"Canceling existing {sub_type} subscription for {self._subscriptions[sub_type]}")
-            self._stop_subscriber(sub_type)
+            self._loop.submit(self._stop_subscriber(sub_type, self._sub_to_name[sub_type]))
+            del self._sub_to_coro[sub_type]
+            del self._sub_to_name[sub_type]
+
         if instruments is not None and len(instruments) == 0:
             return
-        self._subscribe_stream(sub_type, channel, instruments=instruments, **kwargs)
 
-    def _stop_subscriber(self, sub_type: str) -> None:
-        if sub_type not in self._sub_to_coro:
-            return
-        sub_name = self._sub_to_name[sub_type]
-        self._is_sub_name_enabled[sub_name] = False  # stop the subscriber
-        future = self._sub_to_coro[sub_type]
-        future.result(10)  # wait for 10 seconds for the future to finish
-        if future.running():
-            future.cancel()
-        del self._sub_to_coro[sub_type]
-        del self._sub_to_name[sub_type]
-        del self._is_sub_name_enabled[sub_name]
+        self._subscribe_stream(sub_type, channel, instruments=instruments, **kwargs)
 
     def _subscribe_stream(self, sub_type: str, channel: CtrlChannel, **kwargs) -> None:
         _subscriber = self._subscribers[sub_type]
@@ -334,6 +328,33 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
     def _get_hist_type(self, sub_type: str) -> str:
         return f"hist_{sub_type}"
 
+    async def _stop_subscriber(self, sub_type: str, sub_name: str) -> None:
+        try:
+            self._is_sub_name_enabled[sub_name] = False  # stop the subscriber
+            future = self._sub_to_coro[sub_type]
+            total_sleep_time = 0.0
+            while future.running():
+                await asyncio.sleep(1.0)
+                total_sleep_time += 1.0
+                if total_sleep_time >= 20.0:
+                    break
+
+            if future.running():
+                logger.warning(f"Subscriber {sub_name} is still running. Cancelling it.")
+                future.cancel()
+            else:
+                logger.debug(f"Subscriber {sub_name} has been stopped")
+
+            if sub_name in self._sub_to_unsubscribe:
+                logger.debug(f"Unsubscribing from {sub_name}")
+                await self._sub_to_unsubscribe[sub_name]()
+
+            del self._sub_to_unsubscribe[sub_name]
+            del self._is_sub_name_enabled[sub_name]
+            logger.debug(f"Unsubscribed from {sub_name}")
+        except Exception as e:
+            logger.error(f"Error stopping {sub_name} : {e}")
+
     async def _listen_to_stream(
         self,
         subscriber: Callable[[], Awaitable[None]],
@@ -343,26 +364,20 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         unsubscriber: Callable[[], Awaitable[None]] | None = None,
     ):
         logger.info(f"Listening to {name}")
+        if unsubscriber is not None:
+            self._sub_to_unsubscribe[name] = unsubscriber
+
         self._is_sub_name_enabled[name] = True
         n_retry = 0
-        while channel.control.is_set():
+        while channel.control.is_set() and self._is_sub_name_enabled[name]:
             try:
                 await subscriber()
                 n_retry = 0
                 if not self._is_sub_name_enabled[name]:
-                    if unsubscriber is not None:
-                        await unsubscriber()
                     break
-            except CcxtSymbolNotRecognized as e:
+            except CcxtSymbolNotRecognized:
                 continue
             except CancelledError:
-                if unsubscriber is not None:
-                    try:
-                        # - unsubscribe from stream, but ignore if there is an error
-                        # because we anyway close the connection
-                        await unsubscriber()
-                    except:
-                        pass
                 break
             except ExchangeClosedByUser:
                 # - we closed connection so just stop it
@@ -373,6 +388,9 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
                 await asyncio.sleep(1)
                 continue
             except Exception as e:
+                if not channel.control.is_set():
+                    # If the channel is closed, then ignore all exceptions and exit
+                    break
                 logger.error(f"exception in {name} : {e}")
                 logger.exception(e)
                 n_retry += 1
@@ -412,15 +430,22 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
             )
         )
 
-    async def _call_by_market_type(
-        self, subscriber: Callable[[set[Instrument]], Awaitable[None]], instruments: set[Instrument]
-    ) -> None:
+    def _call_by_market_type(
+        self, subscriber: Callable[[list[Instrument]], Awaitable[None]], instruments: set[Instrument]
+    ) -> Any:
         """Call subscriber for each market type"""
-        _instr_by_type = defaultdict(set)
+        _instr_by_type: dict[str, list[Instrument]] = defaultdict(list)
         for instr in instruments:
-            _instr_by_type[instr.market_type].add(instr)
+            _instr_by_type[instr.market_type].append(instr)
+
+        # sort instruments by symbol
         for instrs in _instr_by_type.values():
-            await subscriber(instrs)
+            instrs.sort(key=lambda i: i.symbol)
+
+        async def _call_subscriber():
+            await asyncio.gather(*[subscriber(instrs) for instrs in _instr_by_type.values()])
+
+        return _call_subscriber
 
     #############################
     # - Subscription methods
@@ -454,7 +479,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         _exchange_timeframe = self._get_exch_timeframe(timeframe)
         _symbol_to_instrument = {_instr_to_ccxt_symbol[i]: i for i in instruments}
 
-        async def watch_ohlcv(instruments: set[Instrument]):
+        async def watch_ohlcv(instruments: list[Instrument]):
             _symbol_timeframe_pairs = [[_instr_to_ccxt_symbol[i], _exchange_timeframe] for i in instruments]
             ohlcv = await self._exchange.watch_ohlcv_for_symbols(_symbol_timeframe_pairs)
             _time = self.time()
@@ -478,18 +503,16 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
                         last_close,
                     )
 
-        async def un_watch_ohlcv(instruments: set[Instrument]):
+        async def un_watch_ohlcv(instruments: list[Instrument]):
             _symbol_timeframe_pairs = [[_instr_to_ccxt_symbol[i], _exchange_timeframe] for i in instruments]
-            unwatch = getattr(self._exchange, "un_watch_ohlcv_for_symbols", lambda _: None)(_symbol_timeframe_pairs)
-            if unwatch is not None:
-                await unwatch
+            await self._exchange.un_watch_ohlcv_for_symbols(_symbol_timeframe_pairs)
 
         await self._listen_to_stream(
-            subscriber=partial(self._call_by_market_type, watch_ohlcv, instruments),
+            subscriber=self._call_by_market_type(watch_ohlcv, instruments),
             exchange=self._exchange,
             channel=channel,
             name=name,
-            unsubscriber=partial(self._call_by_market_type, un_watch_ohlcv, instruments),
+            unsubscriber=self._call_by_market_type(un_watch_ohlcv, instruments),
         )
 
     async def _subscribe_trade(
@@ -502,7 +525,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         _instr_to_ccxt_symbol = {i: instrument_to_ccxt_symbol(i) for i in instruments}
         _symbol_to_instrument = {_instr_to_ccxt_symbol[i]: i for i in instruments}
 
-        async def watch_trades(instruments: set[Instrument]):
+        async def watch_trades(instruments: list[Instrument]):
             symbols = [_instr_to_ccxt_symbol[i] for i in instruments]
             trades = await self._exchange.watch_trades_for_symbols(symbols)
             symbol = trades[0]["symbol"]
@@ -514,18 +537,16 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
             for trade in trades:
                 channel.send((instrument, sub_type, ccxt_convert_trade(trade)))
 
-        async def un_watch_trades(instruments: set[Instrument]):
+        async def un_watch_trades(instruments: list[Instrument]):
             symbols = [_instr_to_ccxt_symbol[i] for i in instruments]
-            unwatch = getattr(self._exchange, "un_watch_trades_for_symbols", lambda _: None)(symbols)
-            if unwatch is not None:
-                await unwatch
+            await self._exchange.un_watch_trades_for_symbols(symbols)
 
         await self._listen_to_stream(
-            subscriber=partial(self._call_by_market_type, watch_trades, instruments),
+            subscriber=self._call_by_market_type(watch_trades, instruments),
             exchange=self._exchange,
             channel=channel,
             name=name,
-            unsubscriber=partial(self._call_by_market_type, un_watch_trades, instruments),
+            unsubscriber=self._call_by_market_type(un_watch_trades, instruments),
         )
 
     async def _subscribe_orderbook(
@@ -538,7 +559,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         _instr_to_ccxt_symbol = {i: instrument_to_ccxt_symbol(i) for i in instruments}
         _symbol_to_instrument = {_instr_to_ccxt_symbol[i]: i for i in instruments}
 
-        async def watch_orderbook(instruments: set[Instrument]):
+        async def watch_orderbook(instruments: list[Instrument]):
             symbols = [_instr_to_ccxt_symbol[i] for i in instruments]
             ccxt_ob = await self._exchange.watch_order_book_for_symbols(symbols)
             exch_symbol = ccxt_ob["symbol"]
@@ -551,18 +572,16 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
             self.trading_service.update_position_price(instrument, self.time(), quote)
             channel.send((instrument, sub_type, ob))
 
-        async def un_watch_orderbook(instruments: set[Instrument]):
+        async def un_watch_orderbook(instruments: list[Instrument]):
             symbols = [_instr_to_ccxt_symbol[i] for i in instruments]
-            unwatch = getattr(self._exchange, "un_watch_order_book_for_symbols", lambda _: None)(symbols)
-            if unwatch is not None:
-                await unwatch
+            await self._exchange.un_watch_order_book_for_symbols(symbols)
 
         await self._listen_to_stream(
-            subscriber=partial(self._call_by_market_type, watch_orderbook, instruments),
+            subscriber=self._call_by_market_type(watch_orderbook, instruments),
             exchange=self._exchange,
             channel=channel,
             name=name,
-            unsubscriber=partial(self._call_by_market_type, un_watch_orderbook, instruments),
+            unsubscriber=self._call_by_market_type(un_watch_orderbook, instruments),
         )
 
     async def _subscribe_quote(
@@ -575,7 +594,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         _instr_to_ccxt_symbol = {i: instrument_to_ccxt_symbol(i) for i in instruments}
         _symbol_to_instrument = {_instr_to_ccxt_symbol[i]: i for i in instruments}
 
-        async def watch_quote(instruments: set[Instrument]):
+        async def watch_quote(instruments: list[Instrument]):
             symbols = [_instr_to_ccxt_symbol[i] for i in instruments]
             ccxt_tickers: dict[str, dict] = await self._exchange.watch_tickers(symbols)
             for exch_symbol, ccxt_ticker in ccxt_tickers.items():
@@ -585,18 +604,16 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
                 self.trading_service.update_position_price(instrument, self.time(), quote)
                 channel.send((instrument, sub_type, quote))
 
-        async def un_watch_quote(instruments: set[Instrument]):
+        async def un_watch_quote(instruments: list[Instrument]):
             symbols = [_instr_to_ccxt_symbol[i] for i in instruments]
-            unwatch = getattr(self._exchange, "un_watch_tickers", lambda _: None)(symbols)
-            if unwatch is not None:
-                await unwatch
+            await self._exchange.un_watch_tickers(symbols)
 
         await self._listen_to_stream(
-            subscriber=partial(self._call_by_market_type, watch_quote, instruments),
+            subscriber=self._call_by_market_type(watch_quote, instruments),
             exchange=self._exchange,
             channel=channel,
             name=name,
-            unsubscriber=partial(self._call_by_market_type, un_watch_quote, instruments),
+            unsubscriber=self._call_by_market_type(un_watch_quote, instruments),
         )
 
     async def _subscribe_liquidation(
@@ -609,7 +626,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         _instr_to_ccxt_symbol = {i: instrument_to_ccxt_symbol(i) for i in instruments}
         _symbol_to_instrument = {_instr_to_ccxt_symbol[i]: i for i in instruments}
 
-        async def watch_liquidation(instruments: set[Instrument]):
+        async def watch_liquidation(instruments: list[Instrument]):
             symbols = [_instr_to_ccxt_symbol[i] for i in instruments]
             liquidations = await self._exchange.watch_liquidations_for_symbols(symbols)
             for liquidation in liquidations:
@@ -620,7 +637,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
                     logger.debug(f"Could not parse liquidation {liquidation}")
                     continue
 
-        async def un_watch_liquidation(instruments: set[Instrument]):
+        async def un_watch_liquidation(instruments: list[Instrument]):
             symbols = [_instr_to_ccxt_symbol[i] for i in instruments]
             unwatch = getattr(self._exchange, "un_watch_liquidations_for_symbols", lambda _: None)(symbols)
             if unwatch is not None:
@@ -628,11 +645,11 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
 
         # - fetching of liquidations for warmup is not supported by ccxt
         await self._listen_to_stream(
-            subscriber=partial(self._call_by_market_type, watch_liquidation, instruments),
+            subscriber=self._call_by_market_type(watch_liquidation, instruments),
             exchange=self._exchange,
             channel=channel,
             name=name,
-            unsubscriber=partial(self._call_by_market_type, un_watch_liquidation, instruments),
+            unsubscriber=self._call_by_market_type(un_watch_liquidation, instruments),
         )
 
     async def _subscribe_funding_rate(
@@ -649,7 +666,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
                 try:
                     instrument = self._get_instrument(symbol)
                     instrument_to_funding_rate[instrument] = ccxt_convert_funding_rate(info)
-                except CcxtSymbolNotRecognized as e:
+                except CcxtSymbolNotRecognized:
                     continue
             channel.send((None, sub_type, instrument_to_funding_rate))
 

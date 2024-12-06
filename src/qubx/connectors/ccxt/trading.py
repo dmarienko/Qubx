@@ -66,20 +66,17 @@ class CcxtTradingConnector(ITradingServiceProvider):
         self.account_id = account_processor.account_id
         self.commissions = commissions
         self._loop = AsyncThreadLoop(exchange.asyncio_loop)
+        self._positions = self.acc.get_positions()
 
     def set_communication_channel(self, channel: CtrlChannel):
         super().set_communication_channel(channel)
+        self.acc.set_communication_channel(self.get_communication_channel())
         # TODO: add back
         # self._loop.submit(self._sync_account_info(self.commissions)).result()
-        # self._positions = self.acc.get_positions()
         # self._log_reserved()
-        self.acc.set_communication_channel(self.get_communication_channel())
 
     def get_position(self, instrument: Instrument) -> Position:
-        if instrument not in self._positions:
-            position: Position = self._loop.submit(self._sync_position_and_orders(instrument)).result()
-            self.acc.attach_positions(position)
-        return self._positions[instrument]
+        return self.acc.get_position(instrument)
 
     def send_order(
         self,

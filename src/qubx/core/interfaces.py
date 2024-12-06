@@ -421,6 +421,22 @@ class IUniverseManager:
         """
         ...
 
+    def add_instruments(self, instruments: list[Instrument]):
+        """Add instruments to the trading universe.
+
+        Args:
+            instruments: List of instruments to add
+        """
+        ...
+
+    def remove_instruments(self, instruments: list[Instrument]):
+        """Remove instruments from the trading universe.
+
+        Args:
+            instruments: List of instruments to remove
+        """
+        ...
+
     @property
     def instruments(self) -> list[Instrument]:
         """
@@ -672,6 +688,17 @@ class IAccountViewer:
 
         Returns:
             dict[Instrument, Position]: Dictionary mapping instruments to their positions
+        """
+        ...
+
+    def get_position(self, instrument: Instrument) -> Position:
+        """Get the current position for a specific instrument.
+
+        Args:
+            instrument: The instrument to get the position for
+
+        Returns:
+            Position: The position object
         """
         ...
 
@@ -1044,6 +1071,16 @@ class IStrategy:
 
         Returns:
             List of signals, single signal, or None.
+        """
+        return None
+
+    def on_order_update(self, ctx: IStrategyContext, order: Order) -> list[Signal] | Signal | None:
+        """
+        Called when an order update is received.
+
+        Args:
+            ctx: Strategy context.
+            order: The order update.
         """
         return None
 

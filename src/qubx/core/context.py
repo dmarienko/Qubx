@@ -3,7 +3,7 @@ from threading import Thread
 from typing import Any, Callable, Dict, List, Union
 
 from qubx import logger
-from qubx.core.basics import SW, CtrlChannel, Instrument, Subtype, dt_64
+from qubx.core.basics import SW, AssetBalance, CtrlChannel, Instrument, Order, Position, Subtype, dt_64
 from qubx.core.helpers import (
     BasicScheduler,
     CachedMarketDataHolder,
@@ -133,7 +133,7 @@ class StrategyContext(IStrategyContext):
         # - update cache default timeframe
         sub_type = self.get_base_subscription()
         _, params = Subtype.from_str(sub_type)
-        __default_timeframe = params.get("timeframe", "1Sec")
+        __default_timeframe = params.get("timeframe", "1sec")
         self._cache.update_default_timeframe(__default_timeframe)
 
     def time(self) -> dt_64:
@@ -204,10 +204,8 @@ class StrategyContext(IStrategyContext):
         return self._broker.is_simulated_trading
 
     # IAccountViewer delegation
-    @property
-    def positions(self):
-        return self.account.positions
 
+    # capital information
     def get_capital(self) -> float:
         return self.account.get_capital()
 
@@ -216,6 +214,52 @@ class StrategyContext(IStrategyContext):
 
     def get_reserved(self, instrument: Instrument) -> float:
         return self.account.get_reserved(instrument)
+
+    def get_reserved_capital(self) -> float:
+        return self.account.get_reserved_capital()
+
+    # balance and position information
+    def get_balances(self) -> dict[str, AssetBalance]:
+        return dict(self.account.get_balances())
+
+    def get_positions(self) -> dict[Instrument, Position]:
+        return dict(self.account.get_positions())
+
+    def get_position(self, instrument: Instrument) -> Position:
+        return self.account.get_position(instrument)
+
+    @property
+    def positions(self):
+        return self.account.positions
+
+    def get_orders(self, instrument: Instrument | None = None) -> dict[str, Order]:
+        return self.account.get_orders(instrument)
+
+    def position_report(self) -> dict:
+        return self.account.position_report()
+
+    # leverage information
+    def get_leverage(self, instrument: Instrument) -> float:
+        return self.account.get_leverage(instrument)
+
+    def get_leverages(self) -> dict[Instrument, float]:
+        return self.account.get_leverages()
+
+    def get_net_leverage(self) -> float:
+        return self.account.get_net_leverage()
+
+    def get_gross_leverage(self) -> float:
+        return self.account.get_gross_leverage()
+
+    # margin information
+    def get_total_required_margin(self) -> float:
+        return self.account.get_total_required_margin()
+
+    def get_available_margin(self) -> float:
+        return self.account.get_available_margin()
+
+    def get_margin_ratio(self) -> float:
+        return self.account.get_margin_ratio()
 
     # IMarketDataProvider delegation
     def ohlc(self, instrument: Instrument, timeframe: str | None = None, length: int | None = None):
@@ -249,6 +293,12 @@ class StrategyContext(IStrategyContext):
     # IUniverseManager delegation
     def set_universe(self, instruments: list[Instrument], skip_callback: bool = False):
         return self._universe_manager.set_universe(instruments, skip_callback)
+
+    def add_instruments(self, instruments: list[Instrument]):
+        return self._universe_manager.add_instruments(instruments)
+
+    def remove_instruments(self, instruments: list[Instrument]):
+        return self._universe_manager.remove_instruments(instruments)
 
     @property
     def instruments(self):

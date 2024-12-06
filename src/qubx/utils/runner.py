@@ -16,6 +16,7 @@ from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
 from qubx.connectors.ccxt.factory import get_ccxt_exchange
 from qubx.connectors.ccxt.trading import CcxtTradingConnector
 from qubx.core.account import BasicAccountProcessor
+from qubx.core.basics import Instrument
 from qubx.core.context import StrategyContext
 from qubx.core.interfaces import IStrategy, IStrategyContext
 from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging
@@ -110,8 +111,7 @@ def run_ccxt_trading(
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext:
     # TODO: setup proper loggers to write out to files
-    instruments = [lookup.find_symbol(exchange.upper(), s.upper()) for s in symbols]
-    instruments = [i for i in instruments if i is not None]
+    instruments = _get_instruments(symbols, exchange)
 
     logs_writer = InMemoryLogsWriter("test", "test", "0")
     stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
@@ -141,6 +141,20 @@ def run_ccxt_trading(
         ctx.start()
 
     return ctx
+
+
+def _get_instruments(symbols: list[str], exchange: str) -> list[Instrument]:
+    exchange_symbols = []
+    for symbol in symbols:
+        if ":" in symbol:
+            exchange, symbol = symbol.split(":")
+            exchange_symbols.append((exchange, symbol))
+        else:
+            exchange_symbols.append((exchange, symbol))
+
+    instruments = [lookup.find_symbol(_exchange.upper(), _symbol.upper()) for _exchange, _symbol in exchange_symbols]
+    instruments = [i for i in instruments if i is not None]
+    return instruments
 
 
 def load_strategy_config(filename: str) -> Struct:

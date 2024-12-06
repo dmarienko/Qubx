@@ -64,7 +64,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         base_currency: str,
         balance_interval: str = "10Sec",
         position_interval: str = "10Sec",
-        subscription_interval: str = "2Sec",
+        subscription_interval: str = "10Sec",
         max_retries: int = 10,
     ):
         super().__init__(account_id, base_currency, initial_capital=0)
@@ -102,12 +102,14 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         self._polling_tasks["position"] = self._loop.submit(
             self._poller("position", self._update_positions, self.position_interval)
         )
-        self._polling_tasks["subscription"] = self._loop.submit(
-            self._poller("subscription", self._update_subscriptions, self.subscription_interval)
-        )
         logger.info("Waiting for account polling tasks to be initialized")
         _waiter = self._loop.submit(self._wait_for_init())
         _waiter.result()
+
+        # - start subscription polling task
+        self._polling_tasks["subscription"] = self._loop.submit(
+            self._poller("subscription", self._update_subscriptions, self.subscription_interval)
+        )
 
     def close(self):
         """Stop all polling tasks"""

@@ -1,21 +1,21 @@
 import pandas as pd
-from qubx import lookup, logger
+
+from qubx import logger, lookup
+from qubx.core.basics import Instrument, Position, Subtype, TargetPosition
 from qubx.core.helpers import CachedMarketDataHolder
-from qubx.core.loggers import StrategyLogging
-from qubx.core.basics import TargetPosition, Instrument, Position, Subtype
-from qubx.core.loggers import StrategyLogging
 from qubx.core.interfaces import (
+    IAccountProcessor,
     IBrokerServiceProvider,
     IPositionGathering,
     IStrategy,
-    ITradingServiceProvider,
     IStrategyContext,
-    IUniverseManager,
     ISubscriptionManager,
-    ITradingManager,
     ITimeProvider,
-    IAccountProcessor,
+    ITradingManager,
+    ITradingServiceProvider,
+    IUniverseManager,
 )
+from qubx.core.loggers import StrategyLogging
 
 
 class UniverseManager(IUniverseManager):
@@ -75,6 +75,18 @@ class UniverseManager(IUniverseManager):
         # set new instruments
         self._instruments.clear()
         self._instruments.extend(instruments)
+
+    def add_instruments(self, instruments: list[Instrument]):
+        self.__add_instruments(instruments)
+        self._strategy.on_universe_change(self._context, instruments, [])
+        self._subscription_manager.commit()
+        self._instruments.extend(instruments)
+
+    def remove_instruments(self, instruments: list[Instrument]):
+        self.__remove_instruments(instruments)
+        self._strategy.on_universe_change(self._context, [], instruments)
+        self._subscription_manager.commit()
+        self._instruments = list(set(self._instruments) - set(instruments))
 
     @property
     def instruments(self) -> list[Instrument]:
