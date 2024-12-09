@@ -32,7 +32,7 @@ from qubx.core.basics import (
     dt_64,
 )
 from qubx.core.context import StrategyContext
-from qubx.core.helpers import BasicScheduler
+from qubx.core.helpers import BasicScheduler, extract_parameters_from_object, full_qualified_class_name
 from qubx.core.interfaces import (
     IAccountProcessor,
     IBrokerServiceProvider,
@@ -796,6 +796,12 @@ def _run_setup(
     except KeyboardInterrupt:
         logger.error("Simulated trading interrupted by user !")
 
+    # - get strategy parameters for this run
+    _s_class, _s_params = "", None
+    if setup.setup_type in [_Types.STRATEGY, _Types.STRATEGY_AND_TRACKER]:
+        _s_params = extract_parameters_from_object(setup.generator)
+        _s_class = full_qualified_class_name(setup.generator)
+
     return TradingSessionResult(
         setup_id,
         setup.name,
@@ -810,5 +816,7 @@ def _run_setup(
         logs_writer.get_portfolio(as_plain_dataframe=True),
         logs_writer.get_executions(),
         logs_writer.get_signals(),
-        True,
+        strategy_class=_s_class,
+        parameters=_s_params,
+        is_simulation=True,
     )
