@@ -1,24 +1,23 @@
 from collections import defaultdict
-from typing import Callable, Iterable, List, Set, Tuple, Union, Dict, Any
+from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from qubx import logger, lookup
-from qubx.core.basics import Instrument, Signal, TriggerEvent, MarketEvent, Subtype
-from qubx.core.interfaces import IStrategy, IStrategyContext
-
-from qubx import logger, lookup
-from qubx.data import loader
 from qubx.backtester.simulator import simulate
+from qubx.backtester.utils import _Types, recognize_simulation_setups
+from qubx.core.basics import Instrument, MarketEvent, Signal, Subtype, TriggerEvent
+from qubx.core.interfaces import IStrategy, IStrategyContext
 from qubx.core.series import OHLCV, Quote
+from qubx.data import loader
+from qubx.trackers.riskctrl import AtrRiskTracker
 
 
 class Issue1(IStrategy):
     exchange: str = "BINANCE.UM"
     _idx = 0
     _err = False
-    _to_test: List[List[Instrument]] = []
+    _to_test: list[list[Instrument]] = []
 
     def on_init(self, ctx: IStrategyContext) -> None:
         ctx.set_base_subscription(Subtype.OHLC["1h"])
@@ -37,7 +36,7 @@ class Issue1(IStrategy):
         if self._idx > 2:
             self._idx = 0
 
-    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> list[Signal]:
         for s in ctx.instruments:
             q = ctx.quote(s)
             # - quotes should be in ctx already !!!
@@ -69,7 +68,7 @@ class Issue2(IStrategy):
         logger.info(f" > [{ctx.time()}] On Fit is called")
         self._fits_called += 1
 
-    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> list[Signal]:
         logger.info(f" > [{ctx.time()}] On event is called")
         self._events_called += 1
         return []
@@ -169,7 +168,7 @@ class Issue5(IStrategy):
         ctx.set_base_subscription(Subtype.OHLC["1d"])
         ctx.set_event_schedule("0 0 * * *")  # Run at 00:00 every day
 
-    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> list[Signal]:
         # logger.info(f"On Event: {ctx.time()}")
 
         data = ctx.ohlc(ctx.instruments[0], "1d", 10)
@@ -189,9 +188,9 @@ class Issue5(IStrategy):
 
 
 class Test6_HistOHLC(IStrategy):
-    _U: List[List[Instrument]] = []
-    _out: Dict[Any, OHLCV] = {}
-    _out_fit: Dict[Any, Any] = {}
+    _U: list[list[Instrument]] = []
+    _out: dict[Any, OHLCV] = {}
+    _out_fit: dict[Any, Any] = {}
 
     def on_init(self, ctx: IStrategyContext) -> None:
         ctx.set_base_subscription(Subtype.OHLC["1d"])
@@ -218,12 +217,12 @@ class Test6_HistOHLC(IStrategy):
         self._out_fit |= self.get_ohlc(ctx, self._U[0])
         ctx.set_universe(self._U[0])
 
-    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> list[Signal]:
         print(f" - - - - - - - {ctx.time()}")
         self._out |= self.get_ohlc(ctx, ctx.instruments)
         return []
 
-    def get_ohlc(self, ctx: IStrategyContext, instruments: List[Instrument]) -> dict:
+    def get_ohlc(self, ctx: IStrategyContext, instruments: list[Instrument]) -> dict:
         closes = defaultdict(dict)
         for i in instruments:
             data = ctx.ohlc(i, "1d", 4)
@@ -369,3 +368,32 @@ class TestSimulator:
         # fmt: on
 
         assert stg._triggers_called * 4 == stg._market_quotes_called + 1, "Got Errors during the simulation"
+
+
+class TestSimulatorHelpers:
+    def test_recognize_simulation_setups(self):
+        # fmt: off
+        setups = recognize_simulation_setups(
+            "X1",
+            {
+                "S1": pd.Series([1, 2, 3], name="BTCUSDT"), 
+                "S2": pd.Series([1, 2, 3], name="BINANCE.UM:LTCUSDT"),
+                "S3": [pd.DataFrame({"BTCUSDT": [1, 2, 3], "BCHUSDT": [4, 5, 6]}), AtrRiskTracker(None, None, '1h', 10)],
+                "S4": [IStrategy(), AtrRiskTracker(None, None, '1h', 10)],
+                "S5": IStrategy(),
+                "S6": { 'A': IStrategy(), 'B': IStrategy(), }
+            }, # type: ignore
+            [lookup.find_symbol("BINANCE.UM", s) for s in ["BTCUSDT", "BCHUSDT", "LTCUSDT"]],  # type: ignore
+            "BINANCE.UM",
+            10_000, 1.0, "USDT", "vip0_usdt")
+
+        assert setups[0].setup_type == _Types.SIGNAL, "Got wrong setup type"
+        assert setups[1].setup_type == _Types.SIGNAL, "Got wrong setup type"
+        assert setups[2].setup_type == _Types.SIGNAL_AND_TRACKER, "Got wrong setup type"
+        assert setups[3].setup_type == _Types.STRATEGY_AND_TRACKER, "Got wrong setup type"
+        assert setups[4].setup_type == _Types.STRATEGY, "Got wrong setup type"
+        assert setups[5].setup_type == _Types.STRATEGY, "Got wrong setup type"
+        assert setups[5].name == "X1/S6/A", "Got wrong setup type"
+        assert setups[6].setup_type == _Types.STRATEGY, "Got wrong setup type"
+        assert setups[6].name == "X1/S6/B", "Got wrong setup type"
+        # fmt: on

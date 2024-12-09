@@ -1,17 +1,25 @@
-from typing import Any, Callable, TypeAlias
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, Callable, TypeAlias
 
 import pandas as pd
 import stackprinter
 
 from qubx import logger, lookup
-from qubx.core.basics import CtrlChannel, ITimeProvider, Instrument
+from qubx.core.basics import CtrlChannel, Instrument, ITimeProvider
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy, PositionsTracker
 
-
 StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
+DictOfStrats: TypeAlias = dict[str, StrategyOrSignals]
+VariableStrategyConfig: TypeAlias = (
+    StrategyOrSignals
+    | DictOfStrats
+    | dict[str, DictOfStrats]
+    | dict[str, StrategyOrSignals | list[StrategyOrSignals | PositionsTracker]]
+    | list[StrategyOrSignals | PositionsTracker]
+    | tuple[StrategyOrSignals | PositionsTracker]
+)
 
 
 class _Types(Enum):
@@ -68,6 +76,9 @@ class SimulationSetup:
     leverage: float
     base_currency: str
     commissions: str
+
+    def __str__(self) -> str:
+        return f"{self.name} {self.setup_type} capital {self.capital} {self.base_currency} for [{','.join(map(lambda x: x.symbol, self.instruments))}] @ {self.exchange}[{self.commissions}]"
 
 
 class SimulatedLogFormatter:
@@ -168,12 +179,7 @@ def find_instruments_and_exchanges(
 
 def recognize_simulation_setups(
     name: str,
-    configs: (
-        StrategyOrSignals
-        | dict[str, StrategyOrSignals | list[StrategyOrSignals | PositionsTracker]]
-        | list[StrategyOrSignals | PositionsTracker]
-        | tuple[StrategyOrSignals | PositionsTracker]
-    ),
+    configs: VariableStrategyConfig,
     instruments: list[Instrument],
     exchange: str,
     capital: float,
@@ -181,38 +187,72 @@ def recognize_simulation_setups(
     basic_currency: str,
     commissions: str,
 ) -> list[SimulationSetup]:
-    name_in_list = lambda n: any([n == i for i in instruments])
+    """
+    Recognize and create setups based on the provided simulation configuration.
+
+    This function processes the given configuration and creates a list of SimulationSetup
+    objects that represent different simulation scenarios. It handles various types of
+    configurations including dictionaries, lists, signals, and strategies.
+
+    Parameters:
+    name (str): The name of the simulation setup.
+    configs (VariableStrategyConfig): The configuration for the simulation. Can be a
+        strategy, signals, or a nested structure of these.
+    instruments (list[Instrument]): List of available instruments for the simulation.
+    exchange (str): The name of the exchange to be used.
+    capital (float): The initial capital for the simulation.
+    leverage (float): The leverage to be used in the simulation.
+    basic_currency (str): The base currency for the simulation.
+    commissions (str): The commission structure to be applied.
+
+    Returns:
+    list[SimulationSetup]: A list of SimulationSetup objects, each representing a
+        distinct simulation configuration based on the input parameters.
+
+    Raises:
+    ValueError: If the signal structure is invalid or if an instrument cannot be found
+        for a given signal.
+    """
+
+    def _possible_instruments_ids(i: Instrument) -> set[str]:
+        return set((i.symbol, f"{i.exchange}:{i.symbol}"))
+
+    def _name_in_instruments(n):
+        return any([n in _possible_instruments_ids(i) for i in instruments])
 
     def _check_signals_structure(s: pd.Series | pd.DataFrame) -> pd.Series | pd.DataFrame:
         if isinstance(s, pd.Series):
-            if not name_in_list(s.name):
+            if not _name_in_instruments(s.name):
                 raise ValueError(f"Can't find instrument for signal's name: '{s.name}'")
 
         if isinstance(s, pd.DataFrame):
             for col in s.columns:
-                if not name_in_list(col):
+                if not _name_in_instruments(col):
                     raise ValueError(f"Can't find instrument for signal's name: '{col}'")
         return s
 
     def _pick_instruments(s: pd.Series | pd.DataFrame) -> list[Instrument]:
         if isinstance(s, pd.Series):
-            _instrs = [i for i in instruments if s.name == i]
+            _instrs = [i for i in instruments if s.name in _possible_instruments_ids(i)]
 
         elif isinstance(s, pd.DataFrame):
-            _instrs = [i for i in instruments if i in list(s.columns)]
+            _s_cols = set(s.columns)
+            _instrs = [i for i in instruments if _possible_instruments_ids(i) & _s_cols]
 
         else:
             raise ValueError("Invalid signals or strategy configuration")
 
-        return list(_instrs)
+        return list(set(_instrs))
 
     r = list()
+
     # fmt: off
     if isinstance(configs, dict):
         for n, v in configs.items():
+            _n = (name + "/") if name else ""
             r.extend(
                 recognize_simulation_setups(
-                    name + "/" + n, v, instruments, exchange, capital, leverage, basic_currency, commissions
+                    _n + n, v, instruments, exchange, capital, leverage, basic_currency, commissions
                 )
             )
 
