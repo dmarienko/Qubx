@@ -364,7 +364,7 @@ class SimulatedExchange(IBrokerServiceProvider):
 
             for i in self.get_subscribed_instruments():
                 # - we can process series with variable id's if we can find some similar instrument
-                if s == i.symbol or s == str(i) or s == f"{i.exchange}:{i.symbol}":
+                if s == i.symbol or s == str(i) or s == f"{i.exchange}:{i.symbol}" or str(s) == str(i):
                     sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
                     self._to_process[i] = list(zip(sel.index, sel.values))
                     _s_inst = i
@@ -515,7 +515,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         signals.index = pd.DatetimeIndex(signals.index)
 
         if isinstance(signals, pd.Series):
-            self._pregenerated_signals[signals.name] = signals  # type: ignore
+            self._pregenerated_signals[str(signals.name)] = signals  # type: ignore
 
         elif isinstance(signals, pd.DataFrame):
             for col in signals.columns:

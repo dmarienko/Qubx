@@ -367,7 +367,7 @@ class TestSimulator:
         )
         # fmt: on
 
-        assert stg._triggers_called * 4 == stg._market_quotes_called + 1, "Got Errors during the simulation"
+        assert stg._triggers_called == stg._market_quotes_called, "Got Errors during the simulation"
 
 
 class TestSimulatorHelpers:

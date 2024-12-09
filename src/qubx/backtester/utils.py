@@ -215,19 +215,21 @@ def recognize_simulation_configuration(
     """
 
     def _possible_instruments_ids(i: Instrument) -> set[str]:
-        return set((i.symbol, f"{i.exchange}:{i.symbol}"))
+        return set((i.symbol, str(i), f"{i.exchange}:{i.symbol}"))
 
-    def _name_in_instruments(n):
-        return any([n in _possible_instruments_ids(i) for i in instruments])
+    def _name_in_instruments(n, instrs: list[Instrument]) -> bool:
+        return any([n in _possible_instruments_ids(i) for i in instrs])
 
     def _check_signals_structure(s: pd.Series | pd.DataFrame) -> pd.Series | pd.DataFrame:
         if isinstance(s, pd.Series):
-            if not _name_in_instruments(s.name):
+            # - it's possible to put anything to series name, so we convert it to string
+            s.name = str(s.name)
+            if not _name_in_instruments(s.name, instruments):
                 raise ValueError(f"Can't find instrument for signal's name: '{s.name}'")
 
         if isinstance(s, pd.DataFrame):
             for col in s.columns:
-                if not _name_in_instruments(col):
+                if not _name_in_instruments(col, instruments):
                     raise ValueError(f"Can't find instrument for signal's name: '{col}'")
         return s
 
