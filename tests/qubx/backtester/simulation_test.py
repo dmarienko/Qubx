@@ -5,7 +5,7 @@ import pandas as pd
 
 from qubx import logger, lookup
 from qubx.backtester.simulator import simulate
-from qubx.backtester.utils import _Types, recognize_simulation_setups
+from qubx.backtester.utils import SetupTypes, recognize_simulation_configuration
 from qubx.core.basics import Instrument, MarketEvent, Signal, Subtype, TriggerEvent
 from qubx.core.interfaces import IStrategy, IStrategyContext
 from qubx.core.series import OHLCV, Quote
@@ -371,9 +371,9 @@ class TestSimulator:
 
 
 class TestSimulatorHelpers:
-    def test_recognize_simulation_setups(self):
+    def test_recognize_simulation_configuration(self):
         # fmt: off
-        setups = recognize_simulation_setups(
+        setups = recognize_simulation_configuration(
             "X1",
             {
                 "S1": pd.Series([1, 2, 3], name="BTCUSDT"), 
@@ -387,13 +387,16 @@ class TestSimulatorHelpers:
             "BINANCE.UM",
             10_000, 1.0, "USDT", "vip0_usdt")
 
-        assert setups[0].setup_type == _Types.SIGNAL, "Got wrong setup type"
-        assert setups[1].setup_type == _Types.SIGNAL, "Got wrong setup type"
-        assert setups[2].setup_type == _Types.SIGNAL_AND_TRACKER, "Got wrong setup type"
-        assert setups[3].setup_type == _Types.STRATEGY_AND_TRACKER, "Got wrong setup type"
-        assert setups[4].setup_type == _Types.STRATEGY, "Got wrong setup type"
-        assert setups[5].setup_type == _Types.STRATEGY, "Got wrong setup type"
+        assert setups[0].setup_type == SetupTypes.SIGNAL, "Got wrong setup type"
+        assert setups[1].setup_type == SetupTypes.SIGNAL, "Got wrong setup type"
+        assert setups[2].setup_type == SetupTypes.SIGNAL_AND_TRACKER, "Got wrong setup type"
+        assert setups[3].setup_type == SetupTypes.STRATEGY_AND_TRACKER, "Got wrong setup type"
+        assert setups[4].setup_type == SetupTypes.STRATEGY, "Got wrong setup type"
+        assert setups[5].setup_type == SetupTypes.STRATEGY, "Got wrong setup type"
         assert setups[5].name == "X1/S6/A", "Got wrong setup type"
-        assert setups[6].setup_type == _Types.STRATEGY, "Got wrong setup type"
+        assert setups[6].setup_type == SetupTypes.STRATEGY, "Got wrong setup type"
         assert setups[6].name == "X1/S6/B", "Got wrong setup type"
         # fmt: on
+
+    def test_recognize_simulation_input_data(self):
+        pass

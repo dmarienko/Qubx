@@ -1,7 +1,7 @@
 import traceback
 from multiprocessing.pool import ThreadPool
 from types import FunctionType
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, List, Tuple
 
 import pandas as pd
 
@@ -89,7 +89,7 @@ class ProcessingManager(IProcessingManager):
         self._handlers = {
             n.split("_handle_")[1]: f
             for n, f in self.__class__.__dict__.items()
-            if type(f) == FunctionType and n.startswith("_handle_")
+            if type(f) is FunctionType and n.startswith("_handle_")
         }
         self._strategy_name = strategy.__class__.__name__
         self._trig_bar_freq_nsec = None

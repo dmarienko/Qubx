@@ -10,14 +10,14 @@ from qubx import QubxLogConfig, logger, lookup
 from qubx.backtester.ome import OmeReport, OrdersManagementEngine
 from qubx.backtester.simulated_data import EventBatcher, IterableSimulationData
 from qubx.backtester.utils import (
+    SetupTypes,
     SimulatedCtrlChannel,
     SimulatedLogFormatter,
     SimulatedScheduler,
     SimulationSetup,
-    StrategyOrSignals,
-    _Types,
+    VariableStrategyConfig,
     find_instruments_and_exchanges,
-    recognize_simulation_setups,
+    recognize_simulation_configuration,
 )
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
@@ -39,7 +39,6 @@ from qubx.core.interfaces import (
     IStrategy,
     IStrategyContext,
     ITradingServiceProvider,
-    PositionsTracker,
     TriggerEvent,
 )
 from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
@@ -359,10 +358,21 @@ class SimulatedExchange(IBrokerServiceProvider):
             logger.debug(f" | Warming up {si} -> {warm_period}")
             self._data_source.set_warmup_period(si[0], warm_period)
 
-    def _prepare_generated_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
+    def _prepare_generated_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp):
         for s, v in self._pregenerated_signals.items():
-            sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
-            self._to_process[s] = list(zip(sel.index, sel.values))
+            _s_inst = None
+
+            for i in self.get_subscribed_instruments():
+                # - we can process series with variable id's if we can find some similar instrument
+                if s == i.symbol or s == str(i) or s == f"{i.exchange}:{i.symbol}":
+                    sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
+                    self._to_process[i] = list(zip(sel.index, sel.values))
+                    _s_inst = i
+                    break
+
+            if _s_inst is None:
+                logger.error(f"Can't find instrument for pregenerated signals with id {s}")
+                raise ValueError(f"Can't find instrument for pregenerated signals with id {s}")
 
     def run(
         self,
@@ -515,7 +525,7 @@ class SimulatedExchange(IBrokerServiceProvider):
 
 
 def simulate(
-    config: StrategyOrSignals | Dict | List[StrategyOrSignals | PositionsTracker],
+    config: VariableStrategyConfig,
     data: Dict[str, pd.DataFrame] | DataReader,
     capital: float,
     instruments: List[str] | Dict[str, List[str]] | None,
@@ -540,7 +550,7 @@ def simulate(
     Parameters:
     ----------
 
-    config (StrategyOrSignals | Dict | List[StrategyOrSignals | PositionsTracker]):
+    config (VariableStrategyConfig):
         Trading strategy or signals configuration.
     data (Dict[str, pd.DataFrame] | DataReader):
         Historical data for simulation, either as a dictionary of DataFrames or a DataReader object.
@@ -622,7 +632,9 @@ def simulate(
     exchange = list(set(_exchanges))[0]
 
     # - recognize setup: it can be either a strategy or set of signals
-    setups = recognize_simulation_setups("", config, _instrs, exchange, capital, leverage, base_currency, commissions)
+    setups = recognize_simulation_configuration(
+        "", config, _instrs, exchange, capital, leverage, base_currency, commissions
+    )
     if not setups:
         logger.error(
             "Can't recognize setup - it should be a strategy, a set of signals or list of signals/strategies + tracker !"
@@ -744,14 +756,14 @@ def _run_setup(
     strat: IStrategy | None = None
 
     match setup.setup_type:
-        case _Types.STRATEGY:
+        case SetupTypes.STRATEGY:
             strat = setup.generator  # type: ignore
 
-        case _Types.STRATEGY_AND_TRACKER:
+        case SetupTypes.STRATEGY_AND_TRACKER:
             strat = setup.generator  # type: ignore
             strat.tracker = lambda ctx: setup.tracker  # type: ignore
 
-        case _Types.SIGNAL:
+        case SetupTypes.SIGNAL:
             strat = SignalsProxy(timeframe=signal_timeframe)
             broker.set_generated_signals(setup.generator)  # type: ignore
             # - we don't need any unexpected triggerings
@@ -760,7 +772,7 @@ def _run_setup(
             # - no historical data for generated signals, so disable it
             enable_event_batching = False
 
-        case _Types.SIGNAL_AND_TRACKER:
+        case SetupTypes.SIGNAL_AND_TRACKER:
             strat = SignalsProxy(timeframe=signal_timeframe)
             strat.tracker = lambda ctx: setup.tracker
             broker.set_generated_signals(setup.generator)  # type: ignore
@@ -798,7 +810,7 @@ def _run_setup(
 
     # - get strategy parameters for this run
     _s_class, _s_params = "", None
-    if setup.setup_type in [_Types.STRATEGY, _Types.STRATEGY_AND_TRACKER]:
+    if setup.setup_type in [SetupTypes.STRATEGY, SetupTypes.STRATEGY_AND_TRACKER]:
         _s_params = extract_parameters_from_object(setup.generator)
         _s_class = full_qualified_class_name(setup.generator)
 

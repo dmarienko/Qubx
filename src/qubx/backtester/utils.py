@@ -22,7 +22,7 @@ VariableStrategyConfig: TypeAlias = (
 )
 
 
-class _Types(Enum):
+class SetupTypes(Enum):
     UKNOWN = "unknown"
     LIST = "list"
     TRACKER = "tracker"
@@ -32,32 +32,32 @@ class _Types(Enum):
     STRATEGY_AND_TRACKER = "strategy_and_tracker"
 
 
-def _type(obj: Any) -> _Types:
+def _type(obj: Any) -> SetupTypes:
     if obj is None:
-        t = _Types.UKNOWN
+        t = SetupTypes.UKNOWN
     elif isinstance(obj, (list, tuple)):
-        t = _Types.LIST
+        t = SetupTypes.LIST
     elif isinstance(obj, PositionsTracker):
-        t = _Types.TRACKER
+        t = SetupTypes.TRACKER
     elif isinstance(obj, (pd.DataFrame, pd.Series)):
-        t = _Types.SIGNAL
+        t = SetupTypes.SIGNAL
     elif isinstance(obj, IStrategy):
-        t = _Types.STRATEGY
+        t = SetupTypes.STRATEGY
     else:
-        t = _Types.UKNOWN
+        t = SetupTypes.UKNOWN
     return t
 
 
 def _is_strategy(obj):
-    return _type(obj) == _Types.STRATEGY
+    return _type(obj) == SetupTypes.STRATEGY
 
 
 def _is_tracker(obj):
-    return _type(obj) == _Types.TRACKER
+    return _type(obj) == SetupTypes.TRACKER
 
 
 def _is_signal(obj):
-    return _type(obj) == _Types.SIGNAL
+    return _type(obj) == SetupTypes.SIGNAL
 
 
 def _is_signal_or_strategy(obj):
@@ -66,7 +66,7 @@ def _is_signal_or_strategy(obj):
 
 @dataclass
 class SimulationSetup:
-    setup_type: _Types
+    setup_type: SetupTypes
     name: str
     generator: StrategyOrSignals
     tracker: PositionsTracker | None
@@ -177,7 +177,7 @@ def find_instruments_and_exchanges(
     return _instrs, _exchanges
 
 
-def recognize_simulation_setups(
+def recognize_simulation_configuration(
     name: str,
     configs: VariableStrategyConfig,
     instruments: list[Instrument],
@@ -251,7 +251,7 @@ def recognize_simulation_setups(
         for n, v in configs.items():
             _n = (name + "/") if name else ""
             r.extend(
-                recognize_simulation_setups(
+                recognize_simulation_configuration(
                     _n + n, v, instruments, exchange, capital, leverage, basic_currency, commissions
                 )
             )
@@ -262,10 +262,10 @@ def recognize_simulation_setups(
             _s = _check_signals_structure(c0)   # type: ignore
 
             if _is_signal(c0):
-                _t = _Types.SIGNAL_AND_TRACKER
+                _t = SetupTypes.SIGNAL_AND_TRACKER
 
             if _is_strategy(c0):
-                _t = _Types.STRATEGY_AND_TRACKER
+                _t = SetupTypes.STRATEGY_AND_TRACKER
 
             # - extract actual symbols that have signals
             r.append(
@@ -278,7 +278,7 @@ def recognize_simulation_setups(
         else:
             for j, s in enumerate(configs):
                 r.extend(
-                    recognize_simulation_setups(
+                    recognize_simulation_configuration(
                         # name + "/" + str(j), s, instruments, exchange, capital, leverage, basic_currency, commissions
                         name, s, instruments, exchange, capital, leverage, basic_currency, commissions, # type: ignore
                     )
@@ -287,7 +287,7 @@ def recognize_simulation_setups(
     elif _is_strategy(configs):
         r.append(
             SimulationSetup(
-                _Types.STRATEGY,
+                SetupTypes.STRATEGY,
                 name, configs, None, instruments,
                 exchange, capital, leverage, basic_currency, commissions,
             )
@@ -298,7 +298,7 @@ def recognize_simulation_setups(
         c1 = _check_signals_structure(configs)  # type: ignore
         r.append(
             SimulationSetup(
-                _Types.SIGNAL,
+                SetupTypes.SIGNAL,
                 name, c1, None, _pick_instruments(c1),
                 exchange, capital, leverage, basic_currency, commissions,
             )
@@ -306,3 +306,7 @@ def recognize_simulation_setups(
 
     # fmt: on
     return r
+
+
+def recognize_simulation_data():
+    pass
