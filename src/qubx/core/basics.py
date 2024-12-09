@@ -862,11 +862,13 @@ class TradingSessionResult:
         Return configuration as string: "test.strategies.Strategy1(parameter1=12345)"
         TODO: probably we need to return recreated new object
         """
-        _params = ", ".join([f"{k}={repr(v)}" for k, v in self.parameters.items()])
-        _class = self.strategy_class.split(".")[-1] if short else self.strategy_class
-        _cfg = f"{_class}({_params})"
-        # _cfg = f"{{ {repr(self.name)}: {_class}({_params}) }}"
-        # if instantiated: return eval(_cfg)
+        _cfg = ""
+        if self.strategy_class:
+            _params = ", ".join([f"{k}={repr(v)}" for k, v in self.parameters.items()])
+            _class = self.strategy_class.split(".")[-1] if short else self.strategy_class
+            _cfg = f"{_class}({_params})"
+            # _cfg = f"{{ {repr(self.name)}: {_class}({_params}) }}"
+            # if instantiated: return eval(_cfg)
         return _cfg
 
 
