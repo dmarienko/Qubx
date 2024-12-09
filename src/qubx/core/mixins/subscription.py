@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Dict, List, Set, Tuple, Union
+from typing import Any, Dict, List, Set, Tuple
 
 from qubx.core.basics import Instrument, Subtype
 from qubx.core.interfaces import IBrokerServiceProvider, ISubscriptionManager
@@ -74,25 +74,32 @@ class SubscriptionManager(ISubscriptionManager):
 
     @synchronized
     def commit(self) -> None:
-        _subs = self._get_updated_subs()
-        if not _subs:
+        if not self._has_operations_to_commit():
             return
 
         # - warm up subscriptions
         self._run_warmup()
 
         # - update subscriptions
-        for _sub in _subs:
+        for _sub in self._get_updated_subs():
             _current_sub_instruments = set(self._broker.get_subscribed_instruments(_sub))
             _removed_instruments = self._pending_stream_unsubscriptions.get(_sub, set())
             _added_instruments = self._pending_stream_subscriptions.get(_sub, set())
+
             if _sub in self._pending_global_unsubscriptions:
                 _removed_instruments.update(_current_sub_instruments)
+
             if _sub in self._pending_global_subscriptions:
                 _added_instruments.update(self._broker.get_subscribed_instruments())
+
+            # - subscribe collection
             _updated_instruments = _current_sub_instruments.union(_added_instruments).difference(_removed_instruments)
             if _updated_instruments != _current_sub_instruments:
                 self._broker.subscribe(_sub, _updated_instruments, reset=True)
+
+            # - unsubscribe instruments
+            if _removed_instruments:
+                self._broker.unsubscribe(_sub, _removed_instruments)
 
         # - clean up pending subs and unsubs
         self._pending_stream_subscriptions.clear()
@@ -140,6 +147,16 @@ class SubscriptionManager(ISubscriptionManager):
             | set(self._pending_stream_subscriptions.keys())
             | self._pending_global_subscriptions
             | self._pending_global_unsubscriptions
+        )
+
+    def _has_operations_to_commit(self) -> bool:
+        return any(
+            (
+                self._pending_stream_unsubscriptions,
+                self._pending_stream_subscriptions,
+                self._pending_global_subscriptions,
+                self._pending_global_unsubscriptions,
+            )
         )
 
     def _update_pending_warmups(self, subscription_type: str, instruments: List[Instrument]) -> None:
