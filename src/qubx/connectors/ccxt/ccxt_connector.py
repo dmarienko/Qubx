@@ -19,7 +19,7 @@ from qubx import logger
 from qubx.core.basics import Instrument, Position, dt_64, Deal, CtrlChannel, SubscriptionType
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IBrokerServiceProvider, ITradingServiceProvider, ITimeProvider
-from qubx.utils.threading import synchronized
+from qubx.utils.helpers import synchronized
 from qubx.core.series import TimeSeries, Bar, Trade, Quote
 from qubx.utils.ntp import start_ntp_thread, time_now
 from .ccxt_utils import DATA_PROVIDERS_ALIASES, ccxt_convert_trade, ccxt_convert_orderbook
