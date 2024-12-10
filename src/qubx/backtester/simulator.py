@@ -371,8 +371,8 @@ class SimulatedExchange(IBrokerServiceProvider):
                     break
 
             if _s_inst is None:
-                logger.error(f"Can't find instrument for pregenerated signals with id {s}")
-                raise ValueError(f"Can't find instrument for pregenerated signals with id {s}")
+                logger.error(f"Can't find instrument for pregenerated signals with id '{s}'")
+                raise ValueError(f"Can't find instrument for pregenerated signals with id '{s}'")
 
     def run(
         self,
@@ -488,7 +488,7 @@ class SimulatedExchange(IBrokerServiceProvider):
             _timeframe.asm8.item(),
         )
 
-    def _convert_records_to_bars(self, records: List[Dict[str, Any]], cut_time_ns: int, timeframe_ns: int) -> List[Bar]:
+    def _convert_records_to_bars(self, records: list[dict[str, Any]], cut_time_ns: int, timeframe_ns: int) -> list[Bar]:
         """
         Convert records to bars and we need to cut last bar up to the cut_time_ns
         """
@@ -528,7 +528,7 @@ def simulate(
     config: VariableStrategyConfig,
     data: Dict[str, pd.DataFrame] | DataReader,
     capital: float,
-    instruments: List[str] | Dict[str, List[str]] | None,
+    instruments: list[str] | dict[str, list[str]] | None,
     commissions: str,
     start: str | pd.Timestamp,
     stop: str | pd.Timestamp | None = None,
@@ -731,7 +731,7 @@ def _run_setup(
     open_close_time_indent_secs=1,
     account_id: str = "Simulated0",
 ) -> TradingSessionResult:
-    _stop = stop
+    _stop = pd.Timestamp(stop)
     logger.debug(
         f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {setup.exchange} for {setup.capital} x {setup.leverage} in {setup.base_currency}..."
     )
@@ -767,7 +767,7 @@ def _run_setup(
             strat = SignalsProxy(timeframe=signal_timeframe)
             broker.set_generated_signals(setup.generator)  # type: ignore
             # - we don't need any unexpected triggerings
-            _stop = setup.generator.index[-1]  # type: ignore
+            _stop = min(setup.generator.index[-1], _stop)  # type: ignore
 
             # - no historical data for generated signals, so disable it
             enable_event_batching = False
@@ -777,7 +777,7 @@ def _run_setup(
             strat.tracker = lambda ctx: setup.tracker
             broker.set_generated_signals(setup.generator)  # type: ignore
             # - we don't need any unexpected triggerings
-            _stop = setup.generator.index[-1]  # type: ignore
+            _stop = min(setup.generator.index[-1], _stop)  # type: ignore
 
             # - no historical data for generated signals, so disable it
             enable_event_batching = False

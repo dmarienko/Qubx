@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Set, Tuple
 
 from qubx.core.basics import Instrument, Subtype
 from qubx.core.interfaces import IBrokerServiceProvider, ISubscriptionManager
-from qubx.utils.threading import synchronized
+from qubx.utils.misc import synchronized
 
 
 class SubscriptionManager(ISubscriptionManager):

@@ -9,6 +9,7 @@ from qubx import logger, lookup
 from qubx.core.basics import CtrlChannel, Instrument, ITimeProvider
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy, PositionsTracker
+from qubx.data.readers import DataReader, InMemoryDataFrameReader
 
 StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
 DictOfStrats: TypeAlias = dict[str, StrategyOrSignals]
@@ -79,6 +80,13 @@ class SimulationSetup:
 
     def __str__(self) -> str:
         return f"{self.name} {self.setup_type} capital {self.capital} {self.base_currency} for [{','.join(map(lambda x: x.symbol, self.instruments))}] @ {self.exchange}[{self.commissions}]"
+
+
+@dataclass
+class SimulatedDataInfo:
+    # TODO: ...
+    timeframe: str | None
+    pass
 
 
 class SimulatedLogFormatter:
@@ -228,6 +236,7 @@ def recognize_simulation_configuration(
                 raise ValueError(f"Can't find instrument for signal's name: '{s.name}'")
 
         if isinstance(s, pd.DataFrame):
+            s.columns = s.columns.map(lambda x: str(x))
             for col in s.columns:
                 if not _name_in_instruments(col, instruments):
                     raise ValueError(f"Can't find instrument for signal's name: '{col}'")
@@ -310,5 +319,30 @@ def recognize_simulation_configuration(
     return r
 
 
-def recognize_simulation_data():
+def recognize_simulation_data(
+    data: dict[str, pd.DataFrame] | DataReader,
+    instruments: list[str] | dict[str, list[str]] | None,
+    aux_data: DataReader | None = None,
+) -> SimulatedDataInfo:
+    if isinstance(data, dict):
+        data_reader = InMemoryDataFrameReader(data)  # type: ignore
+
+        if not instruments:
+            instruments = list(data_reader.get_names())
+
+    elif isinstance(data, DataReader):
+        data_reader = data
+        if not instruments:
+            raise ValueError("Symbol list must be provided for generic data reader !")
+
+    else:
+        raise ValueError(f"Unsupported data type: {type(data).__name__}")
     pass
+
+    # _aux_data = None
+    # if aux_data is not None:
+    #     if not isinstance(aux_data, InMemoryCachedReader):
+    #         logger.error("Aux data provider should be an instance of InMemoryCachedReader! Skipping it.")
+    #     _aux_data = TimeGuardedWrapper(aux_data, trading_service)
+
+    return SimulatedDataInfo()

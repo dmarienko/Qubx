@@ -1,10 +1,10 @@
 from typing import Any, List, Optional
 
 import pandas as pd
-import pytest
 from pandas import Timestamp
+from pytest import approx
 
-from qubx import QubxLogConfig, logger, lookup
+from qubx import logger, lookup
 from qubx.backtester.simulator import simulate
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
@@ -40,7 +40,6 @@ from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.pandaz.utils import *
 from qubx.ta.indicators import ema, sma
 from qubx.trackers.composite import CompositeTracker, CompositeTrackerPerSide, LongTracker
-from qubx.trackers.rebalancers import PortfolioRebalancerTracker
 from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
 from qubx.trackers.sizers import FixedLeverageSizer, FixedRiskSizer, FixedSizer
 
@@ -424,7 +423,7 @@ class TestTrackersAndGatherers:
         mtrx1 = portfolio_metrics(
             rep[1].portfolio_log, rep[1].executions_log, rep[1].capital, account_transactions=False, commission_factor=1
         )
-        assert N(mtrx0["gain"]) == 22.6584
-        assert N(mtrx1["gain"]) == 23.3429
+        assert N(mtrx0["gain"]) == 22.6519
+        assert N(mtrx1["gain"]) == 23.3365
 
         # fmt: on
