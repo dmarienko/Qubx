@@ -79,7 +79,7 @@ class DataTransformer:
 
 class DataReader:
     def get_names(self, **kwargs) -> List[str]:
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def read(
         self,
@@ -90,7 +90,7 @@ class DataReader:
         chunksize=0,
         **kwargs,
     ) -> Iterator | List:
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def get_aux_data_ids(self) -> Set[str]:
         """

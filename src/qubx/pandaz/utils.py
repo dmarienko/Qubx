@@ -1,8 +1,8 @@
-from typing import Any, Callable, Dict, Iterable, Literal, Optional, Set, Union, List
 from datetime import timedelta
-import pandas as pd
-import numpy as np
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Set, Union
 
+import numpy as np
+import pandas as pd
 from numpy.lib.stride_tricks import as_strided as stride
 
 from qubx.utils.misc import Struct
@@ -458,6 +458,18 @@ def ohlc_resample(
     def __mx_rsmpl(d, freq: str, is_vmpt: bool = False, resample_tz=None) -> pd.DataFrame:
         _cols = d.columns
         _source_tz = d.index.tz
+
+        # if we have trades
+        if all([i in _cols for i in ["price", "side", "amount"]]):
+            result = _tz_convert(d.price, resample_tz, _source_tz)
+            result = result.resample(freq).agg("ohlc")
+            result["volume"] = d.amount.resample(freq).sum()
+            result["quote_volume"] = (d.amount * d.price).resample(freq).sum()
+            result["taker_buy_volume"] = d[d.side == "buy"].amount.resample(freq).sum()
+            result["taker_buy_quote_volume"] = (
+                (d[d.side == "buy"].amount * d[d.side == "buy"].price).resample(freq).sum()
+            )
+            return result if not resample_tz else result.tz_convert(_source_tz)
 
         # if we have bid/ask frame
         if "ask" in _cols and "bid" in _cols:

@@ -1,15 +1,19 @@
-import glob, re
-import pandas as pd
-import json, os, dataclasses
+import configparser
+import dataclasses
+import glob
+import json
+import os
+import re
 from datetime import datetime
 from typing import Dict, List, Optional
-import configparser
+
+import pandas as pd
 import stackprinter
 
 from qubx import logger
-from qubx.core.basics import Instrument, TransactionCostsCalculator, AssetType, MarketType, ZERO_COSTS
+from qubx.core.basics import ZERO_COSTS, AssetType, Instrument, MarketType, TransactionCostsCalculator
 from qubx.utils.marketdata.dukas import SAMPLE_INSTRUMENTS
-from qubx.utils.misc import makedirs, get_local_qubx_folder
+from qubx.utils.misc import get_local_qubx_folder, makedirs
 
 _DEF_INSTRUMENTS_FOLDER = "instruments"
 _DEF_FEES_FOLDER = "fees"
@@ -146,6 +150,7 @@ class InstrumentsLookup:
         keep_types: list[MarketType] | None = None,
     ):
         import ccxt as cx
+
         from qubx.utils.marketdata.ccxt import ccxt_symbol_to_instrument
 
         instruments = []
@@ -172,6 +177,9 @@ class InstrumentsLookup:
         self._ccxt_update(path, "binance", {"binance": "binance"}, keep_types=[MarketType.SPOT, MarketType.MARGIN])
         self._ccxt_update(path, "binance.um", {"binance.um": "binanceusdm"})
         self._ccxt_update(path, "binance.cm", {"binance.cm": "binancecoinm"})
+
+    def _update_bitfinex(self, path: str):
+        self._ccxt_update(path, "bitfinex.f", {"bitfinex.f": "bitfinex"}, keep_types=[MarketType.SWAP])
 
     def _update_dukas(self, path: str):
         self._save_to_json(os.path.join(path, "dukas.json"), SAMPLE_INSTRUMENTS)

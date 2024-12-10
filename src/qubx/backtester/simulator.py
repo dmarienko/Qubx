@@ -361,7 +361,9 @@ class SimulatedExchange(IBrokerServiceProvider):
 
     def _prepare_generated_signals(self, start: str | pd.Timestamp, end: str | pd.Timestamp) -> None:
         for s, v in self._pregenerated_signals.items():
-            sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
+            _start, _end = pd.Timestamp(start), pd.Timestamp(end)
+            _start_idx, _end_idx = v.index.get_indexer([_start, _end], method="ffill")
+            sel = v.iloc[max(_start_idx, 0) : _end_idx]
             self._to_process[s] = list(zip(sel.index, sel.values))
 
     def run(
@@ -719,7 +721,7 @@ def _run_setup(
     open_close_time_indent_secs=1,
     account_id: str = "Simulated0",
 ) -> TradingSessionResult:
-    _stop = stop
+    _stop = pd.Timestamp(stop)
     logger.debug(
         f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {setup.exchange} for {setup.capital} x {setup.leverage} in {setup.base_currency}..."
     )
@@ -755,7 +757,7 @@ def _run_setup(
             strat = SignalsProxy(timeframe=signal_timeframe)
             broker.set_generated_signals(setup.generator)  # type: ignore
             # - we don't need any unexpected triggerings
-            _stop = setup.generator.index[-1]  # type: ignore
+            _stop = min(setup.generator.index[-1], _stop)  # type: ignore
 
             # - no historical data for generated signals, so disable it
             enable_event_batching = False
@@ -765,7 +767,7 @@ def _run_setup(
             strat.tracker = lambda ctx: setup.tracker
             broker.set_generated_signals(setup.generator)  # type: ignore
             # - we don't need any unexpected triggerings
-            _stop = setup.generator.index[-1]  # type: ignore
+            _stop = min(setup.generator.index[-1], _stop)  # type: ignore
 
             # - no historical data for generated signals, so disable it
             enable_event_batching = False
