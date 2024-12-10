@@ -1,29 +1,23 @@
-import os, msgspec, gzip, traceback
-import pandas as pd
-import numpy as np
-
+import gzip
+import os
+import traceback
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, List, Dict
-from os.path import join, exists
+from os.path import exists, join
 from pathlib import Path
-from tqdm.auto import tqdm
-from datetime import datetime
+from typing import Any, Dict, List
+
+import msgspec
+import numpy as np
+import pandas as pd
 from numba import njit, types
 from numba.typed import Dict
+from tqdm.auto import tqdm
 
-from qubx import logger, QubxLogConfig, lookup
+from qubx import QubxLogConfig, logger, lookup
 from qubx.core.basics import Instrument
-from qubx.pandaz.utils import srows, scols
-
-
-def count_decimal_places(number: float) -> int:
-    number_str = ("%.10f" % number).strip("0")
-    if "." in number_str:
-        integer_part, decimal_part = number_str.split(".")
-        return len(decimal_part)
-    else:
-        return 0
+from qubx.pandaz.utils import scols, srows
+from qubx.utils.numbers import count_decimal_places
 
 
 @njit
