@@ -83,7 +83,7 @@ class SimulationSetup:
 
 
 @dataclass
-class SimulatedDataInfo:
+class SimulationDataInfo:
     # TODO: ...
     timeframe: str | None
     pass
@@ -323,7 +323,7 @@ def recognize_simulation_data(
     data: dict[str, pd.DataFrame] | DataReader,
     instruments: list[str] | dict[str, list[str]] | None,
     aux_data: DataReader | None = None,
-) -> SimulatedDataInfo:
+) -> SimulationDataInfo:
     if isinstance(data, dict):
         data_reader = InMemoryDataFrameReader(data)  # type: ignore
 
@@ -345,4 +345,5 @@ def recognize_simulation_data(
     #         logger.error("Aux data provider should be an instance of InMemoryCachedReader! Skipping it.")
     #     _aux_data = TimeGuardedWrapper(aux_data, trading_service)
 
-    return SimulatedDataInfo()
+    # return SimulationDataInfo()
+    return None
