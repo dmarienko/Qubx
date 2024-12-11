@@ -357,7 +357,7 @@ class Order:
     options: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
-        return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.instrument.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
+        return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.instrument} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
 
 
 @dataclass
@@ -562,7 +562,7 @@ class Position:
         self.last_update_conversion_rate = conversion_rate
 
         if not np.isnan(price):
-            u_pnl = self.quantity * (price - self.position_avg_price) / conversion_rate
+            u_pnl = self.unrealized_pnl()
             self.pnl = u_pnl + self.r_pnl
             if self.instrument.is_futures():
                 # for derivatives market value of the position is the current unrealized PnL
@@ -582,10 +582,12 @@ class Position:
 
     def total_pnl(self) -> float:
         # TODO: account for commissions
-        pnl = self.r_pnl
-        if not np.isnan(self.last_update_price):  # type: ignore
-            pnl += self.quantity * (self.last_update_price - self.position_avg_price) / self.last_update_conversion_rate  # type: ignore
-        return pnl
+        return self.r_pnl + self.unrealized_pnl()
+
+    def unrealized_pnl(self) -> float:
+        if not np.isnan(self.last_update_price):
+            return self.quantity * (self.last_update_price - self.position_avg_price) / self.last_update_conversion_rate  # type: ignore
+        return 0.0
 
     def is_open(self) -> bool:
         return abs(self.quantity) > self.instrument.min_size
@@ -617,7 +619,7 @@ class Position:
                 f"qty={self.quantity:.{self.instrument.size_precision}f}",
                 f"entryPrice={self.position_avg_price:.{self.instrument.price_precision}f}",
                 f"price={self.last_update_price:.{self.instrument.price_precision}f}",
-                f"pnl={self.pnl:.2f}",
+                f"pnl={self.unrealized_pnl():.2f}",
                 f"value={self.market_value_funds:.2f}",
             ]
         )

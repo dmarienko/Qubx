@@ -38,6 +38,7 @@ from .utils import (
     ccxt_convert_positions,
     ccxt_extract_deals_from_exec,
     ccxt_restore_position_from_deals,
+    instrument_to_ccxt_symbol,
 )
 
 ORDERS_HISTORY_LOOKBACK_DAYS = 30
@@ -101,11 +102,13 @@ class CcxtTradingConnector(ITradingServiceProvider):
         if instrument.is_futures():
             params["type"] = "swap"
 
+        ccxt_symbol = instrument_to_ccxt_symbol(instrument)
+
         r: Dict[str, Any] | None = None
         try:
             r = self._loop.submit(
                 self.exchange.create_order(
-                    symbol=instrument.symbol,
+                    symbol=ccxt_symbol,
                     type=order_type,  # type: ignore
                     side=order_side,  # type: ignore
                     amount=amount,
@@ -138,7 +141,9 @@ class CcxtTradingConnector(ITradingServiceProvider):
             order = orders[order_id]
             try:
                 logger.info(f"Canceling order {order_id} ...")
-                r = self._loop.submit(self.exchange.cancel_order(order_id, symbol=order.instrument.symbol)).result()
+                r = self._loop.submit(
+                    self.exchange.cancel_order(order_id, symbol=instrument_to_ccxt_symbol(order.instrument))
+                ).result()
             except Exception as err:
                 logger.error(f"Canceling [{order}] exception : {err}")
                 logger.error(traceback.format_exc())

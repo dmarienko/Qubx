@@ -223,7 +223,6 @@ class CcxtAccountProcessor(BasicAccountProcessor):
 
     async def _update_balance(self) -> None:
         """Fetch and update balances from exchange"""
-        await self.exchange.load_markets()
         balances_raw = await self.exchange.fetch_balance()
         balances = ccxt_convert_balance(balances_raw)
         current_balances = self.get_balances()
@@ -251,9 +250,31 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         # fetch and update positions from exchange
         ccxt_positions = await self.exchange.fetch_positions()
         positions = ccxt_convert_positions(ccxt_positions, self.exchange.name, self.exchange.markets)
-        self.attach_positions(*positions)
         # update required instruments that we need to subscribe to
         self._required_instruments.update([p.instrument for p in positions])
+        # update positions
+        _instrument_to_position = {p.instrument: p for p in positions}
+        _current_instruments = set(self._positions.keys())
+        _new_instruments = set([p.instrument for p in positions])
+        _to_remove = _current_instruments - _new_instruments
+        _to_add = _new_instruments - _current_instruments
+        _to_modify = _current_instruments.intersection(_new_instruments)
+        _update_positions = [Position(i) for i in _to_remove] + [_instrument_to_position[i] for i in _to_modify]
+        # - add new positions
+        for i in _to_add:
+            self._positions[i] = _instrument_to_position[i]
+        # - modify existing positions
+        _time = self.time()
+        for pos in _update_positions:
+            self._update_instrument_position(_time, self._positions[pos.instrument], pos)
+
+    def _update_instrument_position(self, timestamp: dt_64, current_pos: Position, new_pos: Position) -> None:
+        instrument = current_pos.instrument
+        quantity_diff = new_pos.quantity - current_pos.quantity
+        if abs(quantity_diff) < instrument.lot_size:
+            return
+        _current_price = current_pos.last_update_price
+        current_pos.change_position_by(timestamp, quantity_diff, _current_price)
 
     async def _subscribe_instruments(self, instruments: list[Instrument]) -> None:
         assert self._subscription_manager is not None

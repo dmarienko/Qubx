@@ -1,6 +1,6 @@
 from qubx import logger
 from qubx.core.basics import Instrument, Order
-from qubx.core.interfaces import ITradingServiceProvider, ITradingManager, ITimeProvider, ITradingServiceProvider
+from qubx.core.interfaces import ITimeProvider, ITradingManager, ITradingServiceProvider
 
 
 class TradingManager(ITradingManager):
@@ -70,4 +70,4 @@ class TradingManager(ITradingManager):
             self._order_id = self._time_provider.time().item() // 100_000_000
         assert self._order_id is not None
         self._order_id += 1
-        return "_".join([self._strategy_name, symbol, str(self._order_id)])
+        return "_".join(["qubx", symbol, str(self._order_id)])
