@@ -399,4 +399,5 @@ class TestSimulatorHelpers:
         # fmt: on
 
     def test_recognize_simulation_input_data(self):
+        DataSniffer()
         pass

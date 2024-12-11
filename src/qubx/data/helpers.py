@@ -6,7 +6,7 @@ import pandas as pd
 from joblib import delayed
 
 from qubx import logger
-from qubx.core.basics import ITimeProvider
+from qubx.core.basics import DataType, ITimeProvider
 from qubx.core.series import TimeSeries
 from qubx.data.readers import (
     CsvStorageDataReader,
@@ -76,8 +76,8 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
             _s_path = f"{self.exchange}:{data_id}"
         _, symb = _s_path.split(":")
 
-        _start = str(self._start) if start is None else start
-        _stop = str(self._stop) if stop is None else stop
+        _start = str(self._start) if start is None and self._start is not None else start
+        _stop = str(self._stop) if stop is None and self._stop is not None else stop
         if _start is None or _stop is None:
             raise ValueError("Start and stop date must be provided")
 
@@ -87,7 +87,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         # - super InMemoryDataFrameReader supports chunked reading now
         return super().read(_s_path, start, stop, transform, chunksize=chunksize, **kwargs)
 
-    def __getitem__(self, keys) -> Dict[str, pd.DataFrame | pd.Series] | pd.DataFrame | pd.Series:
+    def __getitem__(self, keys) -> dict[str, pd.DataFrame | pd.Series] | pd.DataFrame | pd.Series:
         """
         This helper mostly for using in research notebooks
         """
@@ -206,7 +206,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         self._stop = max(_stop, self._stop if self._stop else _stop)
         return OhlcDict({s: self._data[s].loc[_start:_stop] for s in symbols if s in self._data})
 
-    def get_aux_data_ids(self) -> Set[str]:
+    def get_aux_data_ids(self) -> set[str]:
         return self._reader.get_aux_data_ids() | set(self._external.keys())
 
     def get_aux_data(self, data_id: str, **kwargs) -> Any:
@@ -245,6 +245,12 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         _xd = ohlc_resample(_xd, timeframe) if timeframe else _xd
         _r = [x.assign(symbol=s.upper(), timestamp=x.index) for s, x in _xd.items()]
         return srows(*_r).set_index(["timestamp", "symbol"])
+
+    def get_names(self, **kwargs) -> list[str]:
+        return self._reader.get_names(**kwargs)
+
+    def get_symbols(self, exchange: str, dtype: str) -> list[str]:
+        return self._reader.get_symbols(self.exchange, DataType.OHLC)
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}(exchange={self.exchange},timeframe={self._data_timeframe})"

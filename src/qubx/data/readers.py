@@ -12,6 +12,7 @@ import pyarrow as pa
 from pyarrow import csv
 
 from qubx import logger
+from qubx.core.basics import DataType
 from qubx.core.series import OHLCV, Bar, Quote, TimeSeries, Trade, time_as_nsec
 from qubx.pandaz.utils import ohlc_resample, srows
 from qubx.utils.time import handle_start_stop, infer_series_frequency
@@ -101,7 +102,7 @@ class DataReader:
         chunksize=0,
         **kwargs,
     ) -> Iterator | List:
-        raise NotImplemented()
+        raise NotImplementedError("read() method is not implemented")
 
     def get_aux_data_ids(self) -> Set[str]:
         """
@@ -129,6 +130,9 @@ class DataReader:
         raise ValueError(
             f"{self.__class__.__name__} doesn't have getter for '{data_id}' auxiliary data. Available data: {self.get_aux_data_ids()}"
         )
+
+    def get_symbols(self, exchange: str, dtype: DataType) -> list[str]:
+        raise NotImplementedError("get_symbols() method is not implemented")
 
 
 class CsvStorageDataReader(DataReader):
@@ -259,14 +263,14 @@ class CsvStorageDataReader(DataReader):
                 if timeframe is not None:
                     x = ohlc_resample(x, timeframe)
                 _r.append(x.assign(symbol=symbol.upper(), timestamp=x.index))  # type: ignore
-        return srows(*_r).set_index(["timestamp", "symbol"])
+        return srows(*_r).set_index(["timestamp", "symbol"]) if _r else pd.DataFrame()
 
     def get_names(self, **kwargs) -> List[str]:
         _n = []
         for root, _, files in os.walk(self.path):
             path = root.split(os.sep)
             for file in files:
-                if m := re.match(r"(.*)\.csv(.gz)?$", file):
+                if re.match(r"(.*)\.csv(.gz)?$", file):
                     f = path[-1]
                     n = file.split(".")[0]
                     if f == self.path:
@@ -275,6 +279,9 @@ class CsvStorageDataReader(DataReader):
                         name = f"{f}:{ n }" if f else n
                     _n.append(name)
         return _n
+
+    def get_symbols(self, exchange: str, dtype: str) -> list[str]:
+        return self.get_names()
 
 
 class InMemoryDataFrameReader(DataReader):
@@ -291,7 +298,7 @@ class InMemoryDataFrameReader(DataReader):
         self._data = data
         self.exchange = exchange
 
-    def get_names(self, **kwargs) -> List[str]:
+    def get_names(self, **kwargs) -> list[str]:
         keys = list(self._data.keys())
         if self.exchange:
             return [f"{self.exchange}:{k}" for k in keys]
@@ -305,7 +312,7 @@ class InMemoryDataFrameReader(DataReader):
         transform: DataTransformer = DataTransformer(),
         chunksize=0,
         **kwargs,
-    ) -> Iterable | List:
+    ) -> Iterable | list:
         """
         Read and transform data for a given data_id within a specified time range.
 
@@ -365,7 +372,7 @@ class InMemoryDataFrameReader(DataReader):
 
         return _do_transform(d2.values, list(d2.columns))
 
-    def get_symbols(self, **kwargs) -> List[str]:
+    def get_symbols(self, exchange: str, dtype: str) -> list[str]:
         return self.get_names()
 
 
@@ -916,6 +923,10 @@ class QuestDBSqlBuilder:
     def prepare_names_sql(self) -> str:
         return "select table_name from tables()"
 
+    def prepare_symbols_sql(self, exchange: str, dtype: str) -> str:
+        _table = self.get_table_name(f"{exchange}:BTCUSDT", dtype)
+        return f"select distinct(symbol) from {_table}"
+
 
 class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
     """
@@ -1070,14 +1081,6 @@ class QuestDBConnector(DataReader):
             self._builder,
         )
 
-    def get_symbols(self, exchange: str) -> list[str]:
-        table_name = QuestDBSqlCandlesBuilder().get_table_name(f"{exchange}:BTCUSDT")
-        query = f"""
-        select distinct symbol
-        from "{table_name}";
-        """
-        return self.execute(query)["symbol"].tolist()
-
     def get_candles(
         self,
         exchange: str,
@@ -1221,12 +1224,24 @@ class QuestDBConnector(DataReader):
                 _cursor.close()
         return [r[0] for r in records]
 
+    @_retry
+    def _get_symbols(self, builder: QuestDBSqlBuilder, exchange: str, dtype: str) -> List[str]:
+        _cursor = None
+        try:
+            _cursor = self._connection.cursor()  # type: ignore
+            _cursor.execute(builder.prepare_symbols_sql(exchange, dtype))  # type: ignore
+            records = _cursor.fetchall()
+        finally:
+            if _cursor:
+                _cursor.close()
+        return [f"{exchange}:{r[0].upper()}" for r in records]
+
     def __del__(self):
         try:
             if self._connection is not None:
                 logger.debug("Closing connection")
                 self._connection.close()
-        except:
+        except:  # noqa: E722
             pass
 
 
@@ -1290,6 +1305,10 @@ class TradeSql(QuestDBSqlCandlesBuilder):
             sql = f"""select timestamp, price, size, market_maker from "{table_name}" {where};"""
 
         return sql
+
+    def prepare_symbols_sql(self, exchange: str, dtype: str) -> str:
+        # TODO:
+        raise NotImplementedError("Not implemented yet")
 
 
 class MultiQdbConnector(QuestDBConnector):
@@ -1379,5 +1398,12 @@ class MultiQdbConnector(QuestDBConnector):
             self._TYPE_TO_BUILDER[_mapped_data_type],
         )
 
-    def get_names(self, data_type: str) -> List[str]:
+    def get_names(self, data_type: str) -> list[str]:
         return self._get_names(self._TYPE_TO_BUILDER[self._TYPE_MAPPINGS.get(data_type, data_type)])
+
+    def get_symbols(self, exchange: str, dtype: str) -> list[str]:
+        return self._get_symbols(
+            self._TYPE_TO_BUILDER[self._TYPE_MAPPINGS.get(dtype, dtype)],
+            exchange,
+            self._TYPE_MAPPINGS.get(dtype, dtype),
+        )

@@ -323,8 +323,10 @@ def recognize_simulation_configuration(
 
 
 class DataSniffer:
-    def __init__(self, reader_lookahead_period: str = "1d") -> None:
-        self._reader_lookahead_period = pd.Timedelta(reader_lookahead_period)
+    _probe_size: int
+
+    def __init__(self, _probe_size: int = 50) -> None:
+        self._probe_size = _probe_size
 
     def _has_columns(self, v: pd.DataFrame, columns: list[str]):
         return all([c in v.columns for c in columns])
@@ -335,11 +337,11 @@ class DataSniffer:
     def _sniff_list(self, v: list[Any]) -> str:
         match v[0]:
             case Bar():
-                _tf = time_delta_to_str(infer_series_frequency([x.time for x in v[:20]]).item())
+                _tf = time_delta_to_str(infer_series_frequency([x.time for x in v[: self._probe_size]]).item())
                 return DataType.OHLC[_tf]
 
             case dict():
-                return self._sniff_dict(v)
+                return self._sniff_dicts(v)
 
             case Quote():
                 return DataType.QUOTE
@@ -349,12 +351,12 @@ class DataSniffer:
 
         return DataType.NONE
 
-    def _sniff_dict(self, v: dict[str, Any] | list[dict[str, Any]]) -> str:
+    def _sniff_dicts(self, v: dict[str, Any] | list[dict[str, Any]]) -> str:
         v, vs = (v[0], v) if isinstance(v, list) else (v, None)
 
         if self._has_keys(v, ["open", "high", "low", "close"]):
             if vs:
-                _tf = time_delta_to_str(infer_series_frequency([x.get("time") for x in vs[:20]]).item())
+                _tf = time_delta_to_str(infer_series_frequency([x.get("time") for x in vs[: self._probe_size]]).item())
                 return DataType.OHLC[_tf]
             return DataType.OHLC
 
@@ -368,7 +370,7 @@ class DataSniffer:
 
     def _sniff_pandas(self, v: pd.DataFrame) -> str:
         if self._has_columns(v, ["open", "high", "low", "close"]):
-            _tf = time_delta_to_str(infer_series_frequency(v[:10]).item())
+            _tf = time_delta_to_str(infer_series_frequency(v[: self._probe_size]).item())
             return DataType.OHLC[_tf]
 
         if self._has_columns(v, ["bid", "ask"]):
@@ -379,19 +381,43 @@ class DataSniffer:
 
         return DataType.NONE
 
-    def _sniff_reader(self, symbol: str, reader: DataReader) -> str:
-        data = reader.read(symbol, transform=AsDict(), timeframe=None)
-        return self._sniff_list(data)
+    def _pre_read(self, symbol: str, reader: DataReader, time: str) -> list[Any]:
+        for dt in ["2h", "12h", "2d", "28d", "60d", "720d"]:
+            try:
+                _it = reader.read(
+                    symbol,
+                    transform=AsDict(),
+                    start=time,
+                    stop=pd.Timestamp(time) + pd.Timedelta(dt),  # type: ignore
+                    timeframe=None,
+                    chunksize=self._probe_size,
+                )
+                if len(data := next(_it)) >= 2:  # type: ignore
+                    return data
+            except Exception:
+                pass
+        return []
+
+    def _sniff_reader(self, symbol: str, reader: DataReader, time: str) -> str:
+        data = self._pre_read(symbol, reader, time)
+        if data:
+            return self._sniff_list(data)
+        print(f"Failed to read probe data for symbol: {symbol} -- Skipping this symbol")
+        return DataType.NONE
 
     def extract_types(
         self,
         data: dict[str, Any],
+        time: str,
     ) -> dict[str, str]:
+        """
+        Tries to infer data types from provided data and instruments.
+        """
         _types = {}
         for k, v in data.items():
             match v:
                 case DataReader():
-                    _types[k] = self._sniff_reader(k, v)
+                    _types[k] = self._sniff_reader(k, v, time)
 
                 case pd.DataFrame():
                     _types[k] = self._sniff_pandas(v)
@@ -400,13 +426,21 @@ class DataSniffer:
                     _types[k] = self._sniff_list(v)
 
                 case dict():
-                    _types[k] = self._sniff_dict(v)
+                    _types[k] = self._sniff_dicts(v)
 
                 case _:
                     logger.warning(f"Unsupported data type: {type(v)} for symbol: {k}")
                     _types[k] = DataType.NONE
 
         return _types
+
+    def extract_types_for_reader(
+        self,
+        reader: DataReader,
+        instruments: list[str],
+        time: str,
+    ) -> dict[str, str]:
+        return self.extract_types(dict(zip(instruments, [reader] * len(instruments))), time)
 
 
 def recognize_simulation_data(
