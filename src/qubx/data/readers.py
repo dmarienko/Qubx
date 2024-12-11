@@ -1,17 +1,20 @@
-import re, os
-from typing import Dict, List, Set, Union, Optional, Iterator, Iterable, Any
+import itertools
+import os
+import re
+from functools import wraps
 from os.path import exists, join
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Union
+
 import numpy as np
 import pandas as pd
+import psycopg as pg
 import pyarrow as pa
 from pyarrow import csv
-import psycopg as pg
-from functools import wraps
 
 from qubx import logger
-from qubx.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade, Bar
+from qubx.core.series import OHLCV, Bar, Quote, TimeSeries, Trade, time_as_nsec
 from qubx.pandaz.utils import ohlc_resample, srows
-from qubx.utils.time import infer_series_frequency, handle_start_stop
+from qubx.utils.time import handle_start_stop, infer_series_frequency
 
 _DT = lambda x: pd.Timedelta(x).to_numpy().item()
 D1, H1 = _DT("1D"), _DT("1h")
@@ -46,7 +49,15 @@ def _find_column_index_in_list(xs, *args):
         ai = a.lower()
         if ai in xs:
             return xs.index(ai)
-    raise IndexError(f"Can't find any from {args} in list: {xs}")
+    raise IndexError(f"Can't find any specified columns from [{args}] in provided list: {xs}")
+
+
+def _list_to_chunked_iterator(data: list[Any], chunksize: int) -> Iterable:
+    it = iter(data)
+    chunk = list(itertools.islice(it, chunksize))
+    while chunk:
+        yield chunk
+        chunk = list(itertools.islice(it, chunksize))
 
 
 _FIND_TIME_COL_IDX = lambda column_names: _find_column_index_in_list(
@@ -333,18 +344,26 @@ class InMemoryDataFrameReader(DataReader):
         d2 = d.loc[start:stop].copy()
         if _tf := kwargs.get("timeframe"):
             d2 = ohlc_resample(d2, _tf)
-
+            assert isinstance(d2, pd.DataFrame), "Resampled data should be a DataFrame"
         d2 = d2.reset_index()
-        transform.start_transform(data_id, list(d2.columns), start=start, stop=stop)
-        transform.process_data(d2.values)
-        res = transform.collect()
+
+        def _do_transform(values: Iterable, columns: list[str]) -> Iterable:
+            transform.start_transform(data_id, columns, start=start, stop=stop)
+            transform.process_data(values)
+            return transform.collect()
+
         if chunksize > 0:
+            # returns chunked frames
+            def _chunked_dataframe(data: np.ndarray, columns: list[str], chunksize: int) -> Iterable:
+                it = iter(data)
+                chunk = list(itertools.islice(it, chunksize))
+                while chunk:
+                    yield _do_transform(chunk, columns)
+                    chunk = list(itertools.islice(it, chunksize))
 
-            def __iterable():
-                yield res
+            return _chunked_dataframe(d2.values, list(d2.columns), chunksize)
 
-            return __iterable()
-        return res
+        return _do_transform(d2.values, list(d2.columns))
 
     def get_symbols(self, **kwargs) -> List[str]:
         return self.get_names()
@@ -389,6 +408,10 @@ class AsOhlcvSeries(DataTransformer):
         trades (TAS): time,price,size,(is_taker)
         ```
     """
+
+    timeframe: str | None
+    _series: OHLCV | None
+    _data_type: str | None
 
     def __init__(self, timeframe: str | None = None, timestamp_units="ns") -> None:
         super().__init__()
@@ -502,6 +525,23 @@ class AsOhlcvSeries(DataTransformer):
 
     def collect(self) -> Any:
         return self._series
+
+
+class AsBars(AsOhlcvSeries):
+    """
+    Convert incoming data into Bars sequence.
+
+    Incoming data may have one of the following structures:
+
+        ```
+        ohlcv:        time,open,high,low,close,volume|quote_volume,(buy_volume)
+        quotes:       time,bid,ask,bidsize,asksize
+        trades (TAS): time,price,size,(is_taker)
+        ```
+    """
+
+    def collect(self) -> Any:
+        return self._series[::-1] if self._series is not None else None
 
 
 class AsQuotes(DataTransformer):
@@ -816,6 +856,26 @@ class RestoredBarsFromOHLC(RestoredEmulatorHelper):
 
             # - full bar
             self.buffer.append(Bar(ti + self._t_end, o, h, l, c, vol))
+
+
+class AsDict(DataTransformer):
+    """
+    Tries to keep incoming data as list of dictionaries with preprocessed time
+    """
+
+    def start_transform(self, name: str, column_names: List[str], **kwargs):
+        self.buffer = list()
+        self._time_idx = _FIND_TIME_COL_IDX(column_names)
+        self._column_names = column_names
+        self._time_name = column_names[self._time_idx]
+
+    def process_data(self, rows_data: Iterable) -> Any:
+        if rows_data is not None:
+            for d in rows_data:
+                _r_dict = dict(zip(self._column_names, d))
+                _r_dict.pop(self._time_name)
+                _r_dict["time"] = _time(d[self._time_idx], "ns")
+                self.buffer.append(_r_dict)
 
 
 def _retry(fn):

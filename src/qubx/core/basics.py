@@ -694,10 +694,10 @@ class ITimeProvider:
         ...
 
 
-class Subtype(StrEnum):
+class DataType(StrEnum):
     """
-    Subscription type constants. Used for specifying the type of data to subscribe to.
-    Special value `Subtype.ALL` can be used to subscribe to all available data types
+    Data type constants. Used for specifying the type of data and can be used for subscription to.
+    Special value `DataType.ALL` can be used to subscribe to all available data types
     that are currently in use by the broker for other instruments.
     """
 
@@ -718,21 +718,21 @@ class Subtype(StrEnum):
         return self.value
 
     def __eq__(self, other: Any) -> bool:
-        if isinstance(other, Subtype):
+        if isinstance(other, DataType):
             return self.value == other.value
-        return self.value == Subtype.from_str(other)[0].value
+        return self.value == DataType.from_str(other)[0].value
 
     def __hash__(self) -> int:
         return hash(self.value)
 
     def __getitem__(self, *args, **kwargs) -> str:
         match self:
-            case Subtype.OHLC | Subtype.OHLC_TICKS:
+            case DataType.OHLC | DataType.OHLC_TICKS:
                 tf = args[0] if args else kwargs.get("timeframe")
                 if not tf:
                     raise ValueError("Timeframe is not provided for OHLC subscription")
                 return f"{self.value}({tf})"
-            case Subtype.ORDERBOOK:
+            case DataType.ORDERBOOK:
                 if len(args) == 2:
                     tick_size_pct, depth = args
                 elif len(args) > 0:
@@ -745,7 +745,7 @@ class Subtype(StrEnum):
                 return self.value
 
     @staticmethod
-    def from_str(value: Union[str, "Subtype"]) -> tuple["Subtype", dict[str, Any]]:
+    def from_str(value: Union[str, "DataType"]) -> tuple["DataType", dict[str, Any]]:
         """
         Parse subscription type from string.
         Returns: (subtype, params)
@@ -760,30 +760,32 @@ class Subtype(StrEnum):
         >>> Subtype.from_str("quote")
         (Subtype.QUOTE, {})
         """
-        if isinstance(value, Subtype):
+        if isinstance(value, DataType):
             return value, {}
         try:
             _value = value.lower()
-            _has_params = Subtype._str_has_params(value)
-            if not _has_params and value.upper() not in Subtype.__members__:
-                return Subtype.NONE, {}
+            _has_params = DataType._str_has_params(value)
+            if not _has_params and value.upper() not in DataType.__members__:
+                return DataType.NONE, {}
             elif not _has_params:
-                return Subtype(_value), {}
+                return DataType(_value), {}
             else:
                 type_name, params_str = value.split("(", 1)
                 params = [p.strip() for p in params_str.rstrip(")").split(",")]
                 match type_name.lower():
-                    case Subtype.OHLC.value:
-                        return Subtype.OHLC, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
+                    case DataType.OHLC.value:
+                        return DataType.OHLC, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
 
-                    case Subtype.OHLC_TICKS.value:
-                        return Subtype.OHLC_TICKS, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
+                    case DataType.OHLC_TICKS.value:
+                        return DataType.OHLC_TICKS, {
+                            "timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())
+                        }
 
-                    case Subtype.ORDERBOOK.value:
-                        return Subtype.ORDERBOOK, {"tick_size_pct": float(params[0]), "depth": int(params[1])}
+                    case DataType.ORDERBOOK.value:
+                        return DataType.ORDERBOOK, {"tick_size_pct": float(params[0]), "depth": int(params[1])}
 
                     case _:
-                        return Subtype.NONE, {}
+                        return DataType.NONE, {}
         except IndexError:
             raise ValueError(f"Invalid subscription type: {value}")
 

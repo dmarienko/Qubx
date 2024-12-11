@@ -21,12 +21,12 @@ from qubx.backtester.utils import (
 )
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
+    DataType,
     Deal,
     Instrument,
     Order,
     Position,
     Signal,
-    Subtype,
     TradingSessionResult,
     TransactionCostsCalculator,
     dt_64,
@@ -349,7 +349,7 @@ class SimulatedExchange(IBrokerServiceProvider):
         return _s_lst
 
     def get_subscribed_instruments(self, subscription_type: str | None = None) -> list[Instrument]:
-        _in_lst = self._data_source.get_instruments_for_subscription(subscription_type or Subtype.ALL)
+        _in_lst = self._data_source.get_instruments_for_subscription(subscription_type or DataType.ALL)
         logger.debug(f" | get_subscribed_instruments {subscription_type} -> {_in_lst}")
         return _in_lst
 
@@ -666,7 +666,7 @@ class SignalsProxy(IStrategy):
     timeframe: str = "1m"
 
     def on_init(self, ctx: IStrategyContext):
-        ctx.set_base_subscription(Subtype.OHLC[self.timeframe])
+        ctx.set_base_subscription(DataType.OHLC[self.timeframe])
 
     def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
         if event.data and event.type == "event":

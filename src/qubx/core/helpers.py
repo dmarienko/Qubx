@@ -11,7 +11,7 @@ import pandas as pd
 from croniter import croniter
 
 from qubx import logger
-from qubx.core.basics import SW, CtrlChannel, Instrument, Subtype
+from qubx.core.basics import SW, CtrlChannel, DataType, Instrument
 from qubx.core.series import OHLCV, Bar, OrderBook, Quote, TimeSeries, Trade
 from qubx.utils.time import convert_seconds_to_str, convert_tf_str_td64
 
@@ -86,20 +86,20 @@ class CachedMarketDataHolder:
 
     def update(self, instrument: Instrument, event_type: str, data: Any, update_ohlc: bool = False) -> None:
         # - store data in buffer if it's not OHLC
-        if event_type != Subtype.OHLC:
+        if event_type != DataType.OHLC:
             self._instr_to_sub_to_buffer[instrument][event_type].append(data)
 
         if not update_ohlc:
             return
 
         match event_type:
-            case Subtype.OHLC:
+            case DataType.OHLC:
                 self.update_by_bar(instrument, data)
-            case Subtype.QUOTE:
+            case DataType.QUOTE:
                 self.update_by_quote(instrument, data)
-            case Subtype.TRADE:
+            case DataType.TRADE:
                 self.update_by_trade(instrument, data)
-            case Subtype.ORDERBOOK:
+            case DataType.ORDERBOOK:
                 assert isinstance(data, OrderBook)
                 self.update_by_quote(instrument, data.to_quote())
             case _:

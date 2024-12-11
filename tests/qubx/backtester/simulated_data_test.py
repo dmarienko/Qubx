@@ -1,10 +1,10 @@
 from dataclasses import dataclass
+
 import pandas as pd
 
 from qubx import lookup
-from qubx.backtester.simulated_data import IterableSimulationData, IteratedDataStreamsSlicer, EventBatcher
-
-from qubx.core.basics import BatchEvent, Subtype
+from qubx.backtester.simulated_data import EventBatcher, IterableSimulationData, IteratedDataStreamsSlicer
+from qubx.core.basics import BatchEvent, DataType
 from qubx.data.helpers import loader
 
 
@@ -223,11 +223,11 @@ class TestSimulatedDataStuff:
         s3 = lookup.find_symbol("BINANCE.UM", "LTCUSDT")
         assert s1 is not None and s2 is not None and s3 is not None
 
-        isd.add_instruments_for_subscription(Subtype.OHLC["1h"], [s1, s2])
-        isd.add_instruments_for_subscription(Subtype.OHLC["1h"], s3)
-        isd.add_instruments_for_subscription(Subtype.OHLC["4h"], s3)
-        isd.add_instruments_for_subscription(Subtype.OHLC["1d"], s3)
-        isd.add_instruments_for_subscription(Subtype.OHLC_TICKS["4h"], s1)
+        isd.add_instruments_for_subscription(DataType.OHLC["1h"], [s1, s2])
+        isd.add_instruments_for_subscription(DataType.OHLC["1h"], s3)
+        isd.add_instruments_for_subscription(DataType.OHLC["4h"], s3)
+        isd.add_instruments_for_subscription(DataType.OHLC["1d"], s3)
+        isd.add_instruments_for_subscription(DataType.OHLC_TICKS["4h"], s1)
 
         # has subscription
         assert isd.has_subscription(s3, "ohlc(4h)")
@@ -236,24 +236,24 @@ class TestSimulatedDataStuff:
         assert not isd.has_subscription(s1, "ohlc(1d)")
 
         # get all instruments for ANY subscription
-        assert set(isd.get_instruments_for_subscription(Subtype.ALL)) == set([s1, s2, s3])
+        assert set(isd.get_instruments_for_subscription(DataType.ALL)) == set([s1, s2, s3])
 
         # get subs for instrument
         assert isd.get_subscriptions_for_instrument(s3) == list(
-            set([Subtype.OHLC["1h"], Subtype.OHLC["4h"], Subtype.OHLC["1d"]])
+            set([DataType.OHLC["1h"], DataType.OHLC["4h"], DataType.OHLC["1d"]])
         )
 
-        assert isd.get_instruments_for_subscription(Subtype.OHLC["4h"]) == [s3]
-        assert isd.get_instruments_for_subscription(Subtype.OHLC["1h"]) == [s1, s2, s3]
+        assert isd.get_instruments_for_subscription(DataType.OHLC["4h"]) == [s3]
+        assert isd.get_instruments_for_subscription(DataType.OHLC["1h"]) == [s1, s2, s3]
 
-        isd.remove_instruments_from_subscription(Subtype.OHLC["1h"], s3)
-        assert isd.get_instruments_for_subscription(Subtype.OHLC["1h"]) == [s1, s2]
+        isd.remove_instruments_from_subscription(DataType.OHLC["1h"], s3)
+        assert isd.get_instruments_for_subscription(DataType.OHLC["1h"]) == [s1, s2]
 
-        isd.remove_instruments_from_subscription(Subtype.OHLC["1h"], [s1, s2, s3])
-        assert isd.get_instruments_for_subscription(Subtype.OHLC["1h"]) == []
+        isd.remove_instruments_from_subscription(DataType.OHLC["1h"], [s1, s2, s3])
+        assert isd.get_instruments_for_subscription(DataType.OHLC["1h"]) == []
 
         assert isd.get_subscriptions_for_instrument(None) == list(
-            set([Subtype.OHLC["4h"], Subtype.OHLC_TICKS["4h"], Subtype.OHLC["1d"]])
+            set([DataType.OHLC["4h"], DataType.OHLC_TICKS["4h"], DataType.OHLC["1d"]])
         )
 
     def test_iterable_simulation_data_queue_with_warmup(self):
@@ -266,8 +266,8 @@ class TestSimulatedDataStuff:
         assert s1 is not None and s2 is not None and s3 is not None
 
         # set warmup period
-        isd.set_warmup_period(Subtype.OHLC["1d"], "24h")
-        isd.add_instruments_for_subscription(Subtype.OHLC["1d"], [s1, s2, s3])
+        isd.set_warmup_period(DataType.OHLC["1d"], "24h")
+        isd.add_instruments_for_subscription(DataType.OHLC["1d"], [s1, s2, s3])
 
         _n_hist = 0
         for d in isd.create_iterable("2023-07-01", "2023-07-02"):

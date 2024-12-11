@@ -9,13 +9,13 @@ from qubx.backtester.simulator import simulate
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
     ZERO_COSTS,
+    DataType,
     Deal,
     Instrument,
     ITimeProvider,
     Order,
     Position,
     Signal,
-    Subtype,
     TargetPosition,
 )
 from qubx.core.interfaces import (
@@ -139,7 +139,7 @@ class GuineaPig(IStrategy):
     tests = {}
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(Subtype.OHLC["1Min"])
+        ctx.set_base_subscription(DataType.OHLC["1Min"])
 
     def on_fit(self, ctx: IStrategyContext):
         self.tests = {recognize_time(k): v for k, v in self.tests.items()}
@@ -190,7 +190,7 @@ class TestTrackersAndGatherers:
             slow_period = 12
 
             def on_init(self, ctx: IStrategyContext) -> None:
-                ctx.set_base_subscription(Subtype.OHLC[self.timeframe])
+                ctx.set_base_subscription(DataType.OHLC[self.timeframe])
 
             def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
                 signals = []

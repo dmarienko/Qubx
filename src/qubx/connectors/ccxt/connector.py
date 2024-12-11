@@ -22,7 +22,7 @@ from ccxt import (
 )
 from ccxt.pro import Exchange
 from qubx import logger
-from qubx.core.basics import CtrlChannel, Deal, Instrument, Position, Subtype, dt_64
+from qubx.core.basics import CtrlChannel, DataType, Deal, Instrument, Position, dt_64
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import (
     IBrokerServiceProvider,
@@ -170,7 +170,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         _coros = []
 
         for (sub_type, instrument), period in warmups.items():
-            _sub_type, _params = Subtype.from_str(sub_type)
+            _sub_type, _params = DataType.from_str(sub_type)
             _warmuper = self._warmupers.get(_sub_type)
             if _warmuper is None:
                 logger.warning(f"Warmup for {sub_type} is not supported")
@@ -249,7 +249,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         instruments: Set[Instrument],
         sub_type: str,
     ) -> None:
-        _sub_type, _params = Subtype.from_str(sub_type)
+        _sub_type, _params = DataType.from_str(sub_type)
         _subscriber = self._subscribers.get(_sub_type)
         if _subscriber is None:
             raise ValueError(f"Subscription type {sub_type} is not supported")
@@ -414,7 +414,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         channel.send(
             (
                 instrument,
-                self._get_hist_type(Subtype.OHLC[timeframe]),
+                self._get_hist_type(DataType.OHLC[timeframe]),
                 [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in ohlcv],
             )
         )
@@ -425,7 +425,7 @@ class CcxtBrokerServiceProvider(IBrokerServiceProvider):
         channel.send(
             (
                 instrument,
-                self._get_hist_type(Subtype.TRADE),
+                self._get_hist_type(DataType.TRADE),
                 [ccxt_convert_trade(trade) for trade in trades],
             )
         )

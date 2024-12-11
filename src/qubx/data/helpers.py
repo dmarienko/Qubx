@@ -1,10 +1,9 @@
+from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Set, Type
-from concurrent.futures import ThreadPoolExecutor
 
-from joblib import delayed
 import numpy as np
 import pandas as pd
-from collections import defaultdict
+from joblib import delayed
 
 from qubx import logger
 from qubx.core.basics import ITimeProvider
@@ -12,21 +11,15 @@ from qubx.core.series import TimeSeries
 from qubx.data.readers import (
     CsvStorageDataReader,
     DataReader,
+    DataTransformer,
     InMemoryDataFrameReader,
     MultiQdbConnector,
-    DataTransformer,
     QuestDBConnector,
+    _list_to_chunked_iterator,
 )
 from qubx.pandaz.utils import OhlcDict, generate_equal_date_ranges, ohlc_resample, srows
 from qubx.utils.misc import ProgressParallel
-from qubx.utils.time import convert_seconds_to_str, handle_start_stop, infer_series_frequency
-
-
-def _wrap_as_iterable(data: Any) -> Iterable:
-    def __iterable():
-        yield data
-
-    return __iterable()
+from qubx.utils.time import handle_start_stop
 
 
 class InMemoryCachedReader(InMemoryDataFrameReader):
@@ -45,7 +38,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
     _stop: pd.Timestamp | None = None
 
     # - external data
-    _external: Dict[str, pd.DataFrame | pd.Series]
+    _external: dict[str, pd.DataFrame | pd.Series]
 
     def __init__(
         self,
@@ -91,11 +84,8 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         # - refresh symbol's data
         self._handle_symbols_data_from_to([symb], _start, _stop)
 
-        # - we don't use chunksize from InMemoryDataFrameReader because it returns generator
-        res = super().read(_s_path, start, stop, transform, chunksize=0, **kwargs)
-
-        # - when it's asked to have chunks, it returns generator (single chunk)
-        return _wrap_as_iterable(res) if chunksize > 0 else res
+        # - super InMemoryDataFrameReader supports chunked reading now
+        return super().read(_s_path, start, stop, transform, chunksize=chunksize, **kwargs)
 
     def __getitem__(self, keys) -> Dict[str, pd.DataFrame | pd.Series] | pd.DataFrame | pd.Series:
         """
@@ -257,7 +247,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         return srows(*_r).set_index(["timestamp", "symbol"])
 
     def __str__(self) -> str:
-        return f"InMemoryCachedReader(exchange={self.exchange},timeframe={self._data_timeframe})"
+        return f"{self.__class__.__name__}(exchange={self.exchange},timeframe={self._data_timeframe})"
 
 
 class TimeGuardedWrapper(DataReader):
@@ -287,12 +277,12 @@ class TimeGuardedWrapper(DataReader):
         chunksize=0,
         # timeframe: str | None = None,
         **kwargs,
-    ) -> Iterable | List:
+    ) -> Iterable | list:
         xs = self._time_guarded_data(
             self._reader.read(data_id, start=start, stop=stop, transform=transform, chunksize=0, **kwargs),  # type: ignore
             prev_bar=True,
         )
-        return _wrap_as_iterable(xs) if chunksize > 0 else xs
+        return _list_to_chunked_iterator(xs, chunksize) if chunksize > 0 else xs
 
     def get_aux_data(self, data_id: str, **kwargs) -> Any:
         return self._time_guarded_data(self._reader.get_aux_data(data_id, exchange=self._reader.exchange, **kwargs))
@@ -301,8 +291,8 @@ class TimeGuardedWrapper(DataReader):
         return self._time_guarded_data(self._reader.__getitem__(keys), prev_bar=True)
 
     def _time_guarded_data(
-        self, data: pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | List, prev_bar: bool = False
-    ) -> pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | List:
+        self, data: pd.DataFrame | pd.Series | dict[str, pd.DataFrame | pd.Series] | list, prev_bar: bool = False
+    ) -> pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | list:
         """
         This function is responsible for limiting the data based on a given time guard.
 

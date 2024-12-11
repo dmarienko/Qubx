@@ -12,7 +12,7 @@ from qubx import QubxLogConfig, logger, lookup
 from qubx.backtester.simulator import SimulatedTrading
 from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
 from qubx.connectors.ccxt.trading import CcxtTradingConnector
-from qubx.core.basics import Instrument, MarketEvent, Subtype, Trade, TriggerEvent
+from qubx.core.basics import DataType, Instrument, MarketEvent, Trade, TriggerEvent
 from qubx.core.interfaces import IStrategy, IStrategyContext, Position
 from qubx.pandaz import scols
 from qubx.utils.runner import get_account_config, run_ccxt_paper_trading, run_ccxt_trading
@@ -35,8 +35,8 @@ class DebugStrategy(IStrategy):
     _instr_to_dtype_to_count: dict[Instrument, dict[str, int]]
 
     def on_init(self, ctx: IStrategyContext):
-        ctx.set_base_subscription(Subtype.OHLC["1m"])
-        ctx.set_warmup({Subtype.OHLC["1m"]: "1h"})
+        ctx.set_base_subscription(DataType.OHLC["1m"])
+        ctx.set_warmup({DataType.OHLC["1m"]: "1h"})
         self._instr_to_dtype_to_count = defaultdict(lambda: defaultdict(int))
 
     def on_market_data(self, ctx: IStrategyContext, data: MarketEvent):
@@ -76,8 +76,8 @@ class TestCcxtDataProvider:
         )
         await wait(ctx.is_fitted)
 
-        ctx.subscribe(Subtype.TRADE)
-        ctx.subscribe(Subtype.ORDERBOOK)
+        ctx.subscribe(DataType.TRADE)
+        ctx.subscribe(DataType.ORDERBOOK)
 
         async def wait_for_instrument_data(instr: Instrument):
             async def check_counts():

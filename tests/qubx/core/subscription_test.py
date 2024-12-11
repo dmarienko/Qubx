@@ -1,7 +1,9 @@
-import pytest
 from unittest.mock import Mock, call
+
+import pytest
+
 from qubx import lookup
-from qubx.core.basics import Instrument, Subtype
+from qubx.core.basics import DataType, Instrument
 from qubx.core.mixins.subscription import SubscriptionManager
 
 
@@ -20,48 +22,48 @@ class TestSubscriptionStuff:
         return instr
 
     def test_sub_types(self):
-        trade, _ = Subtype.from_str("trade")
-        assert trade == Subtype.TRADE
+        trade, _ = DataType.from_str("trade")
+        assert trade == DataType.TRADE
 
-        ohlc, params = Subtype.from_str("ohlc(1Min)")
-        assert ohlc == Subtype.OHLC
+        ohlc, params = DataType.from_str("ohlc(1Min)")
+        assert ohlc == DataType.OHLC
         assert params == {"timeframe": "1Min"}
 
-        ob, params = Subtype.from_str("orderbook(0.01, 100)")
-        assert ob == Subtype.ORDERBOOK
+        ob, params = DataType.from_str("orderbook(0.01, 100)")
+        assert ob == DataType.ORDERBOOK
         assert params == {"tick_size_pct": 0.01, "depth": 100}
 
-        assert Subtype.from_str("quote") == (Subtype.QUOTE, {})
-        assert Subtype.from_str("liquidation") == (Subtype.LIQUIDATION, {})
-        assert Subtype.from_str("orderbook") == (Subtype.ORDERBOOK, {})
-        assert Subtype.from_str(Subtype.TRADE) == (Subtype.TRADE, {})
+        assert DataType.from_str("quote") == (DataType.QUOTE, {})
+        assert DataType.from_str("liquidation") == (DataType.LIQUIDATION, {})
+        assert DataType.from_str("orderbook") == (DataType.ORDERBOOK, {})
+        assert DataType.from_str(DataType.TRADE) == (DataType.TRADE, {})
 
     def test_basic_subscription(self):
         instrument = self._get_instrument("BTCUSDT")
-        self.manager.subscribe(Subtype.ORDERBOOK, instrument)
+        self.manager.subscribe(DataType.ORDERBOOK, instrument)
         self.manager.commit()
 
-        self.mock_broker.subscribe.assert_called_once_with(Subtype.ORDERBOOK, {instrument}, reset=True)
+        self.mock_broker.subscribe.assert_called_once_with(DataType.ORDERBOOK, {instrument}, reset=True)
 
     def test_warmup_subscription(self):
         instrument = self._get_instrument("BTCUSDT")
-        warmup_config = {Subtype.ORDERBOOK: "1d"}
+        warmup_config = {DataType.ORDERBOOK: "1d"}
         self.manager.set_warmup(warmup_config)
-        self.manager.subscribe(Subtype.ORDERBOOK, instrument)
+        self.manager.subscribe(DataType.ORDERBOOK, instrument)
         self.manager.commit()
 
-        expected_warmup = {(Subtype.ORDERBOOK, instrument): "1d"}
+        expected_warmup = {(DataType.ORDERBOOK, instrument): "1d"}
         self.mock_broker.warmup.assert_called_once_with(expected_warmup)
 
     def test_multiple_subscriptions(self):
         instruments = [self._get_instrument("BTCUSDT"), self._get_instrument("ETHUSDT")]
-        self.manager.subscribe(Subtype.ORDERBOOK, instruments)
-        self.manager.subscribe(Subtype.TRADE, instruments[0])
+        self.manager.subscribe(DataType.ORDERBOOK, instruments)
+        self.manager.subscribe(DataType.TRADE, instruments[0])
         self.manager.commit()
 
         expected_calls = [
-            call(Subtype.ORDERBOOK, set(instruments), reset=True),
-            call(Subtype.TRADE, set([instruments[0]]), reset=True),
+            call(DataType.ORDERBOOK, set(instruments), reset=True),
+            call(DataType.TRADE, set([instruments[0]]), reset=True),
         ]
         self.mock_broker.subscribe.assert_has_calls(expected_calls, any_order=True)
 
@@ -69,58 +71,58 @@ class TestSubscriptionStuff:
         instrument = self._get_instrument("BTCUSDT")
         self.mock_broker.get_subscribed_instruments.return_value = {instrument}
 
-        self.manager.unsubscribe(Subtype.ORDERBOOK, instrument)
+        self.manager.unsubscribe(DataType.ORDERBOOK, instrument)
         self.manager.commit()
 
-        self.mock_broker.subscribe.assert_called_once_with(Subtype.ORDERBOOK, set(), reset=True)
+        self.mock_broker.subscribe.assert_called_once_with(DataType.ORDERBOOK, set(), reset=True)
 
     def test_global_subscription(self):
         instruments = {self._get_instrument("BTCUSDT"), self._get_instrument("ETHUSDT")}
         self.mock_broker.get_subscribed_instruments.side_effect = lambda x=None: (instruments if x is None else set())
 
-        self.manager.set_warmup({Subtype.TRADE: "1d"})
-        self.manager.subscribe(Subtype.TRADE)
-        self.manager.subscribe(Subtype.ORDERBOOK)
+        self.manager.set_warmup({DataType.TRADE: "1d"})
+        self.manager.subscribe(DataType.TRADE)
+        self.manager.subscribe(DataType.ORDERBOOK)
         self.manager.commit()
 
-        self.mock_broker.warmup.assert_called_once_with({(Subtype.TRADE, i): "1d" for i in instruments})
+        self.mock_broker.warmup.assert_called_once_with({(DataType.TRADE, i): "1d" for i in instruments})
 
         expected_calls = [
-            call(Subtype.TRADE, instruments, reset=True),
-            call(Subtype.ORDERBOOK, instruments, reset=True),
+            call(DataType.TRADE, instruments, reset=True),
+            call(DataType.ORDERBOOK, instruments, reset=True),
         ]
         self.mock_broker.subscribe.assert_has_calls(expected_calls, any_order=True)
 
     def test_subscribe_all(self):
         instruments = {self._get_instrument("BTCUSDT"), self._get_instrument("ETHUSDT")}
         self.mock_broker.get_subscribed_instruments.return_value = set()
-        self.mock_broker.get_subscriptions.return_value = [Subtype.TRADE, Subtype.ORDERBOOK]
+        self.mock_broker.get_subscriptions.return_value = [DataType.TRADE, DataType.ORDERBOOK]
 
-        self.manager.subscribe(Subtype.ALL, list(instruments))
+        self.manager.subscribe(DataType.ALL, list(instruments))
         self.manager.commit()
 
         expected_calls = [
-            call(Subtype.TRADE, instruments, reset=True),
-            call(Subtype.ORDERBOOK, instruments, reset=True),
+            call(DataType.TRADE, instruments, reset=True),
+            call(DataType.ORDERBOOK, instruments, reset=True),
         ]
         self.mock_broker.subscribe.assert_has_calls(expected_calls, any_order=True)
 
     def test_ohlc_warmup(self):
         instruments = {self._get_instrument("BTCUSDT"), self._get_instrument("ETHUSDT")}
         self.mock_broker.get_subscribed_instruments.return_value = set()
-        self.mock_broker.get_subscriptions.return_value = [Subtype.OHLC]
+        self.mock_broker.get_subscriptions.return_value = [DataType.OHLC]
 
         # make sure that ohlc warmups are called even if base subscription is not ohlc
-        self.manager.set_base_subscription(Subtype.TRADE)
-        self.manager.set_warmup({Subtype.OHLC["1h"]: "30d", Subtype.OHLC["1m"]: "1d", Subtype.TRADE: "10m"})
+        self.manager.set_base_subscription(DataType.TRADE)
+        self.manager.set_warmup({DataType.OHLC["1h"]: "30d", DataType.OHLC["1m"]: "1d", DataType.TRADE: "10m"})
         self.manager.subscribe(self.manager.get_base_subscription(), list(instruments))
         self.manager.commit()
 
-        assert self.manager.get_base_subscription() == Subtype.TRADE
+        assert self.manager.get_base_subscription() == DataType.TRADE
 
         expected_warmup = (
-            {(Subtype.OHLC["1h"], i): "30d" for i in instruments}
-            | {(Subtype.OHLC["1m"], i): "1d" for i in instruments}
-            | {(Subtype.TRADE, i): "10m" for i in instruments}
+            {(DataType.OHLC["1h"], i): "30d" for i in instruments}
+            | {(DataType.OHLC["1m"], i): "1d" for i in instruments}
+            | {(DataType.TRADE, i): "10m" for i in instruments}
         )
         self.mock_broker.warmup.assert_called_once_with(expected_warmup)

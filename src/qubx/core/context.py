@@ -3,7 +3,7 @@ from threading import Thread
 from typing import Any, Callable, Dict, List, Union
 
 from qubx import logger
-from qubx.core.basics import SW, AssetBalance, CtrlChannel, Instrument, Order, Position, Subtype, dt_64
+from qubx.core.basics import SW, AssetBalance, CtrlChannel, DataType, Instrument, Order, Position, dt_64
 from qubx.core.helpers import (
     BasicScheduler,
     CachedMarketDataHolder,
@@ -132,7 +132,7 @@ class StrategyContext(IStrategyContext):
         self.strategy.on_init(self)
         # - update cache default timeframe
         sub_type = self.get_base_subscription()
-        _, params = Subtype.from_str(sub_type)
+        _, params = DataType.from_str(sub_type)
         __default_timeframe = params.get("timeframe", "1sec")
         self._cache.update_default_timeframe(__default_timeframe)
 

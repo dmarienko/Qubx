@@ -6,7 +6,7 @@ import pandas as pd
 from qubx import logger, lookup
 from qubx.backtester.ome import OrdersManagementEngine
 from qubx.backtester.simulator import simulate
-from qubx.core.basics import ZERO_COSTS, Deal, Instrument, ITimeProvider, Order, Subtype
+from qubx.core.basics import ZERO_COSTS, DataType, Deal, Instrument, ITimeProvider, Order
 from qubx.core.interfaces import IStrategy, IStrategyContext, TriggerEvent
 from qubx.core.series import Quote
 from qubx.core.utils import recognize_time
@@ -150,7 +150,7 @@ class TestBacktesterStuff:
             slow_period = 12
 
             def on_init(self, ctx: IStrategyContext):
-                ctx.set_base_subscription(Subtype.OHLC[self.timeframe])
+                ctx.set_base_subscription(DataType.OHLC[self.timeframe])
 
             def on_event(self, ctx: IStrategyContext, event: TriggerEvent):
                 for i in ctx.instruments:

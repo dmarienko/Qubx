@@ -18,6 +18,7 @@ from qubx import logger, lookup
 from qubx.core.basics import (
     SW,
     AssetBalance,
+    DataType,
     Deal,
     ICommunicationManager,
     Instrument,
@@ -26,7 +27,6 @@ from qubx.core.basics import (
     Order,
     Position,
     Signal,
-    Subtype,
     TargetPosition,
     TriggerEvent,
     dt_64,

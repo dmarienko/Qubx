@@ -6,10 +6,13 @@ import pandas as pd
 import stackprinter
 
 from qubx import logger, lookup
-from qubx.core.basics import CtrlChannel, Instrument, ITimeProvider
+from qubx.core.basics import CtrlChannel, DataType, Instrument, ITimeProvider
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy, PositionsTracker
-from qubx.data.readers import DataReader, InMemoryDataFrameReader
+from qubx.core.series import Bar, Quote, Trade
+from qubx.core.utils import time_delta_to_str
+from qubx.data.readers import AsDict, DataReader, InMemoryDataFrameReader
+from qubx.utils.time import infer_series_frequency
 
 StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
 DictOfStrats: TypeAlias = dict[str, StrategyOrSignals]
@@ -317,6 +320,93 @@ def recognize_simulation_configuration(
 
     # fmt: on
     return r
+
+
+class DataSniffer:
+    def __init__(self, reader_lookahead_period: str = "1d") -> None:
+        self._reader_lookahead_period = pd.Timedelta(reader_lookahead_period)
+
+    def _has_columns(self, v: pd.DataFrame, columns: list[str]):
+        return all([c in v.columns for c in columns])
+
+    def _has_keys(self, v: dict[str, Any], keys: list[str]):
+        return all([c in v.keys() for c in keys])
+
+    def _sniff_list(self, v: list[Any]) -> str:
+        match v[0]:
+            case Bar():
+                _tf = time_delta_to_str(infer_series_frequency([x.time for x in v[:20]]).item())
+                return DataType.OHLC[_tf]
+
+            case dict():
+                return self._sniff_dict(v)
+
+            case Quote():
+                return DataType.QUOTE
+
+            case Trade():
+                return DataType.TRADE
+
+        return DataType.NONE
+
+    def _sniff_dict(self, v: dict[str, Any] | list[dict[str, Any]]) -> str:
+        v, vs = (v[0], v) if isinstance(v, list) else (v, None)
+
+        if self._has_keys(v, ["open", "high", "low", "close"]):
+            if vs:
+                _tf = time_delta_to_str(infer_series_frequency([x.get("time") for x in vs[:20]]).item())
+                return DataType.OHLC[_tf]
+            return DataType.OHLC
+
+        if self._has_keys(v, ["bid", "ask"]):
+            return DataType.QUOTE
+
+        if self._has_keys(v, ["price", "size"]):
+            return DataType.TRADE
+
+        return DataType.NONE
+
+    def _sniff_pandas(self, v: pd.DataFrame) -> str:
+        if self._has_columns(v, ["open", "high", "low", "close"]):
+            _tf = time_delta_to_str(infer_series_frequency(v[:10]).item())
+            return DataType.OHLC[_tf]
+
+        if self._has_columns(v, ["bid", "ask"]):
+            return DataType.QUOTE
+
+        if self._has_columns(v, ["price", "size"]):
+            return DataType.TRADE
+
+        return DataType.NONE
+
+    def _sniff_reader(self, symbol: str, reader: DataReader) -> str:
+        data = reader.read(symbol, transform=AsDict(), timeframe=None)
+        return self._sniff_list(data)
+
+    def extract_types(
+        self,
+        data: dict[str, Any],
+    ) -> dict[str, str]:
+        _types = {}
+        for k, v in data.items():
+            match v:
+                case DataReader():
+                    _types[k] = self._sniff_reader(k, v)
+
+                case pd.DataFrame():
+                    _types[k] = self._sniff_pandas(v)
+
+                case list():
+                    _types[k] = self._sniff_list(v)
+
+                case dict():
+                    _types[k] = self._sniff_dict(v)
+
+                case _:
+                    logger.warning(f"Unsupported data type: {type(v)} for symbol: {k}")
+                    _types[k] = DataType.NONE
+
+        return _types
 
 
 def recognize_simulation_data(

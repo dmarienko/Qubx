@@ -1,19 +1,19 @@
 import math
-import pandas as pd
-
 from collections import defaultdict, deque
 from typing import Any, Iterable, Iterator, TypeAlias
 
+import pandas as pd
+
 from qubx import logger
-from qubx.core.basics import Instrument, Subtype, dt_64, BatchEvent
-from qubx.core.series import Quote, Trade, Bar, OrderBook
+from qubx.core.basics import BatchEvent, DataType, Instrument, dt_64
+from qubx.core.series import Bar, OrderBook, Quote, Trade
 from qubx.data.readers import (
+    AsQuotes,
+    AsTrades,
     DataReader,
     DataTransformer,
-    RestoreTicksFromOHLC,
     RestoredBarsFromOHLC,
-    AsTrades,
-    AsQuotes,
+    RestoreTicksFromOHLC,
 )
 
 _T: TypeAlias = Quote | Trade | Bar | OrderBook
@@ -142,26 +142,26 @@ class DataFetcher:
         self._params = params
 
         match subtype:
-            case Subtype.OHLC_TICKS:
+            case DataType.OHLC_TICKS:
                 self._transformer = RestoreTicksFromOHLC(open_close_time_shift_secs=open_close_time_indent_secs)
                 self._requested_data_type = "ohlc"
                 self._producing_data_type = "quote"
                 if "timeframe" in params:
                     self._timeframe = params.get("timeframe", "1Min")
 
-            case Subtype.OHLC:
+            case DataType.OHLC:
                 self._transformer = RestoredBarsFromOHLC(open_close_time_shift_secs=open_close_time_indent_secs)
                 self._requested_data_type = "ohlc"
                 self._producing_data_type = "ohlc"
                 if "timeframe" in params:
                     self._timeframe = params.get("timeframe", "1Min")
 
-            case Subtype.TRADE:
+            case DataType.TRADE:
                 self._requested_data_type = "trade"
                 self._producing_data_type = "trade"
                 self._transformer = AsTrades()
 
-            case Subtype.QUOTE:
+            case DataType.QUOTE:
                 self._requested_data_type = "orderbook"
                 self._producing_data_type = "quote"
                 self._transformer = AsQuotes()
@@ -265,7 +265,7 @@ class IterableSimulationData(Iterator):
     _reader: DataReader
     _subtyped_fetchers: dict[str, DataFetcher]
     _warmups: dict[str, pd.Timedelta]
-    _instruments: dict[str, tuple[Instrument, DataFetcher, Subtype]]
+    _instruments: dict[str, tuple[Instrument, DataFetcher, DataType]]
     _open_close_time_indent_secs: int | float
 
     _slicer_ctrl: IteratedDataStreamsSlicer | None = None
@@ -291,12 +291,12 @@ class IterableSimulationData(Iterator):
             self._warmups[_access_key] = pd.Timedelta(warmup_period)
 
     def _parse_subscription_spec(self, subscription: str) -> tuple[str, str, dict[str, object]]:
-        _subtype, _params = Subtype.from_str(subscription)
+        _subtype, _params = DataType.from_str(subscription)
         match _subtype:
-            case Subtype.OHLC | Subtype.OHLC_TICKS:
+            case DataType.OHLC | DataType.OHLC_TICKS:
                 _timeframe = _params.get("timeframe", "1Min")
                 _access_key = f"{_subtype}.{_timeframe}"
-            case Subtype.TRADE | Subtype.QUOTE:
+            case DataType.TRADE | DataType.QUOTE:
                 _access_key = f"{_subtype}"
             case _:
                 raise ValueError(f"Unsupported subscription type: {_subtype}")
@@ -334,7 +334,7 @@ class IterableSimulationData(Iterator):
             )
 
     def get_instruments_for_subscription(self, subscription: str) -> list[Instrument]:
-        if subscription == Subtype.ALL:
+        if subscription == DataType.ALL:
             return list((i for i, *_ in self._instruments.values()))
 
         _subt_key, _, _ = self._parse_subscription_spec(subscription)
@@ -381,7 +381,7 @@ class IterableSimulationData(Iterator):
         instruments = instruments if isinstance(instruments, list) else [instruments]
 
         # - if we want to remove instruments from all subscriptions
-        if subscription == Subtype.ALL:
+        if subscription == DataType.ALL:
             _f_keys = list(self._subtyped_fetchers.keys())
             for s in _f_keys:
                 _remove_from_fetcher(s, instruments)

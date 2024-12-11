@@ -14,11 +14,11 @@ from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
     AssetBalance,
     CtrlChannel,
+    DataType,
     Deal,
     Instrument,
     Order,
     Position,
-    Subtype,
     dt_64,
 )
 from qubx.core.interfaces import ISubscriptionManager
