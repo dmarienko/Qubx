@@ -398,17 +398,28 @@ class DataSniffer:
                 pass
         return []
 
-    def _sniff_reader(self, symbol: str, reader: DataReader, time: str) -> str:
+    def _sniff_reader(self, symbol: str, reader: DataReader, time: str | None) -> str:
+        if time is None:
+            for _type in [DataType.OHLC, DataType.QUOTE, DataType.TRADE]:
+                _t1, _t2 = reader.get_time_ranges(symbol, str(_type))
+                if _t1 is not None:
+                    time = str(_t1 + (_t2 - _t1) / 2)
+                    break
+            else:
+                logger.warning(f"Failed to find data start time for symbol: {symbol}")
+                return DataType.NONE
+
         data = self._pre_read(symbol, reader, time)
         if data:
             return self._sniff_list(data)
-        print(f"Failed to read probe data for symbol: {symbol} -- Skipping this symbol")
+
+        logger.warning(f"Failed to read probe data for symbol: {symbol}")
         return DataType.NONE
 
     def extract_types(
         self,
         data: dict[str, Any],
-        time: str,
+        time: str | None = None,
     ) -> dict[str, str]:
         """
         Tries to infer data types from provided data and instruments.
@@ -434,11 +445,11 @@ class DataSniffer:
 
         return _types
 
-    def extract_types_for_reader(
+    def extract_types_from_reader(
         self,
         reader: DataReader,
         instruments: list[str],
-        time: str,
+        time: str | None = None,
     ) -> dict[str, str]:
         return self.extract_types(dict(zip(instruments, [reader] * len(instruments))), time)
 

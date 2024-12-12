@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import psycopg as pg
 import pyarrow as pa
-from pyarrow import csv
+from pyarrow import csv, table
 
 from qubx import logger
 from qubx.core.basics import DataType
@@ -91,7 +91,10 @@ class DataTransformer:
 
 class DataReader:
     def get_names(self, **kwargs) -> List[str]:
-        raise NotImplemented()
+        """
+        TODO: not sure we really need this !
+        """
+        raise NotImplementedError("get_names() method is not implemented")
 
     def read(
         self,
@@ -112,7 +115,11 @@ class DataReader:
         def _list_methods(cls):
             _meth = []
             for k, s in cls.__dict__.items():
-                if k.startswith("get_") and k not in ["get_names", "get_aux_data_ids", "get_aux_data"] and callable(s):
+                if (
+                    k.startswith("get_")
+                    and k not in ["get_names", "get_symbols", "get_time_ranges", "get_aux_data_ids", "get_aux_data"]
+                    and callable(s)
+                ):
                     _meth.append(k[4:])
             return _meth
 
@@ -131,8 +138,14 @@ class DataReader:
             f"{self.__class__.__name__} doesn't have getter for '{data_id}' auxiliary data. Available data: {self.get_aux_data_ids()}"
         )
 
-    def get_symbols(self, exchange: str, dtype: DataType) -> list[str]:
+    def get_symbols(self, exchange: str, dtype: str) -> list[str]:
         raise NotImplementedError("get_symbols() method is not implemented")
+
+    def get_time_ranges(self, symbol: str, dtype: str) -> tuple[np.datetime64, np.datetime64]:
+        """
+        Returns first and last time for the specified symbol and data type in the reader's storage
+        """
+        raise NotImplementedError("get_time_ranges() method is not implemented")
 
 
 class CsvStorageDataReader(DataReader):
@@ -164,17 +177,9 @@ class CsvStorageDataReader(DataReader):
                 return p
         return None
 
-    def read(
-        self,
-        data_id: str,
-        start: str | None = None,
-        stop: str | None = None,
-        transform: DataTransformer = DataTransformer(),
-        chunksize=0,
-        timestamp_formatters=None,
-        timeframe=None,
-        **kwargs,
-    ) -> Iterable | Any:
+    def __try_read_data(
+        self, data_id: str, start: str | None = None, stop: str | None = None, timestamp_formatters=None
+    ) -> tuple[table, np.ndarray, Any, list[str], int, int]:
         f_path = self.__check_file_name(data_id)
         if not f_path:
             ValueError(f"Can't find any csv data for {data_id} in {self.path} !")
@@ -211,8 +216,8 @@ class CsvStorageDataReader(DataReader):
             if t_0:
                 start_idx = self.__find_time_idx(_time_data, t_0)
                 if start_idx >= table.num_rows:
-                    # no data for requested start date
-                    return None
+                    # - no data for requested start date
+                    return table, _time_data, _time_unit, fieldnames, -1, -1
 
             if t_1:
                 stop_idx = self.__find_time_idx(_time_data, t_1)
@@ -220,9 +225,24 @@ class CsvStorageDataReader(DataReader):
                     stop_idx = table.num_rows
 
         except Exception as exc:
-            logger.warning(exc)
-            logger.info("loading whole file")
+            logger.warning(f"exception [{exc}] during preprocessing '{f_path}'")
 
+        return table, _time_data, _time_unit, fieldnames, start_idx, stop_idx
+
+    def read(
+        self,
+        data_id: str,
+        start: str | None = None,
+        stop: str | None = None,
+        transform: DataTransformer = DataTransformer(),
+        chunksize=0,
+        timestamp_formatters=None,
+        timeframe=None,
+        **kwargs,
+    ) -> Iterable | Any:
+        table, _, _, fieldnames, start_idx, stop_idx = self.__try_read_data(data_id, start, stop, timestamp_formatters)
+        if start_idx < 0 or stop_idx < 0:
+            return None
         length = stop_idx - start_idx + 1
         selected_table = table.slice(start_idx, length)
 
@@ -283,6 +303,13 @@ class CsvStorageDataReader(DataReader):
     def get_symbols(self, exchange: str, dtype: str) -> list[str]:
         return self.get_names()
 
+    def get_time_ranges(self, symbol: str, dtype: str) -> tuple[np.datetime64, np.datetime64]:
+        _, _time_data, _time_unit, _, start_idx, stop_idx = self.__try_read_data(symbol, None, None, None)
+        return (
+            np.datetime64(_time_data[start_idx].value, _time_unit),
+            np.datetime64(_time_data[stop_idx - 1].value, _time_unit),
+        )
+
 
 class InMemoryDataFrameReader(DataReader):
     """
@@ -303,6 +330,14 @@ class InMemoryDataFrameReader(DataReader):
         if self.exchange:
             return [f"{self.exchange}:{k}" for k in keys]
         return keys
+
+    def _get_data_by_key(self, data_id: str) -> tuple[str, pd.DataFrame | pd.Series]:
+        if data_id not in self._data:
+            if self.exchange and data_id.startswith(self.exchange):
+                data_id = data_id.split(":")[1]
+        if (d := self._data.get(data_id)) is None:
+            raise ValueError(f"No data found for {data_id}")
+        return data_id, d
 
     def read(
         self,
@@ -342,17 +377,13 @@ class InMemoryDataFrameReader(DataReader):
             If no data is found for the given data_id.
         """
         start, stop = handle_start_stop(start, stop)
-        if data_id not in self._data:
-            if data_id.startswith(self.exchange):
-                data_id = data_id.split(":")[1]
-        if (d := self._data.get(data_id)) is None:
-            raise ValueError(f"No data found for {data_id}")
+        data_id, _stored_data = self._get_data_by_key(data_id)
 
-        d2 = d.loc[start:stop].copy()
+        _sliced_data = _stored_data.loc[start:stop].copy()
         if _tf := kwargs.get("timeframe"):
-            d2 = ohlc_resample(d2, _tf)
-            assert isinstance(d2, pd.DataFrame), "Resampled data should be a DataFrame"
-        d2 = d2.reset_index()
+            _sliced_data = ohlc_resample(_sliced_data, _tf)
+            assert isinstance(_sliced_data, pd.DataFrame), "Resampled data should be a DataFrame"
+        _sliced_data = _sliced_data.reset_index()
 
         def _do_transform(values: Iterable, columns: list[str]) -> Iterable:
             transform.start_transform(data_id, columns, start=start, stop=stop)
@@ -368,12 +399,19 @@ class InMemoryDataFrameReader(DataReader):
                     yield _do_transform(chunk, columns)
                     chunk = list(itertools.islice(it, chunksize))
 
-            return _chunked_dataframe(d2.values, list(d2.columns), chunksize)
+            return _chunked_dataframe(_sliced_data.values, list(_sliced_data.columns), chunksize)
 
-        return _do_transform(d2.values, list(d2.columns))
+        return _do_transform(_sliced_data.values, list(_sliced_data.columns))
 
     def get_symbols(self, exchange: str, dtype: str) -> list[str]:
         return self.get_names()
+
+    def get_time_ranges(self, symbol: str, dtype: DataType) -> tuple[np.datetime64 | None, np.datetime64 | None]:
+        try:
+            _, _stored_data = self._get_data_by_key(symbol)
+            return _stored_data.index[0], _stored_data.index[-1]
+        except ValueError:
+            return None, None
 
 
 class AsPandasFrame(DataTransformer):
@@ -907,8 +945,39 @@ class QuestDBSqlBuilder:
     Generic sql builder for QuestDB data
     """
 
-    def get_table_name(self, data_id: str, sfx: str = "") -> str | None:
-        pass
+    _aliases = {"um": "umfutures", "cm": "cmfutures", "f": "futures"}
+
+    def get_table_name(self, data_id: str, sfx: str = "") -> str:
+        """
+        Get table name for data_id
+        data_id can have format <exchange>.<type>:<symbol>
+        for example:
+            BINANCE.UM:BTCUSDT or BINANCE:BTCUSDT for spot
+        """
+        sfx = sfx or "candles_1m"
+        table_name = data_id
+        _exch, _symb, _mktype = self._get_exchange_symbol_market_type(data_id)
+        if _exch and _symb:
+            parts = [_exch.lower(), _mktype]
+            if "candles" not in sfx:
+                parts.append(_symb)
+            parts.append(sfx)
+            table_name = ".".join(filter(lambda x: x, parts))
+
+        return table_name
+
+    def _get_exchange_symbol_market_type(self, data_id: str) -> tuple[str | None, str | None, str | None]:
+        _ss = data_id.split(":")
+        if len(_ss) > 1:
+            _exch, symb = _ss
+            _mktype = "spot"
+            _ss = _exch.split(".")
+            if len(_ss) > 1:
+                _exch = _ss[0]
+                _mktype = _ss[1]
+            _mktype = _mktype.lower()
+            return _exch.lower(), symb.lower(), self._aliases.get(_mktype, _mktype)
+        return None, None, None
 
     def prepare_data_sql(
         self,
@@ -927,37 +996,14 @@ class QuestDBSqlBuilder:
         _table = self.get_table_name(f"{exchange}:BTCUSDT", dtype)
         return f"select distinct(symbol) from {_table}"
 
+    def prepare_data_ranges_sql(self, data_id: str) -> str:
+        raise NotImplementedError()
+
 
 class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
     """
     Sql builder for candles data
     """
-
-    def get_table_name(self, data_id: str, sfx: str = "") -> str:
-        """
-        Get table name for data_id
-        data_id can have format <exchange>.<type>:<symbol>
-        for example:
-            BINANCE.UM:BTCUSDT or BINANCE:BTCUSDT for spot
-        """
-        _aliases = {"um": "umfutures", "cm": "cmfutures", "f": "futures"}
-        sfx = sfx or "candles_1m"
-        table_name = data_id
-        _ss = data_id.split(":")
-        if len(_ss) > 1:
-            _exch, symb = _ss
-            _mktype = "spot"
-            _ss = _exch.split(".")
-            if len(_ss) > 1:
-                _exch = _ss[0]
-                _mktype = _ss[1]
-            _mktype = _mktype.lower()
-            parts = [_exch.lower(), _aliases.get(_mktype, _mktype)]
-            if "candles" not in sfx:
-                parts.append(symb.lower())
-            parts.append(sfx)
-            table_name = ".".join(filter(lambda x: x, parts))
-        return table_name
 
     def prepare_names_sql(self) -> str:
         return "select table_name from tables() where table_name like '%candles%'"
@@ -978,15 +1024,11 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
         resample: str | None,
         data_type: str,
     ) -> str:
-        _ss = data_id.split(":")
-        if len(_ss) > 1:
-            _exch, symb = _ss
-        else:
-            symb = data_id
+        _exch, _symb, _mktype = self._get_exchange_symbol_market_type(data_id)
+        if _symb is None:
+            _symb = data_id
 
-        symb = symb.lower()
-
-        where = f"where symbol = '{symb}'"
+        where = f"where symbol = '{_symb}'"
         w0 = f"timestamp >= '{start}'" if start else ""
         w1 = f"timestamp < '{end}'" if end else ""
 
@@ -1008,10 +1050,7 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
         table_name = self.get_table_name(data_id, data_type)
         return f"""
                 select timestamp, 
-                first(open) as open, 
-                max(high) as high,
-                min(low) as low,
-                last(close) as close,
+                first(open) as open, max(high) as high, min(low) as low, last(close) as close,
                 sum(volume) as volume,
                 sum(quote_volume) as quote_volume,
                 sum(count) as count,
@@ -1019,6 +1058,27 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
                 sum(taker_buy_quote_volume) as taker_buy_quote_volume
                 from "{table_name}" {where} {_rsmpl};
             """
+
+    def prepare_data_ranges_sql(self, data_id: str) -> str:
+        _exch, _symb, _mktype = self._get_exchange_symbol_market_type(data_id)
+        if _exch is None:
+            raise ValueError(f"Can't get exchange name from data id: {data_id} !")
+        return f"""(SELECT timestamp FROM "{ _exch }.{_mktype}.candles_1m" WHERE symbol='{_symb}' ORDER BY timestamp ASC LIMIT 1)
+                        UNION
+                   (SELECT timestamp FROM "{ _exch }.{_mktype}.candles_1m" WHERE symbol='{_symb}' ORDER BY timestamp DESC LIMIT 1)
+                """
+
+
+class QuestDBSqlTOBBilder(QuestDBSqlBuilder):
+    def prepare_data_ranges_sql(self, data_id: str) -> str:
+        _exch, _symb, _mktype = self._get_exchange_symbol_market_type(data_id)
+        if _exch is None:
+            raise ValueError(f"Can't get exchange name from data id: {data_id} !")
+        # TODO: ????
+        return f"""(SELECT timestamp FROM "{ _exch }.{_mktype}.{_symb}.orderbook" ORDER BY timestamp ASC LIMIT 1)
+                        UNION
+                   (SELECT timestamp FROM "{ _exch }.{_mktype}.{_symb}.orderbook" ORDER BY timestamp DESC LIMIT 1)
+                """
 
 
 class QuestDBConnector(DataReader):
@@ -1213,7 +1273,7 @@ class QuestDBConnector(DataReader):
             _cursor.close()
 
     @_retry
-    def _get_names(self, builder: QuestDBSqlBuilder) -> List[str]:
+    def _get_names(self, builder: QuestDBSqlBuilder) -> list[str]:
         _cursor = None
         try:
             _cursor = self._connection.cursor()  # type: ignore
@@ -1225,7 +1285,7 @@ class QuestDBConnector(DataReader):
         return [r[0] for r in records]
 
     @_retry
-    def _get_symbols(self, builder: QuestDBSqlBuilder, exchange: str, dtype: str) -> List[str]:
+    def _get_symbols(self, builder: QuestDBSqlBuilder, exchange: str, dtype: str) -> list[str]:
         _cursor = None
         try:
             _cursor = self._connection.cursor()  # type: ignore
@@ -1235,6 +1295,17 @@ class QuestDBConnector(DataReader):
             if _cursor:
                 _cursor.close()
         return [f"{exchange}:{r[0].upper()}" for r in records]
+
+    @_retry
+    def _get_range(self, builder: QuestDBSqlBuilder, data_id: str) -> tuple[Any] | None:
+        _cursor = None
+        try:
+            _cursor = self._connection.cursor()  # type: ignore
+            _cursor.execute(builder.prepare_data_ranges_sql(data_id))  # type: ignore
+            return tuple([np.datetime64(r[0]) for r in _cursor.fetchall()])
+        finally:
+            if _cursor:
+                _cursor.close()
 
     def __del__(self):
         try:
@@ -1334,6 +1405,7 @@ class MultiQdbConnector(QuestDBConnector):
 
     _TYPE_TO_BUILDER = {
         "candles_1m": QuestDBSqlCandlesBuilder(),
+        "tob": QuestDBSqlTOBBilder(),
         "trade": TradeSql(),
         "agg_trade": TradeSql(),
         "orderbook": QuestDBSqlOrderBookBuilder(),
@@ -1346,6 +1418,7 @@ class MultiQdbConnector(QuestDBConnector):
         "ob": "orderbook",
         "trd": "trade",
         "td": "trade",
+        "quote": "tob",
         "aggTrade": "agg_trade",
         "agg_trades": "agg_trade",
         "aggTrades": "agg_trade",
@@ -1407,3 +1480,10 @@ class MultiQdbConnector(QuestDBConnector):
             exchange,
             self._TYPE_MAPPINGS.get(dtype, dtype),
         )
+
+    def get_time_ranges(self, symbol: str, dtype: str) -> tuple[np.datetime64, np.datetime64]:
+        try:
+            _xr = self._get_range(self._TYPE_TO_BUILDER[self._TYPE_MAPPINGS.get(dtype, dtype)], symbol)
+            return (None, None) if not _xr else _xr  # type: ignore
+        except Exception:
+            return (None, None)  # type: ignore

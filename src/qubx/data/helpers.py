@@ -36,6 +36,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
     _n_jobs: int
     _start: pd.Timestamp | None = None
     _stop: pd.Timestamp | None = None
+    _symbols: list[str]
 
     # - external data
     _external: dict[str, pd.DataFrame | pd.Series]
@@ -53,6 +54,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         self._data_timeframe = base_timeframe
         self.exchange = exchange
         self._external = {}
+        self._symbols = []
 
         # - copy external data
         for k, v in kwargs.items():
@@ -250,7 +252,13 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         return self._reader.get_names(**kwargs)
 
     def get_symbols(self, exchange: str, dtype: str) -> list[str]:
-        return self._reader.get_symbols(self.exchange, DataType.OHLC)
+        if not self._symbols:
+            self._symbols = self._reader.get_symbols(self.exchange, DataType.OHLC)
+        return self._symbols
+
+    def get_time_ranges(self, symbol: str, dtype: DataType) -> tuple[Any, Any]:
+        _id = f"{self.exchange}:{symbol}" if not symbol.startswith(self.exchange) else symbol
+        return self._reader.get_time_ranges(_id, dtype)
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}(exchange={self.exchange},timeframe={self._data_timeframe})"

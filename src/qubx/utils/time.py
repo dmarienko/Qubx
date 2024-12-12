@@ -134,14 +134,14 @@ def handle_start_stop(s: Optional[str], e: Optional[str], convert=str) -> Tuple[
     """
     Process start/stop times
 
-        handle_start_stop('2020-01-01', '2020-02-01') # 2020-01-01, 2020-02-01
-        handle_start_stop('2020-02-01', '2020-01-01') # 2020-01-01, 2020-02-01
-        handle_start_stop('2020-01-01', '1w')         # 2020-01-01, 2020-01-01 + 1week
-        handle_start_stop('1w', '2020-01-01')         # 2020-01-01 - 1week, '2020-01-01'
-        handle_start_stop('2020-01-01', '-1w')        # 2020-01-01 - 1week, 2020-01-01,
-        handle_start_stop(None, '2020-01-01')         # None, '2020-01-01'
-        handle_start_stop('2020-01-01', None)         # '2020-01-01', None
-        handle_start_stop(None, None)                 # None, None
+    >>>  handle_start_stop('2020-01-01', '2020-02-01') # 2020-01-01, 2020-02-01
+    >>>  handle_start_stop('2020-02-01', '2020-01-01') # 2020-01-01, 2020-02-01
+    >>>  handle_start_stop('2020-01-01', '1w')         # 2020-01-01, 2020-01-01 + 1week
+    >>>  handle_start_stop('1w', '2020-01-01')         # 2020-01-01 - 1week, '2020-01-01'
+    >>>  handle_start_stop('2020-01-01', '-1w')        # 2020-01-01 - 1week, 2020-01-01,
+    >>>  handle_start_stop(None, '2020-01-01')         # None, '2020-01-01'
+    >>>  handle_start_stop('2020-01-01', None)         # '2020-01-01', None
+    >>>  handle_start_stop(None, None)                 # None, None
 
     """
 
