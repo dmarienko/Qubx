@@ -9,7 +9,7 @@ from qubx import logger, lookup
 from qubx.core.basics import CtrlChannel, DataType, Instrument, ITimeProvider
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy, PositionsTracker
-from qubx.core.series import Bar, Quote, Trade
+from qubx.core.series import OHLCV, Bar, Quote, Trade
 from qubx.core.utils import time_delta_to_str
 from qubx.data.readers import AsDict, DataReader, InMemoryDataFrameReader
 from qubx.utils.time import infer_series_frequency
@@ -428,20 +428,23 @@ class DataSniffer:
         for k, v in data.items():
             match v:
                 case DataReader():
-                    _types[k] = self._sniff_reader(k, v, time)
+                    _types[k] = (self._sniff_reader(k, v, time), "reader")
 
                 case pd.DataFrame():
-                    _types[k] = self._sniff_pandas(v)
+                    _types[k] = (self._sniff_pandas(v), "dataframe")
+
+                case OHLCV():
+                    _types[k] = (self._sniff_pandas(v.pd()), "dataframe")
 
                 case list():
-                    _types[k] = self._sniff_list(v)
+                    _types[k] = (self._sniff_list(v), "list")
 
                 case dict():
-                    _types[k] = self._sniff_dicts(v)
+                    _types[k] = (self._sniff_dicts(v), "dict")
 
                 case _:
                     logger.warning(f"Unsupported data type: {type(v)} for symbol: {k}")
-                    _types[k] = DataType.NONE
+                    _types[k] = (DataType.NONE, None)
 
         return _types
 
@@ -456,8 +459,8 @@ class DataSniffer:
 
 def recognize_simulation_data(
     data: dict[str, pd.DataFrame] | DataReader,
-    instruments: list[str] | dict[str, list[str]] | None,
-    aux_data: DataReader | None = None,
+    instruments: list[Instrument],
+    # aux_data: DataReader | None = None,
 ) -> SimulationDataInfo:
     if isinstance(data, dict):
         data_reader = InMemoryDataFrameReader(data)  # type: ignore
@@ -474,11 +477,4 @@ def recognize_simulation_data(
         raise ValueError(f"Unsupported data type: {type(data).__name__}")
     pass
 
-    # _aux_data = None
-    # if aux_data is not None:
-    #     if not isinstance(aux_data, InMemoryCachedReader):
-    #         logger.error("Aux data provider should be an instance of InMemoryCachedReader! Skipping it.")
-    #     _aux_data = TimeGuardedWrapper(aux_data, trading_service)
-
-    # return SimulationDataInfo()
     return None
