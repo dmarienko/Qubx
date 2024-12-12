@@ -164,7 +164,7 @@ def _get_instruments(symbols: list[str], exchange: str) -> list[Instrument]:
     return instruments
 
 
-def load_strategy_config(filename: str) -> Struct:
+def load_strategy_config(filename: str, account: str) -> Struct:
     with open(filename, "r") as f:
         content = yaml.safe_load(f)
 
@@ -177,10 +177,10 @@ def load_strategy_config(filename: str) -> Struct:
         parameters=config.get("parameters", dict()),
         connector=config["connector"],
         exchange=config["parameters"]["exchange"],
-        account=config.get("account"),
-        # md_subscr=config["subscription"], # xxx
-        strategy_trigger=config["parameters"]["trigger_at"], # ???
-        strategy_fit_trigger=config["parameters"].get("fit_at", ""), # ???
+        account=account,
+        # md_subscr=config["subscription"], # todo: ask where to get?
+        strategy_trigger=config["parameters"]["trigger_at"],
+        strategy_fit_trigger=config["parameters"].get("fit_at", ""),
         portfolio_logger=config.get("logger", None),
         log_positions_interval=config.get("log_positions_interval", None),
         log_portfolio_interval=config.get("log_portfolio_interval", None),
@@ -238,8 +238,8 @@ def get_account_config(account_id: str, accounts_cfg_file: str) -> dict | None:
     return cfg | {"account_id": account_id, "reserves": reserves}
 
 
-def get_strategy(config_file: str, search_paths: list) -> (IStrategy, Struct):
-    cfg = load_strategy_config(config_file)
+def get_strategy(config_file: str, search_paths: list, account: str) -> (IStrategy, Struct):
+    cfg = load_strategy_config(config_file, account)
     search_paths.append(Path(config_file).parent)
     try:
         for p in search_paths:
@@ -404,7 +404,15 @@ def exit():
 
 @click.command()
 @click.argument("filename", type=click.Path(exists=True))
-@click.option("--accounts", "-a", default=".env", type=click.STRING, help=".env file with live accounts configuration data")
+@click.option("--account", "-a", type=click.STRING, help="Account id for trading", default=None, show_default=True)
+@click.option(
+    "--acc_file",
+    "-f",
+    default=".env",
+    type=click.STRING,
+    help="env file with live accounts configuration data",
+    show_default=True,
+)
 @click.option(
     "--paths",
     "-p",
@@ -416,16 +424,20 @@ def exit():
 @click.option("--jupyter", "-j", is_flag=True, default=False, help="Run strategy in jupyter console", show_default=True)
 @click.option("--testnet", "-t", is_flag=True, default=False, help="Use testnet for trading", show_default=True)
 @click.option("--paper", "-p", is_flag=True, default=False, help="Use paper trading mode", show_default=True)
-def run(filename: str, accounts: str, paths: list, jupyter: bool, testnet: bool, paper: bool):
+def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, testnet: bool, paper: bool):
+    if not account and not paper:
+        logger.error("Account id is required for live trading")
+        return
     paths = list(paths)
+
     if jupyter:
-        _run_in_jupyter(filename, accounts, paths)
+        _run_in_jupyter(filename, acc_file, paths)
         return
 
     # - show Qubx logo with current version
     logo()
 
-    strategy, cfg = get_strategy(filename, paths)
+    strategy, cfg = get_strategy(filename, paths, account)
     if not all([strategy, cfg]):
         logger.error("Can't load strategy")
         return
@@ -435,7 +447,7 @@ def run(filename: str, accounts: str, paths: list, jupyter: bool, testnet: bool,
     # - read account creds
     acc_config = {}
     if cfg.account is not None:
-        acc_config = get_account_env_config(cfg.account, accounts)
+        acc_config = get_account_env_config(account, acc_file)
         if acc_config is None:
             logger.error("Can't read account configuration")
             return None
