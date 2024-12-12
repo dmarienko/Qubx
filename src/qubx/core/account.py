@@ -59,11 +59,11 @@ class BasicAccountProcessor(IAccountProcessor):
             self._positions[instrument] = _pos
         return _pos
 
-    def get_orders(self, instrument: Instrument | None = None) -> list[Order]:
-        ols = list(self._active_orders.values())
+    def get_orders(self, instrument: Instrument | None = None) -> dict[str, Order]:
+        orders = self._active_orders.copy()
         if instrument is not None:
-            ols = list(filter(lambda x: x.instrument == instrument, ols))
-        return ols
+            orders = dict(filter(lambda x: x[1].instrument == instrument, orders.items()))
+        return orders
 
     @property
     def reserved(self) -> dict[Instrument, float]:

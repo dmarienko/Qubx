@@ -28,8 +28,11 @@ from qubx.utils.ntp import time_now
 
 from .utils import (
     ccxt_convert_balance,
+    ccxt_convert_deal_info,
+    ccxt_convert_order_info,
     ccxt_convert_positions,
     ccxt_convert_ticker,
+    ccxt_restore_position_from_deals,
     instrument_to_ccxt_symbol,
 )
 
@@ -44,6 +47,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
     balance_interval: str
     position_interval: str
     subscription_interval: str
+    max_position_restore_days: int
     max_retries: int
 
     _loop: AsyncThreadLoop
@@ -65,6 +69,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         balance_interval: str = "10Sec",
         position_interval: str = "10Sec",
         subscription_interval: str = "10Sec",
+        max_position_restore_days: int = 30,
         max_retries: int = 10,
     ):
         super().__init__(account_id, base_currency, initial_capital=0)
@@ -73,6 +78,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         self.balance_interval = balance_interval
         self.position_interval = position_interval
         self.subscription_interval = subscription_interval
+        self.max_position_restore_days = max_position_restore_days
         self._loop = AsyncThreadLoop(exchange.asyncio_loop)
         self._is_running = False
         self._polling_tasks = {}
@@ -95,16 +101,27 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         if self._is_running:
             logger.debug("Account polling is already running")
             return
+
         self._is_running = True
+
+        # - start polling tasks
         self._polling_tasks["balance"] = self._loop.submit(
             self._poller("balance", self._update_balance, self.balance_interval)
         )
         self._polling_tasks["position"] = self._loop.submit(
             self._poller("position", self._update_positions, self.position_interval)
         )
+
+        # - start initialization tasks
+        _init_tasks = [
+            self._loop.submit(self._init_spot_positions()),  # restore spot positions
+            self._loop.submit(self._init_open_orders()),  # fetch open orders
+        ]
+
         logger.info("Waiting for account polling tasks to be initialized")
-        _waiter = self._loop.submit(self._wait_for_init())
+        _waiter = self._loop.submit(self._wait_for_init(*_init_tasks))
         _waiter.result()
+        logger.info("Account polling tasks have been initialized")
 
         # - start subscription polling task
         self._polling_tasks["subscription"] = self._loop.submit(
@@ -131,14 +148,6 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         _currency_to_value = {c: self._get_currency_value(b.total, c) for c, b in self._balances.items()}
         _positions_value = sum([p.market_value_funds for p in self._positions.values() if p.instrument.is_futures()])
         return sum(_currency_to_value.values()) + _positions_value
-
-    def process_deals(self, instrument: Instrument, deals: list[Deal]) -> None:
-        # do nothing on deal updates, because we are updating balances directly from exchange
-        pass
-
-    def process_order(self, order: Order) -> None:
-        # don't update locked value, because we are updating balances directly from exchange
-        super().process_order(order, update_locked_value=False)
 
     def _get_instrument_for_currency(self, currency: str) -> Instrument:
         symbol = f"{currency}/{self.base_currency}"
@@ -207,9 +216,13 @@ class CcxtAccountProcessor(BasicAccountProcessor):
 
         logger.debug(f"{name} polling task has been stopped")
 
-    async def _wait_for_init(self):
-        while not all(self._polling_to_init.values()):
-            await asyncio.sleep(0.1)
+    async def _wait(self, condition: Callable[[], bool], sleep: int = 0.1) -> None:
+        while not condition():
+            await asyncio.sleep(sleep)
+
+    async def _wait_for_init(self, *futures: concurrent.futures.Future) -> None:
+        await self._wait(lambda: all(self._polling_to_init.values()))
+        await self._wait(lambda: all([f.done() for f in futures]))
 
     async def _update_subscriptions(self) -> None:
         """Subscribe to required instruments"""
@@ -276,6 +289,17 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         _current_price = current_pos.last_update_price
         current_pos.change_position_by(timestamp, quantity_diff, _current_price)
 
+    def _get_start_time_in_ms(self, days_before: int) -> int:
+        return (self.time() - days_before * pd.Timedelta("1d")).asm8.item() // 1000000
+
+    def _is_our_order(self, order: Order) -> bool:
+        if order.client_id is None:
+            return False
+        return order.client_id.startswith("qubx_")
+
+    def _is_base_currency(self, currency: str) -> bool:
+        return currency.upper() == self.base_currency
+
     async def _subscribe_instruments(self, instruments: list[Instrument]) -> None:
         assert self._subscription_manager is not None
 
@@ -307,3 +331,93 @@ class CcxtAccountProcessor(BasicAccountProcessor):
                 if instr is not None:
                     quote = ccxt_convert_ticker(ticker)
                     self.update_position_price(_current_time, instr, quote.mid_price())
+
+    async def _init_spot_positions(self) -> None:
+        # - wait for balance to be initialized
+        await self._wait(lambda: self._polling_to_init["balance"])
+        logger.debug("Restoring spot positions ...")
+
+        # - get nonzero balances
+        _nonzero_balances = {
+            c: b.total for c, b in self._balances.items() if b.total > 0 and not self._is_base_currency(c)
+        }
+        _positions = []
+
+        async def _restore_pos(currency: str, balance: float) -> None:
+            try:
+                _instrument = self._get_instrument_for_currency(currency)
+                # - get latest order for instrument and check client id
+                _latest_orders = await self._fetch_orders(_instrument, limit=1)
+                if not _latest_orders:
+                    return
+                _latest_order = list(_latest_orders.values())[-1]
+                if self._is_our_order(_latest_order):
+                    # - if it's our order, then we fetch the deals and restore position
+                    _deals = await self._fetch_deals(_instrument, self.max_position_restore_days)
+                    _position = ccxt_restore_position_from_deals(Position(_instrument), balance, _deals)
+                    _positions.append(_position)
+            except Exception as e:
+                logger.warning(f"Error restoring position for {currency}: {e}")
+
+        # - restore positions
+        await asyncio.gather(*[_restore_pos(c, b) for c, b in _nonzero_balances.items()])
+
+        # - attach positions
+        if _positions:
+            self.attach_positions(*_positions)
+            logger.debug("Restored positions ->")
+            for p in _positions:
+                logger.debug(f"  ::  {p}")
+
+    async def _init_open_orders(self) -> None:
+        # wait for balances and positions to be initialized
+        await self._wait(lambda: all([self._polling_to_init[task] for task in ["balance", "position"]]))
+        logger.debug("Fetching open orders ...")
+
+        # in order to minimize order requests we only fetch open orders for instruments that we have positions in
+        _nonzero_balances = {
+            c: b.total for c, b in self._balances.items() if b.total > 0 and not self._is_base_currency(c)
+        }
+        _balance_instruments = [self._get_instrument_for_currency(c) for c in _nonzero_balances.keys()]
+        _position_instruments = list(self._positions.keys())
+        _instruments = list(set(_balance_instruments + _position_instruments))
+
+        _open_orders: dict[str, Order] = {}
+
+        async def _add_open_orders(instrument: Instrument) -> None:
+            try:
+                _orders = await self._fetch_orders(instrument, is_open=True)
+                _open_orders.update(_orders)
+            except Exception as e:
+                logger.warning(f"Error fetching open orders for {instrument}: {e}")
+
+        await asyncio.gather(*[_add_open_orders(i) for i in _instruments])
+
+        self.add_active_orders(_open_orders)
+
+        logger.debug(f"Found {len(_open_orders)} open orders ->")
+        _instr_to_open_orders: dict[Instrument, list[Order]] = defaultdict(list)
+        for od in _open_orders.values():
+            _instr_to_open_orders[od.instrument].append(od)
+        for instr, orders in _instr_to_open_orders.items():
+            logger.debug(f"  ::  {instr} ->")
+            for order in orders:
+                logger.debug(f"    :: {order.side} {order.quantity} @ {order.price} ({order.status})")
+
+    async def _fetch_orders(
+        self, instrument: Instrument, days_before: int = 30, limit: int | None = None, is_open: bool = False
+    ) -> dict[str, Order]:
+        _start_ms = self._get_start_time_in_ms(days_before) if limit is None else None
+        _ccxt_symbol = instrument_to_ccxt_symbol(instrument)
+        _fetcher = self.exchange.fetch_open_orders if is_open else self.exchange.fetch_orders
+        _raw_orders = await _fetcher(_ccxt_symbol, since=_start_ms, limit=limit)
+        _orders = [ccxt_convert_order_info(instrument, o) for o in _raw_orders]
+        _id_to_order = {o.id: o for o in _orders}
+        return dict(sorted(_id_to_order.items(), key=lambda x: x[1].time, reverse=False))
+
+    async def _fetch_deals(self, instrument: Instrument, days_before: int = 30) -> list[Deal]:
+        _start_ms = self._get_start_time_in_ms(days_before)
+        _ccxt_symbol = instrument_to_ccxt_symbol(instrument)
+        deals_data = await self.exchange.fetch_my_trades(_ccxt_symbol, since=_start_ms)
+        deals: list[Deal] = [ccxt_convert_deal_info(o) for o in deals_data]
+        return sorted(deals, key=lambda x: x.time) if deals else []
