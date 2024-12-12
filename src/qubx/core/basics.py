@@ -342,6 +342,14 @@ OrderStatus = Literal["OPEN", "CLOSED", "CANCELED", "NEW"]
 
 
 @dataclass
+class OrderRequest:
+    instrument: Instrument
+    quantity: float
+    price: float | None = None
+    options: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class Order:
     id: str
     type: OrderType
@@ -358,6 +366,12 @@ class Order:
 
     def __str__(self) -> str:
         return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.instrument} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
+
+
+@dataclass
+class ExecutionReport:
+    order: Order
+    deals: list[Deal]
 
 
 @dataclass
@@ -672,16 +686,6 @@ class CtrlChannel:
             return self._queue.get(timeout=timeout)
         except Empty:
             raise QueueTimeout(f"Timeout waiting for data on {self.name} channel")
-
-
-class ICommunicationManager:
-    databus: CtrlChannel
-
-    def get_communication_channel(self) -> CtrlChannel:
-        return self.databus
-
-    def set_communication_channel(self, channel: CtrlChannel):
-        self.databus = channel
 
 
 class ITimeProvider:
