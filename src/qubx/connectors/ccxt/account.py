@@ -66,8 +66,8 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         account_id: str,
         exchange: cxp.Exchange,
         base_currency: str,
-        balance_interval: str = "10Sec",
-        position_interval: str = "10Sec",
+        balance_interval: str = "30Sec",
+        position_interval: str = "30Sec",
         subscription_interval: str = "10Sec",
         max_position_restore_days: int = 30,
         max_retries: int = 10,
@@ -269,7 +269,9 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         _instrument_to_position = {p.instrument: p for p in positions}
         _current_instruments = set(self._positions.keys())
         _new_instruments = set([p.instrument for p in positions])
-        _to_remove = _current_instruments - _new_instruments
+        # - spot positions should not be updated here, because exchanges don't provide spot positions
+        # - so we have to trust deal updates to update spot positions
+        _to_remove = {instr for instr in _current_instruments - _new_instruments if instr.is_futures()}
         _to_add = _new_instruments - _current_instruments
         _to_modify = _current_instruments.intersection(_new_instruments)
         _update_positions = [Position(i) for i in _to_remove] + [_instrument_to_position[i] for i in _to_modify]
