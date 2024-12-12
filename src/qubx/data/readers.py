@@ -9,24 +9,19 @@ import psycopg as pg
 from functools import wraps
 
 from qubx import logger
-from qubx.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
+from qubx.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade, Bar
 from qubx.pandaz.utils import ohlc_resample, srows
 from qubx.utils.time import infer_series_frequency, handle_start_stop
-from psycopg.types.datetime import TimestampLoader
 
 _DT = lambda x: pd.Timedelta(x).to_numpy().item()
 D1, H1 = _DT("1D"), _DT("1h")
 MS1 = 1_000_000
+S1 = 1000 * MS1
+M1 = 60 * S1
 
 DEFAULT_DAILY_SESSION = (_DT("00:00:00.100"), _DT("23:59:59.900"))
 STOCK_DAILY_SESSION = (_DT("9:30:00.100"), _DT("15:59:59.900"))
 CME_FUTURES_DAILY_SESSION = (_DT("8:30:00.100"), _DT("15:14:59.900"))
-
-
-class NpTimestampLoader(TimestampLoader):
-    def load(self, data) -> np.datetime64:
-        dt = super().load(data)
-        return np.datetime64(dt)
 
 
 def _recognize_t(t: Union[int, str], defaultvalue, timeunit) -> int:
@@ -60,7 +55,6 @@ _FIND_TIME_COL_IDX = lambda column_names: _find_column_index_in_list(
 
 
 class DataTransformer:
-
     def __init__(self) -> None:
         self.buffer = []
         self._column_names = []
@@ -84,9 +78,8 @@ class DataTransformer:
 
 
 class DataReader:
-
     def get_names(self, **kwargs) -> List[str]:
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def read(
         self,
@@ -97,7 +90,7 @@ class DataReader:
         chunksize=0,
         **kwargs,
     ) -> Iterator | List:
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def get_aux_data_ids(self) -> Set[str]:
         """
@@ -167,7 +160,6 @@ class CsvStorageDataReader(DataReader):
         timeframe=None,
         **kwargs,
     ) -> Iterable | Any:
-
         f_path = self.__check_file_name(data_id)
         if not f_path:
             ValueError(f"Can't find any csv data for {data_id} in {self.path} !")
@@ -335,10 +327,14 @@ class InMemoryDataFrameReader(DataReader):
         if data_id not in self._data:
             if data_id.startswith(self.exchange):
                 data_id = data_id.split(":")[1]
-        d = self._data.get(data_id)
-        if d is None:
+        if (d := self._data.get(data_id)) is None:
             raise ValueError(f"No data found for {data_id}")
-        d2 = d.loc[start:stop].copy().reset_index()
+
+        d2 = d.loc[start:stop].copy()
+        if _tf := kwargs.get("timeframe"):
+            d2 = ohlc_resample(d2, _tf)
+
+        d2 = d2.reset_index()
         transform.start_transform(data_id, list(d2.columns), start=start, stop=stop)
         transform.process_data(d2.values)
         res = transform.collect()
@@ -433,7 +429,6 @@ class AsOhlcvSeries(DataTransformer):
                 self._bid_idx = _find_column_index_in_list(column_names, "bid")
                 self._data_type = "quotes"
             except:
-
                 try:
                     self._price_idx = _find_column_index_in_list(column_names, "price")
                     self._size_idx = _find_column_index_in_list(
@@ -606,28 +601,48 @@ class AsTimestampedRecords(DataTransformer):
         return res
 
 
-class RestoreTicksFromOHLC(DataTransformer):
-    """
-    Emulates quotes (and trades) from OHLC bars
-    """
+class RestoredEmulatorHelper(DataTransformer):
+    _freq: np.timedelta64 | None = None
+    _t_start: int
+    _t_mid1: int
+    _t_mid2: int
+    _t_end: int
+    _open_close_time_shift_secs: int
 
-    def __init__(
-        self,
-        trades: bool = False,  # if we also wants 'trades'
-        default_bid_size=1e9,  # default bid/ask is big
-        default_ask_size=1e9,  # default bid/ask is big
-        daily_session_start_end=DEFAULT_DAILY_SESSION,
-        timestamp_units="ns",
-        spread=0.0,
-    ):
+    def __init__(self, daily_session_start_end: tuple, timestamp_units: str, open_close_time_shift_secs: int):
         super().__init__()
-        self._trades = trades
-        self._bid_size = default_bid_size
-        self._ask_size = default_ask_size
-        self._s2 = spread / 2.0
         self._d_session_start = daily_session_start_end[0]
         self._d_session_end = daily_session_start_end[1]
         self._timestamp_units = timestamp_units
+        self._open_close_time_shift_secs = open_close_time_shift_secs  # type: ignore
+
+    def _detect_emulation_timestamps(self, rows_data: list[list]):
+        if self._freq is None:
+            ts = [t[self._time_idx] for t in rows_data]
+            try:
+                self._freq = infer_series_frequency(ts)
+            except ValueError:
+                logger.warning("Can't determine frequency of incoming data")
+                return
+
+            # - timestamps when we emit simulated quotes
+            dt = self._freq.astype("timedelta64[ns]").item()
+            dt10 = dt // 10
+
+            # - adjust open-close time shift to avoid overlapping timestamps
+            if self._open_close_time_shift_secs * S1 >= (dt // 2 - dt10):
+                self._open_close_time_shift_secs = (dt // 2 - 2 * dt10) // S1
+
+            if dt < D1:
+                self._t_start = self._open_close_time_shift_secs * S1
+                self._t_mid1 = dt // 2 - dt10
+                self._t_mid2 = dt // 2 + dt10
+                self._t_end = dt - self._open_close_time_shift_secs * S1
+            else:
+                self._t_start = self._d_session_start + self._open_close_time_shift_secs * S1
+                self._t_mid1 = dt // 2 - H1
+                self._t_mid2 = dt // 2 + H1
+                self._t_end = self._d_session_end - self._open_close_time_shift_secs * S1
 
     def start_transform(self, name: str, column_names: List[str], **kwargs):
         self.buffer = []
@@ -641,39 +656,45 @@ class RestoreTicksFromOHLC(DataTransformer):
         self._freq = None
         try:
             self._volume_idx = _find_column_index_in_list(column_names, "volume", "vol")
-        except:
+        except:  # noqa: E722
             pass
 
+
+class RestoreTicksFromOHLC(RestoredEmulatorHelper):
+    """
+    Emulates quotes (and trades) from OHLC bars
+    """
+
+    def __init__(
+        self,
+        trades: bool = False,  # if we also wants 'trades'
+        default_bid_size=1e9,  # default bid/ask is big
+        default_ask_size=1e9,  # default bid/ask is big
+        daily_session_start_end=DEFAULT_DAILY_SESSION,
+        timestamp_units="ns",
+        spread=0.0,
+        open_close_time_shift_secs=1.0,
+    ):
+        super().__init__(daily_session_start_end, timestamp_units, open_close_time_shift_secs)
+        self._trades = trades
+        self._bid_size = default_bid_size
+        self._ask_size = default_ask_size
+        self._s2 = spread / 2.0
+
+    def start_transform(self, name: str, column_names: list[str], **kwargs):
+        super().start_transform(name, column_names, **kwargs)
+        # -  disable trades if no volume information is available
         if self._volume_idx is None and self._trades:
             logger.warning("Input OHLC data doesn't contain volume information so trades can't be emulated !")
             self._trades = False
 
-    def process_data(self, rows_data: List[List]) -> Any:
+    def process_data(self, rows_data: list[list]) -> Any:
         if rows_data is None:
             return
 
         s2 = self._s2
-
         if self._freq is None:
-            ts = [t[self._time_idx] for t in rows_data[:100]]
-            try:
-                self._freq = infer_series_frequency(ts)
-            except ValueError:
-                logger.warning("Can't determine frequency of incoming data")
-                return
-
-            # - timestamps when we emit simulated quotes
-            dt = self._freq.astype("timedelta64[ns]").item()
-            if dt < D1:
-                self._t_start = MS1  # dt // 10
-                self._t_mid1 = dt // 2 - dt // 10
-                self._t_mid2 = dt // 2 + dt // 10
-                self._t_end = dt - MS1  # dt - dt // 10
-            else:
-                self._t_start = self._d_session_start
-                self._t_mid1 = dt // 2 - H1
-                self._t_mid2 = dt // 2 + H1
-                self._t_end = self._d_session_end
+            self._detect_emulation_timestamps(rows_data[:100])
 
         # - input data
         for data in rows_data:
@@ -684,6 +705,7 @@ class RestoreTicksFromOHLC(DataTransformer):
             l = data[self._low_idx]
             c = data[self._close_idx]
             rv = data[self._volume_idx] if self._volume_idx else 0
+            rv = rv / (h - l) if h > l else rv
 
             # - opening quote
             self.buffer.append(Quote(ti + self._t_start, o - s2, o + s2, self._bid_size, self._ask_size))
@@ -745,6 +767,55 @@ class RestoreTicksFromOHLC(DataTransformer):
 
             # - closing quote
             self.buffer.append(Quote(ti + self._t_end, c - s2, c + s2, self._bid_size, self._ask_size))
+
+
+class RestoredBarsFromOHLC(RestoredEmulatorHelper):
+    """
+    Transforms OHLC data into a sequence of bars trying to mimic real-world market data updates
+    """
+
+    def __init__(
+        self, daily_session_start_end=DEFAULT_DAILY_SESSION, timestamp_units="ns", open_close_time_shift_secs=1.0
+    ):
+        super().__init__(daily_session_start_end, timestamp_units, open_close_time_shift_secs)
+
+    def process_data(self, rows_data: List[List]) -> Any:
+        if rows_data is None:
+            return
+
+        if self._freq is None:
+            self._detect_emulation_timestamps(rows_data[:100])
+
+        # - input data
+        for data in rows_data:
+            ti = _time(data[self._time_idx], self._timestamp_units)
+            o = data[self._open_idx]
+            h = data[self._high_idx]
+            l = data[self._low_idx]
+            c = data[self._close_idx]
+
+            vol = data[self._volume_idx] if self._volume_idx is not None else 0
+            rvol = vol / (h - l) if h > l else vol
+
+            # - opening bar (o,h,l,c=o, v=0)
+            self.buffer.append(Bar(ti + self._t_start, o, o, o, o, 0))
+
+            if c >= o:
+                v1 = rvol * (o - l)
+                self.buffer.append(Bar(ti + self._t_mid1, o, o, l, l, v1))
+
+                v2 = v1 + rvol * (c - o)
+                self.buffer.append(Bar(ti + self._t_mid2, o, h, l, h, v2))
+
+            else:
+                v1 = rvol * (h - o)
+                self.buffer.append(Bar(ti + self._t_mid1, o, h, o, h, v1))
+
+                v2 = v1 + rvol * (o - c)
+                self.buffer.append(Bar(ti + self._t_mid2, o, h, l, l, v2))
+
+            # - full bar
+            self.buffer.append(Bar(ti + self._t_end, o, h, l, c, vol))
 
 
 def _retry(fn):
@@ -1131,7 +1202,6 @@ WHERE timestamp BETWEEN '{raw_start_dt}' AND '{end_dt}'
 
 
 class TradeSql(QuestDBSqlCandlesBuilder):
-
     def prepare_data_sql(
         self,
         data_id: str,

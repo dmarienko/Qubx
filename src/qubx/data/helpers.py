@@ -1,4 +1,3 @@
-from types import GeneratorType
 from typing import Any, Dict, Iterable, List, Set, Type
 from concurrent.futures import ThreadPoolExecutor
 
@@ -11,7 +10,6 @@ from qubx import logger
 from qubx.core.basics import ITimeProvider
 from qubx.core.series import TimeSeries
 from qubx.data.readers import (
-    AsPandasFrame,
     CsvStorageDataReader,
     DataReader,
     InMemoryDataFrameReader,

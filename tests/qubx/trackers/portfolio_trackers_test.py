@@ -3,7 +3,7 @@ from typing import Any, Optional, List
 from pandas import Timestamp
 
 from qubx import QubxLogConfig, lookup, logger
-from qubx.core.account import AccountProcessor
+from qubx.core.account import BasicAccountProcessor
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.pandaz.utils import *
 from qubx.core.utils import recognize_time, time_to_str
@@ -78,7 +78,7 @@ class DebugStratageyCtx(IStrategyContext):
         self._d_qts = {i: None for i in self._instruments}  # type: ignore
         self._positions = {i: Position(i) for i in self.instruments}
         self.capital = capital
-        self.acc = AccountProcessor("test", "USDT", reserves={})
+        self.acc = BasicAccountProcessor("test", "USDT")
         self.acc.update_balance("USDT", capital, 0)
         self.acc.attach_positions(*self.positions.values())
 

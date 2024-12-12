@@ -8,7 +8,11 @@ help:
 
 
 test:
-	poetry run pytest
+	poetry run pytest -m "not integration"
+
+
+test-integration:
+	poetry run pytest -m integration --env=.env.integration
 
 
 build:
@@ -18,8 +22,8 @@ build:
 
 
 dev-install:
-	# - install in dev environment
-	pip install -e . --upgrade
+	poetry lock --no-update || true
+	poetry install
 	
 
 publish: build test

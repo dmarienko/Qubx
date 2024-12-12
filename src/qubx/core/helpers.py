@@ -9,7 +9,7 @@ from collections import defaultdict
 from threading import Thread
 
 from qubx import logger
-from qubx.core.basics import CtrlChannel, Instrument, SW, SubscriptionType
+from qubx.core.basics import CtrlChannel, Instrument, SW, Subtype
 from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV, OrderBook
 from qubx.utils.misc import Stopwatch
 from qubx.utils.time import convert_tf_str_td64, convert_seconds_to_str
@@ -85,34 +85,34 @@ class CachedMarketDataHolder:
 
     def update(self, instrument: Instrument, event_type: str, data: Any, update_ohlc: bool = False) -> None:
         # - store data in buffer if it's not OHLC
-        if event_type != SubscriptionType.OHLC:
+        if event_type != Subtype.OHLC:
             self._instr_to_sub_to_buffer[instrument][event_type].append(data)
 
         if not update_ohlc:
             return
 
         match event_type:
-            case SubscriptionType.OHLC:
+            case Subtype.OHLC:
                 self.update_by_bar(instrument, data)
-            case SubscriptionType.QUOTE:
+            case Subtype.QUOTE:
                 self.update_by_quote(instrument, data)
-            case SubscriptionType.TRADE:
+            case Subtype.TRADE:
                 self.update_by_trade(instrument, data)
-            case SubscriptionType.ORDERBOOK:
+            case Subtype.ORDERBOOK:
                 assert isinstance(data, OrderBook)
                 self.update_by_quote(instrument, data.to_quote())
             case _:
                 pass
 
     @SW.watch("CachedMarketDataHolder")
-    def update_by_bars(self, instrument: Instrument, timeframe: str, bars: List[Bar]) -> OHLCV:
+    def update_by_bars(self, instrument: Instrument, timeframe: str | np.timedelta64, bars: List[Bar]) -> OHLCV:
         """
         Substitute or create new series based on provided historical bars
         """
         if instrument not in self._ohlcvs:
             self._ohlcvs[instrument] = {}
 
-        tf = convert_tf_str_td64(timeframe)
+        tf = convert_tf_str_td64(timeframe) if isinstance(timeframe, str) else timeframe
         new_ohlc = OHLCV(instrument.symbol, tf)
         for b in bars:
             new_ohlc.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume, b.bought_volume)

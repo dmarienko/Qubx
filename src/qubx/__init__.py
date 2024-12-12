@@ -15,7 +15,10 @@ def formatter(record):
     if record["level"].name in {"WARNING", "SNAKY"}:
         fmt = "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - %s" % fmt
 
-    prefix = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [ <level>%s</level> ] " % record["level"].icon
+    prefix = (
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [ <level>%s</level> ] <cyan>({module})</cyan> "
+        % record["level"].icon
+    )
 
     if record["exception"] is not None:
         # stackprinter.set_excepthook(style='darkbg2')
@@ -29,7 +32,6 @@ def formatter(record):
 
 
 class QubxLogConfig:
-
     @staticmethod
     def get_log_level():
         return os.getenv("QUBX_LOG_LEVEL", "DEBUG")
@@ -107,13 +109,14 @@ if runtime_env() in ["notebook", "shell"]:
             if line:
                 if "dark" in line.lower():
                     set_mpl_theme("dark")
+                    # - temporary workaround for vscode - dark theme not applying to ipywidgets in notebook
+                    # - see https://github.com/microsoft/vscode-jupyter/issues/7161
+                    if runtime_env() == "notebook":
+                        _vscode_clr_trick = """from IPython.display import display, HTML; display(HTML("<style> .cell-output-ipywidget-background { background-color: transparent !important; } :root { --jp-widgets-color: var(--vscode-editor-foreground); --jp-widgets-font-size: var(--vscode-editor-font-size); } </style>"))"""
+                        exec(_vscode_clr_trick, self.shell.user_ns)
 
                 elif "light" in line.lower():
                     set_mpl_theme("light")
-
-            # install additional plotly helpers
-            # from qube.charting.plot_helpers import install_plotly_helpers
-            # install_plotly_helpers()
 
         def _get_manager(self):
             if self.__manager is None:

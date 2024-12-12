@@ -1,35 +1,35 @@
 import pandas as pd
-from qubx import lookup, logger
-from qubx.core.account import AccountProcessor
+
+from qubx import logger, lookup
+from qubx.core.basics import Instrument, Position, Subtype, TargetPosition
 from qubx.core.helpers import CachedMarketDataHolder
-from qubx.core.loggers import StrategyLogging
-from qubx.core.basics import TargetPosition, Instrument, Position
-from qubx.core.loggers import StrategyLogging
 from qubx.core.interfaces import (
+    IAccountProcessor,
     IBrokerServiceProvider,
     IPositionGathering,
     IStrategy,
-    ITradingServiceProvider,
     IStrategyContext,
-    IUniverseManager,
     ISubscriptionManager,
-    ITradingManager,
     ITimeProvider,
+    ITradingManager,
+    ITradingServiceProvider,
+    IUniverseManager,
 )
+from qubx.core.loggers import StrategyLogging
 
 
 class UniverseManager(IUniverseManager):
-    __context: IStrategyContext
-    __strategy: IStrategy
-    __broker: IBrokerServiceProvider
-    __trading_service: ITradingServiceProvider
-    __cache: CachedMarketDataHolder
-    __logging: StrategyLogging
-    __subscription_manager: ISubscriptionManager
-    __trading_manager: ITradingManager
-    __time_provider: ITimeProvider
-    __positions: dict[Instrument, Position]
-    __position_gathering: IPositionGathering
+    _context: IStrategyContext
+    _strategy: IStrategy
+    _broker: IBrokerServiceProvider
+    _trading_service: ITradingServiceProvider
+    _cache: CachedMarketDataHolder
+    _logging: StrategyLogging
+    _subscription_manager: ISubscriptionManager
+    _trading_manager: ITradingManager
+    _time_provider: ITimeProvider
+    _positions: dict[Instrument, Position]
+    _position_gathering: IPositionGathering
 
     def __init__(
         self,
@@ -42,20 +42,20 @@ class UniverseManager(IUniverseManager):
         subscription_manager: ISubscriptionManager,
         trading_manager: ITradingManager,
         time_provider: ITimeProvider,
-        account_processor: AccountProcessor,
+        account_processor: IAccountProcessor,
         position_gathering: IPositionGathering,
     ):
-        self.__context = context
-        self.__strategy = strategy
-        self.__broker = broker
-        self.__trading_service = trading_service
-        self.__cache = cache
-        self.__logging = logging
-        self.__subscription_manager = subscription_manager
-        self.__trading_manager = trading_manager
-        self.__time_provider = time_provider
-        self.__positions = account_processor.positions
-        self.__position_gathering = position_gathering
+        self._context = context
+        self._strategy = strategy
+        self._broker = broker
+        self._trading_service = trading_service
+        self._cache = cache
+        self._logging = logging
+        self._subscription_manager = subscription_manager
+        self._trading_manager = trading_manager
+        self._time_provider = time_provider
+        self._positions = account_processor.positions
+        self._position_gathering = position_gathering
         self._instruments = []
 
     def set_universe(self, instruments: list[Instrument], skip_callback: bool = False) -> None:
@@ -68,13 +68,25 @@ class UniverseManager(IUniverseManager):
         self.__remove_instruments(rm_instr)
 
         if not skip_callback and (add_instr or rm_instr):
-            self.__strategy.on_universe_change(self.__context, add_instr, rm_instr)
+            self._strategy.on_universe_change(self._context, add_instr, rm_instr)
 
-        self.__broker.commit()  # apply pending changes
+        self._subscription_manager.commit()  # apply pending changes
 
         # set new instruments
         self._instruments.clear()
         self._instruments.extend(instruments)
+
+    def add_instruments(self, instruments: list[Instrument]):
+        self.__add_instruments(instruments)
+        self._strategy.on_universe_change(self._context, instruments, [])
+        self._subscription_manager.commit()
+        self._instruments.extend(instruments)
+
+    def remove_instruments(self, instruments: list[Instrument]):
+        self.__remove_instruments(instruments)
+        self._strategy.on_universe_change(self._context, [], instruments)
+        self._subscription_manager.commit()
+        self._instruments = list(set(self._instruments) - set(instruments))
 
     @property
     def instruments(self) -> list[Instrument]:
@@ -91,25 +103,25 @@ class UniverseManager(IUniverseManager):
         """
         # - close all open positions
         exit_targets = [
-            TargetPosition.zero(self.__context, instr.signal(0, group="Universe", comment="Universe change"))
+            TargetPosition.zero(self._context, instr.signal(0, group="Universe", comment="Universe change"))
             for instr in instruments
-            if instr.symbol in self.__positions and abs(self.__positions[instr.symbol].quantity) > instr.min_size
+            if instr.symbol in self._positions and abs(self._positions[instr.symbol].quantity) > instr.min_size
         ]
-        self.__position_gathering.alter_positions(self.__context, exit_targets)
+        self._position_gathering.alter_positions(self._context, exit_targets)
 
         # - if still open positions close them manually
         for instr in instruments:
-            pos = self.__positions.get(instr)
+            pos = self._positions.get(instr)
             if pos and abs(pos.quantity) > instr.min_size:
-                self.__trading_manager.trade(instr, -pos.quantity)
+                self._trading_manager.trade(instr, -pos.quantity)
 
         # - unsubscribe from market data
         for instr in instruments:
-            self.__subscription_manager.unsubscribe(instr)
+            self._subscription_manager.unsubscribe(Subtype.ALL, instr)
 
         # - remove from data cache
         for instr in instruments:
-            self.__cache.remove(instr)
+            self._cache.remove(instr)
 
     def __add_instruments(self, instruments: list[Instrument]) -> None:
         # - create positions for instruments
@@ -117,24 +129,31 @@ class UniverseManager(IUniverseManager):
 
         # - get actual positions from exchange
         for instr in instruments:
-            self.__cache.init_ohlcv(instr)
+            self._cache.init_ohlcv(instr)
 
         # - subscribe to market data
-        self.__subscription_manager.subscribe(instruments)
+        self._subscription_manager.subscribe(
+            (
+                Subtype.ALL
+                if self._subscription_manager.auto_subscribe
+                else self._subscription_manager.get_base_subscription()
+            ),
+            instruments,
+        )
 
         # - reinitialize strategy loggers
-        self.__logging.initialize(
-            self.__time_provider.time(), self.__positions, self.__trading_service.get_account().get_balances()
+        self._logging.initialize(
+            self._time_provider.time(), self._positions, self._trading_service.get_account().get_balances()
         )
 
     def _create_and_update_positions(self, instruments: list[Instrument]):
         for instrument in instruments:
-            _ = self.__trading_service.get_position(instrument)
+            _ = self._trading_service.get_position(instrument)
 
             # - check if we need any aux instrument for calculating pnl ?
             # TODO: test edge cases for aux symbols
-            aux = lookup.find_aux_instrument_for(instrument, self.__trading_service.get_base_currency())
+            aux = lookup.find_aux_instrument_for(instrument, self._trading_service.get_base_currency())
             if aux is not None:
                 instrument._aux_instrument = aux
                 instruments.append(aux)
-                _ = self.__trading_service.get_position(aux)
+                _ = self._trading_service.get_position(aux)

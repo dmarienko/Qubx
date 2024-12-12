@@ -10,52 +10,45 @@ This module includes:
 """
 
 import traceback
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+
 import pandas as pd
 
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-from qubx import lookup, logger
-from qubx.core.account import AccountProcessor
-from qubx.core.helpers import BasicScheduler, set_parameters_to_object
+from qubx import logger, lookup
 from qubx.core.basics import (
-    MarketEvent,
-    TargetPosition,
-    TriggerEvent,
+    SW,
+    AssetBalance,
     Deal,
+    ICommunicationManager,
     Instrument,
+    ITimeProvider,
+    MarketEvent,
     Order,
     Position,
     Signal,
+    Subtype,
+    TargetPosition,
+    TriggerEvent,
     dt_64,
     td_64,
-    ITimeProvider,
-    IComminucationManager,
-    SW,
-    SubscriptionType,
 )
-from qubx.core.series import OrderBook, Trade, Quote, Bar, OHLCV
+from qubx.core.helpers import BasicScheduler, set_parameters_to_object
+from qubx.core.series import OHLCV, Bar, OrderBook, Quote, Trade
 
 
-class ITradingServiceProvider(ITimeProvider, IComminucationManager):
+class ITradingServiceProvider(ITimeProvider, ICommunicationManager):
     """Trading service provider interface for managing trading operations.
 
     Handles account operations, order placement, and position tracking.
     """
 
-    acc: AccountProcessor
+    acc: "IAccountProcessor"
 
-    def set_account(self, account: AccountProcessor):
-        """Sets the account processor for the trading service provider.
-
-        Args:
-            account: AccountProcessor instance to be set.
-        """
-        self.acc = account
-
-    def get_account(self) -> AccountProcessor:
+    def get_account(self) -> "IAccountProcessor":
         """Retrieve the current account processor.
 
         Returns:
-            AccountProcessor: The current AccountProcessor object.
+            "IAccountProcessor": The current AccountProcessor object.
         """
         return self.acc
 
@@ -199,7 +192,7 @@ class ITradingServiceProvider(ITimeProvider, IComminucationManager):
         self.acc.update_position_price(timestamp, instrument, ITradingServiceProvider._extract_price(update))
 
 
-class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
+class IBrokerServiceProvider(ICommunicationManager, ITimeProvider):
     trading_service: ITradingServiceProvider
 
     def __init__(self, exchange_id: str, trading_service: ITradingServiceProvider) -> None:
@@ -208,31 +201,27 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
 
     def subscribe(
         self,
-        instruments: List[Instrument],
         subscription_type: str,
-        warmup_period: str | None = None,
-        ohlc_warmup_period: str | None = None,
-        **kwargs,
+        instruments: Set[Instrument],
+        reset: bool = False,
     ) -> None:
         """
         Subscribe to market data for a list of instruments.
 
         Args:
             subscription_type: Type of subscription
-            instruments: List of instruments to subscribe to
-            warmup_period: Warmup period for the subscription
-            ohlc_warmup_period: Warmup period for OHLC data
-            **kwargs: Additional subscription parameters
+            instruments: Set of instruments to subscribe to
+            reset: Reset existing instruments for the subscription type. Default is False.
         """
         ...
 
-    def unsubscribe(self, instruments: List[Instrument], subscription_type: str | None) -> None:
+    def unsubscribe(self, subscription_type: str | None, instruments: Set[Instrument]) -> None:
         """
         Unsubscribe from market data for a list of instruments.
 
         Args:
-            instruments: List of instruments to unsubscribe from
             subscription_type: Type of subscription to unsubscribe from (optional)
+            instruments: Set of instruments to unsubscribe from
         """
         ...
 
@@ -249,21 +238,44 @@ class IBrokerServiceProvider(IComminucationManager, ITimeProvider):
         """
         ...
 
-    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+    def get_subscriptions(self, instrument: Instrument | None = None) -> List[str]:
         """
         Get all subscriptions for an instrument.
 
         Args:
-            instrument: Instrument to get subscriptions for
+            instrument (optional): Instrument to get subscriptions for. If None, all subscriptions are returned.
 
         Returns:
-            dict[str, dict]: Dictionary of subscriptions (type -> parameters)
+            List[str]: List of subscriptions
         """
         ...
 
-    def commit(self) -> None:
+    def get_subscribed_instruments(self, subscription_type: str | None = None) -> List[Instrument]:
         """
-        Apply all pending subscription changes.
+        Get a list of instruments that are subscribed to a specific subscription type.
+
+        Args:
+            subscription_type: Type of subscription to filter by (optional)
+
+        Returns:
+            List[Instrument]: List of subscribed instruments
+        """
+        ...
+
+    def warmup(self, configs: Dict[Tuple[str, Instrument], str]) -> None:
+        """
+        Run warmup for subscriptions.
+
+        Args:
+            configs: Dictionary of (subscription type, instrument) pairs and warmup periods.
+
+        Example:
+            warmup({
+                (Subtype.OHLC["1h"], instr1): "30d",
+                (Subtype.OHLC["1Min"], instr1): "6h",
+                (Subtype.OHLC["1Sec"], instr2): "5Min",
+                (Subtype.TRADE, instr2): "1h",
+            })
         """
         ...
 
@@ -409,6 +421,22 @@ class IUniverseManager:
         """
         ...
 
+    def add_instruments(self, instruments: list[Instrument]):
+        """Add instruments to the trading universe.
+
+        Args:
+            instruments: List of instruments to add
+        """
+        ...
+
+    def remove_instruments(self, instruments: list[Instrument]):
+        """Remove instruments from the trading universe.
+
+        Args:
+            instruments: List of instruments to remove
+        """
+        ...
+
     @property
     def instruments(self) -> list[Instrument]:
         """
@@ -420,24 +448,21 @@ class IUniverseManager:
 class ISubscriptionManager:
     """Manages subscriptions."""
 
-    def subscribe(
-        self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None, **kwargs
-    ) -> None:
+    def subscribe(self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None) -> None:
         """Subscribe to market data for an instrument.
 
         Args:
-            instruments: A list of instrument of instrument to subscribe to
             subscription_type: Type of subscription. If None, the base subscription type is used.
-            **kwargs: Additional subscription parameters
+            instruments: A list of instrument of instrument to subscribe to
         """
         ...
 
-    def unsubscribe(self, instruments: List[Instrument] | Instrument, subscription_type: str | None = None) -> None:
+    def unsubscribe(self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None) -> None:
         """Unsubscribe from market data for an instrument.
 
         Args:
-            instruments: A list of instrument of instrument to unsubscribe from
-            subscription_type: Type of subscription to unsubscribe from (optional)
+            subscription_type: Type of subscription to unsubscribe from (e.g. Subtype.OHLC)
+            instruments (optional): A list of instruments or instrument to unsubscribe from.
         """
         ...
 
@@ -453,7 +478,7 @@ class ISubscriptionManager:
         """
         ...
 
-    def get_base_subscription(self) -> tuple[SubscriptionType, dict]:
+    def get_base_subscription(self) -> str:
         """
         Get the main subscription which should be used for the simulation.
         This data is used for updating the internal OHLCV data series.
@@ -461,25 +486,36 @@ class ISubscriptionManager:
         """
         ...
 
-    def set_base_subscription(self, subscription_type: SubscriptionType, **kwargs) -> None:
+    def set_base_subscription(self, subscription_type: str) -> None:
         """
         Set the main subscription which should be used for the simulation.
 
         Args:
-            subscription_type: Type of subscription
-            **kwargs: Additional subscription parameters (e.g. timeframe for OHLCV)
+            subscription_type: Type of subscription (e.g. Subtype.OHLC, Subtype.OHLC["1h"])
         """
         ...
 
-    def get_subscriptions(self, instrument: Instrument) -> Dict[str, Dict[str, Any]]:
+    def get_subscriptions(self, instrument: Instrument | None = None) -> List[str]:
         """
         Get all subscriptions for an instrument.
 
         Args:
-            instrument: Instrument to get subscriptions for
+            instrument: Instrument to get subscriptions for (optional)
 
         Returns:
-            dict[str, dict]: Dictionary of subscriptions (type -> parameters)
+            List[str]: List of subscriptions
+        """
+        ...
+
+    def get_subscribed_instruments(self, subscription_type: str | None = None) -> List[Instrument]:
+        """
+        Get a list of instruments that are subscribed to a specific subscription type.
+
+        Args:
+            subscription_type: Type of subscription to filter by (optional)
+
+        Returns:
+            List[Instrument]: List of subscribed instruments
         """
         ...
 
@@ -488,20 +524,56 @@ class ISubscriptionManager:
         Get the warmup period for a subscription type.
 
         Args:
-            subscription_type: Type of subscription (e.g. SubscriptionType.OHLC, or something custom like "liquidation")
+            subscription_type: Type of subscription (e.g. Subtype.OHLC["1h"], etc.)
 
         Returns:
             str: Warmup period
         """
         ...
 
-    def set_warmup(self, subscription_type: str, period: str) -> None:
+    def set_warmup(self, configs: dict[Any, str]) -> None:
         """
-        Set the warmup period for a subscription type (default is 0).
+        Set the warmup period for different subscriptions.
+
+        If there are multiple ohlc configs specified, they will be warmed up in parallel.
 
         Args:
-            subscription_type: Type of subscription (e.g. SubscriptionType.OHLC, or something custom like "liquidation")
-            period: Warmup period (e.g. "1d")
+            configs: Dictionary of subscription types and warmup periods.
+                     Keys can be subscription types of dictionaries with subscription parameters.
+
+        Example:
+            set_warmup({
+                Subtype.OHLC["1h"]: "30d",
+                Subtype.OHLC["1Min"]: "6h",
+                Subtype.OHLC["1Sec"]: "5Min",
+                Subtype.TRADE: "1h",
+            })
+        """
+        ...
+
+    def commit(self) -> None:
+        """
+        Apply all pending changes.
+        """
+        ...
+
+    @property
+    def auto_subscribe(self) -> bool:
+        """
+        Get whether new instruments are automatically subscribed to existing subscriptions.
+
+        Returns:
+            bool: True if auto-subscription is enabled
+        """
+        ...
+
+    @auto_subscribe.setter
+    def auto_subscribe(self, value: bool) -> None:
+        """
+        Enable or disable automatic subscription of new instruments.
+
+        Args:
+            value: True to enable auto-subscription, False to disable
         """
         ...
 
@@ -535,30 +607,278 @@ class IProcessingManager:
         """
         ...
 
-
-class IAccountViewer:
-    @property
-    def positions(self) -> dict[Instrument, Position]:
+    def is_fitted(self) -> bool:
         """
-        Get the current positions.
+        Check if the strategy is fitted.
         """
         ...
 
-    def get_capital(self) -> float:
+
+class IAccountViewer:
+    account_id: str
+
+    def get_base_currency(self) -> str:
+        """Get the base currency for the account.
+
+        Returns:
+            str: The base currency.
         """
-        Get the available free capital in the account.
+        ...
+
+    ########################################################
+    # Capital information
+    ########################################################
+    def get_capital(self) -> float:
+        """Get the available free capital in the account.
+
+        Returns:
+            float: The amount of free capital available for trading
         """
         ...
 
     def get_total_capital(self) -> float:
+        """Get the total capital in the account including positions value.
+
+        Returns:
+            float: Total account capital
         """
-        Get the total capital in the account.
+        ...
+
+    @property
+    def reserved(self) -> dict[Instrument, float]:
+        """Get the amount of capital reserved for each instrument.
+
+        Returns:
+            dict[Instrument, float]: Dictionary mapping instruments to reserved capital
         """
         ...
 
     def get_reserved(self, instrument: Instrument) -> float:
+        """Get the amount of capital reserved for an instrument.
+
+        Args:
+            instrument: The instrument to check
+
+        Returns:
+            float: Amount of capital reserved
         """
-        Get the reserved amount for an instrument.
+        ...
+
+    def get_reserved_capital(self) -> float:
+        """Get the total amount of capital reserved from trading.
+
+        Returns:
+            float: Total reserved capital
+        """
+        ...
+
+    ########################################################
+    # Balance and position information
+    ########################################################
+    def get_balances(self) -> dict[str, AssetBalance]:
+        """Get all currency balances.
+
+        Returns:
+            dict[str, AssetBalance]: Dictionary mapping currency codes to AssetBalance objects
+        """
+        ...
+
+    def get_positions(self) -> dict[Instrument, Position]:
+        """Get all current positions.
+
+        Returns:
+            dict[Instrument, Position]: Dictionary mapping instruments to their positions
+        """
+        ...
+
+    def get_position(self, instrument: Instrument) -> Position:
+        """Get the current position for a specific instrument.
+
+        Args:
+            instrument: The instrument to get the position for
+
+        Returns:
+            Position: The position object
+        """
+        ...
+
+    @property
+    def positions(self) -> dict[Instrument, Position]:
+        """[Deprecated: Use get_positions()] Get all current positions.
+
+        Returns:
+            dict[Instrument, Position]: Dictionary mapping instruments to their positions
+        """
+        return self.get_positions()
+
+    def get_orders(self, instrument: Instrument | None = None) -> dict[str, Order]:
+        """Get active orders, optionally filtered by instrument.
+
+        Args:
+            instrument: Optional instrument to filter orders by
+
+        Returns:
+            dict[str, Order]: Dictionary mapping order IDs to Order objects
+        """
+        ...
+
+    def position_report(self) -> dict:
+        """Get detailed report of all positions.
+
+        Returns:
+            dict: Dictionary containing position details including quantities, prices, PnL etc.
+        """
+        ...
+
+    ########################################################
+    # Leverage information
+    ########################################################
+    def get_leverage(self, instrument: Instrument) -> float:
+        """Get the leverage used for a specific instrument.
+
+        Args:
+            instrument: The instrument to check
+
+        Returns:
+            float: Current leverage ratio for the instrument
+        """
+        ...
+
+    def get_leverages(self) -> dict[Instrument, float]:
+        """Get leverages for all instruments.
+
+        Returns:
+            dict[Instrument, float]: Dictionary mapping instruments to their leverage ratios
+        """
+        ...
+
+    def get_net_leverage(self) -> float:
+        """Get the net leverage across all positions.
+
+        Returns:
+            float: Net leverage ratio
+        """
+        ...
+
+    def get_gross_leverage(self) -> float:
+        """Get the gross leverage across all positions.
+
+        Returns:
+            float: Gross leverage ratio
+        """
+        ...
+
+    ########################################################
+    # Margin information
+    # Used for margin, swap, futures, options trading
+    ########################################################
+    def get_total_required_margin(self) -> float:
+        """Get total margin required for all positions.
+
+        Returns:
+            float: Total required margin
+        """
+        ...
+
+    def get_available_margin(self) -> float:
+        """Get available margin for new positions.
+
+        Returns:
+            float: Available margin
+        """
+        ...
+
+    def get_margin_ratio(self) -> float:
+        """Get current margin ratio.
+
+        Formula: (total capital + positions value) / total required margin
+
+        Example:
+            If total capital is 1000, positions value is 2000, and total required margin is 3000,
+            the margin ratio would be (1000 + 2000) / 3000 = 1.0
+
+        Returns:
+            float: Current margin ratio
+        """
+        ...
+
+
+class IAccountProcessor(IAccountViewer, ICommunicationManager):
+    def start(self):
+        """
+        Start the account processor.
+        """
+        ...
+
+    def stop(self):
+        """
+        Stop the account processor.
+        """
+        ...
+
+    def set_subscription_manager(self, manager: ISubscriptionManager) -> None:
+        """Set the subscription manager for the account processor.
+
+        Args:
+            manager: ISubscriptionManager instance to set
+        """
+        ...
+
+    def update_balance(self, currency: str, total: float, locked: float):
+        """Update balance for a specific currency.
+
+        Args:
+            currency: Currency code
+            total: Total amount of currency
+            locked: Amount of locked currency
+        """
+        ...
+
+    def update_position_price(self, time: dt_64, instrument: Instrument, price: float) -> None:
+        """Update position price for an instrument.
+
+        Args:
+            time: Timestamp of the update
+            instrument: Instrument being updated
+            price: New price
+        """
+        ...
+
+    def process_deals(self, instrument: Instrument, deals: list[Deal]) -> None:
+        """Process executed deals for an instrument.
+
+        Args:
+            instrument: Instrument the deals belong to
+            deals: List of deals to process
+        """
+        ...
+
+    def process_order(self, order: Order) -> None:
+        """Process order updates.
+
+        Args:
+            order: Order to process
+        """
+        ...
+
+    def attach_positions(self, *position: Position) -> "IAccountProcessor":
+        """Attach positions to the account.
+
+        Args:
+            *position: Position objects to attach
+
+        Returns:
+            I"IAccountProcessor": Self for chaining
+        """
+        ...
+
+    def add_active_orders(self, orders: Dict[str, Order]) -> None:
+        """Add active orders to the account.
+
+        Warning only use in the beginning for state restoration because it does not update locked balances.
+
+        Args:
+            orders: Dictionary mapping order IDs to Order objects
         """
         ...
 
@@ -566,7 +886,7 @@ class IAccountViewer:
 class IStrategyContext(
     IMarketDataProvider, ITradingManager, IUniverseManager, ISubscriptionManager, IProcessingManager, IAccountViewer
 ):
-    account: AccountProcessor
+    account: "IAccountProcessor"
     strategy: "IStrategy"
 
     def start(self, blocking: bool = False):
@@ -580,6 +900,12 @@ class IStrategyContext(
 
     def stop(self):
         """Stops the strategy context."""
+        ...
+
+    def is_running(self) -> bool:
+        """
+        Check if the strategy is running.
+        """
         ...
 
     @property
@@ -745,6 +1071,16 @@ class IStrategy:
 
         Returns:
             List of signals, single signal, or None.
+        """
+        return None
+
+    def on_order_update(self, ctx: IStrategyContext, order: Order) -> list[Signal] | Signal | None:
+        """
+        Called when an order update is received.
+
+        Args:
+            ctx: Strategy context.
+            order: The order update.
         """
         return None
 

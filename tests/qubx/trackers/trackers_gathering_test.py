@@ -1,51 +1,48 @@
-from typing import Any, Optional, List
+from typing import Any, List, Optional
 
+import pandas as pd
+import pytest
 from pandas import Timestamp
 
-from qubx import QubxLogConfig, lookup, logger
-from qubx.core.account import AccountProcessor
-from qubx.gathering.simplest import SimplePositionGatherer
-from qubx.pandaz.utils import *
-from qubx.core.utils import recognize_time, time_to_str
-
-from qubx.core.series import OHLCV, Quote
-from qubx.core.interfaces import (
-    IPositionGathering,
-    IStrategy,
-    PositionsTracker,
-    IStrategyContext,
-    TriggerEvent,
-)
-from qubx.data.readers import (
-    AsOhlcvSeries,
-    CsvStorageDataReader,
-    AsTimestampedRecords,
-    AsQuotes,
-    RestoreTicksFromOHLC,
-    AsPandasFrame,
-)
+from qubx import QubxLogConfig, logger, lookup
+from qubx.backtester.simulator import simulate
+from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
     ZERO_COSTS,
     Deal,
     Instrument,
-    Order,
     ITimeProvider,
+    Order,
     Position,
     Signal,
+    Subtype,
     TargetPosition,
-    SubscriptionType,
 )
-
-
+from qubx.core.interfaces import (
+    IPositionGathering,
+    IStrategy,
+    IStrategyContext,
+    PositionsTracker,
+    TriggerEvent,
+)
 from qubx.core.metrics import portfolio_metrics
-from qubx.ta.indicators import sma, ema
-from qubx.backtester.simulator import simulate
+from qubx.core.series import OHLCV, Quote
+from qubx.core.utils import recognize_time, time_to_str
+from qubx.data.readers import (
+    AsOhlcvSeries,
+    AsPandasFrame,
+    AsQuotes,
+    AsTimestampedRecords,
+    CsvStorageDataReader,
+    RestoreTicksFromOHLC,
+)
+from qubx.gathering.simplest import SimplePositionGatherer
+from qubx.pandaz.utils import *
+from qubx.ta.indicators import ema, sma
 from qubx.trackers.composite import CompositeTracker, CompositeTrackerPerSide, LongTracker
 from qubx.trackers.rebalancers import PortfolioRebalancerTracker
 from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
 from qubx.trackers.sizers import FixedLeverageSizer, FixedRiskSizer, FixedSizer
-
-from pytest import approx
 
 N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
 
@@ -84,7 +81,7 @@ class DebugStratageyCtx(IStrategyContext):
         self.capital = capital
 
         positions = {i: Position(i) for i in instrs}
-        self.account = AccountProcessor("test", "USDT", reserves={})  # , initial_capital=10000.0)
+        self.account = BasicAccountProcessor("test", "USDT")  # , initial_capital=10000.0)
         self.account.update_balance("USDT", capital, 0)
         self.account.attach_positions(*positions.values())
         self._n_orders = 0
@@ -143,7 +140,7 @@ class GuineaPig(IStrategy):
     tests = {}
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1Min")
+        ctx.set_base_subscription(Subtype.OHLC["1Min"])
 
     def on_fit(self, ctx: IStrategyContext):
         self.tests = {recognize_time(k): v for k, v in self.tests.items()}
@@ -157,7 +154,6 @@ class GuineaPig(IStrategy):
 
 
 class TestTrackersAndGatherers:
-
     def test_simple_tracker_sizer(self):
         ctx = DebugStratageyCtx(instrs := [lookup.find_symbol("BINANCE.UM", "BTCUSDT")], 10000)
         tracker = PositionsTracker(FixedSizer(1000.0, amount_in_quote=False))
@@ -184,7 +180,6 @@ class TestTrackersAndGatherers:
         assert s[0].target_position_size == i.round_size_down((_cap_in_risk / ((_entry - _stop) / _entry)) / _entry)
 
     def test_atr_tracker(self):
-
         I = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         assert I is not None
 
@@ -196,7 +191,7 @@ class TestTrackersAndGatherers:
             slow_period = 12
 
             def on_init(self, ctx: IStrategyContext) -> None:
-                ctx.set_base_subscription(SubscriptionType.OHLC, timeframe=self.timeframe)
+                ctx.set_base_subscription(Subtype.OHLC[self.timeframe])
 
             def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
                 signals = []
@@ -391,24 +386,23 @@ class TestTrackersAndGatherers:
         assert not t2.is_active(I)
 
     def test_stop_loss_broker_side(self):
+        T = pd.Timestamp
         reader = CsvStorageDataReader("tests/data/csv")
-        ohlc = reader.read("BTCUSDT_ohlcv_M1", transform=AsPandasFrame())
-        assert isinstance(ohlc, pd.DataFrame)
-        i1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
-        assert i1 is not None
+        assert isinstance(ohlc := reader.read("BTCUSDT_ohlcv_M1", transform=AsPandasFrame()), pd.DataFrame)
+        assert (i1 := lookup.find_symbol("BINANCE.UM", "BTCUSDT")) is not None
 
-        S = pd.DataFrame(
-            {
-                i1: {
-                    pd.Timestamp("2024-01-10 15:08:59.716000"): 1,
-                    pd.Timestamp("2024-01-10 15:10:52.679000"): 1,
-                    pd.Timestamp("2024-01-10 15:32:44.798000"): 1,
-                    pd.Timestamp("2024-01-10 15:59:55.303000"): 1,
-                    pd.Timestamp("2024-01-10 16:09:00.970000"): 1,
-                    pd.Timestamp("2024-01-10 16:12:34.233000"): 1,
-                    pd.Timestamp("2024-01-10 19:16:00.905000"): 1,
-                    pd.Timestamp("2024-01-10 19:44:37.785000"): 1,
-                    pd.Timestamp("2024-01-10 20:06:00.322000"): 1,
+        # fmt: off
+        S = pd.DataFrame({ 
+            i1: {
+                    T("2024-01-10 15:08:59.716000"): 1,
+                    T("2024-01-10 15:10:52.679000"): 1,
+                    T("2024-01-10 15:32:44.798000"): 1,
+                    T("2024-01-10 15:59:55.303000"): 1,
+                    T("2024-01-10 16:09:00.970000"): 1,
+                    T("2024-01-10 16:12:34.233000"): 1,
+                    T("2024-01-10 19:04:00.905000"): 1,
+                    T("2024-01-10 19:44:37.785000"): 1,
+                    T("2024-01-10 20:06:00.322000"): 1,
                 }
             }
         )
@@ -418,14 +412,9 @@ class TestTrackersAndGatherers:
                 "liq_buy_bounces_c": [S, StopTakePositionTracker(2.5, 0.5, FixedLeverageSizer(0.1), "client")],
                 "liq_buy_bounces_b": [S, StopTakePositionTracker(2.5, 0.5, FixedLeverageSizer(0.1), "broker")],
             },
-            {f"BINANCE.UM:BTCUSDT": ohlc},
-            10000,
-            ["BINANCE.UM:BTCUSDT"],
-            "vip9_usdt",
-            S.index[0] - pd.Timedelta("5Min"),
-            S.index[-1] + pd.Timedelta("5Min"),
-            signal_timeframe="1Min",
-            debug="DEBUG",
+            {"BINANCE.UM:BTCUSDT": ohlc}, 10000, ["BINANCE.UM:BTCUSDT"], "vip9_usdt",
+            S.index[0] - pd.Timedelta("5Min"), S.index[-1] + pd.Timedelta("5Min"),
+            signal_timeframe="1Min", debug="DEBUG"
         )
         assert len(rep[0].executions_log) == len(rep[1].executions_log)
 
@@ -435,5 +424,7 @@ class TestTrackersAndGatherers:
         mtrx1 = portfolio_metrics(
             rep[1].portfolio_log, rep[1].executions_log, rep[1].capital, account_transactions=False, commission_factor=1
         )
-        assert N(mtrx0["gain"]) == 23.87925
-        assert N(mtrx1["gain"]) == 23.36390
+        assert N(mtrx0["gain"]) == 22.6584
+        assert N(mtrx1["gain"]) == 23.3429
+
+        # fmt: on

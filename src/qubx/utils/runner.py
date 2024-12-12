@@ -1,19 +1,26 @@
 import asyncio
-import pandas as pd
-import click, sys, yaml, sys, time
-import yaml, configparser, socket
-
+import configparser
+import socket
+import sys
+import time
 from os.path import exists, expanduser
-from qubx import lookup, logger, formatter
-from qubx.core.interfaces import IStrategyContext, IStrategy
-from qubx.core.account import AccountProcessor
-from qubx.core.context import StrategyContext
-from qubx.core.loggers import LogsWriter, InMemoryLogsWriter, StrategyLogging
-from qubx.connectors.ccxt.ccxt_connector import CCXTExchangesConnector
-from qubx.connectors.ccxt.ccxt_trading import CCXTTradingConnector
-from qubx.utils.misc import add_project_to_system_path, Struct, logo, version
-from qubx.backtester.simulator import SimulatedTrading
 
+import click
+import pandas as pd
+import yaml
+
+from qubx import formatter, logger, lookup
+from qubx.backtester.simulator import SimulatedTrading
+from qubx.connectors.ccxt.account import CcxtAccountProcessor
+from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
+from qubx.connectors.ccxt.factory import get_ccxt_exchange
+from qubx.connectors.ccxt.trading import CcxtTradingConnector
+from qubx.core.account import BasicAccountProcessor
+from qubx.core.basics import Instrument
+from qubx.core.context import StrategyContext
+from qubx.core.interfaces import IStrategy, IStrategyContext
+from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging
+from qubx.utils.misc import Struct, add_project_to_system_path, logo, version
 
 LOGFILE = "logs/"
 
@@ -46,6 +53,7 @@ def run_ccxt_paper_trading(
     base_currency: str = "USDT",
     capital: float = 100_000,
     commissions: str | None = None,
+    use_testnet: bool = False,
 ) -> IStrategyContext:
     # TODO: setup proper loggers to write out to files
     instruments = [lookup.find_symbol(exchange.upper(), s.upper()) for s in symbols]
@@ -53,21 +61,26 @@ def run_ccxt_paper_trading(
 
     logs_writer = InMemoryLogsWriter("test", "test", "0")
 
-    trading_service = SimulatedTrading("test", commissions=commissions, simulation_initial_time=pd.Timestamp.now().asm8)
+    _exchange = get_ccxt_exchange(exchange, use_testnet=use_testnet)
 
-    account = AccountProcessor(
+    trading_service = SimulatedTrading(
+        exchange, commissions=commissions, simulation_initial_time=pd.Timestamp.now().asm8
+    )
+
+    broker = CcxtBrokerServiceProvider(_exchange, trading_service)
+
+    account = BasicAccountProcessor(
         account_id=trading_service.get_account_id(),
         base_currency=base_currency,
         initial_capital=capital,
     )
-    broker = CCXTExchangesConnector(exchange.lower(), trading_service, read_only=True, loop=asyncio.new_event_loop())
 
     ctx = StrategyContext(
         strategy=strategy,
         broker=broker,
         account=account,
         instruments=instruments,
-        logging=StrategyLogging(logs_writer),
+        logging=StrategyLogging(logs_writer, heartbeat_freq="1m"),
         config=strategy_config,
     )
 
@@ -93,30 +106,27 @@ def run_ccxt_trading(
     blocking: bool = True,
     account_id: str = "main",
     base_currency: str = "USDT",
-    capital: float = 100_000,
     commissions: str | None = None,
-) -> IStrategyContext:
+    use_testnet: bool = False,
+    loop: asyncio.AbstractEventLoop | None = None,
+) -> StrategyContext:
     # TODO: setup proper loggers to write out to files
-    instruments = [lookup.find_symbol(exchange.upper(), s.upper()) for s in symbols]
-    instruments = [i for i in instruments if i is not None]
+    instruments = _get_instruments(symbols, exchange)
 
     logs_writer = InMemoryLogsWriter("test", "test", "0")
+    stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
 
-    trading_service = CCXTTradingConnector(exchange, account_id, commissions, **credentials)
-
-    account = AccountProcessor(
-        account_id=trading_service.get_account_id(),
-        base_currency=base_currency,
-        initial_capital=capital,
-    )
-    broker = CCXTExchangesConnector(exchange, trading_service, loop=asyncio.new_event_loop(), **credentials)
+    _exchange = get_ccxt_exchange(exchange, use_testnet=use_testnet, loop=loop, **credentials)
+    account = CcxtAccountProcessor(account_id, _exchange, base_currency)
+    trading_service = CcxtTradingConnector(_exchange, account, commissions)
+    broker = CcxtBrokerServiceProvider(_exchange, trading_service)
 
     ctx = StrategyContext(
         strategy=strategy,
         broker=broker,
         account=account,
         instruments=instruments,
-        logging=StrategyLogging(logs_writer),
+        logging=stg_logging,
         config=strategy_config,
     )
 
@@ -131,6 +141,20 @@ def run_ccxt_trading(
         ctx.start()
 
     return ctx
+
+
+def _get_instruments(symbols: list[str], exchange: str) -> list[Instrument]:
+    exchange_symbols = []
+    for symbol in symbols:
+        if ":" in symbol:
+            exchange, symbol = symbol.split(":")
+            exchange_symbols.append((exchange, symbol))
+        else:
+            exchange_symbols.append((exchange, symbol))
+
+    instruments = [lookup.find_symbol(_exchange.upper(), _symbol.upper()) for _exchange, _symbol in exchange_symbols]
+    instruments = [i for i in instruments if i is not None]
+    return instruments
 
 
 def load_strategy_config(filename: str) -> Struct:
@@ -218,8 +242,8 @@ def create_strategy_context(config_file: str, accounts_cfg_file: str, search_pat
     match conn:
         case "ccxt":
             # - TODO: we need some factory here
-            broker = CCXTTradingConnector(cfg.exchange.lower(), **acc_config)
-            exchange_connector = CCXTExchangesConnector(cfg.exchange.lower(), broker, **acc_config)
+            broker = CcxtTradingConnector(cfg.exchange.lower(), **acc_config)
+            exchange_connector = CcxtBrokerServiceProvider(cfg.exchange.lower(), broker, **acc_config)
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
 

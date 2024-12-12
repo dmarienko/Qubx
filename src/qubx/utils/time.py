@@ -1,14 +1,16 @@
+import re
 from datetime import datetime
 from typing import List, Optional, Tuple, Union
-import numpy as np
-import re
 
+import numpy as np
 import pandas as pd
 
 UNIX_T0 = np.datetime64("1970-01-01T00:00:00")
 
 
-time_to_str = lambda t, u="us": np.datetime_as_string(t if isinstance(t, np.datetime64) else np.datetime64(t, u), unit=u)  # type: ignore
+time_to_str = lambda t, u="us": np.datetime_as_string(
+    t if isinstance(t, np.datetime64) else np.datetime64(t, u), unit=u
+)  # type: ignore
 
 
 def convert_tf_str_td64(c_tf: str) -> np.timedelta64:
@@ -17,7 +19,7 @@ def convert_tf_str_td64(c_tf: str) -> np.timedelta64:
 
     '15Min' -> timedelta64(15, 'm') etc
     """
-    _t = re.findall("(\d+)([A-Za-z]+)", c_tf)
+    _t = re.findall(r"(\d+)([A-Za-z]+)", c_tf)
     _dt = 0
     for g in _t:
         unit = g[1].lower()
@@ -66,10 +68,10 @@ def convert_seconds_to_str(seconds: int, convert_months=False) -> str:
 
     minutes, seconds = divmod(seconds, 60)
     if minutes > 0:
-        r += "%dMin" % minutes
+        r += "%dmin" % minutes
 
     if seconds > 0:
-        r += "%dS" % seconds
+        r += "%ds" % seconds
     return r
 
 
@@ -114,7 +116,9 @@ def infer_series_frequency(series: Union[List, pd.DataFrame, pd.Series, pd.Datet
                 (
                     x
                     if isinstance(x, (np.timedelta64, int, np.int64))
-                    else int(x) if isinstance(x, float) else int(1e9 * x.total_seconds())
+                    else int(x)
+                    if isinstance(x, float)
+                    else int(1e9 * x.total_seconds())
                 )
                 for x in np.abs(np.diff(times_index))
             ]

@@ -4,9 +4,9 @@ from typing import List, Union
 from qubx import lookup
 
 from qubx.utils.time import convert_seconds_to_str
-from tests.qubx.ta.utils_for_testing import N
-from qubx.core.basics import Instrument, Position, TransactionCostsCalculator, ZERO_COSTS
+from qubx.core.basics import Instrument, Position, TransactionCostsCalculator, ZERO_COSTS, Subtype
 from qubx.core.series import time_as_nsec, Trade, Quote
+from tests.qubx.ta.utils_for_testing import N
 
 TIME = lambda x: pd.Timestamp(x, unit="ns").asm8
 

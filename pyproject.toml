@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Qubx"
-version = "0.4.3"
+version = "0.4.2"
 description = "Qubx - quantitative trading framework"
 authors = ["Dmitry Marienko <dmitry@gmail.com>", "Yuriy Arabskyy <yuriy.arabskyy@gmail.com>"]
 readme = "README.md"
@@ -16,7 +16,6 @@ include = [
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
-pytest = {extras = ["lazyfixture"], version = "^7.2.0"}
 numpy = "^1.26.3"
 ntplib = "^0.4.0"
 loguru = "^0.7.2"
@@ -43,17 +42,19 @@ psycopg-binary = "^3.1.19"
 psycopg-pool = "^3.2.2"
 sortedcontainers = "^2.4.0"
 msgspec = "^0.18.6"
-click = "^8.1.7"
+pyyaml = "^6.0.2"
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^2.20.0"
-pytest = "^7.1.3"
 rust-just = "^1.36.0"
 twine = "^5.1.1"
 
 #[project.optional-dependencies]
 #numba = "^0.57.1"
 ipykernel = "^6.29.4"
+iprogress = "^0.4"
+click = "^8.1.7"
+ipywidgets = "^8.1.5"
 
 [build-system]
 requires = ["poetry-core", "setuptools", "numpy>=1.26.3", "cython==3.0.8", "toml>=0.10.2"]
@@ -63,15 +64,25 @@ build-backend = "poetry.core.masonry.api"
 script = "build.py"
 generate-setup-file = false
 
-[tool.poetry.scripts]
-qubx = 'qubx.utils.runner:run'
-
 [tool.poetry.group.test.dependencies]
-pytest = "^7.1.3"
+pytest = {extras = ["lazyfixture"], version = "^8.2.0"}
+pytest-asyncio = "^0.24.0"
 pytest-mock = "*"
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 pythonpath = ["src"]
+markers = [
+    "integration: mark a test as an integration test",
+]
+addopts = "--disable-warnings -s"
 filterwarnings = [
     "ignore:.*Jupyter is migrating.*:DeprecationWarning",
 ]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint.extend-per-file-ignores]
+"*.ipynb" = ["F405", "F401", "E701", "E402", "F403", "E401", "E702"]
