@@ -4,6 +4,7 @@ import numpy as np
 
 from qubx import logger
 from qubx.core.basics import (
+    ZERO_COSTS,
     AssetBalance,
     CtrlChannel,
     Deal,
@@ -36,7 +37,7 @@ class BasicAccountProcessor(IAccountProcessor):
         time_provider: ITimeProvider,
         channel: CtrlChannel,
         base_currency: str,
-        fees_calculator: TransactionCostsCalculator,
+        fees_calculator: TransactionCostsCalculator = ZERO_COSTS,
         initial_capital: float = 100_000,
     ) -> None:
         self.account_id = account_id

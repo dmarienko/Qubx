@@ -82,7 +82,6 @@ class CcxtDataProvider(IMarketDataProvider):
         self._sub_to_unsubscribe = {}
         self._is_sub_name_enabled = defaultdict(lambda: False)
         self._symbol_to_instrument = {}
-
         self._subscribers = {
             n.split("_subscribe_")[1]: f
             for n, f in self.__class__.__dict__.items()
@@ -93,10 +92,6 @@ class CcxtDataProvider(IMarketDataProvider):
             for n, f in self.__class__.__dict__.items()
             if type(f) is FunctionType and n.startswith("_warmup_")
         }
-
-        if not self.is_read_only:
-            self._subscribe_stream("executions", self.channel)
-
         logger.info(f"Initialized {self._exchange_id}")
 
     @property
@@ -423,7 +418,6 @@ class CcxtDataProvider(IMarketDataProvider):
         async def watch_ohlcv(instruments: list[Instrument]):
             _symbol_timeframe_pairs = [[_instr_to_ccxt_symbol[i], _exchange_timeframe] for i in instruments]
             ohlcv = await self._exchange.watch_ohlcv_for_symbols(_symbol_timeframe_pairs)
-            _time = self.time_provider.time()
             # - ohlcv is symbol -> timeframe -> list[timestamp, open, high, low, close, volume]
             for exch_symbol, _data in ohlcv.items():
                 instrument = ccxt_find_instrument(exch_symbol, self._exchange, _symbol_to_instrument)

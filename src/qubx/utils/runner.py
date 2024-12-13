@@ -114,7 +114,6 @@ def run_ccxt_trading(
 ) -> StrategyContext:
     # TODO: setup proper loggers to write out to files
     instruments = _get_instruments(symbols, exchange_name)
-    commissions = commissions or "Zero"
 
     logs_writer = InMemoryLogsWriter("test", "test", "0")
     stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")

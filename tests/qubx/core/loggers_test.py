@@ -1,16 +1,13 @@
-from typing import Any, Dict, List, Union
+import time
 from collections import defaultdict
+from typing import Any, Dict, List, Union
 
 import pandas as pd
-
-from qubx import lookup
-
-import time
 import tabulate
-from qubx import lookup
-from qubx.core.basics import Deal, Position, ZERO_COSTS, dt_64
-from qubx.core.loggers import CsvFileLogsWriter, ExecutionsLogger, PositionsDumper, LogsWriter
 
+from qubx import lookup
+from qubx.core.basics import ZERO_COSTS, Deal, Position, dt_64
+from qubx.core.loggers import CsvFileLogsWriter, ExecutionsLogger, LogsWriter, PositionsDumper
 
 _DT = lambda seconds: (pd.Timestamp("2022-01-01") + pd.to_timedelta(seconds, unit="s")).to_datetime64()
 
@@ -54,7 +51,6 @@ class ConsolePositionsWriter(LogsWriter):
 
     def write_data(self, log_type: str, data: List[Dict[str, Any]]):
         match log_type:
-
             case "positions":
                 self._dump_positions(data)
 
@@ -67,11 +63,11 @@ class ConsolePositionsWriter(LogsWriter):
 
 
 class TestPortfolioLoggers:
-
     def test_positions_dumper(self):
         # - initialize positions: this will be done in StrategyContext
         positions = [
-            Position(lookup.find_symbol("BINANCE", s)) for s in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]  # type: ignore
+            Position(lookup.find_symbol("BINANCE", s))
+            for s in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]  # type: ignore
         ]
         positions[0].change_position_by(_DT(0), 0.05, 63000)
         positions[1].change_position_by(_DT(0), 0.5, 3200)

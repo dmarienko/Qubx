@@ -12,11 +12,16 @@ from qubx import QubxLogConfig, logger, lookup
 from qubx.backtester.simulator import SimulatedTrading
 from qubx.connectors.ccxt.broker import CcxtBroker
 from qubx.connectors.ccxt.data import CcxtDataProvider
-from qubx.core.basics import Instrument, MarketEvent, Subtype, Trade, TriggerEvent
+from qubx.core.basics import Instrument, ITimeProvider, MarketEvent, Subtype, Trade, TriggerEvent, dt_64
 from qubx.core.interfaces import IStrategy, IStrategyContext, Position
 from qubx.pandaz import scols
 from qubx.utils.collections import TimeLimitedDeque
 from qubx.utils.runner import get_account_config, run_ccxt_paper_trading, run_ccxt_trading
+
+
+class DummyTimeProvider(ITimeProvider):
+    def time(self) -> dt_64:
+        return pd.Timestamp("2024-04-07 13:48:37.611000").asm8
 
 
 async def wait(condition: Callable[[], bool] | None = None, timeout: int = 10, period: float = 1.0):

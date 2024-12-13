@@ -2,7 +2,6 @@ import gzip
 import json
 
 import pytest
-from data.ccxt_responses import *
 
 from qubx import lookup
 from qubx.connectors.ccxt.utils import (
@@ -12,6 +11,7 @@ from qubx.connectors.ccxt.utils import (
     ccxt_convert_positions,
     ccxt_symbol_to_instrument,
 )
+from tests.qubx.connectors.ccxt.data.ccxt_responses import *
 
 
 class TestCcxtOrderbookRelatedStuff:

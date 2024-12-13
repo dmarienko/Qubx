@@ -22,7 +22,7 @@ def ccxt_build_qubx_exchange_name(ccxt_exchange: str, market_type: str | None = 
         elif market_type == "swap" and not is_linear:
             return "BINANCE.CM"
         else:
-            raise "BINANCE.UM"
+            return "BINANCE.UM"
     else:
         # for not just return the input exchange and extend later if needed
         return ccxt_exchange

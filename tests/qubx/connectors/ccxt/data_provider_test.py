@@ -1,15 +1,15 @@
 import asyncio
-import time
 from pprint import pprint
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
+import pandas as pd
 import pytest
 from ccxt.pro import Exchange
 
 from qubx import lookup
 from qubx.connectors.ccxt.data import CcxtDataProvider
-from qubx.core.basics import CtrlChannel, Instrument, Subtype
+from qubx.core.basics import CtrlChannel, Instrument, ITimeProvider, Subtype, dt_64
 from qubx.core.exceptions import QueueTimeout
 from qubx.core.mixins.subscription import SubscriptionManager
 
@@ -25,16 +25,19 @@ async def return_ohlcv(*args, **kwargs):
     return OHLCV_RESPONSE
 
 
+class DummyTimeProvider(ITimeProvider):
+    def time(self) -> dt_64:
+        return pd.Timestamp("2024-04-07 13:48:37.611000").asm8
+
+
 class MockExchange(Exchange):
-    def __init__(self):
+    def __init__(self, loop: asyncio.AbstractEventLoop):
         self.name = "mock_exchange"
-        self.asyncio_loop = asyncio.get_event_loop()
+        self.asyncio_loop = loop
         self.watch_ohlcv_for_symbols = AsyncMock()
         self.watch_ohlcv_for_symbols.side_effect = return_ohlcv
         self.watch_trades_for_symbols = AsyncMock()
         self.watch_order_book_for_symbols = AsyncMock()
-        self.watch_orders = AsyncMock()
-        self.watch_orders.side_effect = async_sleep
         self.find_timeframe = MagicMock(return_value="1m")
         self.fetch_ohlcv = AsyncMock(return_value=[])
 
@@ -44,22 +47,16 @@ class TestCcxtExchangeConnector:
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        self.mock_exchange = MockExchange()
-        self.fixed_time = np.datetime64("2023-01-01T00:00:00.000000000")
-        self.mock_trading_service = MagicMock()
-        self.mock_trading_service.time = MagicMock(return_value=self.fixed_time)
-
         # Create event loop
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
+        self.mock_exchange = MockExchange(self.loop)
+        self.fixed_time = np.datetime64("2023-01-01T00:00:00.000000000")
 
-        # Patch NTP functions and exchange
-        with (
-            patch("qubx.utils.ntp.time_now", return_value=self.fixed_time),
-            patch("qubx.connectors.ccxt.connector.CcxtBrokerServiceProvider._start_ntp_thread", return_value=None),
-        ):
-            self.connector = CcxtDataProvider(exchange=self.mock_exchange, trading_service=self.mock_trading_service)
-            self.sub_manager = SubscriptionManager(self.connector)
+        self.connector = CcxtDataProvider(
+            exchange=self.mock_exchange, time_provider=DummyTimeProvider(), channel=CtrlChannel("test")
+        )
+        self.sub_manager = SubscriptionManager(self.connector)
 
         # return from setup
         yield
@@ -87,7 +84,7 @@ class TestCcxtExchangeConnector:
         # assert i1 in self.connector._subscriptions["orderbook"]
         assert i1 in self.connector._subscriptions[Subtype.OHLC["15Min"]]
 
-        channel = self.connector.get_communication_channel()
+        channel = self.connector.channel
         events = []
         max_count = 10
         count = 0
