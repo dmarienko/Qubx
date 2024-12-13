@@ -12,7 +12,7 @@ import pyarrow as pa
 from pyarrow import csv, table
 
 from qubx import logger
-from qubx.core.basics import DataType
+from qubx.core.basics import DataType, TimestampedDict
 from qubx.core.series import OHLCV, Bar, Quote, TimeSeries, Trade, time_as_nsec
 from qubx.pandaz.utils import ohlc_resample, srows
 from qubx.utils.time import handle_start_stop, infer_series_frequency
@@ -914,13 +914,11 @@ class AsDict(DataTransformer):
         self._column_names = column_names
         self._time_name = column_names[self._time_idx]
 
-    def process_data(self, rows_data: Iterable) -> Any:
+    def process_data(self, rows_data: Iterable):
         if rows_data is not None:
             for d in rows_data:
                 _r_dict = dict(zip(self._column_names, d))
-                _r_dict.pop(self._time_name)
-                _r_dict["time"] = _time(d[self._time_idx], "ns")
-                self.buffer.append(_r_dict)
+                self.buffer.append(TimestampedDict(_time(d[self._time_idx], "ns"), _r_dict))  # type: ignore
 
 
 def _retry(fn):

@@ -710,6 +710,7 @@ class DataType(StrEnum):
     LIQUIDATION = "liquidation"
     FUNDING_RATE = "funding_rate"
     OHLC_TICKS = "ohlc_ticks"  # when we want to emulate ticks from OHLC data
+    RECORD = "record"  # arbitrary timestamped data (actually liquidation and funding rates fall into this type)
 
     def __repr__(self) -> str:
         return self.value
@@ -890,3 +891,15 @@ class FundingRate:
     next_funding_time: dt_64
     mark_price: float | None = None
     index_price: float | None = None
+
+
+@dataclass
+class TimestampedDict:
+    """
+    Generic class for representing arbitrary data (as dict) with timestamp
+
+    TODO: probably we need to have gebneric interface for classes like Quote, Bar, .... etc
+    """
+
+    time: dt_64
+    data: dict[str, Any]

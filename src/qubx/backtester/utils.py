@@ -6,7 +6,7 @@ import pandas as pd
 import stackprinter
 
 from qubx import logger, lookup
-from qubx.core.basics import CtrlChannel, DataType, Instrument, ITimeProvider
+from qubx.core.basics import CtrlChannel, DataType, Instrument, ITimeProvider, TimestampedDict
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy, PositionsTracker
 from qubx.core.series import OHLCV, Bar, Quote, Trade
@@ -345,6 +345,9 @@ class DataSniffer:
 
             case Quote():
                 return DataType.QUOTE
+
+            case TimestampedDict():
+                return DataType.RECORD
 
             case Trade():
                 return DataType.TRADE

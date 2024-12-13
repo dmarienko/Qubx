@@ -8,6 +8,7 @@ from qubx import logger
 from qubx.core.basics import BatchEvent, DataType, Instrument, dt_64
 from qubx.core.series import Bar, OrderBook, Quote, Trade
 from qubx.data.readers import (
+    AsDict,
     AsQuotes,
     AsTrades,
     DataReader,
@@ -170,10 +171,9 @@ class DataFetcher:
                 self._transformer = AsQuotes()
 
             case _:
-                # TODO: need to handle other subscription types
-                # case Subtype.LIQUIDATION:
-                # case Subtype.FUNDING_RATE:
-                raise ValueError(f"Unsupported subscription type: {subtype}")
+                self._requested_data_type = subtype
+                self._producing_data_type = subtype
+                self._transformer = AsDict()
 
         self._warmup_period = warmup_period
         self._warmed = {}
@@ -265,7 +265,7 @@ class IterableSimulationData(Iterator):
         2. optimization for historical data (return bunch of history instead of each bar in next(...))
     """
 
-    _reader: DataReader
+    _readers: dict[str, DataReader]
     _subtyped_fetchers: dict[str, DataFetcher]
     _warmups: dict[str, pd.Timedelta]
     _instruments: dict[str, tuple[Instrument, DataFetcher, DataType]]
@@ -279,14 +279,19 @@ class IterableSimulationData(Iterator):
 
     def __init__(
         self,
-        reader: DataReader,
+        readers: dict[str, DataReader],
         open_close_time_indent_secs=1,  # open/close ticks shift
     ):
-        self._reader = reader
+        self._readers = dict(readers)
         self._instruments = {}
         self._subtyped_fetchers = {}
         self._warmups = {}
         self._open_close_time_indent_secs = open_close_time_indent_secs
+
+    def set_typed_reader(self, data_type: str, reader: DataReader):
+        self._readers[data_type] = reader
+        if _fetcher := self._subtyped_fetchers.get(data_type):
+            _fetcher._reader = reader
 
     def set_warmup_period(self, subscription: str, warmup_period: str | None = None):
         if warmup_period:
@@ -302,7 +307,10 @@ class IterableSimulationData(Iterator):
             case DataType.TRADE | DataType.QUOTE:
                 _access_key = f"{_subtype}"
             case _:
-                raise ValueError(f"Unsupported subscription type: {_subtype}")
+                # - any arbitrary data type is passed as is
+                _params = {}
+                _subtype = subscription
+                _access_key = f"{_subtype}"
         return _access_key, _subtype, _params
 
     def add_instruments_for_subscription(self, subscription: str, instruments: list[Instrument] | Instrument):
@@ -311,10 +319,13 @@ class IterableSimulationData(Iterator):
 
         fetcher = self._subtyped_fetchers.get(_subt_key)
         if not fetcher:
+            _reader = self._readers.get(_data_type)
+            if _reader is None:
+                raise ValueError(f"No reader configured for data type: {_data_type}")
             self._subtyped_fetchers[_subt_key] = (
                 fetcher := DataFetcher(
                     _subt_key,
-                    self._reader,
+                    _reader,
                     _data_type,
                     _params,
                     warmup_period=self._warmups.get(_subt_key),
