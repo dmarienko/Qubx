@@ -108,24 +108,47 @@ def run_ccxt_trading(
     strategy: IStrategy,
     exchange: str,
     symbols: list[str | Instrument],
-    credentials: dict,
+    credentials: dict | None = None,
     strategy_config: dict | None = None,
     blocking: bool = True,
     account_id: str = "main",
     base_currency: str = "USDT",
     commissions: str | None = None,
     use_testnet: bool = False,
+    paper: bool = False,
+    paper_capital: float = 100_000,
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext:
+    logger.info(f"Running {'paper' if paper else 'live'} strategy '{strategy.__name__}' on {exchange} exchange...")
+    credentials = credentials if not paper else {}
+    assert paper or credentials, "Credentials are required for live trading"
+
     # TODO: setup proper loggers to write out to files
     instruments = symbols if isinstance(symbols[0], Instrument) else _get_instruments(symbols, exchange)
+    instruments = [i for i in instruments if i is not None]
 
     logs_writer = InMemoryLogsWriter("test", "test", "0")
     stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
 
     _exchange = get_ccxt_exchange(exchange, use_testnet=use_testnet, loop=loop, **credentials)
-    account = CcxtAccountProcessor(account_id, _exchange, base_currency)
-    trading_service = CcxtTradingConnector(_exchange, account, commissions)
+    if paper:
+        trading_service = SimulatedTrading(
+            account_processor=CcxtAccountProcessor(account_id, _exchange, base_currency),
+            exchange_name=exchange,
+            commissions=commissions,
+            simulation_initial_time=pd.Timestamp.now().asm8,
+        )
+        account = BasicAccountProcessor(
+            account_id=trading_service.get_account_id(),
+            base_currency=base_currency,
+            initial_capital=paper_capital,
+        )
+        logger.debug(f"Setup paper account...")
+    else:
+        account = CcxtAccountProcessor(account_id, _exchange, base_currency)
+        logger.debug(f"Setup live {'testnet ' if use_testnet else ''}account...")
+        trading_service = CcxtTradingConnector(_exchange, account, commissions)
+
     broker = CcxtBrokerServiceProvider(_exchange, trading_service)
 
     ctx = StrategyContext(
@@ -456,10 +479,15 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
     conn = cfg.connector.lower()
     match conn:
         case "ccxt":
-            if not paper:
-                run_ccxt_trading(strategy, cfg.exchange, cfg.instruments, acc_config, cfg.parameters, use_testnet=testnet)
-            else:
-                run_ccxt_paper_trading(strategy, cfg.exchange, cfg.instruments, cfg.parameters, use_testnet=testnet)
+            run_ccxt_trading(
+                strategy=strategy,
+                exchange=cfg.exchange,
+                symbols=cfg.instruments,
+                credentials=acc_config,
+                strategy_config=cfg.parameters,
+                use_testnet=testnet,
+                paper=paper,
+            )
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
 
