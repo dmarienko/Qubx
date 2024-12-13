@@ -12,14 +12,16 @@ import yaml
 from qubx import formatter, logger, lookup
 from qubx.backtester.simulator import SimulatedTrading
 from qubx.connectors.ccxt.account import CcxtAccountProcessor
-from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
+from qubx.connectors.ccxt.broker import CcxtBroker
+from qubx.connectors.ccxt.data import CcxtDataProvider
 from qubx.connectors.ccxt.factory import get_ccxt_exchange
-from qubx.connectors.ccxt.trading import CcxtTradingConnector
 from qubx.core.account import BasicAccountProcessor
-from qubx.core.basics import Instrument
+from qubx.core.basics import CtrlChannel, Instrument, LiveTimeProvider
 from qubx.core.context import StrategyContext
+from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy, IStrategyContext
 from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging
+from qubx.utils.marketdata.ccxt import ccxt_build_qubx_exchange_name
 from qubx.utils.misc import Struct, add_project_to_system_path, logo, version
 
 LOGFILE = "logs/"
@@ -67,7 +69,7 @@ def run_ccxt_paper_trading(
         exchange, commissions=commissions, simulation_initial_time=pd.Timestamp.now().asm8
     )
 
-    broker = CcxtBrokerServiceProvider(_exchange, trading_service)
+    broker = CcxtDataProvider(_exchange, trading_service)
 
     account = BasicAccountProcessor(
         account_id=trading_service.get_account_id(),
@@ -77,7 +79,7 @@ def run_ccxt_paper_trading(
 
     ctx = StrategyContext(
         strategy=strategy,
-        broker=broker,
+        data_provider=broker,
         account=account,
         instruments=instruments,
         logging=StrategyLogging(logs_writer, heartbeat_freq="1m"),
@@ -99,7 +101,7 @@ def run_ccxt_paper_trading(
 
 def run_ccxt_trading(
     strategy: IStrategy,
-    exchange: str,
+    exchange_name: str,
     symbols: list[str],
     credentials: dict,
     strategy_config: dict | None = None,
@@ -111,20 +113,34 @@ def run_ccxt_trading(
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext:
     # TODO: setup proper loggers to write out to files
-    instruments = _get_instruments(symbols, exchange)
+    instruments = _get_instruments(symbols, exchange_name)
+    commissions = commissions or "Zero"
 
     logs_writer = InMemoryLogsWriter("test", "test", "0")
     stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
 
-    _exchange = get_ccxt_exchange(exchange, use_testnet=use_testnet, loop=loop, **credentials)
-    account = CcxtAccountProcessor(account_id, _exchange, base_currency)
-    trading_service = CcxtTradingConnector(_exchange, account, commissions)
-    broker = CcxtBrokerServiceProvider(_exchange, trading_service)
+    channel = CtrlChannel("databus", sentinel=(None, None, None))
+    time_provider = LiveTimeProvider()
+    scheduler = BasicScheduler(channel, lambda: time_provider.time().item())
+    exchange = get_ccxt_exchange(exchange_name, use_testnet=use_testnet, loop=loop, **credentials)
+
+    # - find proper fees calculator
+    qubx_exchange_name = ccxt_build_qubx_exchange_name(exchange_name)
+    fees_calculator = lookup.fees.find(qubx_exchange_name.lower(), commissions)
+    assert fees_calculator is not None, f"Can't find fees calculator for {qubx_exchange_name} exchange"
+
+    account = CcxtAccountProcessor(
+        account_id, exchange, channel, time_provider, base_currency, fees_calculator=fees_calculator
+    )
+    broker = CcxtBroker(exchange, channel, time_provider, account)
+    data_provider = CcxtDataProvider(exchange, time_provider, channel)
 
     ctx = StrategyContext(
         strategy=strategy,
         broker=broker,
+        data_provider=data_provider,
         account=account,
+        scheduler=scheduler,
         instruments=instruments,
         logging=stg_logging,
         config=strategy_config,
@@ -242,13 +258,13 @@ def create_strategy_context(config_file: str, accounts_cfg_file: str, search_pat
     match conn:
         case "ccxt":
             # - TODO: we need some factory here
-            broker = CcxtTradingConnector(cfg.exchange.lower(), **acc_config)
-            exchange_connector = CcxtBrokerServiceProvider(cfg.exchange.lower(), broker, **acc_config)
+            broker = CcxtBroker(cfg.exchange.lower(), **acc_config)
+            exchange_connector = CcxtDataProvider(cfg.exchange.lower(), broker, **acc_config)
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
 
     # - generate new run id
-    run_id = socket.gethostname() + "-" + str(broker.time().item() // 100_000_000)
+    run_id = socket.gethostname() + "-" + str(broker.time_provider.time().item() // 100_000_000)
 
     # - get logger
     writer = None

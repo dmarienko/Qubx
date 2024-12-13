@@ -35,10 +35,10 @@ from qubx.core.context import StrategyContext
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import (
     IAccountProcessor,
-    IBrokerServiceProvider,
+    IBroker,
+    IMarketDataProvider,
     IStrategy,
     IStrategyContext,
-    ITradingServiceProvider,
     PositionsTracker,
     TriggerEvent,
 )
@@ -54,7 +54,7 @@ from qubx.utils.misc import ProgressParallel
 from qubx.utils.time import infer_series_frequency
 
 
-class SimulatedTrading(ITradingServiceProvider):
+class SimulatedTrading(IBroker):
     """
     First implementation of a simulated broker.
     TODO:
@@ -106,7 +106,7 @@ class SimulatedTrading(ITradingServiceProvider):
             If the fees configuration is not found for the given name.
 
         """
-        self.acc = account_processor
+        self.account = account_processor
         self._current_time = (
             np.datetime64(simulation_initial_time, "ns")
             if isinstance(simulation_initial_time, str)
@@ -160,7 +160,7 @@ class SimulatedTrading(ITradingServiceProvider):
         if report.exec is not None:
             self.process_execution_report(instrument, {"order": order, "deals": [report.exec]})
         else:
-            self.acc.process_order(order)
+            self.account.process_order(order)
 
         # - send reports to channel
         self.send_execution_report(instrument, report)
@@ -184,7 +184,7 @@ class SimulatedTrading(ITradingServiceProvider):
         # - cancel order in OME and remove from the map to free memory
         self._order_to_instrument.pop(order_id)
         order_update = ome.cancel_order(order_id)
-        self.acc.process_order(order_update.order)
+        self.account.process_order(order_update.order)
 
         # - notify channel about order cancellation
         self.send_execution_report(instrument, order_update)
@@ -201,8 +201,8 @@ class SimulatedTrading(ITradingServiceProvider):
         return [o for ome in self._ome.values() for o in ome.get_open_orders()]
 
     def get_position(self, instrument: Instrument) -> Position:
-        if instrument in self.acc.positions:
-            return self.acc.positions[instrument]
+        if instrument in self.account.positions:
+            return self.account.positions[instrument]
 
         # - initiolize OME for this instrument
         self._ome[instrument] = OrdersManagementEngine(
@@ -215,26 +215,26 @@ class SimulatedTrading(ITradingServiceProvider):
         # - initiolize empty position
         position = Position(instrument)  # type: ignore
         self._half_tick_size[instrument] = instrument.tick_size / 2  # type: ignore
-        self.acc.attach_positions(position)
-        return self.acc.positions[instrument]
+        self.account.attach_positions(position)
+        return self.account.positions[instrument]
 
     def time(self) -> dt_64:
         return self._current_time
 
     def get_base_currency(self) -> str:
-        return self.acc.get_base_currency()
+        return self.account.get_base_currency()
 
     def get_name(self) -> str:
         return self._name
 
     def get_account_id(self) -> str:
-        return self.acc.account_id
+        return self.account.account_id
 
     def process_execution_report(self, instrument: Instrument, report: Dict[str, Any]) -> Tuple[Order, List[Deal]]:
         order = report["order"]
         deals = report.get("deals", [])
-        self.acc.process_deals(instrument, deals)
-        self.acc.process_order(order)
+        self.account.process_deals(instrument, deals)
+        self.account.process_order(order)
         return order, deals
 
     def emulate_quote_from_data(
@@ -292,7 +292,7 @@ class SimulatedTrading(ITradingServiceProvider):
                 self.send_execution_report(instrument, r)
 
 
-class SimulatedExchange(IBrokerServiceProvider):
+class SimulatedExchange(IMarketDataProvider):
     trading_service: SimulatedTrading
     _last_quotes: Dict[Instrument, Optional[Quote]]
     _scheduler: BasicScheduler
@@ -467,10 +467,10 @@ class SimulatedExchange(IBrokerServiceProvider):
     def get_scheduler(self) -> BasicScheduler:
         return self._scheduler
 
-    def is_simulated_trading(self) -> bool:
+    def is_simulation(self) -> bool:
         return True
 
-    def get_historical_ohlcs(self, instrument: Instrument, timeframe: str, nbarsback: int) -> list[Bar]:
+    def get_ohlc(self, instrument: Instrument, timeframe: str, nbarsback: int) -> list[Bar]:
         start = pd.Timestamp(self.time())
         end = start - nbarsback * (_timeframe := pd.Timedelta(timeframe))
         _spec = f"{instrument.exchange}:{instrument.symbol}"
@@ -785,7 +785,7 @@ def _run_setup(
     ctx = StrategyContext(
         strategy=strat,  # type: ignore
         config=None,  # TODO: need to think how we could pass altered parameters here (from variating etc)
-        broker=broker,
+        data_provider=broker,
         account=account,
         instruments=setup.instruments,
         logging=StrategyLogging(logs_writer),

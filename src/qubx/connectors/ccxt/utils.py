@@ -7,6 +7,7 @@ import pandas as pd
 
 import ccxt
 import ccxt.pro as cxp
+from ccxt import BadSymbol
 from qubx import logger, lookup
 from qubx.core.basics import (
     AssetBalance,
@@ -285,3 +286,27 @@ def find_instrument_for_exch_symbol(exch_symbol: str, symbol_to_instrument: Dict
 
 def instrument_to_ccxt_symbol(instr: Instrument) -> str:
     return f"{instr.base}/{instr.quote}:{instr.settle}" if instr.is_futures() else f"{instr.base}/{instr.quote}"
+
+
+def ccxt_find_instrument(
+    symbol: str, exchange: cxp.Exchange, symbol_to_instrument: Dict[str, Instrument] | None = None
+) -> Instrument:
+    if symbol_to_instrument is not None:
+        instrument = symbol_to_instrument.get(symbol)
+        if instrument is not None:
+            return instrument
+        try:
+            instrument = find_instrument_for_exch_symbol(symbol, symbol_to_instrument)
+        except CcxtSymbolNotRecognized:
+            pass
+    if instrument is None:
+        try:
+            symbol_info = exchange.market(symbol)
+        except BadSymbol:
+            raise CcxtSymbolNotRecognized(f"Unknown symbol {symbol}")
+        exchange_name = exchange.name
+        assert exchange_name is not None
+        instrument = ccxt_symbol_to_instrument(exchange_name, symbol_info)
+    if symbol_to_instrument is not None and symbol not in symbol_to_instrument:
+        symbol_to_instrument[symbol] = instrument
+    return instrument

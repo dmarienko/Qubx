@@ -10,17 +10,15 @@ This module includes:
 """
 
 import traceback
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Set, Tuple
 
 import pandas as pd
 
-from qubx import logger, lookup
+from qubx import logger
 from qubx.core.basics import (
-    SW,
     AssetBalance,
     CtrlChannel,
     Deal,
-    ExecutionReport,
     Instrument,
     ITimeProvider,
     MarketEvent,
@@ -35,8 +33,8 @@ from qubx.core.basics import (
     dt_64,
     td_64,
 )
-from qubx.core.helpers import BasicScheduler, set_parameters_to_object
-from qubx.core.series import OHLCV, Bar, OrderBook, Quote, Trade
+from qubx.core.helpers import set_parameters_to_object
+from qubx.core.series import OHLCV, Bar, Quote, Trade
 
 
 class IAccountViewer:
@@ -207,7 +205,16 @@ class IBroker:
     """
 
     time_provider: ITimeProvider
+    channel: CtrlChannel
 
+    @property
+    def is_simulated_trading(self) -> bool:
+        """
+        Check if the broker is in simulation mode.
+        """
+        ...
+
+    # TODO: think about replacing with async methods
     def send_order(
         self,
         instrument: Instrument,
@@ -272,19 +279,6 @@ class IBroker:
             BadRequest: If the request is invalid
         """
         raise NotImplementedError("update_order is not implemented")
-
-    @property
-    def is_simulated_trading(self) -> bool:
-        """
-        Check if the broker is in simulation mode.
-        """
-        ...
-
-    def get_scheduler(self) -> BasicScheduler:
-        """
-        Get the scheduler for the broker.
-        """
-        ...
 
 
 class IMarketDataProvider:
@@ -714,6 +708,7 @@ class ISubscriptionManager:
 
 
 class IAccountProcessor(IAccountViewer):
+    time_provider: ITimeProvider
     channel: CtrlChannel
 
     def start(self):
@@ -770,15 +765,6 @@ class IAccountProcessor(IAccountViewer):
 
         Args:
             order: Order to process
-        """
-        ...
-
-    def process_execution_report(self, instrument: Instrument, report: ExecutionReport) -> None:
-        """Process an execution report for a given symbol.
-
-        Args:
-            symbol: The symbol the execution report is for.
-            report: Execution report to process (contains order and deal information).
         """
         ...
 

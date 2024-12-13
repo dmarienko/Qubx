@@ -18,9 +18,10 @@ from qubx.core.basics import (
     TriggerEvent,
     dt_64,
 )
-from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, process_schedule_spec
+from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, extract_price, process_schedule_spec
 from qubx.core.interfaces import (
-    IMarketDataProvider,
+    IAccountProcessor,
+    IMarketManager,
     IPositionGathering,
     IProcessingManager,
     IStrategy,
@@ -39,9 +40,10 @@ class ProcessingManager(IProcessingManager):
     _context: IStrategyContext
     _strategy: IStrategy
     _logging: StrategyLogging
-    _market_data: IMarketDataProvider
+    _market_data: IMarketManager
     _subscription_manager: ISubscriptionManager
     _time_provider: ITimeProvider
+    _account: IAccountProcessor
     _position_tracker: PositionsTracker
     _position_gathering: IPositionGathering
     _cache: CachedMarketDataHolder
@@ -64,9 +66,10 @@ class ProcessingManager(IProcessingManager):
         context: IStrategyContext,
         strategy: IStrategy,
         logging: StrategyLogging,
-        market_data: IMarketDataProvider,
+        market_data: IMarketManager,
         subscription_manager: ISubscriptionManager,
         time_provider: ITimeProvider,
+        account: IAccountProcessor,
         position_tracker: PositionsTracker,
         position_gathering: IPositionGathering,
         cache: CachedMarketDataHolder,
@@ -79,6 +82,7 @@ class ProcessingManager(IProcessingManager):
         self._market_data = market_data
         self._subscription_manager = subscription_manager
         self._time_provider = time_provider
+        self._account = account
         self._is_simulation = is_simulation
         self._position_gathering = position_gathering
         self._position_tracker = position_tracker
@@ -89,7 +93,7 @@ class ProcessingManager(IProcessingManager):
         self._handlers = {
             n.split("_handle_")[1]: f
             for n, f in self.__class__.__dict__.items()
-            if type(f) == FunctionType and n.startswith("_handle_")
+            if type(f) is FunctionType and n.startswith("_handle_")
         }
         self._strategy_name = strategy.__class__.__name__
         self._trig_bar_freq_nsec = None
@@ -280,6 +284,7 @@ class ProcessingManager(IProcessingManager):
         # update trackers, gatherers on base data and on Quote (always)
         if not is_historical and (is_base_data or isinstance(data, Quote)):
             _data = data if not isinstance(data, OrderBook) else data.to_quote()
+            self._account.update_position_price(self._time_provider.time(), instrument, extract_price(_data))
             target_positions = self.__process_and_log_target_positions(
                 self._position_tracker.update(self._context, instrument, _data)
             )
@@ -387,11 +392,12 @@ class ProcessingManager(IProcessingManager):
 
     @SW.watch("StrategyContext.order")
     def _handle_order(self, instrument: Instrument, event_type: str, order: Order) -> Order:
+        self._account.process_order(order)
         return order
 
     @SW.watch("StrategyContext")
     def _handle_deals(self, instrument: Instrument, event_type: str, deals: list[Deal]) -> TriggerEvent | None:
-        # - log deals in storage
+        self._account.process_deals(instrument, deals)
         self._logging.save_deals(instrument, deals)
         if instrument is None:
             logger.debug(f"Execution report for unknown instrument {instrument}")

@@ -1,22 +1,23 @@
-import pytest
 from typing import Any
 
-from qubx.pandaz.utils import *
+import pytest
+
 from qubx import lookup
-from qubx.core.basics import Instrument, dt_64, ITimeProvider
-from qubx.core.interfaces import IStrategy, IStrategyContext
+from qubx.backtester.simulator import (
+    SimulatedCtrlChannel,
+    SimulatedExchange,
+    SimulatedTrading,
+    find_instruments_and_exchanges,
+    simulate,
+)
+from qubx.core.account import BasicAccountProcessor
+from qubx.core.basics import Instrument, ITimeProvider, dt_64
 from qubx.core.context import StrategyContext
+from qubx.core.interfaces import IStrategy, IStrategyContext
 from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
 from qubx.core.mixins.trading import TradingManager
 from qubx.data.readers import CsvStorageDataReader, DataReader
-from qubx.core.account import BasicAccountProcessor
-from qubx.backtester.simulator import (
-    simulate,
-    SimulatedTrading,
-    SimulatedExchange,
-    find_instruments_and_exchanges,
-    SimulatedCtrlChannel,
-)
+from qubx.pandaz.utils import *
 
 
 def run_debug_sim(
@@ -43,7 +44,7 @@ def run_debug_sim(
     strategy_logging = StrategyLogging(logs_writer)
     ctx = StrategyContext(
         strategy=strategy,
-        broker=broker,
+        data_provider=broker,
         account=account,
         instruments=instruments,
         logging=strategy_logging,
@@ -74,8 +75,7 @@ class TestAccountProcessorStuff:
             base_currency="USDT",
             initial_capital=self.INITIAL_CAPITAL,
         )
-        trading_service = SimulatedTrading(name)
-        trading_service.set_account(account)
+        trading_service = SimulatedTrading(account, name)
 
         channel = SimulatedCtrlChannel("data")
         trading_service.set_communication_channel(channel)
@@ -90,7 +90,7 @@ class TestAccountProcessorStuff:
 
     def test_spot_account_processor(self, trading_manager: TradingManager):
         trading_service = trading_manager._trading_service
-        account = trading_service.get_account()
+        account = trading_service.account
 
         # - check initial state
         assert account.get_total_capital() == self.INITIAL_CAPITAL
@@ -149,7 +149,7 @@ class TestAccountProcessorStuff:
 
     def test_swap_account_processor(self, trading_manager: TradingManager):
         trading_service = trading_manager._trading_service
-        account = trading_service.get_account()
+        account = trading_service.account
 
         i1 = self.get_instrument("BINANCE.UM", "BTCUSDT")
 

@@ -1,31 +1,30 @@
-import time
-import pandas as pd
 import threading
-import plotly.io as pio
-import plotly.graph_objs as go
-import dash_bootstrap_components as dbc
+import time
+from pathlib import Path
+from typing import Any
 
 import dash
-from dash import Dash, html, dcc, ctx
+import dash_bootstrap_components as dbc
+import pandas as pd
+import plotly.graph_objs as go
+import plotly.io as pio
+from dash import Dash, ctx, dcc, html
 from dash._jupyter import JupyterDisplayMode
 from dash.dependencies import Input, Output
-from typing import Any
-from pathlib import Path
 from IPython.display import clear_output
-
 from plotly.subplots import make_subplots
-from qubx import lookup, logger, QubxLogConfig
-from qubx.core.basics import Instrument
-from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
-from qubx.connectors.ccxt.trading import CcxtTradingConnector
-from qubx.utils.runner import get_account_config
-from qubx.pandaz import scols
+from quantkit.features import FeatureManager, OrderbookImbalance, OrderbookMidPrice, TradePrice, TradeVolumeImbalance
+
+from qubx import QubxLogConfig, logger, lookup
 from qubx.backtester.simulator import SimulatedTrading
+from qubx.connectors.ccxt.broker import CcxtBroker
+from qubx.connectors.ccxt.data import CcxtDataProvider
+from qubx.core.basics import Instrument
 from qubx.core.interfaces import IStrategy, IStrategyContext
-from qubx.core.series import TimeSeries, OrderBook
-from qubx.utils.runner import run_ccxt_paper_trading
+from qubx.core.series import OrderBook, TimeSeries
+from qubx.pandaz import scols
 from qubx.utils.charting.lookinglass import LookingGlass
-from quantkit.features import FeatureManager, TradeVolumeImbalance, TradePrice, OrderbookImbalance, OrderbookMidPrice
+from qubx.utils.runner import get_account_config, run_ccxt_paper_trading
 
 pio.templates.default = "plotly_dark"
 

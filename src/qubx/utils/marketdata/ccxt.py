@@ -5,7 +5,7 @@ import pandas as pd
 from qubx.core.basics import AssetType, Instrument, MarketType
 
 
-def ccxt_build_qubx_exchange_name(ccxt_exchange: str, market_type: str, is_linear: bool = True) -> str:
+def ccxt_build_qubx_exchange_name(ccxt_exchange: str, market_type: str | None = None, is_linear: bool = True) -> str:
     """
     Build a Qubx exchange name from a ccxt exchange name and a market dictionary.
     Parameters:
@@ -22,7 +22,7 @@ def ccxt_build_qubx_exchange_name(ccxt_exchange: str, market_type: str, is_linea
         elif market_type == "swap" and not is_linear:
             return "BINANCE.CM"
         else:
-            raise ValueError(f"Unknown market type: {market_type}")
+            raise "BINANCE.UM"
     else:
         # for not just return the input exchange and extend later if needed
         return ccxt_exchange

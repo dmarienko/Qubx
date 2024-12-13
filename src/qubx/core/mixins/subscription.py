@@ -2,12 +2,12 @@ from collections import defaultdict
 from typing import Any, Dict, List, Set, Tuple, Union
 
 from qubx.core.basics import Instrument, Subtype
-from qubx.core.interfaces import IBrokerServiceProvider, ISubscriptionManager
+from qubx.core.interfaces import IMarketDataProvider, ISubscriptionManager
 from qubx.utils.threading import synchronized
 
 
 class SubscriptionManager(ISubscriptionManager):
-    _broker: IBrokerServiceProvider
+    _broker: IMarketDataProvider
     _base_sub: str
     _is_simulation: bool
     _sub_to_warmup: dict[str, str]
@@ -20,9 +20,9 @@ class SubscriptionManager(ISubscriptionManager):
     _pending_stream_unsubscriptions: Dict[str, Set[Instrument]]
     _pending_warmups: Dict[Tuple[str, Instrument], str]
 
-    def __init__(self, broker: IBrokerServiceProvider, auto_subscribe: bool = True) -> None:
+    def __init__(self, broker: IMarketDataProvider, auto_subscribe: bool = True) -> None:
         self._broker = broker
-        self._is_simulation = broker.is_simulated_trading
+        self._is_simulation = broker.is_simulation
         self._base_sub = Subtype.OHLC["1Min"] if self._is_simulation else Subtype.ORDERBOOK
         self._sub_to_warmup = {}
         self._pending_warmups = {}

@@ -8,7 +8,7 @@ import pytest
 from ccxt.pro import Exchange
 
 from qubx import lookup
-from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
+from qubx.connectors.ccxt.data import CcxtDataProvider
 from qubx.core.basics import CtrlChannel, Instrument, Subtype
 from qubx.core.exceptions import QueueTimeout
 from qubx.core.mixins.subscription import SubscriptionManager
@@ -40,7 +40,7 @@ class MockExchange(Exchange):
 
 
 class TestCcxtExchangeConnector:
-    connector: CcxtBrokerServiceProvider
+    connector: CcxtDataProvider
 
     @pytest.fixture(autouse=True)
     def setup(self):
@@ -58,9 +58,7 @@ class TestCcxtExchangeConnector:
             patch("qubx.utils.ntp.time_now", return_value=self.fixed_time),
             patch("qubx.connectors.ccxt.connector.CcxtBrokerServiceProvider._start_ntp_thread", return_value=None),
         ):
-            self.connector = CcxtBrokerServiceProvider(
-                exchange=self.mock_exchange, trading_service=self.mock_trading_service
-            )
+            self.connector = CcxtDataProvider(exchange=self.mock_exchange, trading_service=self.mock_trading_service)
             self.sub_manager = SubscriptionManager(self.connector)
 
         # return from setup

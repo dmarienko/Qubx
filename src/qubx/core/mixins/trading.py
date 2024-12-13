@@ -1,20 +1,22 @@
 from qubx import logger
-from qubx.core.basics import Instrument, Order
-from qubx.core.interfaces import ITimeProvider, ITradingManager, ITradingServiceProvider
+from qubx.core.basics import Instrument, Order, OrderRequest
+from qubx.core.interfaces import IAccountProcessor, IBroker, ITimeProvider, ITradingManager
 
 
 class TradingManager(ITradingManager):
     _time_provider: ITimeProvider
-    _trading_service: ITradingServiceProvider
+    _trading_service: IBroker
+    _account: IAccountProcessor
     _strategy_name: str
 
     _order_id: int | None = None
 
     def __init__(
-        self, time_provider: ITimeProvider, trading_service: ITradingServiceProvider, strategy_name: str
+        self, time_provider: ITimeProvider, trading_service: IBroker, account: IAccountProcessor, strategy_name: str
     ) -> None:
         self._time_provider = time_provider
         self._trading_service = trading_service
+        self._account = account
         self._strategy_name = strategy_name
 
     def trade(
@@ -42,7 +44,6 @@ class TradingManager(ITradingManager):
             f"(StrategyContext) sending {type} {side} for {size_adj} of <green>{instrument.symbol}</green> @ {price} ..."
         )
         client_id = self._generate_order_client_id(instrument.symbol)
-
         order = self._trading_service.send_order(
             instrument=instrument,
             order_side=side,
@@ -53,17 +54,27 @@ class TradingManager(ITradingManager):
             client_id=client_id,
             **options,
         )
-
         return order
 
-    def cancel(self, instrument: Instrument) -> None:
-        for o in self._trading_service.get_orders(instrument):
-            self._trading_service.cancel_order(o.id)
+    def submit_orders(self, order_requests: list[OrderRequest]) -> list[Order]:
+        raise NotImplementedError("Not implemented yet")
+
+    def set_target_position(
+        self, instrument: Instrument, target: float, price: float | None = None, time_in_force="gtc", **options
+    ) -> Order:
+        raise NotImplementedError("Not implemented yet")
+
+    def close_position(self, instrument: Instrument) -> None:
+        raise NotImplementedError("Not implemented yet")
 
     def cancel_order(self, order_id: str) -> None:
         if not order_id:
             return
         self._trading_service.cancel_order(order_id)
+
+    def cancel_orders(self, instrument: Instrument) -> None:
+        for o in self._account.get_orders(instrument).values():
+            self._trading_service.cancel_order(o.id)
 
     def _generate_order_client_id(self, symbol: str) -> str:
         if self._order_id is None:

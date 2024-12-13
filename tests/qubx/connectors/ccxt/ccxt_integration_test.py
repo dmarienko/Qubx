@@ -1,25 +1,22 @@
 import asyncio
-import pytest
-from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
-
-import time
-import pandas as pd
 import threading
-from typing import Any, Callable
-from pathlib import Path
+import time
 from collections import defaultdict
+from pathlib import Path
+from typing import Any, Callable
 
-from qubx import lookup, logger, QubxLogConfig
-from qubx.core.basics import TriggerEvent, Trade, MarketEvent, Instrument, Subtype
-from qubx.core.interfaces import IStrategyContext, IStrategy, Position
-from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
-from qubx.connectors.ccxt.trading import CcxtTradingConnector
-from qubx.utils.runner import get_account_config
-from qubx.pandaz import scols
+import pandas as pd
+import pytest
+
+from qubx import QubxLogConfig, logger, lookup
 from qubx.backtester.simulator import SimulatedTrading
-from qubx.utils.runner import run_ccxt_paper_trading
+from qubx.connectors.ccxt.broker import CcxtBroker
+from qubx.connectors.ccxt.data import CcxtDataProvider
+from qubx.core.basics import Instrument, MarketEvent, Subtype, Trade, TriggerEvent
+from qubx.core.interfaces import IStrategy, IStrategyContext, Position
+from qubx.pandaz import scols
 from qubx.utils.collections import TimeLimitedDeque
-from qubx.utils.runner import run_ccxt_trading, run_ccxt_paper_trading
+from qubx.utils.runner import get_account_config, run_ccxt_paper_trading, run_ccxt_trading
 
 
 async def wait(condition: Callable[[], bool] | None = None, timeout: int = 10, period: float = 1.0):
@@ -53,7 +50,6 @@ class DebugStrategy(IStrategy):
 
 
 class TestCcxtDataProvider:
-
     @pytest.fixture(autouse=True)
     def setup(self):
         QubxLogConfig.set_log_level("DEBUG")
@@ -127,7 +123,7 @@ class TestCcxtTrading:
         # - Start strategy
         ctx = run_ccxt_trading(
             strategy=(stg := DebugStrategy()),
-            exchange=exchange,
+            exchange_name=exchange,
             symbols=symbols,
             credentials=self._creds[exchange],
             blocking=False,

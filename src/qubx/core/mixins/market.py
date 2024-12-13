@@ -1,29 +1,30 @@
+from typing import Any, List
+
 import pandas as pd
-from typing import List, Any
 
 from qubx import lookup
+from qubx.core.basics import Instrument
+from qubx.core.helpers import CachedMarketDataHolder
 from qubx.core.interfaces import (
     IMarketDataProvider,
-    IBrokerServiceProvider,
+    IMarketManager,
     IUniverseManager,
 )
-from qubx.core.helpers import CachedMarketDataHolder
-from qubx.core.series import Quote, OHLCV
-from qubx.core.basics import Instrument
+from qubx.core.series import OHLCV, Quote
 from qubx.data.readers import DataReader
 from qubx.utils import convert_seconds_to_str
 
 
-class MarketDataProvider(IMarketDataProvider):
+class MarketDataProvider(IMarketManager):
     _cache: CachedMarketDataHolder
-    _broker: IBrokerServiceProvider
+    _broker: IMarketDataProvider
     _universe_manager: IUniverseManager
     _aux_data_provider: DataReader | None
 
     def __init__(
         self,
         cache: CachedMarketDataHolder,
-        broker: IBrokerServiceProvider,
+        broker: IMarketDataProvider,
         universe_manager: IUniverseManager,
         aux_data_provider: DataReader | None = None,
     ):
@@ -50,7 +51,9 @@ class MarketDataProvider(IMarketDataProvider):
             _timeframe_ns = pd.Timedelta(timeframe).asm8.item()
 
             # - check if we need to fetch more data
-            if (_last_bar_time + _timeframe_ns <= self._broker.time().item()) or (length and _l_rc < length):
+            if (_last_bar_time + _timeframe_ns <= self._broker.time_provider.time().item()) or (
+                length and _l_rc < length
+            ):
                 _need_history_request = True
 
         else:
@@ -58,7 +61,7 @@ class MarketDataProvider(IMarketDataProvider):
 
         # - send request for historical data
         if _need_history_request and length is not None:
-            bars = self._broker.get_historical_ohlcs(instrument, timeframe, length)
+            bars = self._broker.get_ohlc(instrument, timeframe, length)
             rc = self._cache.update_by_bars(instrument, timeframe, bars)
         return rc
 

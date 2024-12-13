@@ -3,7 +3,18 @@ from threading import Thread
 from typing import Any, Callable, Dict, List, Union
 
 from qubx import logger
-from qubx.core.basics import SW, AssetBalance, CtrlChannel, Instrument, Order, Position, Subtype, dt_64
+from qubx.core.basics import (
+    SW,
+    AssetBalance,
+    CtrlChannel,
+    Instrument,
+    MarketType,
+    Order,
+    OrderRequest,
+    Position,
+    Subtype,
+    dt_64,
+)
 from qubx.core.helpers import (
     BasicScheduler,
     CachedMarketDataHolder,
@@ -11,15 +22,15 @@ from qubx.core.helpers import (
 )
 from qubx.core.interfaces import (
     IAccountProcessor,
-    IBrokerServiceProvider,
+    IBroker,
     IMarketDataProvider,
+    IMarketManager,
     IPositionGathering,
     IProcessingManager,
     IStrategy,
     IStrategyContext,
     ISubscriptionManager,
     ITradingManager,
-    ITradingServiceProvider,
     IUniverseManager,
     PositionsTracker,
 )
@@ -42,15 +53,15 @@ class StrategyContext(IStrategyContext):
         FixedSizer(1.0, amount_in_quote=False)
     )
 
-    _market_data_provider: IMarketDataProvider
+    _market_data_provider: IMarketManager
     _universe_manager: IUniverseManager
     _subscription_manager: ISubscriptionManager
     _trading_manager: ITradingManager
     _processing_manager: IProcessingManager
 
-    _trading_service: ITradingServiceProvider  # service for exchange API: orders managemewnt
+    _broker: IBroker  # service for exchange API: orders managemewnt
     _logging: StrategyLogging  # recording all activities for the strat: execs, positions, portfolio
-    _broker: IBrokerServiceProvider  # market data provider
+    _data_provider: IMarketDataProvider  # market data provider
     _cache: CachedMarketDataHolder
     _scheduler: BasicScheduler
     _initial_instruments: list[Instrument]
@@ -61,8 +72,10 @@ class StrategyContext(IStrategyContext):
     def __init__(
         self,
         strategy: IStrategy,
-        broker: IBrokerServiceProvider,
+        broker: IBroker,
+        data_provider: IMarketDataProvider,
         account: IAccountProcessor,
+        scheduler: BasicScheduler,
         instruments: list[Instrument],
         logging: StrategyLogging,
         config: dict[str, Any] | None = None,
@@ -73,9 +86,9 @@ class StrategyContext(IStrategyContext):
         self.strategy = self.__instantiate_strategy(strategy, config)
 
         self._broker = broker
+        self._data_provider = data_provider
         self._logging = logging
-        self._scheduler = broker.get_scheduler()
-        self._trading_service = broker.get_trading_service()
+        self._scheduler = scheduler
         self._initial_instruments = instruments
 
         self._cache = CachedMarketDataHolder()
@@ -86,31 +99,32 @@ class StrategyContext(IStrategyContext):
 
         __position_gathering = position_gathering if position_gathering is not None else SimplePositionGatherer()
 
-        self._subscription_manager = SubscriptionManager(broker=self._broker)
+        self._subscription_manager = SubscriptionManager(broker=self._data_provider)
         self.account.set_subscription_manager(self._subscription_manager)
 
         self._market_data_provider = MarketDataProvider(
             cache=self._cache,
-            broker=self._broker,
+            broker=self._data_provider,
             universe_manager=self,
             aux_data_provider=aux_data_provider,
         )
         self._universe_manager = UniverseManager(
             context=self,
             strategy=self.strategy,
-            broker=self._broker,
-            trading_service=self._trading_service,
+            broker=self._data_provider,
+            trading_service=self._broker,
             cache=self._cache,
             logging=self._logging,
             subscription_manager=self,
             trading_manager=self,
             time_provider=self,
-            account_processor=self.account,
+            account=self.account,
             position_gathering=__position_gathering,
         )
         self._trading_manager = TradingManager(
             time_provider=self,
-            trading_service=self._trading_service,
+            trading_service=self._broker,
+            account=self.account,
             strategy_name=self.strategy.__class__.__name__,
         )
         self._processing_manager = ProcessingManager(
@@ -120,11 +134,12 @@ class StrategyContext(IStrategyContext):
             market_data=self,
             subscription_manager=self,
             time_provider=self,
+            account=self.account,
             position_tracker=__position_tracker,
             position_gathering=__position_gathering,
             cache=self._cache,
-            scheduler=self._broker.get_scheduler(),
-            is_simulation=self._broker.is_simulated_trading,
+            scheduler=self._scheduler,
+            is_simulation=self._data_provider.is_simulation,
         )
         self.__post_init__()
 
@@ -137,7 +152,7 @@ class StrategyContext(IStrategyContext):
         self._cache.update_default_timeframe(__default_timeframe)
 
     def time(self) -> dt_64:
-        return self._trading_service.time()
+        return self._broker.time_provider.time()
 
     def start(self, blocking: bool = False):
         if self._is_initialized:
@@ -147,7 +162,7 @@ class StrategyContext(IStrategyContext):
         self._scheduler.run()
 
         # - create incoming market data processing
-        databus = self._broker.get_communication_channel()
+        databus = self._data_provider.channel
         databus.register(self)
 
         # - start account processing
@@ -169,7 +184,7 @@ class StrategyContext(IStrategyContext):
                 return
 
         # - for live we run loop
-        if not self._broker.is_simulated_trading:
+        if not self._data_provider.is_simulation:
             self._thread_data_loop = Thread(target=self.__process_incoming_data_loop, args=(databus,), daemon=True)
             self._thread_data_loop.start()
             logger.info("(StrategyContext) strategy is started in thread")
@@ -178,8 +193,8 @@ class StrategyContext(IStrategyContext):
 
     def stop(self):
         if self._thread_data_loop:
-            self._broker.close()
-            self._broker.get_communication_channel().stop()
+            self._data_provider.close()
+            self._data_provider.channel.stop()
             self._thread_data_loop.join()
             try:
                 self.strategy.on_stop(self)
@@ -201,7 +216,7 @@ class StrategyContext(IStrategyContext):
 
     @property
     def is_simulation(self) -> bool:
-        return self._broker.is_simulated_trading
+        return self._data_provider.is_simulation
 
     # IAccountViewer delegation
 
@@ -211,12 +226,6 @@ class StrategyContext(IStrategyContext):
 
     def get_total_capital(self) -> float:
         return self.account.get_total_capital()
-
-    def get_reserved(self, instrument: Instrument) -> float:
-        return self.account.get_reserved(instrument)
-
-    def get_reserved_capital(self) -> float:
-        return self.account.get_reserved_capital()
 
     # balance and position information
     def get_balances(self) -> dict[str, AssetBalance]:
@@ -284,11 +293,25 @@ class StrategyContext(IStrategyContext):
     def trade(self, instrument: Instrument, amount: float, price: float | None = None, time_in_force="gtc", **options):
         return self._trading_manager.trade(instrument, amount, price, time_in_force, **options)
 
-    def cancel(self, instrument: Instrument):
-        return self._trading_manager.cancel(instrument)
+    def submit_orders(self, order_requests: list[OrderRequest]) -> list[Order]:
+        return self._trading_manager.submit_orders(order_requests)
 
-    def cancel_order(self, order_id: str):
+    def set_target_position(
+        self, instrument: Instrument, target: float, price: float | None = None, **options
+    ) -> Order:
+        return self._trading_manager.set_target_position(instrument, target, price, **options)
+
+    def close_position(self, instrument: Instrument) -> None:
+        return self._trading_manager.close_position(instrument)
+
+    def close_positions(self, market_type: MarketType | None = None) -> None:
+        return self._trading_manager.close_positions(market_type)
+
+    def cancel_order(self, order_id: str) -> None:
         return self._trading_manager.cancel_order(order_id)
+
+    def cancel_orders(self, instrument: Instrument):
+        return self._trading_manager.cancel_orders(instrument)
 
     # IUniverseManager delegation
     def set_universe(self, instruments: list[Instrument], skip_callback: bool = False):

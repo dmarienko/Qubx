@@ -12,26 +12,28 @@ from ccxt import ExchangeClosedByUser, ExchangeError, ExchangeNotAvailable, Netw
 from qubx import logger
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
-    AssetBalance,
     CtrlChannel,
     Deal,
     Instrument,
+    ITimeProvider,
     Order,
     Position,
-    Subtype,
+    TransactionCostsCalculator,
     dt_64,
 )
 from qubx.core.interfaces import ISubscriptionManager
 from qubx.utils.marketdata.ccxt import ccxt_symbol_to_instrument
 from qubx.utils.misc import AsyncThreadLoop
-from qubx.utils.ntp import time_now
 
+from .exceptions import CcxtSymbolNotRecognized
 from .utils import (
     ccxt_convert_balance,
     ccxt_convert_deal_info,
     ccxt_convert_order_info,
     ccxt_convert_positions,
     ccxt_convert_ticker,
+    ccxt_extract_deals_from_exec,
+    ccxt_find_instrument,
     ccxt_restore_position_from_deals,
     instrument_to_ccxt_symbol,
 )
@@ -43,6 +45,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
     """
 
     exchange: cxp.Exchange
+    channel: CtrlChannel
     base_currency: str
     balance_interval: str
     position_interval: str
@@ -65,14 +68,24 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         self,
         account_id: str,
         exchange: cxp.Exchange,
+        channel: CtrlChannel,
+        time_provider: ITimeProvider,
         base_currency: str,
+        fees_calculator: TransactionCostsCalculator,
         balance_interval: str = "30Sec",
         position_interval: str = "30Sec",
         subscription_interval: str = "10Sec",
         max_position_restore_days: int = 30,
         max_retries: int = 10,
     ):
-        super().__init__(account_id, base_currency, initial_capital=0)
+        super().__init__(
+            account_id=account_id,
+            time_provider=time_provider,
+            channel=channel,
+            base_currency=base_currency,
+            fees_calculator=fees_calculator,
+            initial_capital=0,
+        )
         self.exchange = exchange
         self.max_retries = max_retries
         self.balance_interval = balance_interval
@@ -93,7 +106,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
 
     def start(self):
         """Start the balance and position polling tasks"""
-        channel = self.get_communication_channel()
+        channel = self.channel
         if channel is None or not channel.control.is_set():
             return
         if self._subscription_manager is None:
@@ -127,17 +140,16 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         self._polling_tasks["subscription"] = self._loop.submit(
             self._poller("subscription", self._update_subscriptions, self.subscription_interval)
         )
+        # - subscribe to order executions
+        self._polling_tasks["executions"] = self._loop.submit(self._subscribe_executions("executions", channel))
 
-    def close(self):
+    def stop(self):
         """Stop all polling tasks"""
         for task in self._polling_tasks.values():
             if not task.done():
                 task.cancel()
         self._polling_tasks.clear()
         self._is_running = False
-
-    def time(self) -> dt_64:
-        return time_now()
 
     def update_position_price(self, time: dt_64, instrument: Instrument, price: float) -> None:
         self._instrument_to_last_price[instrument] = (time, price)
@@ -174,11 +186,10 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         coroutine: Callable[[], Awaitable],
         interval: str,
     ):
-        channel = self.get_communication_channel()
         sleep_time = pd.Timedelta(interval).total_seconds()
         retries = 0
 
-        while channel.control.is_set():
+        while self.channel.control.is_set():
             try:
                 await coroutine()
 
@@ -200,7 +211,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
                     logger.error(f"Max retries ({self.max_retries}) reached. Stopping poller.")
                     break
             except Exception as e:
-                if not channel.control.is_set():
+                if not self.channel.control.is_set():
                     # If the channel is closed, then ignore all exceptions and exit
                     break
                 logger.error(f"Unexpected error during account polling: {e}")
@@ -210,13 +221,13 @@ class CcxtAccountProcessor(BasicAccountProcessor):
                     logger.error(f"Max retries ({self.max_retries}) reached. Stopping poller.")
                     break
             finally:
-                if not channel.control.is_set():
+                if not self.channel.control.is_set():
                     break
                 await asyncio.sleep(min(sleep_time * (2 ** (retries)), 60))  # Exponential backoff capped at 60s
 
         logger.debug(f"{name} polling task has been stopped")
 
-    async def _wait(self, condition: Callable[[], bool], sleep: int = 0.1) -> None:
+    async def _wait(self, condition: Callable[[], bool], sleep: float = 0.1) -> None:
         while not condition():
             await asyncio.sleep(sleep)
 
@@ -279,7 +290,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         for i in _to_add:
             self._positions[i] = _instrument_to_position[i]
         # - modify existing positions
-        _time = self.time()
+        _time = self.time_provider.time()
         for pos in _update_positions:
             self._update_instrument_position(_time, self._positions[pos.instrument], pos)
 
@@ -292,7 +303,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         current_pos.change_position_by(timestamp, quantity_diff, _current_price)
 
     def _get_start_time_in_ms(self, days_before: int) -> int:
-        return (self.time() - days_before * pd.Timedelta("1d")).asm8.item() // 1000000
+        return (self.time_provider.time() - days_before * pd.Timedelta("1d")).asm8.item() // 1000000
 
     def _is_our_order(self, order: Order) -> bool:
         if order.client_id is None:
@@ -316,7 +327,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
             self._subscription_manager.commit()
 
     async def _fetch_missing_tickers(self, instruments: list[Instrument]) -> None:
-        _current_time = self.time()
+        _current_time = self.time_provider.time()
         _fetch_instruments: list[Instrument] = []
         for instr in instruments:
             _dt, _ = self._instrument_to_last_price.get(instr, (None, None))
@@ -423,3 +434,61 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         deals_data = await self.exchange.fetch_my_trades(_ccxt_symbol, since=_start_ms)
         deals: list[Deal] = [ccxt_convert_deal_info(o) for o in deals_data]
         return sorted(deals, key=lambda x: x.time) if deals else []
+
+    async def _listen_to_stream(
+        self,
+        subscriber: Callable[[], Awaitable[None]],
+        exchange: cxp.Exchange,
+        channel: CtrlChannel,
+        name: str,
+    ):
+        logger.info(f"Listening to {name}")
+        n_retry = 0
+        while channel.control.is_set():
+            try:
+                await subscriber()
+                n_retry = 0
+            except CcxtSymbolNotRecognized:
+                continue
+            except CancelledError:
+                break
+            except ExchangeClosedByUser:
+                # - we closed connection so just stop it
+                logger.info(f"{name} listening has been stopped")
+                break
+            except (NetworkError, ExchangeError, ExchangeNotAvailable) as e:
+                logger.error(f"Error in {name} : {e}")
+                await asyncio.sleep(1)
+                continue
+            except Exception as e:
+                if not channel.control.is_set():
+                    # If the channel is closed, then ignore all exceptions and exit
+                    break
+                logger.error(f"exception in {name} : {e}")
+                logger.exception(e)
+                n_retry += 1
+                if n_retry >= self.max_retries:
+                    logger.error(f"Max retries reached for {name}. Closing connection.")
+                    del exchange
+                    break
+                await asyncio.sleep(min(2**n_retry, 60))  # Exponential backoff with a cap at 60 seconds
+
+    async def _subscribe_executions(self, name: str, channel: CtrlChannel):
+        _symbol_to_instrument = {}
+
+        async def _watch_executions():
+            exec = await self.exchange.watch_orders()
+            for report in exec:
+                instrument = ccxt_find_instrument(report["symbol"], self.exchange, _symbol_to_instrument)
+                order = ccxt_convert_order_info(instrument, report)
+                deals = ccxt_extract_deals_from_exec(report)
+                channel.send((instrument, "order", order))
+                if deals:
+                    channel.send((instrument, "deals", deals))
+
+        await self._listen_to_stream(
+            subscriber=_watch_executions,
+            exchange=self.exchange,
+            channel=channel,
+            name=name,
+        )

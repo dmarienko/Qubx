@@ -12,6 +12,7 @@ from qubx.core.exceptions import QueueTimeout
 from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.core.utils import prec_ceil, prec_floor, time_delta_to_str
 from qubx.utils.misc import Stopwatch
+from qubx.utils.ntp import start_ntp_thread, time_now
 
 dt_64 = np.datetime64
 td_64 = np.timedelta64
@@ -366,12 +367,6 @@ class Order:
 
     def __str__(self) -> str:
         return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.instrument} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
-
-
-@dataclass
-class ExecutionReport:
-    order: Order
-    deals: list[Deal]
 
 
 @dataclass
@@ -863,3 +858,14 @@ class FundingRate:
     next_funding_time: dt_64
     mark_price: float | None = None
     index_price: float | None = None
+
+
+class LiveTimeProvider(ITimeProvider):
+    def __init__(self):
+        self._start_ntp_thread()
+
+    def time(self) -> dt_64:
+        return time_now()
+
+    def _start_ntp_thread(self):
+        start_ntp_thread()
