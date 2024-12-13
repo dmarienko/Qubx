@@ -119,6 +119,7 @@ class IteratedDataStreamsSlicer(Iterator[_D]):
 
 class DataFetcher:
     _fetcher_id: str
+    _reader: DataReader
     _requested_data_type: str
     _producing_data_type: str
     _params: dict[str, object]
@@ -132,6 +133,7 @@ class DataFetcher:
     def __init__(
         self,
         fetcher_id: str,
+        reader: DataReader,
         subtype: str,
         params: dict[str, Any],
         warmup_period: pd.Timedelta | None = None,
@@ -140,6 +142,7 @@ class DataFetcher:
     ) -> None:
         self._fetcher_id = fetcher_id
         self._params = params
+        self._reader = reader
 
         match subtype:
             case DataType.OHLC_TICKS:
@@ -206,7 +209,7 @@ class DataFetcher:
         return [self._fetcher_id + "." + i for i in self._specs]
 
     def load(
-        self, reader: DataReader, start: str | pd.Timestamp, end: str | pd.Timestamp, to_load: list[Instrument] | None
+        self, start: str | pd.Timestamp, end: str | pd.Timestamp, to_load: list[Instrument] | None
     ) -> dict[str, Iterator]:
         # - iterate over all instruments if no indices specified
         _requests = self._specs if not to_load else set(self._make_request_id(i) for i in to_load)
@@ -233,7 +236,7 @@ class DataFetcher:
                 if self._timeframe:
                     _args["timeframe"] = self._timeframe
 
-                _r_iters[self._fetcher_id + "." + _r] = reader.read(**_args)  # type: ignore
+                _r_iters[self._fetcher_id + "." + _r] = self._reader.read(**_args)  # type: ignore
             else:
                 raise IndexError(
                     f"Instrument {_r} is not subscribed for this data {self._requested_data_type} in {self._fetcher_id} !"
@@ -311,6 +314,7 @@ class IterableSimulationData(Iterator):
             self._subtyped_fetchers[_subt_key] = (
                 fetcher := DataFetcher(
                     _subt_key,
+                    self._reader,
                     _data_type,
                     _params,
                     warmup_period=self._warmups.get(_subt_key),
@@ -327,7 +331,6 @@ class IterableSimulationData(Iterator):
 
         if self.is_running and _instrs_to_preload:
             self._slicer_ctrl += fetcher.load(
-                self._reader,
                 pd.Timestamp(self._current_time, unit="ns"),  # type: ignore
                 self._stop,  # type: ignore
                 _instrs_to_preload,
@@ -408,7 +411,7 @@ class IterableSimulationData(Iterator):
 
         for f in self._subtyped_fetchers.values():
             logger.debug(f"Preloading initial data for {f._fetcher_id} {self._start} : {self._stop} ...")
-            self._slicer_ctrl += f.load(self._reader, _ct_timestap, self._stop, None)  # type: ignore
+            self._slicer_ctrl += f.load(_ct_timestap, self._stop, None)  # type: ignore
 
         self._slicing_iterator = iter(self._slicer_ctrl)
         return self
