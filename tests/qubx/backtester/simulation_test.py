@@ -5,7 +5,7 @@ import pandas as pd
 
 from qubx import logger, lookup
 from qubx.backtester.simulator import simulate
-from qubx.backtester.utils import SetupTypes, recognize_simulation_configuration
+from qubx.backtester.utils import SetupTypes, recognize_simulation_configuration, recognize_simulation_data
 from qubx.core.basics import DataType, Instrument, MarketEvent, Signal, TriggerEvent
 from qubx.core.interfaces import IStrategy, IStrategyContext
 from qubx.core.series import OHLCV, Quote
@@ -399,5 +399,7 @@ class TestSimulatorHelpers:
         # fmt: on
 
     def test_recognize_simulation_input_data(self):
-        # DataSniffer()
-        pass
+        reader = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
+        instrs = [lookup.find_symbol("BINANCE.UM", s) for s in ["BTCUSDT", "BCHUSDT", "LTCUSDT"]]  # type: ignore
+
+        cfg = recognize_simulation_data(reader, instrs, "BINANCE.UM")

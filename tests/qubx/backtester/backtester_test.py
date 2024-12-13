@@ -1,5 +1,3 @@
-from typing import Any, List, Optional
-
 import numpy as np
 import pandas as pd
 
@@ -10,7 +8,7 @@ from qubx.core.basics import ZERO_COSTS, DataType, Deal, Instrument, ITimeProvid
 from qubx.core.interfaces import IStrategy, IStrategyContext, TriggerEvent
 from qubx.core.series import Quote
 from qubx.core.utils import recognize_time
-from qubx.data.readers import AsOhlcvSeries, AsQuotes, AsTimestampedRecords, CsvStorageDataReader, RestoreTicksFromOHLC
+from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, RestoreTicksFromOHLC
 from qubx.pandaz.utils import shift_series
 from qubx.ta.indicators import ema, sma
 
@@ -125,7 +123,7 @@ class TestBacktesterStuff:
         assert instr is not None
         r = CsvStorageDataReader("tests/data/csv")
         stream = r.read("BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=False, spread=instr.tick_size))
-        assert isinstance(stream, List)
+        assert isinstance(stream, list)
 
         ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
         ome.update_bbo(t.g(stream[0]))
@@ -212,7 +210,7 @@ class TestBacktesterStuff:
             stop="2024-01-15",
             transform=RestoreTicksFromOHLC(trades=False, spread=instr.tick_size),
         )
-        assert isinstance(stream, List)
+        assert isinstance(stream, list)
 
         ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
         q0 = t.g(stream[0])

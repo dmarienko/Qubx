@@ -10,14 +10,18 @@ from qubx import QubxLogConfig, logger, lookup
 from qubx.backtester.ome import OmeReport, OrdersManagementEngine
 from qubx.backtester.simulated_data import EventBatcher, IterableSimulationData
 from qubx.backtester.utils import (
+    DataDecls_t,
+    ExchangeName_t,
     SetupTypes,
     SimulatedCtrlChannel,
     SimulatedLogFormatter,
     SimulatedScheduler,
     SimulationSetup,
-    VariableStrategyConfig,
+    StrategiesDecls_t,
+    SymbolOrInstrument_t,
     find_instruments_and_exchanges,
     recognize_simulation_configuration,
+    recognize_simulation_data,
 )
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
@@ -27,11 +31,13 @@ from qubx.core.basics import (
     Order,
     Position,
     Signal,
+    TimestampedDict,
     TradingSessionResult,
     TransactionCostsCalculator,
     dt_64,
 )
 from qubx.core.context import StrategyContext
+from qubx.core.exceptions import SimulationError
 from qubx.core.helpers import BasicScheduler, extract_parameters_from_object, full_qualified_class_name
 from qubx.core.interfaces import (
     IAccountProcessor,
@@ -42,15 +48,33 @@ from qubx.core.interfaces import (
     TriggerEvent,
 )
 from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
-from qubx.core.series import OHLCV, Bar, Quote, TimeSeries, Trade, time_as_nsec
+from qubx.core.series import Bar, Quote, Trade, time_as_nsec
 from qubx.data.helpers import InMemoryCachedReader, TimeGuardedWrapper
 from qubx.data.readers import (
-    AsTimestampedRecords,
+    AsDict,
     DataReader,
-    InMemoryDataFrameReader,
 )
 from qubx.utils.misc import ProgressParallel
 from qubx.utils.time import infer_series_frequency
+
+
+class SignalsProxy(IStrategy):
+    """
+    Proxy strategy for generated signals.
+    """
+
+    timeframe: str = "1m"
+
+    def on_init(self, ctx: IStrategyContext):
+        ctx.set_base_subscription(DataType.OHLC[self.timeframe])
+
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
+        if event.data and event.type == "event":
+            signal = event.data.get("order")
+            # - TODO: also need to think about how to pass stop/take here
+            if signal is not None and event.instrument:
+                return [event.instrument.signal(signal)]
+        return None
 
 
 class SimulatedTrading(ITradingServiceProvider):
@@ -294,17 +318,23 @@ class SimulatedTrading(ITradingServiceProvider):
 class SimulatedExchange(IBrokerServiceProvider):
     trading_service: SimulatedTrading
     _last_quotes: Dict[Instrument, Optional[Quote]]
+    _readers: dict[str, DataReader]
     _scheduler: BasicScheduler
     _current_time: dt_64
     _pregenerated_signals: dict[Instrument, pd.Series | pd.DataFrame]
     _to_process: dict[Instrument, list]
     _data_source: IterableSimulationData
+    _open_close_time_indent_ns: int
 
     def __init__(
-        self, exchange_id: str, trading_service: SimulatedTrading, reader: DataReader, open_close_time_indent_secs=1
+        self,
+        exchange_id: str,
+        trading_service: SimulatedTrading,
+        readers: dict[str, DataReader],
+        open_close_time_indent_secs=1,
     ):
         super().__init__(exchange_id, trading_service)
-        self._reader = reader
+        self._readers = readers
         exchange_id = exchange_id.lower()
 
         # - create exchange's instance
@@ -324,8 +354,9 @@ class SimulatedExchange(IBrokerServiceProvider):
 
         # - simulation data source
         self._data_source = IterableSimulationData(
-            self._reader, open_close_time_indent_secs=open_close_time_indent_secs
+            self._readers, open_close_time_indent_secs=open_close_time_indent_secs
         )
+        self._open_close_time_indent_ns = open_close_time_indent_secs * 1_000_000_000  # convert seconds to nanoseconds
 
         logger.info(f"{self.__class__.__name__}.{exchange_id} is initialized")
 
@@ -479,33 +510,45 @@ class SimulatedExchange(IBrokerServiceProvider):
         return True
 
     def get_historical_ohlcs(self, instrument: Instrument, timeframe: str, nbarsback: int) -> list[Bar]:
+        _reader = self._readers.get(DataType.OHLC)
+        if _reader is None:
+            logger.error(f"Reader for {DataType.OHLC} data not configured")
+            return []
+
         start = pd.Timestamp(self.time())
         end = start - nbarsback * (_timeframe := pd.Timedelta(timeframe))
         _spec = f"{instrument.exchange}:{instrument.symbol}"
         return self._convert_records_to_bars(
-            self._reader.read(data_id=_spec, start=start, stop=end, transform=AsTimestampedRecords()),  # type: ignore
+            _reader.read(data_id=_spec, start=start, stop=end, transform=AsDict()),  # type: ignore
             time_as_nsec(self.time()),
             _timeframe.asm8.item(),
         )
 
-    def _convert_records_to_bars(self, records: list[dict[str, Any]], cut_time_ns: int, timeframe_ns: int) -> list[Bar]:
+    def _convert_records_to_bars(
+        self, records: list[TimestampedDict], cut_time_ns: int, timeframe_ns: int
+    ) -> list[Bar]:
         """
         Convert records to bars and we need to cut last bar up to the cut_time_ns
         """
         bars = []
 
-        _data_tf = infer_series_frequency([r["timestamp_ns"] for r in records[:100]])
+        _data_tf = infer_series_frequency([r.time for r in records[:50]])
         timeframe_ns = _data_tf.item()
 
         if records is not None:
             for r in records:
-                _bts_0 = np.datetime64(r["timestamp_ns"], "ns").item()
-                o, h, l, c, v = r["open"], r["high"], r["low"], r["close"], r["volume"]
+                # _b_ts_0 = np.datetime64(r.time, "ns").item()
+                _b_ts_0 = r.time
+                _b_ts_1 = _b_ts_0 + timeframe_ns - self._open_close_time_indent_ns
 
-                if _bts_0 <= cut_time_ns and cut_time_ns < _bts_0 + timeframe_ns:
+                if _b_ts_0 <= cut_time_ns and cut_time_ns < _b_ts_1:
                     break
 
-                bars.append(Bar(_bts_0, o, h, l, c, v))
+                bars.append(
+                    Bar(
+                        _b_ts_0, r.data["open"], r.data["high"], r.data["low"], r.data["close"], r.data.get("volume", 0)
+                    )
+                )
 
         return bars
 
@@ -525,22 +568,22 @@ class SimulatedExchange(IBrokerServiceProvider):
 
 
 def simulate(
-    config: VariableStrategyConfig,
-    data: Dict[str, pd.DataFrame] | DataReader,
+    strategies: StrategiesDecls_t,
+    data: DataDecls_t,
     capital: float,
-    instruments: list[str] | dict[str, list[str]] | None,
+    instruments: list[SymbolOrInstrument_t] | dict[ExchangeName_t, list[SymbolOrInstrument_t]],
     commissions: str,
     start: str | pd.Timestamp,
     stop: str | pd.Timestamp | None = None,
-    exchange: str | None = None,  # in case if exchange is not specified in symbols list
+    exchange: ExchangeName_t | None = None,
     base_currency: str = "USDT",
-    signal_timeframe: str = "1Min",
     leverage: float = 1.0,  # TODO: we need to add support for leverage
     n_jobs: int = 1,
     silent: bool = False,
     enable_event_batching: bool = True,
-    accurate_stop_orders_execution: bool = False,
     aux_data: DataReader | None = None,
+    accurate_stop_orders_execution: bool = False,
+    signal_timeframe: str = "1Min",
     open_close_time_indent_secs=1,
     debug: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None = "WARNING",
 ) -> list[TradingSessionResult]:
@@ -600,47 +643,39 @@ def simulate(
     # - setup logging
     QubxLogConfig.set_log_level(debug.upper() if debug else "WARNING")
 
-    # - recognize provided data
-    if isinstance(data, dict):
-        data_reader = InMemoryDataFrameReader(data)  # type: ignore
-        if not instruments:
-            instruments = list(data_reader.get_names())
-    elif isinstance(data, DataReader):
-        data_reader = data
-        if not instruments:
-            raise ValueError("Symbol list must be provided for generic data reader !")
-    else:
-        raise ValueError(f"Unsupported data type: {type(data).__name__}")
-
     # - process instruments:
-    #    check if instruments are from the same exchange (mmulti-exchanges is not supported yet)
-    _instrs, _exchanges = find_instruments_and_exchanges(instruments, exchange)
+    _instruments, _exchanges = find_instruments_and_exchanges(instruments, exchange)
 
+    # - check we have exchange
     if not _exchanges:
         logger.error(
-            "No exchange information provided - you can specify it by exchange parameter or use <yellow>EXCHANGE:SYMBOL</yellow> format for symbols"
+            _msg
+            := "No exchange information provided - you can specify it by exchange parameter or use <yellow>EXCHANGE:SYMBOL</yellow> format for symbols"
         )
-        # - TODO: probably we need to raise exceptions here ?
-        return []
+        raise SimulationError(_msg)
 
-    # - check exchanges
-    if len(set(_exchanges)) > 1:
-        logger.error(f"Multiple exchanges found: {', '.join(_exchanges)} - this mode is not supported yet in Qubx !")
-        # - TODO: probably we need to raise exceptions here ?
-        return []
+    # - check if instruments are from the same exchange (mmulti-exchanges is not supported yet)
+    if len(_exchanges) > 1:
+        logger.error(
+            _msg := f"Multiple exchanges found: {', '.join(_exchanges)} - this mode is not supported yet in Qubx !"
+        )
+        raise SimulationError(_msg)
 
-    exchange = list(set(_exchanges))[0]
+    exchange = _exchanges[0]
+
+    # - recognize provided data
+    data_config = recognize_simulation_data(data, _instruments, exchange)
 
     # - recognize setup: it can be either a strategy or set of signals
     setups = recognize_simulation_configuration(
-        "", config, _instrs, exchange, capital, leverage, base_currency, commissions
+        "", strategies, _instruments, exchange, capital, leverage, base_currency, commissions
     )
     if not setups:
         logger.error(
-            "Can't recognize setup - it should be a strategy, a set of signals or list of signals/strategies + tracker !"
+            _msg
+            := "Can't recognize setup - it should be a strategy, a set of signals or list of signals/strategies + tracker !"
         )
-        # - TODO: probably we need to raise exceptions here ?
-        return []
+        raise SimulationError(_msg)
 
     # - check stop time : here we try to backtest till now (may be we need to get max available time from data reader ?)
     if stop is None:
@@ -651,7 +686,7 @@ def simulate(
         setups,
         start,
         stop,
-        data_reader,
+        data_config,
         n_jobs=n_jobs,
         silent=silent,
         enable_event_batching=enable_event_batching,
@@ -662,26 +697,11 @@ def simulate(
     )
 
 
-class SignalsProxy(IStrategy):
-    timeframe: str = "1m"
-
-    def on_init(self, ctx: IStrategyContext):
-        ctx.set_base_subscription(DataType.OHLC[self.timeframe])
-
-    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> Optional[List[Signal]]:
-        if event.data and event.type == "event":
-            signal = event.data.get("order")
-            # - TODO: also need to think about how to pass stop/take here
-            if signal is not None and event.instrument:
-                return [event.instrument.signal(signal)]
-        return None
-
-
 def _run_setups(
     setups: List[SimulationSetup],
     start: str | pd.Timestamp,
     stop: str | pd.Timestamp,
-    data_reader: DataReader,
+    typed_data_config: dict[str, DataReader],
     n_jobs: int = -1,
     silent: bool = False,
     enable_event_batching: bool = True,
@@ -701,10 +721,10 @@ def _run_setups(
     reports = ProgressParallel(n_jobs=n_jobs, total=len(setups), silent=_main_loop_silent, backend="multiprocessing")(
         delayed(_run_setup)(
             id,
-            s,
+            setup,
             start,
             stop,
-            data_reader,
+            typed_data_config,
             silent=silent,
             enable_event_batching=enable_event_batching,
             accurate_stop_orders_execution=accurate_stop_orders_execution,
@@ -712,7 +732,7 @@ def _run_setups(
             open_close_time_indent_secs=open_close_time_indent_secs,
             **kwargs,
         )
-        for id, s in enumerate(setups)
+        for id, setup in enumerate(setups)
     )
     return reports  # type: ignore
 
@@ -722,7 +742,7 @@ def _run_setup(
     setup: SimulationSetup,
     start: str | pd.Timestamp,
     stop: str | pd.Timestamp,
-    data_reader: DataReader,
+    typed_data_config: dict[str, DataReader],
     silent: bool = False,
     enable_event_batching: bool = True,
     accurate_stop_orders_execution: bool = False,
@@ -748,7 +768,7 @@ def _run_setup(
         accurate_stop_orders_execution=accurate_stop_orders_execution,
     )
     broker = SimulatedExchange(
-        setup.exchange, trading_service, data_reader, open_close_time_indent_secs=open_close_time_indent_secs
+        setup.exchange, trading_service, typed_data_config, open_close_time_indent_secs=open_close_time_indent_secs
     )
 
     # - it will store simulation results into memory
@@ -783,7 +803,7 @@ def _run_setup(
             enable_event_batching = False
 
         case _:
-            raise ValueError(f"Unsupported setup type: {setup.setup_type} !")
+            raise SimulationError(f"Unsupported setup type: {setup.setup_type} !")
 
     # - check aux data provider
     _aux_data = None
@@ -794,7 +814,6 @@ def _run_setup(
 
     ctx = StrategyContext(
         strategy=strat,  # type: ignore
-        config=None,  # TODO: need to think how we could pass altered parameters here (from variating etc)
         broker=broker,
         account=account,
         instruments=setup.instruments,

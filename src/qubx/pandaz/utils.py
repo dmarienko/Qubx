@@ -1,10 +1,11 @@
-from typing import Any, Callable, Dict, Iterable, Literal, Optional, Set, Union, List
 from datetime import timedelta
-import pandas as pd
-import numpy as np
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Set, Union
 
+import numpy as np
+import pandas as pd
 from numpy.lib.stride_tricks import as_strided as stride
 
+from qubx.core.series import OHLCV
 from qubx.utils.misc import Struct
 
 
@@ -571,19 +572,24 @@ class OhlcDict(dict):
 
     _fields: Set[str]
 
-    def __init__(self, orig: dict):
+    def __init__(self, orig: dict[str, pd.DataFrame | pd.Series | OHLCV]):
         _o_copy = {}
         _lst = []
         if isinstance(orig, dict):
             for k, o in orig.items():
-                if not isinstance(o, (pd.DataFrame | pd.Series)):
+                if not isinstance(o, (pd.DataFrame | pd.Series | OHLCV)):
                     raise ValueError(
-                        f"All values in the dictionary must be pandas Series or DataFrames, but {k} is {type(o)}"
+                        f"All values in the dictionary must be pandas Series, DataFrames or OHLCV, but {k} is {type(o)}"
                     )
+
+                if isinstance(o, OHLCV):
+                    o = o.pd()
+
                 # - skip empty data
                 if not o.empty:
                     _o_copy[k] = o
                     _lst.extend(o.columns.values)
+
         self._fields = set(_lst)
         super().__init__(_o_copy)
 

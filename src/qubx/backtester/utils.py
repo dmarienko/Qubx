@@ -7,6 +7,7 @@ import stackprinter
 
 from qubx import logger, lookup
 from qubx.core.basics import CtrlChannel, DataType, Instrument, ITimeProvider, TimestampedDict
+from qubx.core.exceptions import SimulationError
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy, PositionsTracker
 from qubx.core.series import OHLCV, Bar, Quote, Trade
@@ -14,15 +15,21 @@ from qubx.core.utils import time_delta_to_str
 from qubx.data.readers import AsDict, DataReader, InMemoryDataFrameReader
 from qubx.utils.time import infer_series_frequency
 
-StrategyOrSignals: TypeAlias = IStrategy | pd.DataFrame | pd.Series
-DictOfStrats: TypeAlias = dict[str, StrategyOrSignals]
-VariableStrategyConfig: TypeAlias = (
-    StrategyOrSignals
-    | DictOfStrats
-    | dict[str, DictOfStrats]
-    | dict[str, StrategyOrSignals | list[StrategyOrSignals | PositionsTracker]]
-    | list[StrategyOrSignals | PositionsTracker]
-    | tuple[StrategyOrSignals | PositionsTracker]
+SymbolOrInstrument_t: TypeAlias = str | Instrument
+ExchangeName_t: TypeAlias = str
+SubsType_t: TypeAlias = str | DataType
+RawData_t: TypeAlias = pd.DataFrame | OHLCV
+DataDecls_t: TypeAlias = DataReader | dict[SubsType_t, DataReader | dict[SymbolOrInstrument_t, RawData_t]]
+
+StrategyOrSignals_t: TypeAlias = IStrategy | pd.DataFrame | pd.Series
+DictOfStrats_t: TypeAlias = dict[str, StrategyOrSignals_t]
+StrategiesDecls_t: TypeAlias = (
+    StrategyOrSignals_t
+    | DictOfStrats_t
+    | dict[str, DictOfStrats_t]
+    | dict[str, StrategyOrSignals_t | list[StrategyOrSignals_t | PositionsTracker]]
+    | list[StrategyOrSignals_t | PositionsTracker]
+    | tuple[StrategyOrSignals_t | PositionsTracker]
 )
 
 
@@ -72,7 +79,7 @@ def _is_signal_or_strategy(obj):
 class SimulationSetup:
     setup_type: SetupTypes
     name: str
-    generator: StrategyOrSignals
+    generator: StrategyOrSignals_t
     tracker: PositionsTracker | None
     instruments: list[Instrument]
     exchange: str
@@ -83,13 +90,6 @@ class SimulationSetup:
 
     def __str__(self) -> str:
         return f"{self.name} {self.setup_type} capital {self.capital} {self.base_currency} for [{','.join(map(lambda x: x.symbol, self.instruments))}] @ {self.exchange}[{self.commissions}]"
-
-
-@dataclass
-class SimulationDataInfo:
-    # TODO: ...
-    timeframe: str | None
-    pass
 
 
 class SimulatedLogFormatter:
@@ -145,7 +145,7 @@ class SimulatedCtrlChannel(CtrlChannel):
         return self._callback.process_data(*data)
 
     def receive(self, timeout: int | None = None) -> Any:
-        raise ValueError("This method should not be called in a simulated environment.")
+        raise SimulationError("Method SimulatedCtrlChannel::receive() should not be called in a simulated environment.")
 
     def stop(self):
         self.control.clear()
@@ -155,8 +155,9 @@ class SimulatedCtrlChannel(CtrlChannel):
 
 
 def find_instruments_and_exchanges(
-    instruments: list[str] | dict[str, list[str]], exchange: str | None
-) -> tuple[list[Instrument], list[str]]:
+    instruments: list[SymbolOrInstrument_t] | dict[ExchangeName_t, list[SymbolOrInstrument_t]],
+    exchange: ExchangeName_t | None,
+) -> tuple[list[Instrument], list[ExchangeName_t]]:
     _instrs: list[Instrument] = []
     _exchanges = [] if exchange is None else [exchange.lower()]
     for i in instruments:
@@ -184,13 +185,14 @@ def find_instruments_and_exchanges(
                 _instrs.append(i)
 
             case _:
-                raise ValueError(f"Unsupported instrument type: {i}")
-    return _instrs, _exchanges
+                raise SimulationError(f"Unsupported type for {i} only str or Instrument instances are allowed!")
+
+    return _instrs, list(set(_exchanges))
 
 
 def recognize_simulation_configuration(
     name: str,
-    configs: VariableStrategyConfig,
+    configs: StrategiesDecls_t,
     instruments: list[Instrument],
     exchange: str,
     capital: float,
@@ -322,7 +324,7 @@ def recognize_simulation_configuration(
     return r
 
 
-class DataSniffer:
+class ObjectsSniffer:
     _probe_size: int
 
     def __init__(self, _probe_size: int = 50) -> None:
@@ -347,12 +349,16 @@ class DataSniffer:
                 return DataType.QUOTE
 
             case TimestampedDict():
-                return DataType.RECORD
+                _t = self._sniff_dicts(v[0].data)
+                if _t in [DataType.OHLC, DataType.OHLC_TICKS]:
+                    _tf = time_delta_to_str(infer_series_frequency([x.time for x in v[: self._probe_size]]).item())
+                    return DataType(_t)[_tf]
+                return _t
 
             case Trade():
                 return DataType.TRADE
 
-        return DataType.NONE
+        return DataType.RECORD
 
     def _sniff_dicts(self, v: dict[str, Any] | list[dict[str, Any]]) -> str:
         v, vs = (v[0], v) if isinstance(v, list) else (v, None)
@@ -369,7 +375,7 @@ class DataSniffer:
         if self._has_keys(v, ["price", "size"]):
             return DataType.TRADE
 
-        return DataType.NONE
+        return DataType.RECORD
 
     def _sniff_pandas(self, v: pd.DataFrame) -> str:
         if self._has_columns(v, ["open", "high", "low", "close"]):
@@ -382,7 +388,7 @@ class DataSniffer:
         if self._has_columns(v, ["price", "size"]):
             return DataType.TRADE
 
-        return DataType.NONE
+        return DataType.RECORD
 
     def _pre_read(self, symbol: str, reader: DataReader, time: str) -> list[Any]:
         for dt in ["2h", "12h", "2d", "28d", "60d", "720d"]:
@@ -401,7 +407,7 @@ class DataSniffer:
                 pass
         return []
 
-    def _sniff_reader(self, symbol: str, reader: DataReader, time: str | None) -> str:
+    def _sniff_reader(self, symbol: str, reader: DataReader, time: str | None = None) -> str:
         if time is None:
             for _type in [DataType.OHLC, DataType.QUOTE, DataType.TRADE]:
                 _t1, _t2 = reader.get_time_ranges(symbol, str(_type))
@@ -451,33 +457,51 @@ class DataSniffer:
 
         return _types
 
-    def extract_types_from_reader(
-        self,
-        reader: DataReader,
-        instruments: list[str],
-        time: str | None = None,
-    ) -> dict[str, str]:
-        return self.extract_types(dict(zip(instruments, [reader] * len(instruments))), time)
-
 
 def recognize_simulation_data(
-    data: dict[str, pd.DataFrame] | DataReader,
+    decls: DataDecls_t,
     instruments: list[Instrument],
-    # aux_data: DataReader | None = None,
-) -> SimulationDataInfo:
-    if isinstance(data, dict):
-        data_reader = InMemoryDataFrameReader(data)  # type: ignore
+    exchange: str,
+) -> dict[str, DataReader]:
+    sniffer = ObjectsSniffer()
+    _d_cfg = {}
 
-        if not instruments:
-            instruments = list(data_reader.get_names())
+    match decls:
+        case DataReader():
+            _supported_data_type = sniffer._sniff_reader(f"{exchange}:{instruments[0].symbol}", decls)
+            _available_symbols = decls.get_symbols(exchange, DataType.from_str(_supported_data_type)[0])
+            print(f">>> {_supported_data_type} -> {_supported_data_type} | {_available_symbols}  ::: {decls}")
 
-    elif isinstance(data, DataReader):
-        data_reader = data
-        if not instruments:
-            raise ValueError("Symbol list must be provided for generic data reader !")
+        case pd.DataFrame():
+            _supported_data_type = sniffer._sniff_pandas(decls)
+            _reader = InMemoryDataFrameReader(decls, exchange)
+            _available_symbols = _reader.get_symbols(exchange, DataType.from_str(_supported_data_type)[0])
+            print(f">>> {_supported_data_type} -> {_supported_data_type} | {_available_symbols}  ::: {_reader}")
 
-    else:
-        raise ValueError(f"Unsupported data type: {type(data).__name__}")
-    pass
+        case dict():
+            for _desired_type, _provider in decls.items():
+                match _provider:
+                    case DataReader():
+                        _supported_data_type = sniffer._sniff_reader(f"{exchange}:{instruments[0].symbol}", _provider)
+                        _available_symbols = _provider.get_symbols(exchange, DataType.from_str(_supported_data_type)[0])
+                        print(f">>> {_supported_data_type} -> {_desired_type} | {_available_symbols}  ::: {_provider}")
 
-    return None
+                    case dict():  # must be {instr: Df | OHLCV}
+                        try:
+                            _reader = InMemoryDataFrameReader(_provider, exchange)
+                            _available_symbols = _reader.get_symbols(exchange, None)
+                            _supported_data_type = sniffer._sniff_reader(_available_symbols[0], _reader)
+                            print(
+                                f">>> {_supported_data_type} -> {_desired_type} | {_available_symbols}  ::: {_reader}"
+                            )
+                        except Exception as e:
+                            raise SimulationError(
+                                f"Error in declared data provider for: {_desired_type} -> {type(_provider)} ({str(e)})"
+                            )
+
+                    case _:
+                        raise SimulationError(f"Unsupported data provider type: {type(_provider)}")
+        case _:
+            raise SimulationError(f"Can't recognize declared data provider: {type(decls)}")
+
+    return {}
