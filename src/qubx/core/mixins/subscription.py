@@ -23,7 +23,8 @@ class SubscriptionManager(ISubscriptionManager):
     def __init__(self, broker: IBrokerServiceProvider, auto_subscribe: bool = True) -> None:
         self._broker = broker
         self._is_simulation = broker.is_simulated_trading
-        self._base_sub = DataType.OHLC["1Min"] if self._is_simulation else DataType.ORDERBOOK
+        # self._base_sub = DataType.OHLC["1Min"] if self._is_simulation else DataType.ORDERBOOK
+        self._base_sub = DataType.NONE if self._is_simulation else DataType.ORDERBOOK
         self._sub_to_warmup = {}
         self._pending_warmups = {}
         self._pending_global_subscriptions = set()

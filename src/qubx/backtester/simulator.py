@@ -664,7 +664,7 @@ def simulate(
     exchange = _exchanges[0]
 
     # - recognize provided data
-    data_config = recognize_simulation_data_config(data, _instruments, exchange)
+    _schedule, _base_subscription, _typed_readers = recognize_simulation_data_config(data, _instruments, exchange)
 
     # - recognize setup: it can be either a strategy or set of signals
     setups = recognize_simulation_configuration(
@@ -686,7 +686,9 @@ def simulate(
         setups,
         start,
         stop,
-        data_config,
+        _typed_readers,
+        _schedule,
+        _base_subscription,
         n_jobs=n_jobs,
         silent=silent,
         enable_event_batching=enable_event_batching,
@@ -702,6 +704,8 @@ def _run_setups(
     start: str | pd.Timestamp,
     stop: str | pd.Timestamp,
     typed_data_config: dict[str, DataReader],
+    default_schedule: str,
+    default_base_subscription: str,
     n_jobs: int = -1,
     silent: bool = False,
     enable_event_batching: bool = True,
@@ -725,6 +729,8 @@ def _run_setups(
             start,
             stop,
             typed_data_config,
+            default_schedule,
+            default_base_subscription,
             silent=silent,
             enable_event_batching=enable_event_batching,
             accurate_stop_orders_execution=accurate_stop_orders_execution,
@@ -743,6 +749,8 @@ def _run_setup(
     start: str | pd.Timestamp,
     stop: str | pd.Timestamp,
     typed_data_config: dict[str, DataReader],
+    default_schedule: str,
+    default_base_subscription: str,
     silent: bool = False,
     enable_event_batching: bool = True,
     accurate_stop_orders_execution: bool = False,
@@ -820,6 +828,16 @@ def _run_setup(
         logging=StrategyLogging(logs_writer),
         aux_data_provider=_aux_data,
     )
+
+    if ctx.get_base_subscription() == DataType.NONE:
+        logger.debug(f" | Setting up default base subscription: {default_base_subscription}")
+        ctx.set_base_subscription(default_base_subscription)
+
+    # - set default on_event schedule if detected
+    if default_schedule:
+        logger.debug(f" | Setting default schedule: {default_schedule}")
+        ctx.set_event_schedule(default_schedule)
+
     ctx.start()
 
     try:

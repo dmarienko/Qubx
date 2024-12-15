@@ -486,7 +486,7 @@ def _detect_defaults_from_subscriptions(
 
         match _t, _src:
             case (DataType.OHLC, DataType.OHLC):
-                _t_readers[_src] = _r
+                _t_readers[DataType.OHLC] = _r
                 _out_tf = _tf(_t)
                 _in_base_tf = _tf(_src)
 
@@ -506,7 +506,7 @@ def _detect_defaults_from_subscriptions(
                 _base_subscr = _src
 
             case (DataType.OHLC, DataType.QUOTE) | (DataType.OHLC, DataType.TRADE):
-                _t_readers[_src] = _r
+                _t_readers[DataType.OHLC] = _r
                 _out_tf = _tf(_t)
                 _base_subscr = _src
                 if _out_tf is None:
@@ -571,6 +571,7 @@ def recognize_simulation_data_config(
     sniffer = _StructureSniffer()
     _requested_types = []
     _requests = {}
+    exchange = exchange.upper()
 
     match decls:
         case DataReader():
