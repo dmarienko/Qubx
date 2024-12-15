@@ -288,7 +288,7 @@ class BasicScheduler:
     _chan: CtrlChannel
     _scdlr: sched.scheduler
     _ns_time_fun: Callable[[], float]
-    _crons: Dict[str, croniter]
+    _crons: dict[str, croniter]
     _is_started: bool
 
     def __init__(self, channel: CtrlChannel, time_provider_ns: Callable[[], float]):
@@ -308,6 +308,11 @@ class BasicScheduler:
 
         if self._is_started:
             self._arm_schedule(event_name, self.time_sec())
+
+    def get_schedule_for_event(self, event_name: str) -> str | None:
+        if event_name in self._crons:
+            return " ".join(self._crons[event_name].expressions)
+        return None
 
     def get_event_last_time(self, event_name: str) -> pd.Timestamp | None:
         if event_name in self._crons:

@@ -64,10 +64,11 @@ class TestScheduler:
     def test_scheduler(self):
         time_now_fixed = lambda: pd.Timestamp("2024-04-20 12:00:00", tz="UTC").as_unit("ns").asm8.item()  # noqa: E731
 
-        bs = BasicScheduler(c := CtrlChannel("test"), time_now_fixed)
+        bs = BasicScheduler(CtrlChannel("test"), time_now_fixed)
 
         # schedule every 10 sec
         bs.schedule_event("* * * * * */10", "TEST")
+        assert "* * * * * */10" == bs.get_schedule_for_event("TEST")
 
         assert bs.get_event_last_time("TEST") == pd.Timestamp("2024-04-20 11:59:50")
         assert bs.get_event_next_time("TEST") == pd.Timestamp("2024-04-20 12:00:10")

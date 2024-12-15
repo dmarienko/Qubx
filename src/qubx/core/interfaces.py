@@ -607,6 +607,12 @@ class IProcessingManager:
         """
         ...
 
+    def get_event_schedule(self, event_id: str) -> str | None:
+        """
+        Get defined schedule for event id.
+        """
+        ...
+
     def is_fitted(self) -> bool:
         """
         Check if the strategy is fitted.

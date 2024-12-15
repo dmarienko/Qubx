@@ -102,10 +102,17 @@ class ProcessingManager(IProcessingManager):
 
     def set_event_schedule(self, schedule: str) -> None:
         rule = process_schedule_spec(schedule)
+        if not rule or "type" not in rule:
+            raise ValueError(f"Can't recognoize schedule format: '{schedule}'")
+
         if rule["type"] != "cron":
             raise ValueError("Only cron type is supported for event schedule")
+
         self._scheduler.schedule_event(rule["schedule"], "time")
         self._trigger_on_time_event = True
+
+    def get_event_schedule(self, event_id: str) -> str | None:
+        return self._scheduler.get_schedule_for_event(event_id)
 
     def process_data(self, instrument: Instrument, d_type: str, data: Any) -> bool:
         self._logging.notify(self._time_provider.time())

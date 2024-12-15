@@ -829,16 +829,31 @@ def _run_setup(
         aux_data_provider=_aux_data,
     )
 
+    # - setup base subscription from spec
     if ctx.get_base_subscription() == DataType.NONE:
         logger.debug(f" | Setting up default base subscription: {default_base_subscription}")
         ctx.set_base_subscription(default_base_subscription)
 
-    # - set default on_event schedule if detected
-    if default_schedule:
+    # - set default on_event schedule if detected and strategy didn't set it's own schedule
+    if not ctx.get_event_schedule("time") and default_schedule:
         logger.debug(f" | Setting default schedule: {default_schedule}")
         ctx.set_event_schedule(default_schedule)
 
+    # - start context at this point
     ctx.start()
+
+    def _is_known_type(t: str):
+        try:
+            DataType(t)
+            return True
+        except:  # noqa: E722
+            return False
+
+    # - if any custom data providers are in the data spec
+    for t, r in typed_data_config.items():
+        if not _is_known_type(t) or t in [DataType.TRADE, DataType.OHLC_TRADES, DataType.OHLC_QUOTES, DataType.QUOTE]:
+            logger.debug(f" | Subscribing to: {t}")
+            ctx.subscribe(t, ctx.instruments)
 
     try:
         broker.run(start, _stop, silent=silent, enable_event_batching=enable_event_batching)  # type: ignore

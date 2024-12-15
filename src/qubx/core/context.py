@@ -350,6 +350,9 @@ class StrategyContext(IStrategyContext):
     def set_event_schedule(self, schedule: str):
         return self._processing_manager.set_event_schedule(schedule)
 
+    def get_event_schedule(self, event_id: str) -> str | None:
+        return self._processing_manager.get_event_schedule(event_id)
+
     def is_fitted(self) -> bool:
         return self._processing_manager.is_fitted()
 

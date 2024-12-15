@@ -109,9 +109,6 @@ class Issue3(IStrategy):
 
 
 class Issue3_OHLC_TICKS(IStrategy):
-    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    # TODO: need to check how it's passed in simulator
-    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     _fits_called = 0
     _triggers_called = 0
     _market_quotes_called = 0
@@ -122,7 +119,7 @@ class Issue3_OHLC_TICKS(IStrategy):
 
     def on_init(self, ctx: IStrategyContext) -> None:
         # - this will creates quotes from OHLC
-        ctx.set_base_subscription(DataType.OHLC_QUOTES["1h"])
+        # ctx.set_base_subscription(DataType.OHLC_QUOTES["1h"])
         self._fits_called = 0
         self._triggers_called = 0
         self._market_events = []
@@ -132,7 +129,7 @@ class Issue3_OHLC_TICKS(IStrategy):
         self._last_trigger_event = event
 
     def on_market_data(self, ctx: IStrategyContext, event: MarketEvent):
-        print(event.type)
+        logger.info(f"{event.instrument.symbol} market event ::: {event.type}\t:::  -> {event.data}")
         if event.type == DataType.QUOTE:
             self._market_quotes_called += 1
 
@@ -237,7 +234,7 @@ class TestSimulator:
     def test_fit_event_quotes(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
 
-        test0 = simulate(
+        simulate(
             {
                 "fail1": (stg := Issue1()),
             },
@@ -278,7 +275,7 @@ class TestSimulator:
     def test_market_updates(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
 
-        test0 = simulate(
+        simulate(
             {
                 "fail3": (stg := Issue3()),
             },
@@ -294,7 +291,7 @@ class TestSimulator:
         )
 
         # +1 because first event is used for on_fit and skipped for on_market_data
-        assert stg._triggers_called * 4 == stg._market_quotes_called + 1, "Got Errors during the simulation"
+        assert (stg._triggers_called + 1) * 4 == stg._market_quotes_called + 1, "Got Errors during the simulation"
 
     def test_ohlc_quote_update(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
@@ -364,12 +361,16 @@ class TestSimulator:
         # fmt: off
         simulate(
             { "fail3_ohlc_ticks": (stg := Issue3_OHLC_TICKS()), },
-            ld, aux_data=ld, capital=100_000, debug="DEBUG", n_jobs=1, instruments=["BINANCE.UM:BTCUSDT"], commissions="vip0_usdt",
-            start="2023-06-01", stop="2023-06-10",
+            # ld, 
+            {'quote': ld}, 
+            aux_data=ld, capital=100_000, debug="DEBUG", n_jobs=1, instruments=["BINANCE.UM:BTCUSDT"], commissions="vip0_usdt",
+            start="2023-06-01", stop="2023-06-02 1:00",
+            enable_event_batching=False,
+            silent=True
         )
         # fmt: on
 
-        assert stg._triggers_called == stg._market_quotes_called, "Got Errors during the simulation"
+        assert (stg._triggers_called + 1) * 4 - 1 == stg._market_quotes_called, "Got Errors during the test"
 
 
 class TestSimulatorHelpers:

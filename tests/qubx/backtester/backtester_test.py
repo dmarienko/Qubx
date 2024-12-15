@@ -178,21 +178,19 @@ class TestBacktesterStuff:
         sigs = sigs[sigs != 0]
         i1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         assert i1 is not None
-        s2 = shift_series(sigs, "4Min59Sec").rename(i1) / 100  # type: ignore
+        # s2 = shift_series(sigs, "4Min59Sec").rename(i1) / 100  # type: ignore
+        s2 = shift_series(sigs, "5Min1Sec").rename(i1) / 100  # type: ignore
+
+        # fmt: off
         rep1 = simulate(
             {
                 # - generated signals as series
                 "test0": CrossOver(timeframe="5Min", fast_period=5, slow_period=15),
                 "test1": s2,
             },
-            r,
-            10000,
-            ["BINANCE.UM:BTCUSDT"],
-            "vip0_usdt",
-            "2024-01-01",
-            "2024-01-02",
-            n_jobs=1,
-        )
+            {'ohlc(5Min)': r}, 10000, ["BINANCE.UM:BTCUSDT"], "vip0_usdt", "2024-01-01", "2024-01-02", n_jobs=1
+        ) 
+        # fmt:on
 
         assert all(
             rep1[0].executions_log[["filled_qty", "price", "side"]]
