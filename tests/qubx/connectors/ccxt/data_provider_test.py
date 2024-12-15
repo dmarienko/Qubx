@@ -1,5 +1,6 @@
 import asyncio
 from pprint import pprint
+from threading import Thread
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -13,7 +14,9 @@ from qubx.core.basics import CtrlChannel, Instrument, ITimeProvider, Subtype, dt
 from qubx.core.exceptions import QueueTimeout
 from qubx.core.mixins.subscription import SubscriptionManager
 
-OHLCV_RESPONSE = {"ETH/USDT": {"5m": [[1731239700000, 3222.69, 3227.58, 3218.18, 3220.01, 2866.3094, 10000.0, 5000.0]]}}
+OHLCV_RESPONSE = {
+    "ETH/USDT:USDT": {"5m": [[1731239700000, 3222.69, 3227.58, 3218.18, 3220.01, 2866.3094, 10000.0, 5000.0]]}
+}
 
 
 async def async_sleep(*args, seconds: int = 1, **kwargs):
@@ -31,9 +34,11 @@ class DummyTimeProvider(ITimeProvider):
 
 
 class MockExchange(Exchange):
-    def __init__(self, loop: asyncio.AbstractEventLoop):
+    def __init__(self):
         self.name = "mock_exchange"
-        self.asyncio_loop = loop
+        self.asyncio_loop = asyncio.new_event_loop()
+        self.thread = Thread(target=self.asyncio_loop.run_forever, daemon=True)
+        self.thread.start()
         self.watch_ohlcv_for_symbols = AsyncMock()
         self.watch_ohlcv_for_symbols.side_effect = return_ohlcv
         self.watch_trades_for_symbols = AsyncMock()
@@ -48,9 +53,7 @@ class TestCcxtExchangeConnector:
     @pytest.fixture(autouse=True)
     def setup(self):
         # Create event loop
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-        self.mock_exchange = MockExchange(self.loop)
+        self.mock_exchange = MockExchange()
         self.fixed_time = np.datetime64("2023-01-01T00:00:00.000000000")
 
         self.connector = CcxtDataProvider(
@@ -62,7 +65,7 @@ class TestCcxtExchangeConnector:
         yield
 
         # teardown
-        self.loop.stop()
+        self.mock_exchange.asyncio_loop.stop()
 
     def test_subscribe(self):
         # Create test instrument
@@ -73,8 +76,8 @@ class TestCcxtExchangeConnector:
         # self.connector.subscribe([i1, i2], "trade", warmup_period="1m")
         # self.connector.subscribe([i1], "orderbook", warmup_period="1m")
         # self.connector.subscribe([i2], "orderbook", warmup_period="1m")
-        self.sub_manager.subscribe(Subtype.OHLC["15Min"], [i2])
-        self.sub_manager.subscribe(Subtype.OHLC["15Min"], [i1])
+        self.sub_manager.subscribe(Subtype.OHLC["5min"], [i2])
+        self.sub_manager.subscribe(Subtype.OHLC["5min"], [i1])
 
         # Commit subscriptions
         self.sub_manager.commit()
@@ -82,7 +85,7 @@ class TestCcxtExchangeConnector:
         # Verify subscriptions were added
         # assert i1 in self.connector._subscriptions["trade"]
         # assert i1 in self.connector._subscriptions["orderbook"]
-        assert i1 in self.connector._subscriptions[Subtype.OHLC["15Min"]]
+        assert i1 in self.connector._subscriptions[Subtype.OHLC["5min"]]
 
         channel = self.connector.channel
         events = []
