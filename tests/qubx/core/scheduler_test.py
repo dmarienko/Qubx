@@ -1,10 +1,11 @@
 import pandas as pd
+
 from qubx.core.basics import CtrlChannel
 from qubx.core.helpers import BasicScheduler, _parse_schedule_spec
+from qubx.utils.time import timedelta_to_crontab
 
 
 class TestScheduler:
-
     def test_parsing_formats(self):
         specs = [
             "",
@@ -61,7 +62,7 @@ class TestScheduler:
             assert _parse_schedule_spec(s) == r
 
     def test_scheduler(self):
-        time_now_fixed = lambda: pd.Timestamp("2024-04-20 12:00:00", tz="UTC").as_unit("ns").asm8.item()
+        time_now_fixed = lambda: pd.Timestamp("2024-04-20 12:00:00", tz="UTC").as_unit("ns").asm8.item()  # noqa: E731
 
         bs = BasicScheduler(c := CtrlChannel("test"), time_now_fixed)
 
@@ -71,8 +72,26 @@ class TestScheduler:
         assert bs.get_event_last_time("TEST") == pd.Timestamp("2024-04-20 11:59:50")
         assert bs.get_event_next_time("TEST") == pd.Timestamp("2024-04-20 12:00:10")
 
+    def test_scheduler_from_timedelta(self):
+        time_now_fixed = lambda: pd.Timestamp("2024-04-20 12:01:00", tz="UTC").as_unit("ns").asm8.item()  # noqa: E731
+
+        bs = BasicScheduler(CtrlChannel("test"), time_now_fixed)
+
+        sched = timedelta_to_crontab(pd.Timedelta("1d23h55Min"))
+        bs.schedule_event(sched, "TEST1")
+
+        sched = timedelta_to_crontab(pd.Timedelta("1h"))
+        bs.schedule_event(sched, "TEST2")
+
+        sched = timedelta_to_crontab(pd.Timedelta("15Min1Sec"))
+        bs.schedule_event(sched, "TEST3")
+
+        assert bs.get_event_next_time("TEST1") == pd.Timestamp("2024-04-20 23:55:00")
+        assert bs.get_event_next_time("TEST2") == pd.Timestamp("2024-04-20 13:00:00")
+        assert bs.get_event_next_time("TEST3") == pd.Timestamp("2024-04-20 12:15:01")
+
     def test_scheduler_run(self):
-        time_now = lambda: pd.Timestamp("now", tz="UTC").as_unit("ns").asm8.item()
+        time_now = lambda: pd.Timestamp("now", tz="UTC").as_unit("ns").asm8.item()  # noqa: E731
         bs = BasicScheduler(c := CtrlChannel("test"), time_now)
 
         # - schedule event every 1 and 2 sec

@@ -178,3 +178,46 @@ def handle_start_stop(s: Optional[str], e: Optional[str], convert=str) -> Tuple[
         return converts(sorted([t0, t1]))
 
     return converts([t0, t1])
+
+
+def timedelta_to_crontab(td: pd.Timedelta) -> str:
+    """
+    Convert a pandas Timedelta to a crontab specification string.
+
+    Args:
+        td (pd.Timedelta): Timedelta to convert to crontab spec
+
+    Returns:
+        str: Crontab specification string
+
+    Examples:
+        >>> timedelta_to_crontab(pd.Timedelta('4h'))
+        '0 */4 * * *'
+        >>> timedelta_to_crontab(pd.Timedelta('2d'))
+        '59 23 */2 * *'
+        >>> timedelta_to_crontab(pd.Timedelta('1d23h50Min10Sec'))
+        '50 23 */2 * * 10'
+    """
+    days = td.days
+    hours = td.components.hours
+    minutes = td.components.minutes
+    seconds = td.components.seconds
+
+    if days > 0:
+        if hours == 0 and minutes == 0 and seconds == 0:
+            hours, minutes, seconds = 23, 59, 59
+        _sched = f"{minutes} {hours} */{days} * *"
+        return _sched + f" {seconds}" if seconds > 0 else _sched
+
+    if hours > 0:
+        _sched = f"{minutes} */{hours} * * *"
+        return _sched + f" {seconds}" if seconds > 0 else _sched
+
+    if minutes > 0:
+        _sched = f"*/{minutes} * * * *"
+        return _sched + f" {seconds}" if seconds > 0 else _sched
+
+    if seconds > 0:
+        return f"* * * * * */{seconds}"
+
+    raise ValueError("Timedelta must specify a non-zero period of days, hours, minutes or seconds")
