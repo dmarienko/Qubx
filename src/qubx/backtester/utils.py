@@ -13,7 +13,7 @@ from qubx.core.interfaces import IStrategy, PositionsTracker
 from qubx.core.series import OHLCV, Bar, Quote, Trade
 from qubx.core.utils import recognize_timeframe, time_delta_to_str
 from qubx.data.readers import AsDict, DataReader, InMemoryDataFrameReader
-from qubx.utils.time import infer_series_frequency
+from qubx.utils.time import infer_series_frequency, timedelta_to_crontab
 
 SymbolOrInstrument_t: TypeAlias = str | Instrument
 ExchangeName_t: TypeAlias = str
@@ -458,126 +458,98 @@ class _StructureSniffer:
         return _types
 
 
-def _process_transformation_rules(rules: list[tuple[str, str, DataReader]]):
-    MIN, MAX = pd.Timedelta.min, pd.Timedelta.max
-
-    def _tf(x):
-        return pd.Timedelta(DataType.from_str(x)[1].get("timeframe", "nat"))
-
-    def _min(a, b):
-        return a if a[0] < b[0] else b
-
-    def _max(a, b):
-        return a if a[0] > b[0] else b
-
-    _max_ohlc_dst_tf = (MIN, None)
-    _max_ohlc_src_tf = (MIN, None)
-    _min_ohlc_src_tf = (MAX, None)
-    _quotes_src, _trades_src = None, None
-
-    for src, dest, rdr in rules:
-        if src == DataType.OHLC:
-            _t_src = _tf(src)
-            if _t_src is not pd.NaT:
-                _min_ohlc_src_tf = _min(_min_ohlc_src_tf, (_t_src, rdr))
-                _max_ohlc_src_tf = _max(_max_ohlc_src_tf, (_t_src, rdr))
-
-        if src == DataType.QUOTE:
-            _quotes_src = rdr
-
-        if src == DataType.TRADE:
-            _trades_src = rdr
-
-        if dest == DataType.OHLC:
-            if (_t_d := _tf(dest)) is not pd.NaT:
-                _max_ohlc_dst_tf = _max(_max_ohlc_dst_tf, (_t_d, rdr))
-
-    # - detect when trigger strategy and subscriptions
-    _when_trigger = None
-    max_requested_tf = _max_ohlc_dst_tf[0]
-    max_presented_tf = _max_ohlc_src_tf[0]
-    min_presented_tf = _min_ohlc_src_tf[0]
-
-    # - by default we want to trigger on maximal timeframe
-    _when_trigger = max_requested_tf
-    if _when_trigger == MIN:
-        if max_presented_tf == MIN:
-            print("Can't detect event time -> trigger on every update")
-        else:
-            _when_trigger = max_presented_tf
-
-    # - check if we can construct this timeframe from provided data
-    if _when_trigger and min_presented_tf and _when_trigger < min_presented_tf:
-        print(f"Can't produce {_when_trigger} from {min_presented_tf}")
-        _when_trigger = min_presented_tf
-
-    print(f">>> trigger at {_when_trigger}")
-    if min_presented_tf == MAX:
-        pass
-    else:
-        print(f">>> Base subscription {DataType.OHLC[time_delta_to_str(min_presented_tf.asm8)]}")
-
-
-def _process_requests(requests: dict[str, tuple[str, DataReader]]) -> tuple[str, str, dict[str, DataReader]]:
+def _detect_defaults_from_subscriptions(
+    requests: dict[str, tuple[str, DataReader]],
+) -> tuple[str, str, dict[str, DataReader]]:
     def _tf(x):
         # return pd.Timedelta(DataType.from_str(x)[1].get("timeframe", "nat"))
         _p = DataType.from_str(x)[1]
         return pd.Timedelta(_p["timeframe"]) if "timeframe" in _p else None
 
-    _when_trigger = None
     _base_subscr = None
     _t_readers = {}
-    _min_base_tf = None
+    _in_base_tf = None
     _out_tf = None
 
-    _has_out_ohlc = False
     _has_in_qts = False
     _has_in_trd = False
     _has_in_ohlc = False
+    _has_out_trd = False
+    _has_out_qts = False
 
     for _t, (_src, _r) in requests.items():
-        _has_out_ohlc |= _t == DataType.OHLC
         _has_in_ohlc |= _src == DataType.OHLC
         _has_in_qts |= _src == DataType.QUOTE
         _has_in_trd |= _src == DataType.TRADE
+        _has_out_trd |= _t == DataType.TRADE
+        _has_out_qts |= _t == DataType.QUOTE
 
         match _t, _src:
-            case DataType.OHLC, DataType.OHLC:
+            case (DataType.OHLC, DataType.OHLC):
+                _t_readers[_src] = _r
                 _out_tf = _tf(_t)
-                _min_base_tf = _tf(_src)
+                _in_base_tf = _tf(_src)
+
+                if not _in_base_tf:
+                    SimulationError(f"ohlc data specified for {_src} but it's timeframe was not detected")
+
+                if not _out_tf:
+                    _out_tf = _in_base_tf
+
+                assert _out_tf and _in_base_tf
+                if _in_base_tf > _out_tf:
+                    logger.warning(
+                        f"Can't produce OHLC {_out_tf} data from provided {_in_base_tf} timeframe, reduce to {_in_base_tf}"
+                    )
+                    _out_tf = _in_base_tf
+
+                _base_subscr = _src
 
             case (DataType.OHLC, DataType.QUOTE) | (DataType.OHLC, DataType.TRADE):
                 _t_readers[_src] = _r
-                _has_out_ohlc = True
+                _out_tf = _tf(_t)
+                _base_subscr = _src
+                if _out_tf is None:
+                    raise SimulationError(f"ohlc output data timeframe is not specified for {_t}")
 
             case (DataType.QUOTE, DataType.OHLC):
                 _t_readers[DataType.OHLC_QUOTES] = _r
-                _min_base_tf = _tf(_src) if not _min_base_tf else min(_tf(_src), _min_base_tf)
+                _in_base_tf = _tf(_src)
 
             case (DataType.TRADE, DataType.OHLC):
                 _t_readers[DataType.OHLC_TRADES] = _r
-                _min_base_tf = _tf(_src) if not _min_base_tf else min(_tf(_src), _min_base_tf)
+                _in_base_tf = _tf(_src)
 
             case (_, _):
                 _t_readers[_t] = _r
 
-    print(_has_out_ohlc, _has_in_qts, _has_in_trd, _has_in_ohlc)
-    # - try define on_event trigger time
-    if _has_out_ohlc:
-        if _out_tf:
-            if _min_base_tf and _min_base_tf > _out_tf:
-                print(f"Can't produce OHLC {_out_tf} data from available minimal {_min_base_tf} timeframe")
-                _out_tf = _min_base_tf
-            _when_trigger = _out_tf
-        else:
-            if not _min_base_tf:
-                SimulationError("ohlc subscription specified but it's impossible to find timeframe")
-            _when_trigger = _min_base_tf
+    if not _base_subscr:
+        if _has_in_qts:  # it has input quotes - so base subscription is quotes
+            _base_subscr = DataType.QUOTE
 
-    return _when_trigger, _base_subscr, _t_readers
+        elif _has_in_trd:  # it has input trades - so base subscription is trades
+            _base_subscr = DataType.TRADE
+
+        elif _has_in_ohlc:  # it has input ohlc - let's generate quotes from this ohlc
+            _out_tf = _in_base_tf
+
+            if _has_out_trd:
+                _base_subscr = DataType.OHLC_TRADES
+
+            if _has_out_qts:
+                _base_subscr = DataType.OHLC_QUOTES
+
+    if not _base_subscr:
+        raise SimulationError("Can't detect base subscription in provided spec")
+
+    _default_trigger_schedule = ""  # default trigger on every event
+    if _out_tf:
+        _default_trigger_schedule = timedelta_to_crontab(pd.Timedelta(_out_tf))
+
+    return _default_trigger_schedule, _base_subscr, _t_readers
 
 
-def _can_be_transformed(_dest: str, _src: str) -> bool:
+def _is_transformable(_dest: str, _src: str) -> bool:
     match _dest:
         case DataType.OHLC:
             return _src in [DataType.OHLC, DataType.QUOTE, DataType.TRADE]
@@ -613,6 +585,8 @@ def recognize_simulation_data_config(
             _requests[_supported_data_type] = (_supported_data_type, _reader)
 
         case dict():
+            _is_dict_of_pandas = False
+
             for _requested_type, _provider in decls.items():
                 # - if we already have this type declared, skip it
                 # - it prevents to have duplicated ohlc (and potentially other data types with parametrization)
@@ -627,7 +601,7 @@ def recognize_simulation_data_config(
                         _supported_data_type = sniffer._sniff_reader(f"{exchange}:{instruments[0].symbol}", _provider)
                         _available_symbols = _provider.get_symbols(exchange, DataType.from_str(_supported_data_type)[0])
                         _requests[_requested_type] = (_supported_data_type, _provider)
-                        if not _can_be_transformed(_requested_type, _supported_data_type):
+                        if not _is_transformable(_requested_type, _supported_data_type):
                             raise SimulationError(f"Can't produce {_requested_type} from {_supported_data_type}")
 
                     case dict():  # must be {instr: Df | OHLCV}
@@ -636,7 +610,7 @@ def recognize_simulation_data_config(
                             _available_symbols = _reader.get_symbols(exchange, None)
                             _supported_data_type = sniffer._sniff_reader(_available_symbols[0], _reader)
                             _requests[_requested_type] = (_supported_data_type, _reader)
-                            if not _can_be_transformed(_requested_type, _supported_data_type):
+                            if not _is_transformable(_requested_type, _supported_data_type):
                                 raise SimulationError(f"Can't produce {_requested_type} from {_supported_data_type}")
 
                         except Exception as e:
@@ -644,10 +618,29 @@ def recognize_simulation_data_config(
                                 f"Error in declared data provider for: {_requested_type} -> {type(_provider)} ({str(e)})"
                             )
 
+                    case pd.DataFrame():
+                        _is_dict_of_pandas = True
+                        break
+
                     case _:
                         raise SimulationError(f"Unsupported data provider type: {type(_provider)}")
+
+            if _is_dict_of_pandas:
+                try:
+                    _reader = InMemoryDataFrameReader(decls, exchange)
+                    _available_symbols = _reader.get_symbols(exchange, None)
+                    _supported_data_type = sniffer._sniff_reader(_available_symbols[0], _reader)
+                    _requests[DataType.OHLC] = (_supported_data_type, _reader)
+                    if not _is_transformable(_requested_type, _supported_data_type):
+                        raise SimulationError(f"Can't produce {_requested_type} from {_supported_data_type}")
+
+                except Exception as e:
+                    raise SimulationError(
+                        f"Error in declared data provider for: {_requested_type} -> {type(_provider)} ({str(e)})"
+                    )
+
         case _:
             raise SimulationError(f"Can't recognize declared data provider: {type(decls)}")
 
     # trigger_time, base_subscription, available subscription_types
-    return _process_requests(_requests)
+    return _detect_defaults_from_subscriptions(_requests)
