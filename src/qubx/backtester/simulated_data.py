@@ -14,7 +14,9 @@ from qubx.data.readers import (
     DataReader,
     DataTransformer,
     RestoredBarsFromOHLC,
+    RestoreQuotesFromOHLC,
     RestoreTicksFromOHLC,
+    RestoreTradesFromOHLC,
 )
 
 _T: TypeAlias = Quote | Trade | Bar | OrderBook
@@ -146,14 +148,24 @@ class DataFetcher:
         self._reader = reader
 
         match subtype:
-            case DataType.OHLC_TICKS:
-                self._transformer = RestoreTicksFromOHLC(open_close_time_shift_secs=open_close_time_indent_secs)
+            case DataType.OHLC_QUOTES:
+                # - requested restore quotes from OHLC
+                self._transformer = RestoreQuotesFromOHLC(open_close_time_shift_secs=open_close_time_indent_secs)
                 self._requested_data_type = "ohlc"
                 self._producing_data_type = "quote"
                 if "timeframe" in params:
                     self._timeframe = params.get("timeframe", "1Min")
 
+            case DataType.OHLC_TRADES:
+                # - requested restore trades from OHLC
+                self._transformer = RestoreTradesFromOHLC(open_close_time_shift_secs=open_close_time_indent_secs)
+                self._requested_data_type = "ohlc"
+                self._producing_data_type = "trade"
+                if "timeframe" in params:
+                    self._timeframe = params.get("timeframe", "1Min")
+
             case DataType.OHLC:
+                # - requested restore bars from OHLC
                 self._transformer = RestoredBarsFromOHLC(open_close_time_shift_secs=open_close_time_indent_secs)
                 self._requested_data_type = "ohlc"
                 self._producing_data_type = "ohlc"
@@ -167,7 +179,7 @@ class DataFetcher:
 
             case DataType.QUOTE:
                 self._requested_data_type = "orderbook"
-                self._producing_data_type = "quote"
+                self._producing_data_type = "quote"  # ???
                 self._transformer = AsQuotes()
 
             case _:
@@ -301,7 +313,7 @@ class IterableSimulationData(Iterator):
     def _parse_subscription_spec(self, subscription: str) -> tuple[str, str, dict[str, object]]:
         _subtype, _params = DataType.from_str(subscription)
         match _subtype:
-            case DataType.OHLC | DataType.OHLC_TICKS:
+            case DataType.OHLC | DataType.OHLC_QUOTES:
                 _timeframe = _params.get("timeframe", "1Min")
                 _access_key = f"{_subtype}.{_timeframe}"
             case DataType.TRADE | DataType.QUOTE:

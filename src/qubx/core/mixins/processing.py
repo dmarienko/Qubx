@@ -314,7 +314,8 @@ class ProcessingManager(IProcessingManager):
         # TODO: handle batched events
         return (
             (sub_type == DataType.OHLC and isinstance(data, Bar))
-            or (sub_type == DataType.OHLC_TICKS and isinstance(data, Quote))  # TEMPORARY: just to pass test
+            or (sub_type == DataType.OHLC_QUOTES and isinstance(data, Quote))  # TEMPORARY: just to pass test
+            or (sub_type == DataType.OHLC_TRADES and isinstance(data, Trade))  # TEMPORARY: just to pass test
             or (sub_type == DataType.QUOTE and isinstance(data, Quote))
             or (sub_type == DataType.ORDERBOOK and isinstance(data, OrderBook))
             or (sub_type == DataType.TRADE and isinstance(data, Trade))

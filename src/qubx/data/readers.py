@@ -759,9 +759,12 @@ class RestoreTicksFromOHLC(RestoredEmulatorHelper):
         timestamp_units="ns",
         spread=0.0,
         open_close_time_shift_secs=1.0,
+        quotes=True,
     ):
         super().__init__(daily_session_start_end, timestamp_units, open_close_time_shift_secs)
+        assert trades or quotes or trades and trades, "Either trades or quotes or both must be enabled"
         self._trades = trades
+        self._quotes = quotes
         self._bid_size = default_bid_size
         self._ask_size = default_ask_size
         self._s2 = spread / 2.0
@@ -793,65 +796,124 @@ class RestoreTicksFromOHLC(RestoredEmulatorHelper):
             rv = rv / (h - l) if h > l else rv
 
             # - opening quote
-            self.buffer.append(Quote(ti + self._t_start, o - s2, o + s2, self._bid_size, self._ask_size))
+            if self._quotes:
+                self.buffer.append(Quote(ti + self._t_start, o - s2, o + s2, self._bid_size, self._ask_size))
 
             if c >= o:
                 if self._trades:
                     self.buffer.append(Trade(ti + self._t_start, o - s2, rv * (o - l)))  # sell 1
-                self.buffer.append(
-                    Quote(
-                        ti + self._t_mid1,
-                        l - s2,
-                        l + s2,
-                        self._bid_size,
-                        self._ask_size,
+
+                if self._quotes:
+                    self.buffer.append(
+                        Quote(
+                            ti + self._t_mid1,
+                            l - s2,
+                            l + s2,
+                            self._bid_size,
+                            self._ask_size,
+                        )
                     )
-                )
 
                 if self._trades:
                     self.buffer.append(Trade(ti + self._t_mid1, l + s2, rv * (c - o)))  # buy 1
-                self.buffer.append(
-                    Quote(
-                        ti + self._t_mid2,
-                        h - s2,
-                        h + s2,
-                        self._bid_size,
-                        self._ask_size,
+
+                if self._quotes:
+                    self.buffer.append(
+                        Quote(
+                            ti + self._t_mid2,
+                            h - s2,
+                            h + s2,
+                            self._bid_size,
+                            self._ask_size,
+                        )
                     )
-                )
 
                 if self._trades:
                     self.buffer.append(Trade(ti + self._t_mid2, h - s2, rv * (h - c)))  # sell 2
             else:
                 if self._trades:
                     self.buffer.append(Trade(ti + self._t_start, o + s2, rv * (h - o)))  # buy 1
-                self.buffer.append(
-                    Quote(
-                        ti + self._t_mid1,
-                        h - s2,
-                        h + s2,
-                        self._bid_size,
-                        self._ask_size,
+
+                if self._quotes:
+                    self.buffer.append(
+                        Quote(
+                            ti + self._t_mid1,
+                            h - s2,
+                            h + s2,
+                            self._bid_size,
+                            self._ask_size,
+                        )
                     )
-                )
 
                 if self._trades:
                     self.buffer.append(Trade(ti + self._t_mid1, h - s2, rv * (o - c)))  # sell 1
-                self.buffer.append(
-                    Quote(
-                        ti + self._t_mid2,
-                        l - s2,
-                        l + s2,
-                        self._bid_size,
-                        self._ask_size,
+
+                if self._quotes:
+                    self.buffer.append(
+                        Quote(
+                            ti + self._t_mid2,
+                            l - s2,
+                            l + s2,
+                            self._bid_size,
+                            self._ask_size,
+                        )
                     )
-                )
 
                 if self._trades:
                     self.buffer.append(Trade(ti + self._t_mid2, l + s2, rv * (c - l)))  # buy 2
 
             # - closing quote
-            self.buffer.append(Quote(ti + self._t_end, c - s2, c + s2, self._bid_size, self._ask_size))
+            if self._quotes:
+                self.buffer.append(Quote(ti + self._t_end, c - s2, c + s2, self._bid_size, self._ask_size))
+
+
+class RestoreQuotesFromOHLC(RestoreTicksFromOHLC):
+    """
+    Restore (emulate) quotes from OHLC bars
+    """
+
+    def __init__(
+        self,
+        default_bid_size=1e9,  # default bid/ask is big
+        default_ask_size=1e9,  # default bid/ask is big
+        daily_session_start_end=DEFAULT_DAILY_SESSION,
+        timestamp_units="ns",
+        spread=0.0,
+        open_close_time_shift_secs=1.0,
+    ):
+        super().__init__(
+            trades=False,
+            default_bid_size=default_bid_size,
+            default_ask_size=default_ask_size,
+            daily_session_start_end=daily_session_start_end,
+            timestamp_units=timestamp_units,
+            spread=spread,
+            open_close_time_shift_secs=open_close_time_shift_secs,
+            quotes=True,
+        )
+
+
+class RestoreTradesFromOHLC(RestoreTicksFromOHLC):
+    """
+    Restore (emulate) trades from OHLC bars
+    """
+
+    def __init__(
+        self,
+        daily_session_start_end=DEFAULT_DAILY_SESSION,
+        timestamp_units="ns",
+        open_close_time_shift_secs=1.0,
+    ):
+        super().__init__(
+            trades=True,
+            default_bid_size=0,
+            default_ask_size=0,
+            daily_session_start_end=daily_session_start_end,
+            timestamp_units=timestamp_units,
+            spread=0,
+            open_close_time_shift_secs=open_close_time_shift_secs,
+            quotes=False,
+        )
 
 
 class RestoredBarsFromOHLC(RestoredEmulatorHelper):

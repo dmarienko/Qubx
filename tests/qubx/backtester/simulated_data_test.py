@@ -218,7 +218,7 @@ class TestSimulatedDataStuff:
 
     def test_iterable_simulation_data_management(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h", n_jobs=1)
-        isd = IterableSimulationData({"ohlc": ld}, open_close_time_indent_secs=300)
+        isd = IterableSimulationData({"ohlc": ld, "ohlc_quotes": ld}, open_close_time_indent_secs=300)
 
         s1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         s2 = lookup.find_symbol("BINANCE.UM", "ETHUSDT")
@@ -229,7 +229,7 @@ class TestSimulatedDataStuff:
         isd.add_instruments_for_subscription(DataType.OHLC["1h"], s3)
         isd.add_instruments_for_subscription(DataType.OHLC["4h"], s3)
         isd.add_instruments_for_subscription(DataType.OHLC["1d"], s3)
-        isd.add_instruments_for_subscription(DataType.OHLC_TICKS["4h"], s1)
+        isd.add_instruments_for_subscription(DataType.OHLC_QUOTES["4h"], s1)
 
         # has subscription
         assert isd.has_subscription(s3, "ohlc(4h)")
@@ -255,7 +255,7 @@ class TestSimulatedDataStuff:
         assert isd.get_instruments_for_subscription(DataType.OHLC["1h"]) == []
 
         assert isd.get_subscriptions_for_instrument(None) == list(
-            set([DataType.OHLC["4h"], DataType.OHLC_TICKS["4h"], DataType.OHLC["1d"]])
+            set([DataType.OHLC["4h"], DataType.OHLC_QUOTES["4h"], DataType.OHLC["1d"]])
         )
 
     def test_iterable_simulation_data_queue_with_warmup(self):

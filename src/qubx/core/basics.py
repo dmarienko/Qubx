@@ -709,7 +709,8 @@ class DataType(StrEnum):
     ORDERBOOK = "orderbook"
     LIQUIDATION = "liquidation"
     FUNDING_RATE = "funding_rate"
-    OHLC_TICKS = "ohlc_ticks"  # when we want to emulate ticks from OHLC data
+    OHLC_QUOTES = "ohlc_quotes"  # when we want to emulate quotes from OHLC data
+    OHLC_TRADES = "ohlc_trades"  # when we want to emulate trades from OHLC data
     RECORD = "record"  # arbitrary timestamped data (actually liquidation and funding rates fall into this type)
 
     def __repr__(self) -> str:
@@ -728,7 +729,7 @@ class DataType(StrEnum):
 
     def __getitem__(self, *args, **kwargs) -> str:
         match self:
-            case DataType.OHLC | DataType.OHLC_TICKS:
+            case DataType.OHLC | DataType.OHLC_QUOTES:
                 tf = args[0] if args else kwargs.get("timeframe")
                 if not tf:
                     raise ValueError("Timeframe is not provided for OHLC subscription")
@@ -777,8 +778,13 @@ class DataType(StrEnum):
                     case DataType.OHLC.value:
                         return DataType.OHLC, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
 
-                    case DataType.OHLC_TICKS.value:
-                        return DataType.OHLC_TICKS, {
+                    case DataType.OHLC_QUOTES.value:
+                        return DataType.OHLC_QUOTES, {
+                            "timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())
+                        }
+
+                    case DataType.OHLC_TRADES.value:
+                        return DataType.OHLC_TRADES, {
                             "timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())
                         }
 

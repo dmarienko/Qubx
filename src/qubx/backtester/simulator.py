@@ -21,7 +21,7 @@ from qubx.backtester.utils import (
     SymbolOrInstrument_t,
     find_instruments_and_exchanges,
     recognize_simulation_configuration,
-    recognize_simulation_data,
+    recognize_simulation_data_config,
 )
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
@@ -664,7 +664,7 @@ def simulate(
     exchange = _exchanges[0]
 
     # - recognize provided data
-    data_config = recognize_simulation_data(data, _instruments, exchange)
+    data_config = recognize_simulation_data_config(data, _instruments, exchange)
 
     # - recognize setup: it can be either a strategy or set of signals
     setups = recognize_simulation_configuration(

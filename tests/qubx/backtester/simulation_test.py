@@ -5,7 +5,7 @@ import pandas as pd
 
 from qubx import logger, lookup
 from qubx.backtester.simulator import simulate
-from qubx.backtester.utils import SetupTypes, recognize_simulation_configuration, recognize_simulation_data
+from qubx.backtester.utils import SetupTypes, recognize_simulation_configuration, recognize_simulation_data_config
 from qubx.core.basics import DataType, Instrument, MarketEvent, Signal, TriggerEvent
 from qubx.core.interfaces import IStrategy, IStrategyContext
 from qubx.core.series import OHLCV, Quote
@@ -120,7 +120,7 @@ class Issue3_OHLC_TICKS(IStrategy):
 
     def on_init(self, ctx: IStrategyContext) -> None:
         # - this will creates quotes from OHLC
-        ctx.set_base_subscription(DataType.OHLC_TICKS["1h"])
+        ctx.set_base_subscription(DataType.OHLC_QUOTES["1h"])
         self._fits_called = 0
         self._triggers_called = 0
         self._market_events = []
@@ -402,4 +402,4 @@ class TestSimulatorHelpers:
         reader = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
         instrs = [lookup.find_symbol("BINANCE.UM", s) for s in ["BTCUSDT", "BCHUSDT", "LTCUSDT"]]  # type: ignore
 
-        cfg = recognize_simulation_data(reader, instrs, "BINANCE.UM")
+        cfg = recognize_simulation_data_config(reader, instrs, "BINANCE.UM")
