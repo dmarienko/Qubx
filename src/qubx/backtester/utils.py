@@ -287,7 +287,7 @@ class _StructureSniffer:
 
         return DataType.RECORD
 
-    def _pre_read(self, symbol: str, reader: DataReader, time: str) -> list[Any]:
+    def _pre_read(self, symbol: str, reader: DataReader, time: str, data_type: str) -> list[Any]:
         for dt in ["2h", "12h", "2d", "28d", "60d", "720d"]:
             try:
                 _it = reader.read(
@@ -297,6 +297,7 @@ class _StructureSniffer:
                     stop=pd.Timestamp(time) + pd.Timedelta(dt),  # type: ignore
                     timeframe=None,
                     chunksize=self._probe_size,
+                    data_type=data_type,
                 )
                 if len(data := next(_it)) >= 2:  # type: ignore
                     return data
@@ -304,18 +305,25 @@ class _StructureSniffer:
                 pass
         return []
 
-    def _sniff_reader(self, symbol: str, reader: DataReader, time: str | None = None) -> str:
-        if time is None:
-            for _type in [DataType.OHLC, DataType.QUOTE, DataType.TRADE]:
-                _t1, _t2 = reader.get_time_ranges(symbol, str(_type))
-                if _t1 is not None:
-                    time = str(_t1 + (_t2 - _t1) / 2)
-                    break
-            else:
-                logger.warning(f"Failed to find data start time for symbol: {symbol}")
-                return DataType.NONE
+    def _sniff_reader(self, symbol: str, reader: DataReader, preferred_data_type: str | None) -> str:
+        _probing_types = [DataType.OHLC, DataType.QUOTE, DataType.TRADE]
+        _probing_types = ([preferred_data_type] + _probing_types) if preferred_data_type is not None else _probing_types
+        _found_type = None
+        for _type in _probing_types:
+            _t1, _t2 = reader.get_time_ranges(symbol, str(_type))
+            if _t1 is not None:
+                time = str(_t1 + (_t2 - _t1) / 2)
+                _found_type = _type
+                break
+        else:
+            logger.warning(f"Failed to find data start time and supported type for symbol: {symbol}")
+            return DataType.NONE
 
-        data = self._pre_read(symbol, reader, time)
+        if _found_type is None:
+            logger.warning(f"Failed to detect data type for symbol: {symbol}")
+            return DataType.NONE
+
+        data = self._pre_read(symbol, reader, time, _found_type)
         if data:
             return self._sniff_list(data)
 
@@ -506,7 +514,7 @@ def _detect_defaults_from_subscriptions(
                 _base_subscr = DataType.OHLC_QUOTES
 
     if not _base_subscr:
-        raise SimulationConfigError("Can't detect base subscription in provided spec")
+        raise SimulationConfigError("Can't detect base subscription in provided data specification")
 
     _default_trigger_schedule = ""  # default trigger on every event
     if _out_tf:
@@ -563,7 +571,7 @@ def recognize_simulation_data_config(
 
     match decls:
         case DataReader():
-            _supported_data_type = sniffer._sniff_reader(f"{exchange}:{instruments[0].symbol}", decls)
+            _supported_data_type = sniffer._sniff_reader(f"{exchange}:{instruments[0].symbol}", decls, None)
             _available_symbols = decls.get_symbols(exchange, DataType.from_str(_supported_data_type)[0])
             _requests[_supported_data_type] = (_supported_data_type, decls)
 
@@ -587,7 +595,9 @@ def recognize_simulation_data_config(
 
                 match _provider:
                     case DataReader():
-                        _supported_data_type = sniffer._sniff_reader(f"{exchange}:{instruments[0].symbol}", _provider)
+                        _supported_data_type = sniffer._sniff_reader(
+                            f"{exchange}:{instruments[0].symbol}", _provider, _requested_type
+                        )
                         _available_symbols = _provider.get_symbols(exchange, DataType.from_str(_supported_data_type)[0])
                         _requests[_requested_type] = (_supported_data_type, _provider)
                         if not _is_transformable(_requested_type, _supported_data_type):
@@ -597,7 +607,9 @@ def recognize_simulation_data_config(
                         try:
                             _reader = InMemoryDataFrameReader(_provider, exchange)
                             _available_symbols = _reader.get_symbols(exchange, None)
-                            _supported_data_type = sniffer._sniff_reader(_available_symbols[0], _reader)
+                            _supported_data_type = sniffer._sniff_reader(
+                                _available_symbols[0], _reader, _requested_type
+                            )
                             _requests[_requested_type] = (_supported_data_type, _reader)
                             if not _is_transformable(_requested_type, _supported_data_type):
                                 raise SimulationConfigError(
@@ -620,7 +632,7 @@ def recognize_simulation_data_config(
                 try:
                     _reader = InMemoryDataFrameReader(decls, exchange)
                     _available_symbols = _reader.get_symbols(exchange, None)
-                    _supported_data_type = sniffer._sniff_reader(_available_symbols[0], _reader)
+                    _supported_data_type = sniffer._sniff_reader(_available_symbols[0], _reader, _requested_type)
                     _requests[DataType.OHLC] = (_supported_data_type, _reader)
                     if not _is_transformable(_requested_type, _supported_data_type):
                         raise SimulationConfigError(f"Can't produce {_requested_type} from {_supported_data_type}")
