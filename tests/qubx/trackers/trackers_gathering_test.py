@@ -254,7 +254,6 @@ class TestTrackersAndGatherers:
             start="2024-01-01",
             stop="2024-01-03 13:00",
         )
-
         assert rep[2].executions_log.iloc[-1].price < rep[3].executions_log.iloc[-1].price
         assert t0.is_active(I) and t1.is_active(I)
         assert not t2.is_active(I) and not t3.is_active(I)

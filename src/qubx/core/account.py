@@ -6,7 +6,6 @@ from qubx import logger
 from qubx.core.basics import (
     ZERO_COSTS,
     AssetBalance,
-    CtrlChannel,
     Deal,
     Instrument,
     ITimeProvider,

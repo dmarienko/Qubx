@@ -3,7 +3,6 @@ from qubx.core.basics import (
     CtrlChannel,
     Instrument,
     Order,
-    dt_64,
 )
 from qubx.core.interfaces import IBroker
 
@@ -53,15 +52,7 @@ class SimulatedBroker(IBroker):
             **options,
         )
 
-        order = report.order
-        self._account.order_to_instrument[order.id] = instrument
-        self.channel.send((instrument, "order", order))
-        if report.exec is not None:
-            self.channel.send((instrument, "deals", [report.exec]))
-
-        # - send reports to channel
         self._send_exec_report(instrument, report)
-
         return report.order
 
     def cancel_order(self, order_id: str) -> Order | None:
@@ -74,11 +65,7 @@ class SimulatedBroker(IBroker):
             raise ValueError(f"ExchangeService:send_order :: No OME configured for '{instrument}'!")
 
         # - cancel order in OME and remove from the map to free memory
-        self._account.order_to_instrument.pop(order_id)
         order_update = ome.cancel_order(order_id)
-        self._account.process_order(order_update.order)
-
-        # - notify channel about order cancellation
         self._send_exec_report(instrument, order_update)
 
         return order_update.order

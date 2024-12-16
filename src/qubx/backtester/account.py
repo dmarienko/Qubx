@@ -1,6 +1,4 @@
-import numpy as np
-
-from qubx import QubxLogConfig, logger
+from qubx import logger
 from qubx.backtester.ome import OrdersManagementEngine
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
@@ -87,6 +85,17 @@ class SimulatedAccountProcessor(BasicAccountProcessor):
 
         # - process new quote
         self._process_new_quote(instrument, quote)
+
+    def process_order(self, order: Order, update_locked_value: bool = True) -> None:
+        _new = order.status == "NEW"
+        _open = order.status == "OPEN"
+        _cancel = order.status == "CANCELED"
+        _closed = order.status == "CLOSED"
+        if _new or _open:
+            self.order_to_instrument[order.id] = order.instrument
+        if (_cancel or _closed) and order.id in self.order_to_instrument:
+            self.order_to_instrument.pop(order.id)
+        return super().process_order(order, update_locked_value)
 
     def emulate_quote_from_data(
         self, instrument: Instrument, timestamp: dt_64, data: float | Trade | Bar
