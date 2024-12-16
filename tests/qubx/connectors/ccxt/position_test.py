@@ -283,7 +283,6 @@ class TestStrats:
         acc = BasicAccountProcessor(
             account_id="TestAcc1",
             time_provider=DummyTimeProvider(),
-            channel=CtrlChannel("test"),
             base_currency="USDT",
             initial_capital=100,
         )

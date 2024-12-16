@@ -9,6 +9,7 @@ from qubx.core.basics import (
     CtrlChannel,
     DataType,
     Instrument,
+    ITimeProvider,
     MarketType,
     Order,
     OrderRequest,
@@ -76,6 +77,7 @@ class StrategyContext(IStrategyContext):
         data_provider: IDataProvider,
         account: IAccountProcessor,
         scheduler: BasicScheduler,
+        time_provider: ITimeProvider,
         instruments: list[Instrument],
         logging: StrategyLogging,
         config: dict[str, Any] | None = None,
@@ -85,6 +87,7 @@ class StrategyContext(IStrategyContext):
         self.account = account
         self.strategy = self.__instantiate_strategy(strategy, config)
 
+        self._time_provider = time_provider
         self._broker = broker
         self._data_provider = data_provider
         self._logging = logging
@@ -103,6 +106,7 @@ class StrategyContext(IStrategyContext):
         self.account.set_subscription_manager(self._subscription_manager)
 
         self._market_data_provider = MarketDataProvider(
+            time_provider=self._time_provider,
             cache=self._cache,
             broker=self._data_provider,
             universe_manager=self,
@@ -150,9 +154,6 @@ class StrategyContext(IStrategyContext):
         _, params = DataType.from_str(sub_type)
         __default_timeframe = params.get("timeframe", "1sec")
         self._cache.update_default_timeframe(__default_timeframe)
-
-    def time(self) -> dt_64:
-        return self._broker.time_provider.time()
 
     def start(self, blocking: bool = False):
         if self._is_initialized:
@@ -271,6 +272,9 @@ class StrategyContext(IStrategyContext):
         return self.account.get_margin_ratio()
 
     # IMarketDataProvider delegation
+    def time(self) -> dt_64:
+        return self._market_data_provider.time()
+
     def ohlc(self, instrument: Instrument, timeframe: str | None = None, length: int | None = None):
         return self._market_data_provider.ohlc(instrument, timeframe, length)
 

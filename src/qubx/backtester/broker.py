@@ -1,4 +1,4 @@
-from qubx.backtester.ome import OmeReport, OrdersManagementEngine
+from qubx.backtester.ome import OmeReport
 from qubx.core.basics import (
     CtrlChannel,
     Instrument,
@@ -12,11 +12,8 @@ from .account import SimulatedAccountProcessor
 
 class SimulatedBroker(IBroker):
     channel: CtrlChannel
-    _account: SimulatedAccountProcessor
 
-    _current_time: dt_64
-    _name: str
-    _ome: dict[Instrument, OrdersManagementEngine]
+    _account: SimulatedAccountProcessor
 
     def __init__(
         self,
@@ -41,7 +38,7 @@ class SimulatedBroker(IBroker):
         time_in_force: str = "gtc",
         **options,
     ) -> Order:
-        ome = self._ome.get(instrument)
+        ome = self._account.ome.get(instrument)
         if ome is None:
             raise ValueError(f"ExchangeService:send_order :: No OME configured for '{instrument.symbol}'!")
 
@@ -72,7 +69,7 @@ class SimulatedBroker(IBroker):
         if instrument is None:
             raise ValueError(f"ExchangeService:cancel_order :: can't find order with id = '{order_id}'!")
 
-        ome = self._ome.get(instrument)
+        ome = self._account.ome.get(instrument)
         if ome is None:
             raise ValueError(f"ExchangeService:send_order :: No OME configured for '{instrument}'!")
 

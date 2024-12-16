@@ -16,11 +16,12 @@ from qubx.core.series import Bar, Quote, Trade
 
 
 class SimulatedAccountProcessor(BasicAccountProcessor):
+    ome: dict[Instrument, OrdersManagementEngine]
+    order_to_instrument: dict[str, Instrument]
+
     _channel: CtrlChannel
-    _ome: dict[Instrument, OrdersManagementEngine]
     _fill_stop_order_at_price: bool
     _half_tick_size: dict[Instrument, float]
-    _order_to_instrument: dict[str, Instrument]
 
     def __init__(
         self,
@@ -39,37 +40,29 @@ class SimulatedAccountProcessor(BasicAccountProcessor):
             tcc=tcc,
             initial_capital=initial_capital,
         )
-        self._ome = {}
+        self.ome = {}
+        self.order_to_instrument = {}
         self._channel = channel
         self._half_tick_size = {}
-        self._order_to_instrument = {}
         self._fill_stop_order_at_price = accurate_stop_orders_execution
         if self._fill_stop_order_at_price:
             logger.info(f"{self.__class__.__name__} emulates stop orders executions at exact price")
 
-    @property
-    def ome(self) -> dict[Instrument, OrdersManagementEngine]:
-        return self._ome
-
-    @property
-    def order_to_instrument(self) -> dict[str, Instrument]:
-        return self._order_to_instrument
-
     def get_orders(self, instrument: Instrument | None = None) -> list[Order]:
         if instrument is not None:
-            ome = self._ome.get(instrument)
+            ome = self.ome.get(instrument)
             if ome is None:
                 raise ValueError(f"ExchangeService:get_orders :: No OME configured for '{instrument}'!")
             return ome.get_open_orders()
 
-        return [o for ome in self._ome.values() for o in ome.get_open_orders()]
+        return [o for ome in self.ome.values() for o in ome.get_open_orders()]
 
     def get_position(self, instrument: Instrument) -> Position:
         if instrument in self.positions:
             return self.positions[instrument]
 
         # - initiolize OME for this instrument
-        self._ome[instrument] = OrdersManagementEngine(
+        self.ome[instrument] = OrdersManagementEngine(
             instrument=instrument,
             time_provider=self.time_provider,
             tcc=self._tcc,  # type: ignore
@@ -82,17 +75,13 @@ class SimulatedAccountProcessor(BasicAccountProcessor):
         self.attach_positions(position)
         return self.positions[instrument]
 
-    def update_position_price(self, instrument: Instrument, timestamp: dt_64, price: float) -> None:
-        # logger.info(f"{symbol} -> {timestamp} -> {update}")
-        # - set current time from update
-        self._current_time = timestamp
-
+    def update_position_price(self, time: dt_64, instrument: Instrument, price: float) -> None:
         # - first we need to update OME with new quote.
         # - if update is not a quote we need 'emulate' it.
         # - actually if SimulatedExchangeService is used in backtesting mode it will recieve only quotes
         # - case when we need that - SimulatedExchangeService is used for paper trading and data provider configured to listen to OHLC or TAS.
         # - probably we need to subscribe to quotes in real data provider in any case and then this emulation won't be needed.
-        quote = price if isinstance(price, Quote) else self.emulate_quote_from_data(instrument, timestamp, price)
+        quote = price if isinstance(price, Quote) else self.emulate_quote_from_data(instrument, time, price)
         if quote is None:
             return
 
@@ -121,14 +110,13 @@ class SimulatedAccountProcessor(BasicAccountProcessor):
             return None
 
     def _process_new_quote(self, instrument: Instrument, data: Quote) -> None:
-        ome = self._ome.get(instrument)
+        ome = self.ome.get(instrument)
         if ome is None:
             logger.warning("ExchangeService:update :: No OME configured for '{symbol}' yet !")
             return
         for r in ome.update_bbo(data):
             if r.exec is not None:
-                self._order_to_instrument.pop(r.order.id)
-                self.process_order(r.order)
-                self.process_deals(instrument, [r.exec])
+                self.order_to_instrument.pop(r.order.id)
+                # - process methods will be called from stg context
                 self._channel.send((instrument, "order", r.order))
                 self._channel.send((instrument, "deals", [r.exec]))

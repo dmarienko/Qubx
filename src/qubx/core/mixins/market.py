@@ -3,7 +3,7 @@ from typing import Any, List
 import pandas as pd
 
 from qubx import lookup
-from qubx.core.basics import Instrument
+from qubx.core.basics import Instrument, ITimeProvider, dt_64
 from qubx.core.helpers import CachedMarketDataHolder
 from qubx.core.interfaces import (
     IDataProvider,
@@ -16,6 +16,7 @@ from qubx.utils import convert_seconds_to_str
 
 
 class MarketDataProvider(IMarketManager):
+    _time_provider: ITimeProvider
     _cache: CachedMarketDataHolder
     _broker: IDataProvider
     _universe_manager: IUniverseManager
@@ -23,15 +24,20 @@ class MarketDataProvider(IMarketManager):
 
     def __init__(
         self,
+        time_provider: ITimeProvider,
         cache: CachedMarketDataHolder,
         broker: IDataProvider,
         universe_manager: IUniverseManager,
         aux_data_provider: DataReader | None = None,
     ):
+        self._time_provider = time_provider
         self._cache = cache
         self._broker = broker
         self._universe_manager = universe_manager
         self._aux_data_provider = aux_data_provider
+
+    def time(self) -> dt_64:
+        return self._time_provider.time()
 
     def ohlc(
         self,

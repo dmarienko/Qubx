@@ -286,6 +286,7 @@ def _run_setup(
         data_provider=data_provider,
         account=account,
         scheduler=scheduler,
+        time_provider=time_provider,
         instruments=setup.instruments,
         logging=StrategyLogging(logs_writer),
         aux_data_provider=_aux_data,

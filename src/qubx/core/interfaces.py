@@ -830,7 +830,12 @@ class IProcessingManager:
 
 
 class IStrategyContext(
-    IMarketManager, ITradingManager, IUniverseManager, ISubscriptionManager, IProcessingManager, IAccountViewer
+    IMarketManager,
+    ITradingManager,
+    IUniverseManager,
+    ISubscriptionManager,
+    IProcessingManager,
+    IAccountViewer,
 ):
     strategy: "IStrategy"
 

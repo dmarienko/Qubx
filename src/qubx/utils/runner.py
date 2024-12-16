@@ -110,6 +110,7 @@ def run_ccxt_trading(
         data_provider=data_provider,
         account=account,
         scheduler=scheduler,
+        time_provider=time_provider,
         instruments=instruments,
         logging=stg_logging,
         config=strategy_config,
