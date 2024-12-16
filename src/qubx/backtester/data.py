@@ -190,7 +190,7 @@ class SimulatedDataProvider(IDataProvider):
                 if s == i.symbol or s == str(i) or s == f"{i.exchange}:{i.symbol}" or str(s) == str(i):
                     _start, _end = pd.Timestamp(start), pd.Timestamp(end)
                     _start_idx, _end_idx = v.index.get_indexer([_start, _end], method="ffill")
-                    sel = v.iloc[max(_start_idx, 0) : _end_idx]  # sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
+                    sel = v.iloc[max(_start_idx, 0) : _end_idx + 1]  # sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
 
                     self._to_process[i] = list(zip(sel.index, sel.values))
                     _s_inst = i
