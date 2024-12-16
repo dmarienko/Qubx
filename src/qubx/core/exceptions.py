@@ -28,3 +28,7 @@ class SimulatorError(BaseError):
 
 class QueueTimeout(BaseError):
     pass
+
+
+class SimulationError(Exception):
+    pass

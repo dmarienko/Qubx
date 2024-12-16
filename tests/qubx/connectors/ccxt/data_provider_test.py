@@ -1,7 +1,7 @@
 import asyncio
 from pprint import pprint
 from threading import Thread
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pandas as pd
@@ -10,7 +10,7 @@ from ccxt.pro import Exchange
 
 from qubx import lookup
 from qubx.connectors.ccxt.data import CcxtDataProvider
-from qubx.core.basics import CtrlChannel, Instrument, ITimeProvider, Subtype, dt_64
+from qubx.core.basics import CtrlChannel, DataType, ITimeProvider, dt_64
 from qubx.core.exceptions import QueueTimeout
 from qubx.core.mixins.subscription import SubscriptionManager
 
@@ -76,8 +76,8 @@ class TestCcxtExchangeConnector:
         # self.connector.subscribe([i1, i2], "trade", warmup_period="1m")
         # self.connector.subscribe([i1], "orderbook", warmup_period="1m")
         # self.connector.subscribe([i2], "orderbook", warmup_period="1m")
-        self.sub_manager.subscribe(Subtype.OHLC["5min"], [i2])
-        self.sub_manager.subscribe(Subtype.OHLC["5min"], [i1])
+        self.sub_manager.subscribe(DataType.OHLC["15Min"], [i2])
+        self.sub_manager.subscribe(DataType.OHLC["15Min"], [i1])
 
         # Commit subscriptions
         self.sub_manager.commit()
@@ -85,7 +85,7 @@ class TestCcxtExchangeConnector:
         # Verify subscriptions were added
         # assert i1 in self.connector._subscriptions["trade"]
         # assert i1 in self.connector._subscriptions["orderbook"]
-        assert i1 in self.connector._subscriptions[Subtype.OHLC["5min"]]
+        assert i1 in self.connector._subscriptions[DataType.OHLC["15Min"]]
 
         channel = self.connector.channel
         events = []

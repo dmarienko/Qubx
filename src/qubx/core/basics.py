@@ -695,10 +695,10 @@ class ITimeProvider:
         ...
 
 
-class Subtype(StrEnum):
+class DataType(StrEnum):
     """
-    Subscription type constants. Used for specifying the type of data to subscribe to.
-    Special value `Subtype.ALL` can be used to subscribe to all available data types
+    Data type constants. Used for specifying the type of data and can be used for subscription to.
+    Special value `DataType.ALL` can be used to subscribe to all available data types
     that are currently in use by the broker for other instruments.
     """
 
@@ -710,7 +710,9 @@ class Subtype(StrEnum):
     ORDERBOOK = "orderbook"
     LIQUIDATION = "liquidation"
     FUNDING_RATE = "funding_rate"
-    OHLC_TICKS = "ohlc_ticks"  # when we want to emulate ticks from OHLC data
+    OHLC_QUOTES = "ohlc_quotes"  # when we want to emulate quotes from OHLC data
+    OHLC_TRADES = "ohlc_trades"  # when we want to emulate trades from OHLC data
+    RECORD = "record"  # arbitrary timestamped data (actually liquidation and funding rates fall into this type)
 
     def __repr__(self) -> str:
         return self.value
@@ -719,21 +721,21 @@ class Subtype(StrEnum):
         return self.value
 
     def __eq__(self, other: Any) -> bool:
-        if isinstance(other, Subtype):
+        if isinstance(other, DataType):
             return self.value == other.value
-        return self.value == Subtype.from_str(other)[0].value
+        return self.value == DataType.from_str(other)[0].value
 
     def __hash__(self) -> int:
         return hash(self.value)
 
     def __getitem__(self, *args, **kwargs) -> str:
         match self:
-            case Subtype.OHLC | Subtype.OHLC_TICKS:
+            case DataType.OHLC | DataType.OHLC_QUOTES:
                 tf = args[0] if args else kwargs.get("timeframe")
                 if not tf:
                     raise ValueError("Timeframe is not provided for OHLC subscription")
                 return f"{self.value}({tf})"
-            case Subtype.ORDERBOOK:
+            case DataType.ORDERBOOK:
                 if len(args) == 2:
                     tick_size_pct, depth = args
                 elif len(args) > 0:
@@ -746,7 +748,7 @@ class Subtype(StrEnum):
                 return self.value
 
     @staticmethod
-    def from_str(value: Union[str, "Subtype"]) -> tuple["Subtype", dict[str, Any]]:
+    def from_str(value: Union[str, "DataType"]) -> tuple["DataType", dict[str, Any]]:
         """
         Parse subscription type from string.
         Returns: (subtype, params)
@@ -761,30 +763,37 @@ class Subtype(StrEnum):
         >>> Subtype.from_str("quote")
         (Subtype.QUOTE, {})
         """
-        if isinstance(value, Subtype):
+        if isinstance(value, DataType):
             return value, {}
         try:
             _value = value.lower()
-            _has_params = Subtype._str_has_params(value)
-            if not _has_params and value.upper() not in Subtype.__members__:
-                return Subtype.NONE, {}
+            _has_params = DataType._str_has_params(value)
+            if not _has_params and value.upper() not in DataType.__members__:
+                return DataType.NONE, {}
             elif not _has_params:
-                return Subtype(_value), {}
+                return DataType(_value), {}
             else:
                 type_name, params_str = value.split("(", 1)
                 params = [p.strip() for p in params_str.rstrip(")").split(",")]
                 match type_name.lower():
-                    case Subtype.OHLC.value:
-                        return Subtype.OHLC, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
+                    case DataType.OHLC.value:
+                        return DataType.OHLC, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
 
-                    case Subtype.OHLC_TICKS.value:
-                        return Subtype.OHLC_TICKS, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
+                    case DataType.OHLC_QUOTES.value:
+                        return DataType.OHLC_QUOTES, {
+                            "timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())
+                        }
 
-                    case Subtype.ORDERBOOK.value:
-                        return Subtype.ORDERBOOK, {"tick_size_pct": float(params[0]), "depth": int(params[1])}
+                    case DataType.OHLC_TRADES.value:
+                        return DataType.OHLC_TRADES, {
+                            "timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())
+                        }
+
+                    case DataType.ORDERBOOK.value:
+                        return DataType.ORDERBOOK, {"tick_size_pct": float(params[0]), "depth": int(params[1])}
 
                     case _:
-                        return Subtype.NONE, {}
+                        return DataType.NONE, {}
         except IndexError:
             raise ValueError(f"Invalid subscription type: {value}")
 
@@ -794,20 +803,24 @@ class Subtype(StrEnum):
 
 
 class TradingSessionResult:
+    # fmt: off
     id: int
     name: str
     start: str | pd.Timestamp
     stop: str | pd.Timestamp
-    exchange: str
-    instruments: list[Instrument]
+    exchange: str                     # exchange name (TODO: need to think how to do with it for multiple exchanges)
+    instruments: list[Instrument]     # instruments used at the start of the session (TODO: need to collect all traded instruments)
     capital: float
     leverage: float
     base_currency: str
-    commissions: str
-    portfolio_log: pd.DataFrame
-    executions_log: pd.DataFrame
-    signals_log: pd.DataFrame
+    commissions: str                   # used commissions ("vip0_usdt" etc)
+    portfolio_log: pd.DataFrame        # portfolio log records
+    executions_log: pd.DataFrame       # executed trades
+    signals_log: pd.DataFrame          # signals generated by the strategy
+    strategy_class: str                # strategy full qualified class name
+    parameters: dict[str, Any]         # strategy parameters if provided
     is_simulation: bool
+    # fmt: on
 
     def __init__(
         self,
@@ -824,6 +837,8 @@ class TradingSessionResult:
         portfolio_log: pd.DataFrame,
         executions_log: pd.DataFrame,
         signals_log: pd.DataFrame,
+        strategy_class: str,
+        parameters: dict[str, Any] | None = None,
         is_simulation=True,
     ):
         self.id = id
@@ -839,7 +854,32 @@ class TradingSessionResult:
         self.portfolio_log = portfolio_log
         self.executions_log = executions_log
         self.signals_log = signals_log
+        self.strategy_class = strategy_class
+        self.parameters = parameters if parameters else {}
         self.is_simulation = is_simulation
+
+    @property
+    def symbols(self) -> list[str]:
+        """
+        Extracts all traded symbols from the portfolio log
+        """
+        if not self.portfolio_log.empty:
+            return list(set(self.portfolio_log.columns.str.split("_").str.get(0).values))
+        return []
+
+    def config(self, short=True) -> str:
+        """
+        Return configuration as string: "test.strategies.Strategy1(parameter1=12345)"
+        TODO: probably we need to return recreated new object
+        """
+        _cfg = ""
+        if self.strategy_class:
+            _params = ", ".join([f"{k}={repr(v)}" for k, v in self.parameters.items()])
+            _class = self.strategy_class.split(".")[-1] if short else self.strategy_class
+            _cfg = f"{_class}({_params})"
+            # _cfg = f"{{ {repr(self.name)}: {_class}({_params}) }}"
+            # if instantiated: return eval(_cfg)
+        return _cfg
 
 
 @dataclass
@@ -869,3 +909,15 @@ class LiveTimeProvider(ITimeProvider):
 
     def _start_ntp_thread(self):
         start_ntp_thread()
+
+
+@dataclass
+class TimestampedDict:
+    """
+    Generic class for representing arbitrary data (as dict) with timestamp
+
+    TODO: probably we need to have gebneric interface for classes like Quote, Bar, .... etc
+    """
+
+    time: dt_64
+    data: dict[str, Any]

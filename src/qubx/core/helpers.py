@@ -2,15 +2,16 @@ import re
 import sched
 import time
 from collections import defaultdict, deque
+from inspect import isfunction
 from threading import Thread
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List
 
 import numpy as np
 import pandas as pd
 from croniter import croniter
 
 from qubx import logger
-from qubx.core.basics import SW, CtrlChannel, Instrument, Subtype
+from qubx.core.basics import SW, CtrlChannel, DataType, Instrument
 from qubx.core.series import OHLCV, Bar, OrderBook, Quote, Trade
 from qubx.utils.time import convert_seconds_to_str, convert_tf_str_td64
 
@@ -85,20 +86,20 @@ class CachedMarketDataHolder:
 
     def update(self, instrument: Instrument, event_type: str, data: Any, update_ohlc: bool = False) -> None:
         # - store data in buffer if it's not OHLC
-        if event_type != Subtype.OHLC:
+        if event_type != DataType.OHLC:
             self._instr_to_sub_to_buffer[instrument][event_type].append(data)
 
         if not update_ohlc:
             return
 
         match event_type:
-            case Subtype.OHLC:
+            case DataType.OHLC:
                 self.update_by_bar(instrument, data)
-            case Subtype.QUOTE:
+            case DataType.QUOTE:
                 self.update_by_quote(instrument, data)
-            case Subtype.TRADE:
+            case DataType.TRADE:
                 self.update_by_trade(instrument, data)
-            case Subtype.ORDERBOOK:
+            case DataType.ORDERBOOK:
                 assert isinstance(data, OrderBook)
                 self.update_by_quote(instrument, data.to_quote())
             case _:
@@ -276,7 +277,7 @@ def process_schedule_spec(spec_str: str | None) -> Dict[str, Any]:
     return config
 
 
-_SEC2TS = lambda t: pd.Timestamp(t, unit="s")
+_SEC2TS = lambda t: pd.Timestamp(t, unit="s")  # noqa: E731
 
 
 class BasicScheduler:
@@ -287,7 +288,7 @@ class BasicScheduler:
     _chan: CtrlChannel
     _scdlr: sched.scheduler
     _ns_time_fun: Callable[[], float]
-    _crons: Dict[str, croniter]
+    _crons: dict[str, croniter]
     _is_started: bool
 
     def __init__(self, channel: CtrlChannel, time_provider_ns: Callable[[], float]):
@@ -307,6 +308,11 @@ class BasicScheduler:
 
         if self._is_started:
             self._arm_schedule(event_name, self.time_sec())
+
+    def get_schedule_for_event(self, event_name: str) -> str | None:
+        if event_name in self._crons:
+            return " ".join(self._crons[event_name].expressions)
+        return None
 
     def get_event_last_time(self, event_name: str) -> pd.Timestamp | None:
         if event_name in self._crons:
@@ -372,6 +378,18 @@ class BasicScheduler:
             self._is_started = True
 
 
+def extract_parameters_from_object(strategy: Any) -> dict[str, Any]:
+    """
+    Extract default parameters (as defined in class) and their values from object.
+    """
+    r = {}
+    # - we need to get all defined attributes of strategy so look for them in class
+    for k, v in strategy.__class__.__dict__.items():
+        if not k.startswith("_") and not isfunction(v):
+            r[k] = getattr(strategy, k, v)
+    return r
+
+
 def set_parameters_to_object(strategy: Any, **kwargs):
     """
     Set given parameters values to object.
@@ -412,3 +430,14 @@ def extract_price(update: float | Quote | Trade | Bar) -> float:
         return update.close
     else:
         raise ValueError(f"Unknown update type: {type(update)}")
+
+
+def full_qualified_class_name(obj: object):
+    """
+    Returns full qualified class name of object.
+    """
+    klass = obj.__class__
+    module = klass.__module__
+    if module in ["__builtin__", "__main__"]:
+        return klass.__qualname__  # avoid outputs like 'builtins.str'
+    return module + "." + klass.__name__

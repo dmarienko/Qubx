@@ -1,32 +1,25 @@
+from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Set, Type
-from concurrent.futures import ThreadPoolExecutor
 
-from joblib import delayed
 import numpy as np
 import pandas as pd
-from collections import defaultdict
+from joblib import delayed
 
 from qubx import logger
-from qubx.core.basics import ITimeProvider
+from qubx.core.basics import DataType, ITimeProvider
 from qubx.core.series import TimeSeries
 from qubx.data.readers import (
     CsvStorageDataReader,
     DataReader,
+    DataTransformer,
     InMemoryDataFrameReader,
     MultiQdbConnector,
-    DataTransformer,
     QuestDBConnector,
+    _list_to_chunked_iterator,
 )
 from qubx.pandaz.utils import OhlcDict, generate_equal_date_ranges, ohlc_resample, srows
 from qubx.utils.misc import ProgressParallel
-from qubx.utils.time import convert_seconds_to_str, handle_start_stop, infer_series_frequency
-
-
-def _wrap_as_iterable(data: Any) -> Iterable:
-    def __iterable():
-        yield data
-
-    return __iterable()
+from qubx.utils.time import handle_start_stop
 
 
 class InMemoryCachedReader(InMemoryDataFrameReader):
@@ -43,9 +36,10 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
     _n_jobs: int
     _start: pd.Timestamp | None = None
     _stop: pd.Timestamp | None = None
+    _symbols: list[str]
 
     # - external data
-    _external: Dict[str, pd.DataFrame | pd.Series]
+    _external: dict[str, pd.DataFrame | pd.Series]
 
     def __init__(
         self,
@@ -60,6 +54,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         self._data_timeframe = base_timeframe
         self.exchange = exchange
         self._external = {}
+        self._symbols = []
 
         # - copy external data
         for k, v in kwargs.items():
@@ -83,21 +78,18 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
             _s_path = f"{self.exchange}:{data_id}"
         _, symb = _s_path.split(":")
 
-        _start = str(self._start) if start is None else start
-        _stop = str(self._stop) if stop is None else stop
+        _start = str(self._start) if start is None and self._start is not None else start
+        _stop = str(self._stop) if stop is None and self._stop is not None else stop
         if _start is None or _stop is None:
             raise ValueError("Start and stop date must be provided")
 
         # - refresh symbol's data
         self._handle_symbols_data_from_to([symb], _start, _stop)
 
-        # - we don't use chunksize from InMemoryDataFrameReader because it returns generator
-        res = super().read(_s_path, start, stop, transform, chunksize=0, **kwargs)
+        # - super InMemoryDataFrameReader supports chunked reading now
+        return super().read(_s_path, start, stop, transform, chunksize=chunksize, **kwargs)
 
-        # - when it's asked to have chunks, it returns generator (single chunk)
-        return _wrap_as_iterable(res) if chunksize > 0 else res
-
-    def __getitem__(self, keys) -> Dict[str, pd.DataFrame | pd.Series] | pd.DataFrame | pd.Series:
+    def __getitem__(self, keys) -> dict[str, pd.DataFrame | pd.Series] | pd.DataFrame | pd.Series:
         """
         This helper mostly for using in research notebooks
         """
@@ -216,7 +208,7 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         self._stop = max(_stop, self._stop if self._stop else _stop)
         return OhlcDict({s: self._data[s].loc[_start:_stop] for s in symbols if s in self._data})
 
-    def get_aux_data_ids(self) -> Set[str]:
+    def get_aux_data_ids(self) -> set[str]:
         return self._reader.get_aux_data_ids() | set(self._external.keys())
 
     def get_aux_data(self, data_id: str, **kwargs) -> Any:
@@ -256,8 +248,20 @@ class InMemoryCachedReader(InMemoryDataFrameReader):
         _r = [x.assign(symbol=s.upper(), timestamp=x.index) for s, x in _xd.items()]
         return srows(*_r).set_index(["timestamp", "symbol"])
 
+    def get_names(self, **kwargs) -> list[str]:
+        return self._reader.get_names(**kwargs)
+
+    def get_symbols(self, exchange: str, dtype: str) -> list[str]:
+        if not self._symbols:
+            self._symbols = self._reader.get_symbols(self.exchange, DataType.OHLC)
+        return self._symbols
+
+    def get_time_ranges(self, symbol: str, dtype: DataType) -> tuple[Any, Any]:
+        _id = f"{self.exchange}:{symbol}" if not symbol.startswith(self.exchange) else symbol
+        return self._reader.get_time_ranges(_id, dtype)
+
     def __str__(self) -> str:
-        return f"InMemoryCachedReader(exchange={self.exchange},timeframe={self._data_timeframe})"
+        return f"{self.__class__.__name__}(exchange={self.exchange},timeframe={self._data_timeframe})"
 
 
 class TimeGuardedWrapper(DataReader):
@@ -287,12 +291,12 @@ class TimeGuardedWrapper(DataReader):
         chunksize=0,
         # timeframe: str | None = None,
         **kwargs,
-    ) -> Iterable | List:
+    ) -> Iterable | list:
         xs = self._time_guarded_data(
             self._reader.read(data_id, start=start, stop=stop, transform=transform, chunksize=0, **kwargs),  # type: ignore
             prev_bar=True,
         )
-        return _wrap_as_iterable(xs) if chunksize > 0 else xs
+        return _list_to_chunked_iterator(xs, chunksize) if chunksize > 0 else xs
 
     def get_aux_data(self, data_id: str, **kwargs) -> Any:
         return self._time_guarded_data(self._reader.get_aux_data(data_id, exchange=self._reader.exchange, **kwargs))
@@ -301,8 +305,8 @@ class TimeGuardedWrapper(DataReader):
         return self._time_guarded_data(self._reader.__getitem__(keys), prev_bar=True)
 
     def _time_guarded_data(
-        self, data: pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | List, prev_bar: bool = False
-    ) -> pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | List:
+        self, data: pd.DataFrame | pd.Series | dict[str, pd.DataFrame | pd.Series] | list, prev_bar: bool = False
+    ) -> pd.DataFrame | pd.Series | Dict[str, pd.DataFrame | pd.Series] | list:
         """
         This function is responsible for limiting the data based on a given time guard.
 

@@ -1,7 +1,7 @@
 import pandas as pd
 
 from qubx import logger, lookup
-from qubx.core.basics import Instrument, Position, Subtype, TargetPosition
+from qubx.core.basics import DataType, Instrument, Position, TargetPosition
 from qubx.core.helpers import CachedMarketDataHolder
 from qubx.core.interfaces import (
     IAccountProcessor,
@@ -118,7 +118,7 @@ class UniverseManager(IUniverseManager):
 
         # - unsubscribe from market data
         for instr in instruments:
-            self._subscription_manager.unsubscribe(Subtype.ALL, instr)
+            self._subscription_manager.unsubscribe(DataType.ALL, instr)
 
         # - remove from data cache
         for instr in instruments:
@@ -135,7 +135,7 @@ class UniverseManager(IUniverseManager):
         # - subscribe to market data
         self._subscription_manager.subscribe(
             (
-                Subtype.ALL
+                DataType.ALL
                 if self._subscription_manager.auto_subscribe
                 else self._subscription_manager.get_base_subscription()
             ),

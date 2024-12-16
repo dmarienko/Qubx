@@ -13,6 +13,7 @@ from qubx import logger
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
     CtrlChannel,
+    DataType,
     Deal,
     Instrument,
     ITimeProvider,

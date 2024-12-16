@@ -17,7 +17,7 @@ from tqdm.auto import tqdm
 from qubx import QubxLogConfig, logger, lookup
 from qubx.core.basics import Instrument
 from qubx.pandaz.utils import scols, srows
-from qubx.utils.numbers import count_decimal_places
+from qubx.utils.numbers_utils import count_decimal_places
 
 
 @njit

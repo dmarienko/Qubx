@@ -27,11 +27,9 @@ from qubx.core.basics import (
     OrderRequest,
     Position,
     Signal,
-    Subtype,
     TargetPosition,
     TriggerEvent,
     dt_64,
-    td_64,
 )
 from qubx.core.helpers import set_parameters_to_object
 from qubx.core.series import OHLCV, Bar, Quote, Trade
@@ -357,10 +355,10 @@ class IMarketDataProvider:
 
         Example:
             warmup({
-                (Subtype.OHLC["1h"], instr1): "30d",
-                (Subtype.OHLC["1Min"], instr1): "6h",
-                (Subtype.OHLC["1Sec"], instr2): "5Min",
-                (Subtype.TRADE, instr2): "1h",
+                (DataType.OHLC["1h"], instr1): "30d",
+                (DataType.OHLC["1Min"], instr1): "6h",
+                (DataType.OHLC["1Sec"], instr2): "5Min",
+                (DataType.TRADE, instr2): "1h",
             })
         """
         ...
@@ -590,7 +588,7 @@ class ISubscriptionManager:
         """Unsubscribe from market data for an instrument.
 
         Args:
-            subscription_type: Type of subscription to unsubscribe from (e.g. Subtype.OHLC)
+            subscription_type: Type of subscription to unsubscribe from (e.g. DataType.OHLC)
             instruments (optional): A list of instruments or instrument to unsubscribe from.
         """
         ...
@@ -620,7 +618,7 @@ class ISubscriptionManager:
         Set the main subscription which should be used for the simulation.
 
         Args:
-            subscription_type: Type of subscription (e.g. Subtype.OHLC, Subtype.OHLC["1h"])
+            subscription_type: Type of subscription (e.g. DataType.OHLC, DataType.OHLC["1h"])
         """
         ...
 
@@ -653,7 +651,7 @@ class ISubscriptionManager:
         Get the warmup period for a subscription type.
 
         Args:
-            subscription_type: Type of subscription (e.g. Subtype.OHLC["1h"], etc.)
+            subscription_type: Type of subscription (e.g. DataType.OHLC["1h"], etc.)
 
         Returns:
             str: Warmup period
@@ -672,10 +670,10 @@ class ISubscriptionManager:
 
         Example:
             set_warmup({
-                Subtype.OHLC["1h"]: "30d",
-                Subtype.OHLC["1Min"]: "6h",
-                Subtype.OHLC["1Sec"]: "5Min",
-                Subtype.TRADE: "1h",
+                DataType.OHLC["1h"]: "30d",
+                DataType.OHLC["1Min"]: "6h",
+                DataType.OHLC["1Sec"]: "5Min",
+                DataType.TRADE: "1h",
             })
         """
         ...
@@ -816,6 +814,12 @@ class IProcessingManager:
     def set_event_schedule(self, schedule: str) -> None:
         """
         Set the schedule for triggering events (default is to only trigger on data events).
+        """
+        ...
+
+    def get_event_schedule(self, event_id: str) -> str | None:
+        """
+        Get defined schedule for event id.
         """
         ...
 

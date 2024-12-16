@@ -1,11 +1,13 @@
 from dataclasses import dataclass
+
+import numpy as np
 import pandas as pd
 
 from qubx import lookup
-from qubx.backtester.simulated_data import IterableSimulationData, IteratedDataStreamsSlicer, EventBatcher
-
-from qubx.core.basics import BatchEvent, Subtype
+from qubx.backtester.simulated_data import EventBatcher, IterableSimulationData, IteratedDataStreamsSlicer
+from qubx.core.basics import BatchEvent, DataType
 from qubx.data.helpers import loader
+from qubx.data.readers import InMemoryDataFrameReader
 
 
 def get_event_dt(i: float, base: pd.Timestamp = pd.Timestamp("2021-01-01"), offset: str = "D") -> int:
@@ -216,18 +218,18 @@ class TestSimulatedDataStuff:
 
     def test_iterable_simulation_data_management(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h", n_jobs=1)
-        isd = IterableSimulationData(ld, open_close_time_indent_secs=300)
+        isd = IterableSimulationData({"ohlc": ld, "ohlc_quotes": ld}, open_close_time_indent_secs=300)
 
         s1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         s2 = lookup.find_symbol("BINANCE.UM", "ETHUSDT")
         s3 = lookup.find_symbol("BINANCE.UM", "LTCUSDT")
         assert s1 is not None and s2 is not None and s3 is not None
 
-        isd.add_instruments_for_subscription(Subtype.OHLC["1h"], [s1, s2])
-        isd.add_instruments_for_subscription(Subtype.OHLC["1h"], s3)
-        isd.add_instruments_for_subscription(Subtype.OHLC["4h"], s3)
-        isd.add_instruments_for_subscription(Subtype.OHLC["1d"], s3)
-        isd.add_instruments_for_subscription(Subtype.OHLC_TICKS["4h"], s1)
+        isd.add_instruments_for_subscription(DataType.OHLC["1h"], [s1, s2])
+        isd.add_instruments_for_subscription(DataType.OHLC["1h"], s3)
+        isd.add_instruments_for_subscription(DataType.OHLC["4h"], s3)
+        isd.add_instruments_for_subscription(DataType.OHLC["1d"], s3)
+        isd.add_instruments_for_subscription(DataType.OHLC_QUOTES["4h"], s1)
 
         # has subscription
         assert isd.has_subscription(s3, "ohlc(4h)")
@@ -236,29 +238,29 @@ class TestSimulatedDataStuff:
         assert not isd.has_subscription(s1, "ohlc(1d)")
 
         # get all instruments for ANY subscription
-        assert set(isd.get_instruments_for_subscription(Subtype.ALL)) == set([s1, s2, s3])
+        assert set(isd.get_instruments_for_subscription(DataType.ALL)) == set([s1, s2, s3])
 
         # get subs for instrument
         assert isd.get_subscriptions_for_instrument(s3) == list(
-            set([Subtype.OHLC["1h"], Subtype.OHLC["4h"], Subtype.OHLC["1d"]])
+            set([DataType.OHLC["1h"], DataType.OHLC["4h"], DataType.OHLC["1d"]])
         )
 
-        assert isd.get_instruments_for_subscription(Subtype.OHLC["4h"]) == [s3]
-        assert isd.get_instruments_for_subscription(Subtype.OHLC["1h"]) == [s1, s2, s3]
+        assert isd.get_instruments_for_subscription(DataType.OHLC["4h"]) == [s3]
+        assert isd.get_instruments_for_subscription(DataType.OHLC["1h"]) == [s1, s2, s3]
 
-        isd.remove_instruments_from_subscription(Subtype.OHLC["1h"], s3)
-        assert isd.get_instruments_for_subscription(Subtype.OHLC["1h"]) == [s1, s2]
+        isd.remove_instruments_from_subscription(DataType.OHLC["1h"], s3)
+        assert isd.get_instruments_for_subscription(DataType.OHLC["1h"]) == [s1, s2]
 
-        isd.remove_instruments_from_subscription(Subtype.OHLC["1h"], [s1, s2, s3])
-        assert isd.get_instruments_for_subscription(Subtype.OHLC["1h"]) == []
+        isd.remove_instruments_from_subscription(DataType.OHLC["1h"], [s1, s2, s3])
+        assert isd.get_instruments_for_subscription(DataType.OHLC["1h"]) == []
 
         assert isd.get_subscriptions_for_instrument(None) == list(
-            set([Subtype.OHLC["4h"], Subtype.OHLC_TICKS["4h"], Subtype.OHLC["1d"]])
+            set([DataType.OHLC["4h"], DataType.OHLC_QUOTES["4h"], DataType.OHLC["1d"]])
         )
 
     def test_iterable_simulation_data_queue_with_warmup(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h", n_jobs=1)
-        isd = IterableSimulationData(ld, open_close_time_indent_secs=300)
+        isd = IterableSimulationData({"ohlc": ld}, open_close_time_indent_secs=300)
 
         s1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         s2 = lookup.find_symbol("BINANCE.UM", "ETHUSDT")
@@ -266,8 +268,8 @@ class TestSimulatedDataStuff:
         assert s1 is not None and s2 is not None and s3 is not None
 
         # set warmup period
-        isd.set_warmup_period(Subtype.OHLC["1d"], "24h")
-        isd.add_instruments_for_subscription(Subtype.OHLC["1d"], [s1, s2, s3])
+        isd.set_warmup_period(DataType.OHLC["1d"], "24h")
+        isd.add_instruments_for_subscription(DataType.OHLC["1d"], [s1, s2, s3])
 
         _n_hist = 0
         for d in isd.create_iterable("2023-07-01", "2023-07-02"):
@@ -277,6 +279,47 @@ class TestSimulatedDataStuff:
                 _n_hist += 1
             print(t, d[0], d[1])
         assert _n_hist == 3 * 4
+
+    def test_iterable_simulation_custom_subscription_type(self):
+        ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h", n_jobs=1)
+        isd = IterableSimulationData({"ohlc": ld}, open_close_time_indent_secs=300)
+
+        s1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        s2 = lookup.find_symbol("BINANCE.UM", "ETHUSDT")
+        s3 = lookup.find_symbol("BINANCE.UM", "LTCUSDT")
+        s4 = lookup.find_symbol("BINANCE.UM", "AAVEUSDT")
+        assert s1 is not None and s2 is not None and s3 is not None and s4 is not None
+
+        # set warmup period
+        isd.set_warmup_period(DataType.OHLC["1d"], "24h")
+        isd.add_instruments_for_subscription(DataType.OHLC["1d"], [s1, s2, s3])
+
+        # - custom reader
+        idx = pd.date_range(start="2023-06-01 00:00", end="2023-07-30", freq="1h", name="timestamp")
+        c_data = pd.DataFrame({"value1": np.random.randn(len(idx)), "value2": np.random.randn(len(idx))}, index=idx)
+        custom_reader_2 = InMemoryDataFrameReader({"BINANCE.UM:AAVEUSDT": c_data})
+
+        _n_r, _got_hist, got_live = 0, False, False
+        for d in isd.create_iterable("2023-07-01", "2023-07-02"):
+            t = pd.Timestamp(d[2].time, "ns")
+            data_type = d[1]
+            _n_r += 1
+
+            if _n_r == 20:
+                print("- Subscribe on some shit here -")
+                isd.set_typed_reader("some_my_custom_data", custom_reader_2)
+                isd.set_warmup_period("some_my_custom_data", "24h")
+                isd.add_instruments_for_subscription("some_my_custom_data", [s4])
+            print(t, d[0], data_type)
+
+            if "some_my_custom_data" == data_type:
+                got_live = True
+
+            if "hist_some_my_custom_data" in data_type:
+                got_hist = True
+
+        assert got_live
+        assert got_hist
 
     def test_batching_basic(self):
         events = [

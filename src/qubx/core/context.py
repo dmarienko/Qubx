@@ -7,12 +7,12 @@ from qubx.core.basics import (
     SW,
     AssetBalance,
     CtrlChannel,
+    DataType,
     Instrument,
     MarketType,
     Order,
     OrderRequest,
     Position,
-    Subtype,
     dt_64,
 )
 from qubx.core.helpers import (
@@ -147,7 +147,7 @@ class StrategyContext(IStrategyContext):
         self.strategy.on_init(self)
         # - update cache default timeframe
         sub_type = self.get_base_subscription()
-        _, params = Subtype.from_str(sub_type)
+        _, params = DataType.from_str(sub_type)
         __default_timeframe = params.get("timeframe", "1sec")
         self._cache.update_default_timeframe(__default_timeframe)
 
@@ -372,6 +372,9 @@ class StrategyContext(IStrategyContext):
 
     def set_event_schedule(self, schedule: str):
         return self._processing_manager.set_event_schedule(schedule)
+
+    def get_event_schedule(self, event_id: str) -> str | None:
+        return self._processing_manager.get_event_schedule(event_id)
 
     def is_fitted(self) -> bool:
         return self._processing_manager.is_fitted()

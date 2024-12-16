@@ -1,11 +1,12 @@
-import pandas as pd
 from dataclasses import dataclass
 from typing import List, Union
-from qubx import lookup
 
+import pandas as pd
+
+from qubx import lookup
+from qubx.core.basics import ZERO_COSTS, DataType, Instrument, Position, TransactionCostsCalculator
+from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.utils.time import convert_seconds_to_str
-from qubx.core.basics import Instrument, Position, TransactionCostsCalculator, ZERO_COSTS, Subtype
-from qubx.core.series import time_as_nsec, Trade, Quote
 from tests.qubx.ta.utils_for_testing import N
 
 TIME = lambda x: pd.Timestamp(x, unit="ns").asm8
@@ -42,7 +43,6 @@ pos_round = lambda s, p, i: (p * round(s / p, i.size_precision), p, round(s / p,
 
 
 class TestBasics:
-
     def test_convertors(self):
         assert "3w" == convert_seconds_to_str(int(pd.Timedelta("3w").total_seconds()))
         assert "1d5h" == convert_seconds_to_str(int(pd.Timedelta("1d5h").total_seconds()))
