@@ -4,9 +4,9 @@ import pytest
 
 from qubx import lookup
 from qubx.backtester.simulator import (
+    SimulatedBroker,
     SimulatedCtrlChannel,
-    SimulatedExchange,
-    SimulatedTrading,
+    SimulatedDataProvider,
     find_instruments_and_exchanges,
     simulate,
 )
@@ -32,8 +32,8 @@ def run_debug_sim(
     initial_capital: float,
     base_currency: str,
 ) -> tuple[IStrategyContext, InMemoryLogsWriter]:
-    broker = SimulatedTrading(exchange, commissions, np.datetime64(start, "ns"))
-    broker = SimulatedExchange(exchange, broker, data_reader)
+    broker = SimulatedBroker(exchange, commissions, np.datetime64(start, "ns"))
+    broker = SimulatedDataProvider(exchange, broker, data_reader)
     instruments, _ = find_instruments_and_exchanges(symbols, exchange)
     account = BasicAccountProcessor(
         account_id=broker.get_trading_service().get_account_id(),
@@ -75,7 +75,7 @@ class TestAccountProcessorStuff:
             base_currency="USDT",
             initial_capital=self.INITIAL_CAPITAL,
         )
-        trading_service = SimulatedTrading(account, name)
+        trading_service = SimulatedBroker(account, name)
 
         channel = SimulatedCtrlChannel("data")
         trading_service.set_communication_channel(channel)

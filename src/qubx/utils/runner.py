@@ -12,16 +12,16 @@ import yaml
 from dotenv import dotenv_values, find_dotenv, load_dotenv
 
 from qubx import formatter, logger, lookup
-from qubx.backtester.simulator import SimulatedTrading
+from qubx.backtester.account import SimulatedAccountProcessor
+from qubx.backtester.simulator import SimulatedBroker
 from qubx.connectors.ccxt.account import CcxtAccountProcessor
 from qubx.connectors.ccxt.broker import CcxtBroker
 from qubx.connectors.ccxt.data import CcxtDataProvider
 from qubx.connectors.ccxt.factory import get_ccxt_exchange
-from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import CtrlChannel, Instrument, LiveTimeProvider
 from qubx.core.context import StrategyContext
 from qubx.core.helpers import BasicScheduler
-from qubx.core.interfaces import IStrategy, IStrategyContext
+from qubx.core.interfaces import IStrategy
 from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging
 from qubx.utils.marketdata.ccxt import ccxt_build_qubx_exchange_name
 from qubx.utils.misc import Struct, add_project_to_system_path, logo, version
@@ -87,25 +87,18 @@ def run_ccxt_trading(
     assert fees_calculator is not None, f"Can't find fees calculator for {qubx_exchange_name} exchange"
 
     if paper:
-        account = BasicAccountProcessor(
+        account = SimulatedAccountProcessor(
             account_id=account_id,
-            time_provider=time_provider,
             channel=channel,
             base_currency=base_currency,
-            fees_calculator=fees_calculator,
+            time_provider=time_provider,
+            tcc=fees_calculator,
             initial_capital=paper_capital,
         )
-        broker = SimulatedTrading(
-            account_processor=account,
-            exchange_name=exchange_name,
-            commissions=commissions,
-            simulation_initial_time=pd.Timestamp.now().asm8,
-        )
+        broker = SimulatedBroker(channel=channel, account=account)
         logger.debug("Setup paper account...")
     else:
-        account = CcxtAccountProcessor(
-            account_id, exchange, channel, time_provider, base_currency, fees_calculator=fees_calculator
-        )
+        account = CcxtAccountProcessor(account_id, exchange, channel, time_provider, base_currency, tcc=fees_calculator)
         broker = CcxtBroker(exchange, channel, time_provider, account)
         logger.debug(f"Setup live {'testnet ' if use_testnet else ''}account...")
 

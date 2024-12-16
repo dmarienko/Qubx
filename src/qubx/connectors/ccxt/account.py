@@ -72,7 +72,7 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         channel: CtrlChannel,
         time_provider: ITimeProvider,
         base_currency: str,
-        fees_calculator: TransactionCostsCalculator,
+        tcc: TransactionCostsCalculator,
         balance_interval: str = "30Sec",
         position_interval: str = "30Sec",
         subscription_interval: str = "10Sec",
@@ -82,12 +82,12 @@ class CcxtAccountProcessor(BasicAccountProcessor):
         super().__init__(
             account_id=account_id,
             time_provider=time_provider,
-            channel=channel,
             base_currency=base_currency,
-            fees_calculator=fees_calculator,
+            tcc=tcc,
             initial_capital=0,
         )
         self.exchange = exchange
+        self.channel = channel
         self.max_retries = max_retries
         self.balance_interval = balance_interval
         self.position_interval = position_interval

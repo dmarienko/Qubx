@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from qubx import QubxLogConfig, logger, lookup
-from qubx.backtester.simulator import SimulatedTrading
+from qubx.backtester.simulator import SimulatedBroker
 from qubx.connectors.ccxt.broker import CcxtBroker
 from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
 from qubx.connectors.ccxt.data import CcxtDataProvider

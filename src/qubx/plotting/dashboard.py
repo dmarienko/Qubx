@@ -16,7 +16,7 @@ from plotly.subplots import make_subplots
 from quantkit.features import FeatureManager, OrderbookImbalance, OrderbookMidPrice, TradePrice, TradeVolumeImbalance
 
 from qubx import QubxLogConfig, logger, lookup
-from qubx.backtester.simulator import SimulatedTrading
+from qubx.backtester.simulator import SimulatedBroker
 from qubx.connectors.ccxt.broker import CcxtBroker
 from qubx.connectors.ccxt.data import CcxtDataProvider
 from qubx.core.basics import Instrument
@@ -24,7 +24,7 @@ from qubx.core.interfaces import IStrategy, IStrategyContext
 from qubx.core.series import OrderBook, TimeSeries
 from qubx.pandaz import scols
 from qubx.utils.charting.lookinglass import LookingGlass
-from qubx.utils.runner import get_account_config, run_ccxt_paper_trading
+from qubx.utils.runner import get_account_config
 
 pio.templates.default = "plotly_dark"
 

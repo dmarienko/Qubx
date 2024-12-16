@@ -202,7 +202,6 @@ class IBroker:
     Handles account operations, order placement, and position tracking.
     """
 
-    time_provider: ITimeProvider
     channel: CtrlChannel
 
     @property
@@ -707,7 +706,6 @@ class ISubscriptionManager:
 
 class IAccountProcessor(IAccountViewer):
     time_provider: ITimeProvider
-    channel: CtrlChannel
 
     def start(self):
         """
@@ -739,6 +737,7 @@ class IAccountProcessor(IAccountViewer):
         """
         ...
 
+    # TODO: refactor interface to accept float, Quote, Trade
     def update_position_price(self, time: dt_64, instrument: Instrument, price: float) -> None:
         """Update position price for an instrument.
 

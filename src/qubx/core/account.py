@@ -21,10 +21,9 @@ from qubx.core.interfaces import IAccountProcessor
 class BasicAccountProcessor(IAccountProcessor):
     account_id: str
     time_provider: ITimeProvider
-    channel: CtrlChannel
     base_currency: str
     commissions: str
-    _fees_calculator: TransactionCostsCalculator
+    _tcc: TransactionCostsCalculator
     _balances: dict[str, AssetBalance]
     _active_orders: dict[str, Order]
     _processed_trades: dict[str, list[str | int]]
@@ -35,16 +34,14 @@ class BasicAccountProcessor(IAccountProcessor):
         self,
         account_id: str,
         time_provider: ITimeProvider,
-        channel: CtrlChannel,
         base_currency: str,
-        fees_calculator: TransactionCostsCalculator = ZERO_COSTS,
+        tcc: TransactionCostsCalculator = ZERO_COSTS,
         initial_capital: float = 100_000,
     ) -> None:
         self.account_id = account_id
         self.time_provider = time_provider
-        self.channel = channel
         self.base_currency = base_currency.upper()
-        self._fees_calculator = fees_calculator
+        self._tcc = tcc
         self._processed_trades = defaultdict(list)
         self._active_orders = dict()
         self._positions = {}
@@ -218,7 +215,7 @@ class BasicAccountProcessor(IAccountProcessor):
     def _fill_missing_fee_info(self, instrument: Instrument, deals: list[Deal]) -> None:
         for d in deals:
             if d.fee_amount is None:
-                d.fee_amount = self._fees_calculator.get_execution_fees(
+                d.fee_amount = self._tcc.get_execution_fees(
                     instrument=instrument, exec_price=d.price, amount=d.amount, crossed_market=d.aggressive
                 )
                 # this is only true for linear contracts
