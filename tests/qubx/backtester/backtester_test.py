@@ -1,16 +1,14 @@
-from typing import Any, List, Optional
-
 import numpy as np
 import pandas as pd
 
 from qubx import logger, lookup
 from qubx.backtester.ome import OrdersManagementEngine
 from qubx.backtester.simulator import simulate
-from qubx.core.basics import ZERO_COSTS, Deal, Instrument, ITimeProvider, Order, Subtype
+from qubx.core.basics import ZERO_COSTS, DataType, Deal, Instrument, ITimeProvider, Order
 from qubx.core.interfaces import IStrategy, IStrategyContext, TriggerEvent
 from qubx.core.series import Quote
 from qubx.core.utils import recognize_time
-from qubx.data.readers import AsOhlcvSeries, AsQuotes, AsTimestampedRecords, CsvStorageDataReader, RestoreTicksFromOHLC
+from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, RestoreTicksFromOHLC
 from qubx.pandaz.utils import shift_series
 from qubx.ta.indicators import ema, sma
 
@@ -125,7 +123,7 @@ class TestBacktesterStuff:
         assert instr is not None
         r = CsvStorageDataReader("tests/data/csv")
         stream = r.read("BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=False, spread=instr.tick_size))
-        assert isinstance(stream, List)
+        assert isinstance(stream, list)
 
         ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
         ome.update_bbo(t.g(stream[0]))
@@ -150,7 +148,7 @@ class TestBacktesterStuff:
             slow_period = 12
 
             def on_init(self, ctx: IStrategyContext):
-                ctx.set_base_subscription(Subtype.OHLC[self.timeframe])
+                ctx.set_base_subscription(DataType.OHLC[self.timeframe])
 
             def on_event(self, ctx: IStrategyContext, event: TriggerEvent):
                 for i in ctx.instruments:
@@ -180,21 +178,19 @@ class TestBacktesterStuff:
         sigs = sigs[sigs != 0]
         i1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         assert i1 is not None
-        s2 = shift_series(sigs, "4Min59Sec").rename(i1) / 100  # type: ignore
+        # s2 = shift_series(sigs, "4Min59Sec").rename(i1) / 100  # type: ignore
+        s2 = shift_series(sigs, "5Min1Sec").rename(i1) / 100  # type: ignore
+
+        # fmt: off
         rep1 = simulate(
             {
                 # - generated signals as series
                 "test0": CrossOver(timeframe="5Min", fast_period=5, slow_period=15),
                 "test1": s2,
             },
-            r,
-            10000,
-            ["BINANCE.UM:BTCUSDT"],
-            "vip0_usdt",
-            "2024-01-01",
-            "2024-01-02",
-            n_jobs=1,
-        )
+            {'ohlc(5Min)': r}, 10000, ["BINANCE.UM:BTCUSDT"], "vip0_usdt", "2024-01-01", "2024-01-02", n_jobs=1
+        ) 
+        # fmt:on
 
         assert all(
             rep1[0].executions_log[["filled_qty", "price", "side"]]
@@ -212,7 +208,7 @@ class TestBacktesterStuff:
             stop="2024-01-15",
             transform=RestoreTicksFromOHLC(trades=False, spread=instr.tick_size),
         )
-        assert isinstance(stream, List)
+        assert isinstance(stream, list)
 
         ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
         q0 = t.g(stream[0])

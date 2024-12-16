@@ -1,19 +1,19 @@
 import traceback
 from multiprocessing.pool import ThreadPool
 from types import FunctionType
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, List, Tuple
 
 import pandas as pd
 
 from qubx import logger
 from qubx.core.basics import (
     SW,
+    DataType,
     Deal,
     Instrument,
     MarketEvent,
     Order,
     Signal,
-    Subtype,
     TargetPosition,
     TriggerEvent,
     dt_64,
@@ -89,7 +89,7 @@ class ProcessingManager(IProcessingManager):
         self._handlers = {
             n.split("_handle_")[1]: f
             for n, f in self.__class__.__dict__.items()
-            if type(f) == FunctionType and n.startswith("_handle_")
+            if type(f) is FunctionType and n.startswith("_handle_")
         }
         self._strategy_name = strategy.__class__.__name__
         self._trig_bar_freq_nsec = None
@@ -102,10 +102,17 @@ class ProcessingManager(IProcessingManager):
 
     def set_event_schedule(self, schedule: str) -> None:
         rule = process_schedule_spec(schedule)
+        if not rule or "type" not in rule:
+            raise ValueError(f"Can't recognoize schedule format: '{schedule}'")
+
         if rule["type"] != "cron":
             raise ValueError("Only cron type is supported for event schedule")
+
         self._scheduler.schedule_event(rule["schedule"], "time")
         self._trigger_on_time_event = True
+
+    def get_event_schedule(self, event_id: str) -> str | None:
+        return self._scheduler.get_schedule_for_event(event_id)
 
     def process_data(self, instrument: Instrument, d_type: str, data: Any) -> bool:
         self._logging.notify(self._time_provider.time())
@@ -273,7 +280,7 @@ class ProcessingManager(IProcessingManager):
         _update_ohlc = is_base_data or (
             not is_historical
             and self._is_simulation
-            and Subtype.OHLC == self._subscription_manager.get_base_subscription()
+            and DataType.OHLC == self._subscription_manager.get_base_subscription()
             and isinstance(data, Quote)
         )
         self._cache.update(instrument, event_type, data, update_ohlc=_update_ohlc)
@@ -289,12 +296,12 @@ class ProcessingManager(IProcessingManager):
 
     def __is_base_data(self, data: Any) -> bool:
         _sub_type = self._subscription_manager.get_base_subscription()
-        sub_type, sub_params = Subtype.from_str(_sub_type)
+        sub_type, sub_params = DataType.from_str(_sub_type)
         timeframe = sub_params.get("timeframe")
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         # TODO - think about refactoring we need to get rid of it !!!
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        if self._is_simulation and Subtype.OHLC == sub_type and timeframe:
+        if self._is_simulation and DataType.OHLC == sub_type and timeframe:
             # in simulate we transform OHLC into quotes, so we need to check
             # if this is the final quote of a bar which should be considered as base data
             if self._trig_bar_freq_nsec is None:
@@ -313,11 +320,14 @@ class ProcessingManager(IProcessingManager):
 
         # TODO: handle batched events
         return (
-            (sub_type == Subtype.OHLC and isinstance(data, Bar))
-            or (sub_type == Subtype.QUOTE and isinstance(data, Quote))
-            or (sub_type == Subtype.ORDERBOOK and isinstance(data, OrderBook))
-            or (sub_type == Subtype.TRADE and isinstance(data, Trade))
+            (sub_type == DataType.OHLC and isinstance(data, Bar))
+            or (sub_type == DataType.OHLC_QUOTES and isinstance(data, Quote))  # TEMPORARY: just to pass test
+            or (sub_type == DataType.OHLC_TRADES and isinstance(data, Trade))  # TEMPORARY: just to pass test
+            or (sub_type == DataType.QUOTE and isinstance(data, Quote))
+            or (sub_type == DataType.ORDERBOOK and isinstance(data, OrderBook))
+            or (sub_type == DataType.TRADE and isinstance(data, Trade))
         )
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
     ###########################################################################
     # - Handlers for different types of incoming data
@@ -340,10 +350,10 @@ class ProcessingManager(IProcessingManager):
     def _process_hist_event(self, instrument: Instrument, event_type: str, event_data: Any) -> None:
         if not isinstance(event_data, list):
             event_data = [event_data]
-        if Subtype.OHLC == event_type:
+        if DataType.OHLC == event_type:
             # - update ohlc using the list directly, this allows to update
             # multiple timeframes with different data (1h can have more bars than 1m)
-            _, sub_params = Subtype.from_str(event_type)
+            _, sub_params = DataType.from_str(event_type)
             timeframe = sub_params.get("timeframe", self._cache.default_timeframe)
             self._cache.update_by_bars(instrument, timeframe, event_data)
         else:

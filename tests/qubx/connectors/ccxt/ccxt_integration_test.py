@@ -1,25 +1,21 @@
 import asyncio
-import pytest
-from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
-
-import time
-import pandas as pd
 import threading
-from typing import Any, Callable
-from pathlib import Path
+import time
 from collections import defaultdict
+from pathlib import Path
+from typing import Any, Callable
 
-from qubx import lookup, logger, QubxLogConfig
-from qubx.core.basics import TriggerEvent, Trade, MarketEvent, Instrument, Subtype
-from qubx.core.interfaces import IStrategyContext, IStrategy, Position
+import pandas as pd
+import pytest
+
+from qubx import QubxLogConfig, logger, lookup
+from qubx.backtester.simulator import SimulatedTrading
 from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
 from qubx.connectors.ccxt.trading import CcxtTradingConnector
-from qubx.utils.runner import get_account_config
+from qubx.core.basics import DataType, Instrument, MarketEvent, Trade, TriggerEvent
+from qubx.core.interfaces import IStrategy, IStrategyContext, Position
 from qubx.pandaz import scols
-from qubx.backtester.simulator import SimulatedTrading
-from qubx.utils.runner import run_ccxt_paper_trading
-from qubx.utils.collections import TimeLimitedDeque
-from qubx.utils.runner import run_ccxt_trading, run_ccxt_paper_trading
+from qubx.utils.runner import get_account_config, run_ccxt_paper_trading, run_ccxt_trading
 
 
 async def wait(condition: Callable[[], bool] | None = None, timeout: int = 10, period: float = 1.0):
@@ -39,8 +35,8 @@ class DebugStrategy(IStrategy):
     _instr_to_dtype_to_count: dict[Instrument, dict[str, int]]
 
     def on_init(self, ctx: IStrategyContext):
-        ctx.set_base_subscription(Subtype.OHLC["1m"])
-        ctx.set_warmup({Subtype.OHLC["1m"]: "1h"})
+        ctx.set_base_subscription(DataType.OHLC["1m"])
+        ctx.set_warmup({DataType.OHLC["1m"]: "1h"})
         self._instr_to_dtype_to_count = defaultdict(lambda: defaultdict(int))
 
     def on_market_data(self, ctx: IStrategyContext, data: MarketEvent):
@@ -53,7 +49,6 @@ class DebugStrategy(IStrategy):
 
 
 class TestCcxtDataProvider:
-
     @pytest.fixture(autouse=True)
     def setup(self):
         QubxLogConfig.set_log_level("DEBUG")
@@ -81,8 +76,8 @@ class TestCcxtDataProvider:
         )
         await wait(ctx.is_fitted)
 
-        ctx.subscribe(Subtype.TRADE)
-        ctx.subscribe(Subtype.ORDERBOOK)
+        ctx.subscribe(DataType.TRADE)
+        ctx.subscribe(DataType.ORDERBOOK)
 
         async def wait_for_instrument_data(instr: Instrument):
             async def check_counts():

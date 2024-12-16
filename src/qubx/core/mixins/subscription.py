@@ -1,9 +1,9 @@
 from collections import defaultdict
-from typing import Any, Dict, List, Set, Tuple, Union
+from typing import Any, Dict, List, Set, Tuple
 
-from qubx.core.basics import Instrument, Subtype
+from qubx.core.basics import DataType, Instrument
 from qubx.core.interfaces import IBrokerServiceProvider, ISubscriptionManager
-from qubx.utils.helpers import synchronized
+from qubx.utils.misc import synchronized
 
 
 class SubscriptionManager(ISubscriptionManager):
@@ -23,7 +23,8 @@ class SubscriptionManager(ISubscriptionManager):
     def __init__(self, broker: IBrokerServiceProvider, auto_subscribe: bool = True) -> None:
         self._broker = broker
         self._is_simulation = broker.is_simulated_trading
-        self._base_sub = Subtype.OHLC["1Min"] if self._is_simulation else Subtype.ORDERBOOK
+        # self._base_sub = DataType.OHLC["1Min"] if self._is_simulation else DataType.ORDERBOOK
+        self._base_sub = DataType.NONE if self._is_simulation else DataType.ORDERBOOK
         self._sub_to_warmup = {}
         self._pending_warmups = {}
         self._pending_global_subscriptions = set()
@@ -46,7 +47,7 @@ class SubscriptionManager(ISubscriptionManager):
         instruments = list(set(instruments).difference(_current_instruments))
 
         # - subscribe to all existing subscriptions if subscription_type is ALL
-        if subscription_type == Subtype.ALL:
+        if subscription_type == DataType.ALL:
             subscriptions = self.get_subscriptions()
             for sub in subscriptions:
                 self.subscribe(sub, instruments)
@@ -64,7 +65,7 @@ class SubscriptionManager(ISubscriptionManager):
             instruments = [instruments]
 
         # - subscribe to all existing subscriptions if subscription_type is ALL
-        if subscription_type == Subtype.ALL:
+        if subscription_type == DataType.ALL:
             subscriptions = self.get_subscriptions()
             for sub in subscriptions:
                 self.unsubscribe(sub, instruments)
@@ -74,25 +75,32 @@ class SubscriptionManager(ISubscriptionManager):
 
     @synchronized
     def commit(self) -> None:
-        _subs = self._get_updated_subs()
-        if not _subs:
+        if not self._has_operations_to_commit():
             return
 
         # - warm up subscriptions
         self._run_warmup()
 
         # - update subscriptions
-        for _sub in _subs:
+        for _sub in self._get_updated_subs():
             _current_sub_instruments = set(self._broker.get_subscribed_instruments(_sub))
             _removed_instruments = self._pending_stream_unsubscriptions.get(_sub, set())
             _added_instruments = self._pending_stream_subscriptions.get(_sub, set())
+
             if _sub in self._pending_global_unsubscriptions:
                 _removed_instruments.update(_current_sub_instruments)
+
             if _sub in self._pending_global_subscriptions:
                 _added_instruments.update(self._broker.get_subscribed_instruments())
+
+            # - subscribe collection
             _updated_instruments = _current_sub_instruments.union(_added_instruments).difference(_removed_instruments)
             if _updated_instruments != _current_sub_instruments:
                 self._broker.subscribe(_sub, _updated_instruments, reset=True)
+
+            # - unsubscribe instruments
+            if _removed_instruments:
+                self._broker.unsubscribe(_sub, _removed_instruments)
 
         # - clean up pending subs and unsubs
         self._pending_stream_subscriptions.clear()
@@ -142,10 +150,20 @@ class SubscriptionManager(ISubscriptionManager):
             | self._pending_global_unsubscriptions
         )
 
+    def _has_operations_to_commit(self) -> bool:
+        return any(
+            (
+                self._pending_stream_unsubscriptions,
+                self._pending_stream_subscriptions,
+                self._pending_global_subscriptions,
+                self._pending_global_unsubscriptions,
+            )
+        )
+
     def _update_pending_warmups(self, subscription_type: str, instruments: List[Instrument]) -> None:
         # TODO: refactor pending warmups in a way that would allow to subscribe and then call set_warmup in the same iteration
         # - ohlc is handled separately
-        if Subtype.from_str(subscription_type) != Subtype.OHLC:
+        if DataType.from_str(subscription_type) != DataType.OHLC:
             _warmup_period = self._sub_to_warmup.get(subscription_type)
             if _warmup_period is not None:
                 for instrument in instruments:
@@ -158,7 +176,7 @@ class SubscriptionManager(ISubscriptionManager):
                     (sub, instrument): period
                     for sub, period in self._sub_to_warmup.items()
                     for instrument in instruments
-                    if Subtype.OHLC == sub
+                    if DataType.OHLC == sub
                 }
             )
 

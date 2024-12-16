@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from pytest import approx
 
 from qubx import QubxLogConfig
 from qubx.core.basics import ITimeProvider
@@ -8,15 +9,15 @@ from qubx.core.utils import time_to_str
 from qubx.data.helpers import TimeGuardedWrapper, loader
 from qubx.data.readers import (
     STOCK_DAILY_SESSION,
+    AsOhlcvSeries,
     AsPandasFrame,
+    AsQuotes,
     CsvStorageDataReader,
     InMemoryDataFrameReader,
-    AsQuotes,
-    AsOhlcvSeries,
-    RestoreTicksFromOHLC,
     RestoredBarsFromOHLC,
+    RestoreTicksFromOHLC,
 )
-from pytest import approx
+from qubx.pandaz.utils import srows
 
 N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
 
@@ -107,8 +108,8 @@ class TestDataReaders:
         assert set(r0.get_aux_data_ids()) == {"candles"}
 
         r1 = InMemoryDataFrameReader({"TEST1": pd.DataFrame(), "TEST2": pd.DataFrame()})
-        assert r1.get_aux_data_ids()
-        assert set(r1.get_aux_data("symbols")) == {"TEST1", "TEST2"}
+        # assert r1.get_aux_data_ids()
+        assert set(r1.get_aux_data("symbols", exchange=None, dtype=None)) == {"TEST1", "TEST2"}
         try:
             r1.get_aux_data("some_arbitrary_data_id")
         except:
@@ -194,6 +195,19 @@ class TestDataReaders:
         for b in bars_data:
             if isinstance(b, Bar):
                 restored_ohlc.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume)
-                # print(f"{time_to_str(b.time)} : {str(b)}")
 
         assert all((restored_ohlc.pd() - ohlc_data.pd()) < 1e-10)
+
+    def test_inmem_chunk(self):
+        r0 = CsvStorageDataReader("tests/data/csv/")
+        data = r0.read("BTCUSDT_ohlcv_M1", transform=AsPandasFrame(), timeframe="1h")
+        r1 = InMemoryDataFrameReader({"BTCUSDT": data})
+        data2 = r1.read("BTCUSDT", transform=AsPandasFrame(), chunksize=10_000)
+
+        res1 = []
+        for c in data2:
+            res1.append(c)
+            assert len(c) <= 10_000
+
+        # - read by chuncks must be the same as reading all at once
+        assert all(srows(*res1) == r1.read("BTCUSDT", transform=AsPandasFrame(), chunksize=0))

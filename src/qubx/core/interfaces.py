@@ -18,6 +18,7 @@ from qubx import logger, lookup
 from qubx.core.basics import (
     SW,
     AssetBalance,
+    DataType,
     Deal,
     ICommunicationManager,
     Instrument,
@@ -26,7 +27,6 @@ from qubx.core.basics import (
     Order,
     Position,
     Signal,
-    Subtype,
     TargetPosition,
     TriggerEvent,
     dt_64,
@@ -604,6 +604,12 @@ class IProcessingManager:
     def set_event_schedule(self, schedule: str) -> None:
         """
         Set the schedule for triggering events (default is to only trigger on data events).
+        """
+        ...
+
+    def get_event_schedule(self, event_id: str) -> str | None:
+        """
+        Get defined schedule for event id.
         """
         ...
 

@@ -9,7 +9,7 @@ from ccxt.pro import Exchange
 
 from qubx import lookup
 from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
-from qubx.core.basics import CtrlChannel, Instrument, Subtype
+from qubx.core.basics import CtrlChannel, DataType, Instrument
 from qubx.core.exceptions import QueueTimeout
 from qubx.core.mixins.subscription import SubscriptionManager
 
@@ -78,8 +78,8 @@ class TestCcxtExchangeConnector:
         # self.connector.subscribe([i1, i2], "trade", warmup_period="1m")
         # self.connector.subscribe([i1], "orderbook", warmup_period="1m")
         # self.connector.subscribe([i2], "orderbook", warmup_period="1m")
-        self.sub_manager.subscribe(Subtype.OHLC["15Min"], [i2])
-        self.sub_manager.subscribe(Subtype.OHLC["15Min"], [i1])
+        self.sub_manager.subscribe(DataType.OHLC["15Min"], [i2])
+        self.sub_manager.subscribe(DataType.OHLC["15Min"], [i1])
 
         # Commit subscriptions
         self.sub_manager.commit()
@@ -87,7 +87,7 @@ class TestCcxtExchangeConnector:
         # Verify subscriptions were added
         # assert i1 in self.connector._subscriptions["trade"]
         # assert i1 in self.connector._subscriptions["orderbook"]
-        assert i1 in self.connector._subscriptions[Subtype.OHLC["15Min"]]
+        assert i1 in self.connector._subscriptions[DataType.OHLC["15Min"]]
 
         channel = self.connector.get_communication_channel()
         events = []

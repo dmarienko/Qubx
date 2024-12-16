@@ -1,19 +1,22 @@
 import math
-import pandas as pd
-
 from collections import defaultdict, deque
 from typing import Any, Iterable, Iterator, TypeAlias
 
+import pandas as pd
+
 from qubx import logger
-from qubx.core.basics import Instrument, Subtype, dt_64, BatchEvent
-from qubx.core.series import Quote, Trade, Bar, OrderBook
+from qubx.core.basics import BatchEvent, DataType, Instrument, dt_64
+from qubx.core.series import Bar, OrderBook, Quote, Trade
 from qubx.data.readers import (
+    AsDict,
+    AsQuotes,
+    AsTrades,
     DataReader,
     DataTransformer,
-    RestoreTicksFromOHLC,
     RestoredBarsFromOHLC,
-    AsTrades,
-    AsQuotes,
+    RestoreQuotesFromOHLC,
+    RestoreTicksFromOHLC,
+    RestoreTradesFromOHLC,
 )
 
 _T: TypeAlias = Quote | Trade | Bar | OrderBook
@@ -119,6 +122,7 @@ class IteratedDataStreamsSlicer(Iterator[_D]):
 
 class DataFetcher:
     _fetcher_id: str
+    _reader: DataReader
     _requested_data_type: str
     _producing_data_type: str
     _params: dict[str, object]
@@ -132,6 +136,7 @@ class DataFetcher:
     def __init__(
         self,
         fetcher_id: str,
+        reader: DataReader,
         subtype: str,
         params: dict[str, Any],
         warmup_period: pd.Timedelta | None = None,
@@ -140,37 +145,47 @@ class DataFetcher:
     ) -> None:
         self._fetcher_id = fetcher_id
         self._params = params
+        self._reader = reader
 
         match subtype:
-            case Subtype.OHLC_TICKS:
-                self._transformer = RestoreTicksFromOHLC(open_close_time_shift_secs=open_close_time_indent_secs)
+            case DataType.OHLC_QUOTES:
+                # - requested restore quotes from OHLC
+                self._transformer = RestoreQuotesFromOHLC(open_close_time_shift_secs=open_close_time_indent_secs)
                 self._requested_data_type = "ohlc"
                 self._producing_data_type = "quote"
                 if "timeframe" in params:
                     self._timeframe = params.get("timeframe", "1Min")
 
-            case Subtype.OHLC:
+            case DataType.OHLC_TRADES:
+                # - requested restore trades from OHLC
+                self._transformer = RestoreTradesFromOHLC(open_close_time_shift_secs=open_close_time_indent_secs)
+                self._requested_data_type = "ohlc"
+                self._producing_data_type = "trade"
+                if "timeframe" in params:
+                    self._timeframe = params.get("timeframe", "1Min")
+
+            case DataType.OHLC:
+                # - requested restore bars from OHLC
                 self._transformer = RestoredBarsFromOHLC(open_close_time_shift_secs=open_close_time_indent_secs)
                 self._requested_data_type = "ohlc"
                 self._producing_data_type = "ohlc"
                 if "timeframe" in params:
                     self._timeframe = params.get("timeframe", "1Min")
 
-            case Subtype.TRADE:
+            case DataType.TRADE:
                 self._requested_data_type = "trade"
                 self._producing_data_type = "trade"
                 self._transformer = AsTrades()
 
-            case Subtype.QUOTE:
+            case DataType.QUOTE:
                 self._requested_data_type = "orderbook"
-                self._producing_data_type = "quote"
+                self._producing_data_type = "quote"  # ???
                 self._transformer = AsQuotes()
 
             case _:
-                # TODO: need to handle other subscription types
-                # case Subtype.LIQUIDATION:
-                # case Subtype.FUNDING_RATE:
-                raise ValueError(f"Unsupported subscription type: {subtype}")
+                self._requested_data_type = subtype
+                self._producing_data_type = subtype
+                self._transformer = AsDict()
 
         self._warmup_period = warmup_period
         self._warmed = {}
@@ -206,7 +221,7 @@ class DataFetcher:
         return [self._fetcher_id + "." + i for i in self._specs]
 
     def load(
-        self, reader: DataReader, start: str | pd.Timestamp, end: str | pd.Timestamp, to_load: list[Instrument] | None
+        self, start: str | pd.Timestamp, end: str | pd.Timestamp, to_load: list[Instrument] | None
     ) -> dict[str, Iterator]:
         # - iterate over all instruments if no indices specified
         _requests = self._specs if not to_load else set(self._make_request_id(i) for i in to_load)
@@ -233,7 +248,7 @@ class DataFetcher:
                 if self._timeframe:
                     _args["timeframe"] = self._timeframe
 
-                _r_iters[self._fetcher_id + "." + _r] = reader.read(**_args)  # type: ignore
+                _r_iters[self._fetcher_id + "." + _r] = self._reader.read(**_args)  # type: ignore
             else:
                 raise IndexError(
                     f"Instrument {_r} is not subscribed for this data {self._requested_data_type} in {self._fetcher_id} !"
@@ -262,10 +277,10 @@ class IterableSimulationData(Iterator):
         2. optimization for historical data (return bunch of history instead of each bar in next(...))
     """
 
-    _reader: DataReader
+    _readers: dict[str, DataReader]
     _subtyped_fetchers: dict[str, DataFetcher]
     _warmups: dict[str, pd.Timedelta]
-    _instruments: dict[str, tuple[Instrument, DataFetcher, Subtype]]
+    _instruments: dict[str, tuple[Instrument, DataFetcher, DataType]]
     _open_close_time_indent_secs: int | float
 
     _slicer_ctrl: IteratedDataStreamsSlicer | None = None
@@ -276,14 +291,19 @@ class IterableSimulationData(Iterator):
 
     def __init__(
         self,
-        reader: DataReader,
+        readers: dict[str, DataReader],
         open_close_time_indent_secs=1,  # open/close ticks shift
     ):
-        self._reader = reader
+        self._readers = dict(readers)
         self._instruments = {}
         self._subtyped_fetchers = {}
         self._warmups = {}
         self._open_close_time_indent_secs = open_close_time_indent_secs
+
+    def set_typed_reader(self, data_type: str, reader: DataReader):
+        self._readers[data_type] = reader
+        if _fetcher := self._subtyped_fetchers.get(data_type):
+            _fetcher._reader = reader
 
     def set_warmup_period(self, subscription: str, warmup_period: str | None = None):
         if warmup_period:
@@ -291,15 +311,18 @@ class IterableSimulationData(Iterator):
             self._warmups[_access_key] = pd.Timedelta(warmup_period)
 
     def _parse_subscription_spec(self, subscription: str) -> tuple[str, str, dict[str, object]]:
-        _subtype, _params = Subtype.from_str(subscription)
+        _subtype, _params = DataType.from_str(subscription)
         match _subtype:
-            case Subtype.OHLC | Subtype.OHLC_TICKS:
+            case DataType.OHLC | DataType.OHLC_QUOTES:
                 _timeframe = _params.get("timeframe", "1Min")
                 _access_key = f"{_subtype}.{_timeframe}"
-            case Subtype.TRADE | Subtype.QUOTE:
+            case DataType.TRADE | DataType.QUOTE:
                 _access_key = f"{_subtype}"
             case _:
-                raise ValueError(f"Unsupported subscription type: {_subtype}")
+                # - any arbitrary data type is passed as is
+                _params = {}
+                _subtype = subscription
+                _access_key = f"{_subtype}"
         return _access_key, _subtype, _params
 
     def add_instruments_for_subscription(self, subscription: str, instruments: list[Instrument] | Instrument):
@@ -308,9 +331,13 @@ class IterableSimulationData(Iterator):
 
         fetcher = self._subtyped_fetchers.get(_subt_key)
         if not fetcher:
+            _reader = self._readers.get(_data_type)
+            if _reader is None:
+                raise ValueError(f"No reader configured for data type: {_data_type}")
             self._subtyped_fetchers[_subt_key] = (
                 fetcher := DataFetcher(
                     _subt_key,
+                    _reader,
                     _data_type,
                     _params,
                     warmup_period=self._warmups.get(_subt_key),
@@ -327,14 +354,13 @@ class IterableSimulationData(Iterator):
 
         if self.is_running and _instrs_to_preload:
             self._slicer_ctrl += fetcher.load(
-                self._reader,
                 pd.Timestamp(self._current_time, unit="ns"),  # type: ignore
                 self._stop,  # type: ignore
                 _instrs_to_preload,
             )
 
     def get_instruments_for_subscription(self, subscription: str) -> list[Instrument]:
-        if subscription == Subtype.ALL:
+        if subscription == DataType.ALL:
             return list((i for i, *_ in self._instruments.values()))
 
         _subt_key, _, _ = self._parse_subscription_spec(subscription)
@@ -381,7 +407,7 @@ class IterableSimulationData(Iterator):
         instruments = instruments if isinstance(instruments, list) else [instruments]
 
         # - if we want to remove instruments from all subscriptions
-        if subscription == Subtype.ALL:
+        if subscription == DataType.ALL:
             _f_keys = list(self._subtyped_fetchers.keys())
             for s in _f_keys:
                 _remove_from_fetcher(s, instruments)
@@ -408,7 +434,7 @@ class IterableSimulationData(Iterator):
 
         for f in self._subtyped_fetchers.values():
             logger.debug(f"Preloading initial data for {f._fetcher_id} {self._start} : {self._stop} ...")
-            self._slicer_ctrl += f.load(self._reader, _ct_timestap, self._stop, None)  # type: ignore
+            self._slicer_ctrl += f.load(_ct_timestap, self._stop, None)  # type: ignore
 
         self._slicing_iterator = iter(self._slicer_ctrl)
         return self

@@ -1,27 +1,28 @@
 from collections import defaultdict
-from typing import Callable, Iterable, List, Set, Tuple, Union, Dict, Any
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from qubx import logger, lookup
-from qubx.core.basics import Instrument, Signal, TriggerEvent, MarketEvent, Subtype
-from qubx.core.interfaces import IStrategy, IStrategyContext
-
-from qubx import logger, lookup
-from qubx.data import loader
 from qubx.backtester.simulator import simulate
+from qubx.backtester.utils import SetupTypes, recognize_simulation_configuration, recognize_simulation_data_config
+from qubx.core.basics import DataType, Instrument, MarketEvent, Signal, TriggerEvent
+from qubx.core.interfaces import IStrategy, IStrategyContext
 from qubx.core.series import OHLCV, Quote
+from qubx.data import loader
+from qubx.data.readers import InMemoryDataFrameReader
+from qubx.trackers.riskctrl import AtrRiskTracker
 
 
 class Issue1(IStrategy):
     exchange: str = "BINANCE.UM"
     _idx = 0
     _err = False
-    _to_test: List[List[Instrument]] = []
+    _to_test: list[list[Instrument]] = []
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(Subtype.OHLC["1h"])
+        ctx.set_base_subscription(DataType.OHLC["1h"])
         ctx.set_fit_schedule("59 22 * */1 L7")  # Run at 22:59 every month on Sunday
         ctx.set_event_schedule("55 23 * * *")  # Run at 23:55 every day
         self._to_test = [
@@ -37,7 +38,7 @@ class Issue1(IStrategy):
         if self._idx > 2:
             self._idx = 0
 
-    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> list[Signal]:
         for s in ctx.instruments:
             q = ctx.quote(s)
             # - quotes should be in ctx already !!!
@@ -59,7 +60,7 @@ class Issue2(IStrategy):
     _events_called = 0
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(Subtype.OHLC["1h"])
+        ctx.set_base_subscription(DataType.OHLC["1h"])
         ctx.set_fit_schedule("59 22 * * *")  # Run at 22:59 every month on Sunday
         ctx.set_event_schedule("55 23 * * *")  # Run at 23:55 every day
         self._fits_called = 0
@@ -69,7 +70,7 @@ class Issue2(IStrategy):
         logger.info(f" > [{ctx.time()}] On Fit is called")
         self._fits_called += 1
 
-    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> list[Signal]:
         logger.info(f" > [{ctx.time()}] On event is called")
         self._events_called += 1
         return []
@@ -85,7 +86,7 @@ class Issue3(IStrategy):
     _market_events: list[MarketEvent]
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(Subtype.OHLC["1h"])
+        ctx.set_base_subscription(DataType.OHLC["1h"])
         # ctx.set_base_subscription(Subtype.OHLC_TICKS["1h"])
         self._fits_called = 0
         self._triggers_called = 0
@@ -97,10 +98,10 @@ class Issue3(IStrategy):
 
     def on_market_data(self, ctx: IStrategyContext, event: MarketEvent):
         print(event.type)
-        if event.type == Subtype.QUOTE:
+        if event.type == DataType.QUOTE:
             self._market_quotes_called += 1
 
-        if event.type == Subtype.OHLC:
+        if event.type == DataType.OHLC:
             self._market_ohlc_called += 1
 
         self._market_events.append(event)
@@ -108,9 +109,6 @@ class Issue3(IStrategy):
 
 
 class Issue3_OHLC_TICKS(IStrategy):
-    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    # TODO: need to check how it's passed in simulator
-    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     _fits_called = 0
     _triggers_called = 0
     _market_quotes_called = 0
@@ -121,7 +119,7 @@ class Issue3_OHLC_TICKS(IStrategy):
 
     def on_init(self, ctx: IStrategyContext) -> None:
         # - this will creates quotes from OHLC
-        ctx.set_base_subscription(Subtype.OHLC_TICKS["1h"])
+        # ctx.set_base_subscription(DataType.OHLC_QUOTES["1h"])
         self._fits_called = 0
         self._triggers_called = 0
         self._market_events = []
@@ -131,11 +129,11 @@ class Issue3_OHLC_TICKS(IStrategy):
         self._last_trigger_event = event
 
     def on_market_data(self, ctx: IStrategyContext, event: MarketEvent):
-        print(event.type)
-        if event.type == Subtype.QUOTE:
+        logger.info(f"{event.instrument.symbol} market event ::: {event.type}\t:::  -> {event.data}")
+        if event.type == DataType.QUOTE:
             self._market_quotes_called += 1
 
-        if event.type == Subtype.OHLC:
+        if event.type == DataType.OHLC:
             self._market_ohlc_called += 1
 
         self._market_events.append(event)
@@ -146,11 +144,11 @@ class Issue4(IStrategy):
     _issues = 0
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(Subtype.OHLC["1h"])
+        ctx.set_base_subscription(DataType.OHLC["1h"])
 
     def on_market_data(self, ctx: IStrategyContext, event: MarketEvent):
         try:
-            if event.type != Subtype.QUOTE:
+            if event.type != DataType.QUOTE:
                 return
             quote = event.data
             assert isinstance(quote, Quote)
@@ -166,10 +164,10 @@ class Issue5(IStrategy):
     _out: OHLCV | None = None
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(Subtype.OHLC["1d"])
+        ctx.set_base_subscription(DataType.OHLC["1d"])
         ctx.set_event_schedule("0 0 * * *")  # Run at 00:00 every day
 
-    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> list[Signal]:
         # logger.info(f"On Event: {ctx.time()}")
 
         data = ctx.ohlc(ctx.instruments[0], "1d", 10)
@@ -189,12 +187,12 @@ class Issue5(IStrategy):
 
 
 class Test6_HistOHLC(IStrategy):
-    _U: List[List[Instrument]] = []
-    _out: Dict[Any, OHLCV] = {}
-    _out_fit: Dict[Any, Any] = {}
+    _U: list[list[Instrument]] = []
+    _out: dict[Any, OHLCV] = {}
+    _out_fit: dict[Any, Any] = {}
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(Subtype.OHLC["1d"])
+        ctx.set_base_subscription(DataType.OHLC["1d"])
         # ctx.set_fit_schedule("59 22 * */1 L7")
         # ctx.set_event_schedule("55 23 * * *")
         # ctx.set_fit_schedule("0 0 * */1 L1")
@@ -218,12 +216,12 @@ class Test6_HistOHLC(IStrategy):
         self._out_fit |= self.get_ohlc(ctx, self._U[0])
         ctx.set_universe(self._U[0])
 
-    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal]:
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> list[Signal]:
         print(f" - - - - - - - {ctx.time()}")
         self._out |= self.get_ohlc(ctx, ctx.instruments)
         return []
 
-    def get_ohlc(self, ctx: IStrategyContext, instruments: List[Instrument]) -> dict:
+    def get_ohlc(self, ctx: IStrategyContext, instruments: list[Instrument]) -> dict:
         closes = defaultdict(dict)
         for i in instruments:
             data = ctx.ohlc(i, "1d", 4)
@@ -236,7 +234,7 @@ class TestSimulator:
     def test_fit_event_quotes(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
 
-        test0 = simulate(
+        simulate(
             {
                 "fail1": (stg := Issue1()),
             },
@@ -277,7 +275,7 @@ class TestSimulator:
     def test_market_updates(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
 
-        test0 = simulate(
+        simulate(
             {
                 "fail3": (stg := Issue3()),
             },
@@ -293,7 +291,7 @@ class TestSimulator:
         )
 
         # +1 because first event is used for on_fit and skipped for on_market_data
-        assert stg._triggers_called * 4 == stg._market_quotes_called + 1, "Got Errors during the simulation"
+        assert (stg._triggers_called + 1) * 4 == stg._market_quotes_called + 1, "Got Errors during the simulation"
 
     def test_ohlc_quote_update(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
@@ -363,9 +361,119 @@ class TestSimulator:
         # fmt: off
         simulate(
             { "fail3_ohlc_ticks": (stg := Issue3_OHLC_TICKS()), },
-            ld, aux_data=ld, capital=100_000, debug="DEBUG", n_jobs=1, instruments=["BINANCE.UM:BTCUSDT"], commissions="vip0_usdt",
-            start="2023-06-01", stop="2023-06-10",
+            # ld, 
+            {'quote': ld}, 
+            aux_data=ld, capital=100_000, debug="DEBUG", n_jobs=1, instruments=["BINANCE.UM:BTCUSDT"], commissions="vip0_usdt",
+            start="2023-06-01", stop="2023-06-02 1:00",
+            enable_event_batching=False,
+            silent=True
         )
         # fmt: on
 
-        assert stg._triggers_called * 4 == stg._market_quotes_called + 1, "Got Errors during the simulation"
+        assert (stg._triggers_called + 1) * 4 - 1 == stg._market_quotes_called, "Got Errors during the test"
+
+
+class TestSimulatorHelpers:
+    def test_recognize_simulation_configuration(self):
+        # fmt: off
+        setups = recognize_simulation_configuration(
+            "X1",
+            {
+                "S1": pd.Series([1, 2, 3], name="BTCUSDT"), 
+                "S2": pd.Series([1, 2, 3], name="BINANCE.UM:LTCUSDT"),
+                "S3": [pd.DataFrame({"BTCUSDT": [1, 2, 3], "BCHUSDT": [4, 5, 6]}), AtrRiskTracker(None, None, '1h', 10)],
+                "S4": [IStrategy(), AtrRiskTracker(None, None, '1h', 10)],
+                "S5": IStrategy(),
+                "S6": { 'A': IStrategy(), 'B': IStrategy(), }
+            }, # type: ignore
+            [lookup.find_symbol("BINANCE.UM", s) for s in ["BTCUSDT", "BCHUSDT", "LTCUSDT"]],  # type: ignore
+            "BINANCE.UM",
+            10_000, 1.0, "USDT", "vip0_usdt")
+
+        assert setups[0].setup_type == SetupTypes.SIGNAL, "Got wrong setup type"
+        assert setups[1].setup_type == SetupTypes.SIGNAL, "Got wrong setup type"
+        assert setups[2].setup_type == SetupTypes.SIGNAL_AND_TRACKER, "Got wrong setup type"
+        assert setups[3].setup_type == SetupTypes.STRATEGY_AND_TRACKER, "Got wrong setup type"
+        assert setups[4].setup_type == SetupTypes.STRATEGY, "Got wrong setup type"
+        assert setups[5].setup_type == SetupTypes.STRATEGY, "Got wrong setup type"
+        assert setups[5].name == "X1/S6/A", "Got wrong setup type"
+        assert setups[6].setup_type == SetupTypes.STRATEGY, "Got wrong setup type"
+        assert setups[6].name == "X1/S6/B", "Got wrong setup type"
+        # fmt: on
+
+    def test_recognize_simulation_input_data(self):
+        l1 = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h", n_jobs=1)
+        l2 = loader("BINANCE.UM", "1d", source="csv::tests/data/csv_1h", n_jobs=1)
+
+        idx = pd.date_range(start="2023-06-01 00:00", end="2023-07-30", freq="1h", name="timestamp")
+        c_data = pd.DataFrame({"value1": np.random.randn(len(idx)), "value2": np.random.randn(len(idx))}, index=idx)
+        custom_reader = InMemoryDataFrameReader({"BINANCE.UM:BTCUSDT": c_data})
+
+        idx = pd.date_range(start="2023-06-01 00:00", end="2023-07-30", freq="1h", name="timestamp")
+        q_data = pd.DataFrame({"bid": np.random.randn(len(idx)), "ask": np.random.randn(len(idx))}, index=idx)
+        qts_reader = InMemoryDataFrameReader({"BINANCE.UM:BTCUSDT": q_data})
+
+        instrs = [lookup.find_symbol("BINANCE.UM", s) for s in ["BTCUSDT", "BCHUSDT", "LTCUSDT"]]  # type: ignore
+        assert all([x and isinstance(x, Instrument) for x in instrs]), "Got wrong instruments"
+
+        C1 = l1
+        cfg = recognize_simulation_data_config(C1, instrs, "BINANCE.UM")
+        assert cfg[0] == "0 */1 * * *"
+        assert cfg[1] == "ohlc(1h)"
+
+        C2 = l1[["BTCUSDT", "ETHUSDT"], "2023-06-01":"2023-07-30"]
+        cfg = recognize_simulation_data_config(C2, instrs, "BINANCE.UM")
+        assert cfg[0] == "0 */1 * * *"
+        assert cfg[1] == "ohlc(1h)"
+
+        C3 = {"ohlc(15Min)": l2}
+        cfg = recognize_simulation_data_config(C3, instrs, "BINANCE.UM")
+        assert cfg[0] == "59 23 */1 * * 59"
+        assert cfg[1] == "ohlc(1D)"
+
+        try:
+            C3 = {"ohlc(1h)": l1, "ohlc(15Min)": l2}
+            cfg = recognize_simulation_data_config(C3, instrs, "BINANCE.UM")
+            assert False, "Shoud not pass !"
+        except:  # noqa: E722
+            assert True
+
+        Ci = {"ohlc(1Min)": qts_reader}
+        cfg = recognize_simulation_data_config(Ci, instrs, "BINANCE.UM")
+        assert cfg[0] == "*/1 * * * *"
+        assert cfg[1] == "quote"
+
+        Ci = {"ohlc": l1[["BTCUSDT", "ETHUSDT"], "2023-06-01":"2023-07-30"]}
+        cfg = recognize_simulation_data_config(Ci, instrs, "BINANCE.UM")
+        assert cfg[0] == "0 */1 * * *"
+        assert cfg[1] == "ohlc(1h)"
+
+        Ci = {"quote": qts_reader}
+        cfg = recognize_simulation_data_config(Ci, instrs, "BINANCE.UM")
+        assert cfg[0] == ""
+        assert cfg[1] == "quote"
+
+        Ci = {"trade": l1}
+        cfg = recognize_simulation_data_config(Ci, instrs, "BINANCE.UM")
+        assert cfg[0] == "0 */1 * * *"
+        assert cfg[1] == "ohlc_trades"
+
+        Ci = {"trade": l1, "quote": l1}
+        cfg = recognize_simulation_data_config(Ci, instrs, "BINANCE.UM")
+        assert cfg[0] == "0 */1 * * *"
+        assert cfg[1] == "ohlc_quotes"  # quotes has higher priority
+
+        Ci = {"ohlc(1Min)": qts_reader, "quote": l1}
+        cfg = recognize_simulation_data_config(Ci, instrs, "BINANCE.UM")
+        assert cfg[0] == "*/1 * * * *"
+        assert cfg[1] == "quote"  # quotes has higher priority
+
+        Ci = {
+            "ohlc(1d23h45Min30Sec)": l1,
+            "trade": l1,
+            "custom": custom_reader,
+        }
+        cfg = recognize_simulation_data_config(Ci, instrs, "BINANCE.UM")
+        assert cfg[0] == "45 23 */1 * * 30"
+        assert cfg[1] == "ohlc(1h)"
+        assert "custom" in cfg[2]

@@ -1,17 +1,16 @@
+import re
+from copy import copy
+from itertools import chain
 from typing import List, Tuple
+
+import matplotlib
+import matplotlib.pylab as plt
 import numpy as np
 import pandas as pd
-
-import re
+import plotly.graph_objects as go
 from scipy import stats
 from scipy.stats import norm
 from statsmodels.regression.linear_model import OLS
-from copy import copy
-from itertools import chain
-
-import plotly.graph_objects as go
-import matplotlib
-import matplotlib.pylab as plt
 
 from qubx.core.basics import TradingSessionResult
 from qubx.core.series import OHLCV
@@ -19,7 +18,6 @@ from qubx.pandaz.utils import ohlc_resample
 from qubx.utils.charting.lookinglass import LookingGlass
 from qubx.utils.charting.mpl_helpers import sbp
 from qubx.utils.time import infer_series_frequency
-
 
 YEARLY = 1
 MONTHLY = 12
@@ -674,7 +672,7 @@ def portfolio_metrics(
     # - aggregate returns to higher timeframe
     try:
         _conversion = "daily"
-        match (_s_freq := infer_series_frequency(returns)):
+        match _s_freq := infer_series_frequency(returns):
             case _ if _s_freq <= _D1.to_timedelta64():
                 _conversion = "daily"
             case _ if _s_freq > _D1.to_timedelta64() and _s_freq <= _W1.to_timedelta64():
@@ -747,7 +745,7 @@ def tearsheet(
     sort_ascending: bool = False,
     plot_equities: bool = True,
     commission_factor: float = 1,
-    use_plotly: bool = True,
+    use_plotly: bool = False,
 ):
     """
     Generate a tearsheet for one or multiple trading sessions.

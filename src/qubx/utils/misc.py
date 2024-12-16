@@ -1,13 +1,17 @@
-import os
-import time
-import joblib
-import pandas as pd
 import asyncio
 import concurrent.futures
-from pathlib import Path
-from typing import Any, Dict, Set, Union, List, Awaitable
-from collections import OrderedDict, defaultdict, namedtuple
-from os.path import basename, exists, dirname, join, expanduser
+import os
+import time
+from collections import OrderedDict, defaultdict, deque, namedtuple
+from collections.abc import Callable
+from functools import wraps
+from os.path import exists
+from threading import Lock
+from typing import Any, Awaitable, Dict, List, Union
+
+import joblib
+import numpy as np
+import pandas as pd
 from tqdm.auto import tqdm
 
 
@@ -18,7 +22,7 @@ def version() -> str:
         import importlib_metadata
 
         version = importlib_metadata.version("qubx")
-    except:
+    except:  # noqa: E722
         pass
 
     return version
@@ -405,3 +409,63 @@ class AsyncThreadLoop:
 
     def submit(self, coro: Awaitable) -> concurrent.futures.Future:
         return asyncio.run_coroutine_threadsafe(coro, self.loop)
+
+
+def synchronized(func: Callable):
+    """Decorator that ensures only one thread can execute the decorated function at a time."""
+    lock = Lock()
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        with lock:
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
+class TimeLimitedDeque(deque):
+    """
+    A deque that removes elements older than a given time limit.
+    Assumes that elements are inserted in increasing order of time.
+    """
+
+    def __init__(self, time_limit: str, time_key=lambda x: x[0], unit="ns", *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.time_limit = pd.Timedelta(time_limit).to_timedelta64()
+        self.unit = unit
+        self.time_key = lambda x: self._to_datetime64(time_key(x))
+
+    def append(self, item):
+        super().append(item)
+        self._remove_old_elements()
+
+    def __getitem__(self, idx) -> list[Any]:
+        if isinstance(idx, slice) and (isinstance(idx.start, str) or isinstance(idx.stop, str)):
+            start_loc, end_loc = 0, len(self)
+            if idx.start is not None:
+                start = self._to_datetime64(idx.start)
+                while start_loc < len(self) and self.time_key(self[start_loc]) < start:
+                    start_loc += 1
+            if idx.stop is not None:
+                stop = self._to_datetime64(idx.stop)
+                while end_loc > 0 and self.time_key(self[end_loc - 1]) > stop:
+                    end_loc -= 1
+            return list(self)[start_loc:end_loc]
+        else:
+            return super().__getitem__(idx)
+
+    def appendleft(self, item):
+        raise NotImplementedError("appendleft is not supported for TimeLimitedDeque")
+
+    def extendleft(self, items):
+        raise NotImplementedError("extendleft is not supported for TimeLimitedDeque")
+
+    def _remove_old_elements(self):
+        if not self:
+            return
+        current_time = self.time_key(self[-1])
+        while self and (current_time - self.time_key(self[0])) > self.time_limit:
+            self.popleft()
+
+    def _to_datetime64(self, time):
+        return np.datetime64(time, self.unit)

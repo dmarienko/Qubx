@@ -1,21 +1,16 @@
-from typing import Any, List, Optional
-
 import pandas as pd
-import pytest
-from pandas import Timestamp
+from pytest import approx
 
-from qubx import QubxLogConfig, logger, lookup
+from qubx import logger, lookup
 from qubx.backtester.simulator import simulate
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
-    ZERO_COSTS,
+    DataType,
     Deal,
     Instrument,
-    ITimeProvider,
     Order,
     Position,
     Signal,
-    Subtype,
     TargetPosition,
 )
 from qubx.core.interfaces import (
@@ -29,18 +24,13 @@ from qubx.core.metrics import portfolio_metrics
 from qubx.core.series import OHLCV, Quote
 from qubx.core.utils import recognize_time, time_to_str
 from qubx.data.readers import (
-    AsOhlcvSeries,
     AsPandasFrame,
-    AsQuotes,
-    AsTimestampedRecords,
     CsvStorageDataReader,
-    RestoreTicksFromOHLC,
 )
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.pandaz.utils import *
 from qubx.ta.indicators import ema, sma
 from qubx.trackers.composite import CompositeTracker, CompositeTrackerPerSide, LongTracker
-from qubx.trackers.rebalancers import PortfolioRebalancerTracker
 from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
 from qubx.trackers.sizers import FixedLeverageSizer, FixedRiskSizer, FixedSizer
 
@@ -140,12 +130,12 @@ class GuineaPig(IStrategy):
     tests = {}
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(Subtype.OHLC["1Min"])
+        ctx.set_base_subscription(DataType.OHLC["1Min"])
 
     def on_fit(self, ctx: IStrategyContext):
         self.tests = {recognize_time(k): v for k, v in self.tests.items()}
 
-    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> list[Signal] | None:
         r = []
         for k in list(self.tests.keys()):
             if event.time >= k:
@@ -191,9 +181,9 @@ class TestTrackersAndGatherers:
             slow_period = 12
 
             def on_init(self, ctx: IStrategyContext) -> None:
-                ctx.set_base_subscription(Subtype.OHLC[self.timeframe])
+                ctx.set_base_subscription(DataType.OHLC[self.timeframe])
 
-            def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
+            def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> list[Signal] | None:
                 signals = []
                 for i in ctx.instruments:
                     ohlc = ctx.ohlc(i, self.timeframe)
@@ -213,7 +203,7 @@ class TestTrackersAndGatherers:
                 return PositionsTracker(FixedRiskSizer(1, 10_000, reinvest_profit=True))
 
         rep = simulate(
-            config={
+            strategies={
                 "Strategy ST client": [
                     StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
                     t0 := StopTakePositionTracker(
@@ -424,7 +414,7 @@ class TestTrackersAndGatherers:
         mtrx1 = portfolio_metrics(
             rep[1].portfolio_log, rep[1].executions_log, rep[1].capital, account_transactions=False, commission_factor=1
         )
-        assert N(mtrx0["gain"]) == 22.6584
-        assert N(mtrx1["gain"]) == 23.3429
+        assert N(mtrx0["gain"]) == 22.6519
+        assert N(mtrx1["gain"]) == 23.3365
 
         # fmt: on
