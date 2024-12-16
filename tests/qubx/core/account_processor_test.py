@@ -18,6 +18,7 @@ from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
 from qubx.core.mixins.trading import TradingManager
 from qubx.data.readers import CsvStorageDataReader, DataReader
 from qubx.pandaz.utils import *
+from tests.qubx.core.utils_test import DummyTimeProvider
 
 
 def run_debug_sim(
@@ -52,11 +53,6 @@ def run_debug_sim(
     ctx.start()
     broker.run(start, stop)
     return ctx, logs_writer
-
-
-class DummyTimeProvider(ITimeProvider):
-    def time(self) -> dt_64:
-        return np.datetime64("2024-01-01T00:00:00", "ns")
 
 
 class TestAccountProcessorStuff:

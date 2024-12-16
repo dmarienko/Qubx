@@ -13,6 +13,7 @@ from qubx.connectors.ccxt.data import CcxtDataProvider
 from qubx.core.basics import CtrlChannel, DataType, ITimeProvider, dt_64
 from qubx.core.exceptions import QueueTimeout
 from qubx.core.mixins.subscription import SubscriptionManager
+from tests.qubx.core.utils_test import DummyTimeProvider
 
 OHLCV_RESPONSE = {
     "ETH/USDT:USDT": {"5m": [[1731239700000, 3222.69, 3227.58, 3218.18, 3220.01, 2866.3094, 10000.0, 5000.0]]}
@@ -26,11 +27,6 @@ async def async_sleep(*args, seconds: int = 1, **kwargs):
 async def return_ohlcv(*args, **kwargs):
     await asyncio.sleep(0.1)
     return OHLCV_RESPONSE
-
-
-class DummyTimeProvider(ITimeProvider):
-    def time(self) -> dt_64:
-        return pd.Timestamp("2024-04-07 13:48:37.611000").asm8
 
 
 class MockExchange(Exchange):

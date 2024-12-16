@@ -21,11 +21,6 @@ from qubx.utils.collections import TimeLimitedDeque
 from qubx.utils.runner import get_account_config, run_ccxt_trading
 
 
-class DummyTimeProvider(ITimeProvider):
-    def time(self) -> dt_64:
-        return pd.Timestamp("2024-04-07 13:48:37.611000").asm8
-
-
 async def wait(condition: Callable[[], bool] | None = None, timeout: int = 10, period: float = 1.0):
     start = time.time()
     if condition is None:

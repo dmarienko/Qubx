@@ -12,12 +12,7 @@ from qubx.connectors.ccxt.utils import (
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import ZERO_COSTS, CtrlChannel, Deal, Instrument, ITimeProvider, Position, dt_64
 from tests.qubx.connectors.ccxt.data.ccxt_responses import *
-
-
-class DummyTimeProvider(ITimeProvider):
-    def time(self) -> dt_64:
-        return pd.Timestamp("2024-04-07 13:48:37.611000").asm8
-
+from tests.qubx.core.utils_test import DummyTimeProvider
 
 N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
 
