@@ -12,6 +12,7 @@ from qubx.core.exceptions import QueueTimeout
 from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.core.utils import prec_ceil, prec_floor, time_delta_to_str
 from qubx.utils.misc import Stopwatch
+from qubx.utils.ntp import start_ntp_thread, time_now
 
 dt_64 = np.datetime64
 td_64 = np.timedelta64
@@ -342,6 +343,14 @@ OrderStatus = Literal["OPEN", "CLOSED", "CANCELED", "NEW"]
 
 
 @dataclass
+class OrderRequest:
+    instrument: Instrument
+    quantity: float
+    price: float | None = None
+    options: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class Order:
     id: str
     type: OrderType
@@ -357,7 +366,7 @@ class Order:
     options: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
-        return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.instrument.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
+        return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.instrument} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
 
 
 @dataclass
@@ -562,7 +571,7 @@ class Position:
         self.last_update_conversion_rate = conversion_rate
 
         if not np.isnan(price):
-            u_pnl = self.quantity * (price - self.position_avg_price) / conversion_rate
+            u_pnl = self.unrealized_pnl()
             self.pnl = u_pnl + self.r_pnl
             if self.instrument.is_futures():
                 # for derivatives market value of the position is the current unrealized PnL
@@ -582,10 +591,12 @@ class Position:
 
     def total_pnl(self) -> float:
         # TODO: account for commissions
-        pnl = self.r_pnl
-        if not np.isnan(self.last_update_price):  # type: ignore
-            pnl += self.quantity * (self.last_update_price - self.position_avg_price) / self.last_update_conversion_rate  # type: ignore
-        return pnl
+        return self.r_pnl + self.unrealized_pnl()
+
+    def unrealized_pnl(self) -> float:
+        if not np.isnan(self.last_update_price):
+            return self.quantity * (self.last_update_price - self.position_avg_price) / self.last_update_conversion_rate  # type: ignore
+        return 0.0
 
     def is_open(self) -> bool:
         return abs(self.quantity) > self.instrument.min_size
@@ -617,7 +628,7 @@ class Position:
                 f"qty={self.quantity:.{self.instrument.size_precision}f}",
                 f"entryPrice={self.position_avg_price:.{self.instrument.price_precision}f}",
                 f"price={self.last_update_price:.{self.instrument.price_precision}f}",
-                f"pnl={self.pnl:.2f}",
+                f"pnl={self.unrealized_pnl():.2f}",
                 f"value={self.market_value_funds:.2f}",
             ]
         )
@@ -670,16 +681,6 @@ class CtrlChannel:
             return self._queue.get(timeout=timeout)
         except Empty:
             raise QueueTimeout(f"Timeout waiting for data on {self.name} channel")
-
-
-class ICommunicationManager:
-    databus: CtrlChannel
-
-    def get_communication_channel(self) -> CtrlChannel:
-        return self.databus
-
-    def set_communication_channel(self, channel: CtrlChannel):
-        self.databus = channel
 
 
 class ITimeProvider:
@@ -909,3 +910,14 @@ class TimestampedDict:
 
     time: dt_64
     data: dict[str, Any]
+
+
+class LiveTimeProvider(ITimeProvider):
+    def __init__(self):
+        self._start_ntp_thread()
+
+    def time(self) -> dt_64:
+        return time_now()
+
+    def _start_ntp_thread(self):
+        start_ntp_thread()

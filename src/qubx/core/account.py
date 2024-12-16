@@ -3,13 +3,27 @@ from collections import defaultdict
 import numpy as np
 
 from qubx import logger
-from qubx.core.basics import AssetBalance, Deal, Instrument, Order, Position, dt_64
+from qubx.core.basics import (
+    ZERO_COSTS,
+    AssetBalance,
+    CtrlChannel,
+    Deal,
+    Instrument,
+    ITimeProvider,
+    Order,
+    Position,
+    TransactionCostsCalculator,
+    dt_64,
+)
 from qubx.core.interfaces import IAccountProcessor
 
 
 class BasicAccountProcessor(IAccountProcessor):
     account_id: str
+    time_provider: ITimeProvider
     base_currency: str
+    commissions: str
+    _tcc: TransactionCostsCalculator
     _balances: dict[str, AssetBalance]
     _active_orders: dict[str, Order]
     _processed_trades: dict[str, list[str | int]]
@@ -19,11 +33,15 @@ class BasicAccountProcessor(IAccountProcessor):
     def __init__(
         self,
         account_id: str,
+        time_provider: ITimeProvider,
         base_currency: str,
+        tcc: TransactionCostsCalculator = ZERO_COSTS,
         initial_capital: float = 100_000,
     ) -> None:
         self.account_id = account_id
+        self.time_provider = time_provider
         self.base_currency = base_currency.upper()
+        self._tcc = tcc
         self._processed_trades = defaultdict(list)
         self._active_orders = dict()
         self._positions = {}
@@ -59,22 +77,11 @@ class BasicAccountProcessor(IAccountProcessor):
             self._positions[instrument] = _pos
         return _pos
 
-    def get_orders(self, instrument: Instrument | None = None) -> list[Order]:
-        ols = list(self._active_orders.values())
+    def get_orders(self, instrument: Instrument | None = None) -> dict[str, Order]:
+        orders = self._active_orders.copy()
         if instrument is not None:
-            ols = list(filter(lambda x: x.instrument == instrument, ols))
-        return ols
-
-    @property
-    def reserved(self) -> dict[Instrument, float]:
-        return {}
-
-    def get_reserved(self, instrument: Instrument) -> float:
-        # TODO: reimplement reserved logic if needed
-        return 0.0
-
-    def get_reserved_capital(self) -> float:
-        return 0.0
+            orders = dict(filter(lambda x: x[1].instrument == instrument, orders.items()))
+        return orders
 
     def position_report(self) -> dict:
         rep = {}
@@ -151,30 +158,6 @@ class BasicAccountProcessor(IAccountProcessor):
             p = self._positions[instrument]
             p.update_market_price(time, price, 1)
 
-    def process_deals(self, instrument: Instrument, deals: list[Deal]) -> None:
-        pos = self._positions.get(instrument)
-
-        if pos is not None:
-            conversion_rate = 1
-            traded_amnt, realized_pnl, deal_cost = 0, 0, 0
-
-            # - process deals
-            for d in deals:
-                if d.id not in self._processed_trades[d.order_id]:
-                    self._processed_trades[d.order_id].append(d.id)
-                    r_pnl, fee_in_base = pos.update_position_by_deal(d, conversion_rate)
-                    realized_pnl += r_pnl
-                    deal_cost += d.amount * d.price / conversion_rate
-                    traded_amnt += d.amount
-                    total_cost = deal_cost + fee_in_base
-                    logger.debug(f"  ::  traded {d.amount} for {instrument} @ {d.price} -> {realized_pnl:.2f}")
-                    if not instrument.is_futures():
-                        self._balances[self.base_currency] -= total_cost
-                        self._balances[instrument.base] += d.amount
-                    else:
-                        self._balances[self.base_currency] -= fee_in_base
-                        self._balances[instrument.settle] += realized_pnl
-
     def process_order(self, order: Order, update_locked_value: bool = True) -> None:
         _new = order.status == "NEW"
         _open = order.status == "OPEN"
@@ -203,6 +186,40 @@ class BasicAccountProcessor(IAccountProcessor):
             f"[{order.instrument}] [{order.id}] Order {order.type} {order.side} {order.quantity} "
             f"{ (' @ ' + str(order.price)) if order.price else '' } -> {order.status}"
         )
+
+    def process_deals(self, instrument: Instrument, deals: list[Deal]) -> None:
+        self._fill_missing_fee_info(instrument, deals)
+        pos = self._positions.get(instrument)
+
+        if pos is not None:
+            conversion_rate = 1
+            traded_amnt, realized_pnl, deal_cost = 0, 0, 0
+
+            # - process deals
+            for d in deals:
+                if d.id not in self._processed_trades[d.order_id]:
+                    self._processed_trades[d.order_id].append(d.id)
+                    r_pnl, fee_in_base = pos.update_position_by_deal(d, conversion_rate)
+                    realized_pnl += r_pnl
+                    deal_cost += d.amount * d.price / conversion_rate
+                    traded_amnt += d.amount
+                    total_cost = deal_cost + fee_in_base
+                    logger.debug(f"  ::  traded {d.amount} for {instrument} @ {d.price} -> {realized_pnl:.2f}")
+                    if not instrument.is_futures():
+                        self._balances[self.base_currency] -= total_cost
+                        self._balances[instrument.base] += d.amount
+                    else:
+                        self._balances[self.base_currency] -= fee_in_base
+                        self._balances[instrument.settle] += realized_pnl
+
+    def _fill_missing_fee_info(self, instrument: Instrument, deals: list[Deal]) -> None:
+        for d in deals:
+            if d.fee_amount is None:
+                d.fee_amount = self._tcc.get_execution_fees(
+                    instrument=instrument, exec_price=d.price, amount=d.amount, crossed_market=d.aggressive
+                )
+                # this is only true for linear contracts
+                d.fee_currency = instrument.quote
 
     def _lock_limit_order_value(self, order: Order) -> float:
         pos = self._positions.get(order.instrument)

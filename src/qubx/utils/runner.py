@@ -1,28 +1,29 @@
 import asyncio
-from pathlib import Path
-from dotenv import load_dotenv, find_dotenv, dotenv_values
-
 import configparser
 import socket
 import sys
 import time
 from os.path import exists, expanduser
+from pathlib import Path
 
 import click
 import pandas as pd
 import yaml
+from dotenv import dotenv_values, find_dotenv, load_dotenv
 
 from qubx import formatter, logger, lookup
-from qubx.backtester.simulator import SimulatedTrading
+from qubx.backtester.account import SimulatedAccountProcessor
+from qubx.backtester.simulator import SimulatedBroker
 from qubx.connectors.ccxt.account import CcxtAccountProcessor
-from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
+from qubx.connectors.ccxt.broker import CcxtBroker
+from qubx.connectors.ccxt.data import CcxtDataProvider
 from qubx.connectors.ccxt.factory import get_ccxt_exchange
-from qubx.connectors.ccxt.trading import CcxtTradingConnector
-from qubx.core.account import BasicAccountProcessor
-from qubx.core.basics import Instrument
+from qubx.core.basics import CtrlChannel, Instrument, LiveTimeProvider
 from qubx.core.context import StrategyContext
-from qubx.core.interfaces import IStrategy, IStrategyContext
+from qubx.core.helpers import BasicScheduler
+from qubx.core.interfaces import IStrategy
 from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging
+from qubx.utils.marketdata.ccxt import ccxt_build_qubx_exchange_name
 from qubx.utils.misc import Struct, add_project_to_system_path, logo, version
 
 LOGFILE = "logs/"
@@ -47,67 +48,10 @@ def _instruments_for_exchange(exch: str, symbols: list) -> list:
     return instrs
 
 
-def run_ccxt_paper_trading(
-    strategy: IStrategy,
-    exchange: str,
-    symbols: list[str | Instrument],
-    strategy_config: dict | None = None,
-    blocking: bool = True,
-    account_id: str = "main",
-    base_currency: str = "USDT",
-    capital: float = 100_000,
-    commissions: str | None = None,
-    use_testnet: bool = False,
-) -> IStrategyContext:
-    # TODO: setup proper loggers to write out to files
-    instruments = symbols if isinstance(symbols[0], Instrument) else _get_instruments(symbols, exchange)
-    instruments = [i for i in instruments if i is not None]
-
-    logs_writer = InMemoryLogsWriter("test", "test", "0")
-
-    _exchange = get_ccxt_exchange(exchange, use_testnet=use_testnet)
-
-    trading_service = SimulatedTrading(
-        account_processor=CcxtAccountProcessor(account_id, _exchange, base_currency),
-        exchange_name=exchange,
-        commissions=commissions,
-        simulation_initial_time=pd.Timestamp.now().asm8,
-    )
-
-    broker = CcxtBrokerServiceProvider(_exchange, trading_service)
-
-    account = BasicAccountProcessor(
-        account_id=trading_service.get_account_id(),
-        base_currency=base_currency,
-        initial_capital=capital,
-    )
-
-    ctx = StrategyContext(
-        strategy=strategy,
-        broker=broker,
-        account=account,
-        instruments=instruments,
-        logging=StrategyLogging(logs_writer, heartbeat_freq="1m"),
-        config=strategy_config,
-    )
-
-    if blocking:
-        try:
-            ctx.start(blocking=True)
-        except KeyboardInterrupt:
-            logger.info("Stopped by user")
-        finally:
-            ctx.stop()
-    else:
-        ctx.start()
-
-    return ctx
-
-
 def run_ccxt_trading(
     strategy: IStrategy,
-    exchange: str,
-    symbols: list[str | Instrument],
+    exchange_name: str,
+    symbols: list[str],
     credentials: dict | None = None,
     strategy_config: dict | None = None,
     blocking: bool = True,
@@ -119,42 +63,54 @@ def run_ccxt_trading(
     paper_capital: float = 100_000,
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext:
-    logger.info(f"Running {'paper' if paper else 'live'} strategy '{strategy.__name__}' on {exchange} exchange...")
+    logger.info(f"Running {'paper' if paper else 'live'} strategy on {exchange_name} exchange...")
     credentials = credentials if not paper else {}
     assert paper or credentials, "Credentials are required for live trading"
 
     # TODO: setup proper loggers to write out to files
-    instruments = symbols if isinstance(symbols[0], Instrument) else _get_instruments(symbols, exchange)
+    instruments: list[Instrument] = (  # type: ignore
+        symbols if isinstance(symbols[0], Instrument) else _get_instruments(symbols, exchange_name)
+    )
     instruments = [i for i in instruments if i is not None]
 
     logs_writer = InMemoryLogsWriter("test", "test", "0")
     stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
 
-    _exchange = get_ccxt_exchange(exchange, use_testnet=use_testnet, loop=loop, **credentials)
+    channel = CtrlChannel("databus", sentinel=(None, None, None))
+    time_provider = LiveTimeProvider()
+    scheduler = BasicScheduler(channel, lambda: time_provider.time().item())
+    exchange = get_ccxt_exchange(exchange_name, use_testnet=use_testnet, loop=loop, **(credentials or {}))
+
+    # - find proper fees calculator
+    qubx_exchange_name = ccxt_build_qubx_exchange_name(exchange_name)
+    fees_calculator = lookup.fees.find(qubx_exchange_name.lower(), commissions)
+    assert fees_calculator is not None, f"Can't find fees calculator for {qubx_exchange_name} exchange"
+
     if paper:
-        trading_service = SimulatedTrading(
-            account_processor=CcxtAccountProcessor(account_id, _exchange, base_currency),
-            exchange_name=exchange,
-            commissions=commissions,
-            simulation_initial_time=pd.Timestamp.now().asm8,
-        )
-        account = BasicAccountProcessor(
-            account_id=trading_service.get_account_id(),
+        account = SimulatedAccountProcessor(
+            account_id=account_id,
+            channel=channel,
             base_currency=base_currency,
+            time_provider=time_provider,
+            tcc=fees_calculator,
             initial_capital=paper_capital,
         )
-        logger.debug(f"Setup paper account...")
+        broker = SimulatedBroker(channel=channel, account=account)
+        logger.debug("Setup paper account...")
     else:
-        account = CcxtAccountProcessor(account_id, _exchange, base_currency)
+        account = CcxtAccountProcessor(account_id, exchange, channel, time_provider, base_currency, tcc=fees_calculator)
+        broker = CcxtBroker(exchange, channel, time_provider, account)
         logger.debug(f"Setup live {'testnet ' if use_testnet else ''}account...")
-        trading_service = CcxtTradingConnector(_exchange, account, commissions)
 
-    broker = CcxtBrokerServiceProvider(_exchange, trading_service)
+    data_provider = CcxtDataProvider(exchange, time_provider, channel)
 
     ctx = StrategyContext(
         strategy=strategy,
         broker=broker,
+        data_provider=data_provider,
         account=account,
+        scheduler=scheduler,
+        time_provider=time_provider,
         instruments=instruments,
         logging=stg_logging,
         config=strategy_config,
@@ -302,13 +258,13 @@ def create_strategy_context(config_file: str, accounts_cfg_file: str, search_pat
     match conn:
         case "ccxt":
             # - TODO: we need some factory here
-            broker = CcxtTradingConnector(cfg.exchange.lower(), **acc_config)
-            exchange_connector = CcxtBrokerServiceProvider(cfg.exchange.lower(), broker, **acc_config)
+            broker = CcxtBroker(cfg.exchange.lower(), **acc_config)
+            exchange_connector = CcxtDataProvider(cfg.exchange.lower(), broker, **acc_config)
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
 
     # - generate new run id
-    run_id = socket.gethostname() + "-" + str(broker.time().item() // 100_000_000)
+    run_id = socket.gethostname() + "-" + str(broker.time_provider.time().item() // 100_000_000)
 
     # - get logger
     writer = None
@@ -481,7 +437,7 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
         case "ccxt":
             run_ccxt_trading(
                 strategy=strategy,
-                exchange=cfg.exchange,
+                exchange_name=cfg.exchange,
                 symbols=cfg.instruments,
                 credentials=acc_config,
                 strategy_config=cfg.parameters,

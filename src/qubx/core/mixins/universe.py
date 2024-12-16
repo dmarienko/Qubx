@@ -5,14 +5,14 @@ from qubx.core.basics import DataType, Instrument, Position, TargetPosition
 from qubx.core.helpers import CachedMarketDataHolder
 from qubx.core.interfaces import (
     IAccountProcessor,
-    IBrokerServiceProvider,
+    IBroker,
+    IDataProvider,
     IPositionGathering,
     IStrategy,
     IStrategyContext,
     ISubscriptionManager,
     ITimeProvider,
     ITradingManager,
-    ITradingServiceProvider,
     IUniverseManager,
 )
 from qubx.core.loggers import StrategyLogging
@@ -21,28 +21,28 @@ from qubx.core.loggers import StrategyLogging
 class UniverseManager(IUniverseManager):
     _context: IStrategyContext
     _strategy: IStrategy
-    _broker: IBrokerServiceProvider
-    _trading_service: ITradingServiceProvider
+    _broker: IDataProvider
+    _trading_service: IBroker
     _cache: CachedMarketDataHolder
     _logging: StrategyLogging
     _subscription_manager: ISubscriptionManager
     _trading_manager: ITradingManager
     _time_provider: ITimeProvider
-    _positions: dict[Instrument, Position]
+    _account: IAccountProcessor
     _position_gathering: IPositionGathering
 
     def __init__(
         self,
         context: IStrategyContext,
         strategy: IStrategy,
-        broker: IBrokerServiceProvider,
-        trading_service: ITradingServiceProvider,
+        broker: IDataProvider,
+        trading_service: IBroker,
         cache: CachedMarketDataHolder,
         logging: StrategyLogging,
         subscription_manager: ISubscriptionManager,
         trading_manager: ITradingManager,
         time_provider: ITimeProvider,
-        account_processor: IAccountProcessor,
+        account: IAccountProcessor,
         position_gathering: IPositionGathering,
     ):
         self._context = context
@@ -54,7 +54,7 @@ class UniverseManager(IUniverseManager):
         self._subscription_manager = subscription_manager
         self._trading_manager = trading_manager
         self._time_provider = time_provider
-        self._positions = account_processor.positions
+        self._account = account
         self._position_gathering = position_gathering
         self._instruments = []
 
@@ -105,13 +105,14 @@ class UniverseManager(IUniverseManager):
         exit_targets = [
             TargetPosition.zero(self._context, instr.signal(0, group="Universe", comment="Universe change"))
             for instr in instruments
-            if instr.symbol in self._positions and abs(self._positions[instr.symbol].quantity) > instr.min_size
+            if instr.symbol in self._account.positions
+            and abs(self._account.positions[instr.symbol].quantity) > instr.min_size
         ]
         self._position_gathering.alter_positions(self._context, exit_targets)
 
         # - if still open positions close them manually
         for instr in instruments:
-            pos = self._positions.get(instr)
+            pos = self._account.positions.get(instr)
             if pos and abs(pos.quantity) > instr.min_size:
                 self._trading_manager.trade(instr, -pos.quantity)
 
@@ -142,18 +143,16 @@ class UniverseManager(IUniverseManager):
         )
 
         # - reinitialize strategy loggers
-        self._logging.initialize(
-            self._time_provider.time(), self._positions, self._trading_service.get_account().get_balances()
-        )
+        self._logging.initialize(self._time_provider.time(), self._account.positions, self._account.get_balances())
 
     def _create_and_update_positions(self, instruments: list[Instrument]):
         for instrument in instruments:
-            _ = self._trading_service.get_position(instrument)
+            _ = self._account.get_position(instrument)
 
             # - check if we need any aux instrument for calculating pnl ?
             # TODO: test edge cases for aux symbols
-            aux = lookup.find_aux_instrument_for(instrument, self._trading_service.get_base_currency())
-            if aux is not None:
-                instrument._aux_instrument = aux
-                instruments.append(aux)
-                _ = self._trading_service.get_position(aux)
+            # aux = lookup.find_aux_instrument_for(instrument, self._account.get_base_currency())
+            # if aux is not None:
+            #     instrument._aux_instrument = aux
+            #     instruments.append(aux)
+            #     _ = self._trading_service.get_position(aux)
