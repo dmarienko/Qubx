@@ -1,4 +1,7 @@
 import asyncio
+from pathlib import Path
+from dotenv import load_dotenv, find_dotenv, dotenv_values
+
 import configparser
 import socket
 import sys
@@ -47,16 +50,17 @@ def _instruments_for_exchange(exch: str, symbols: list) -> list:
 def run_ccxt_paper_trading(
     strategy: IStrategy,
     exchange: str,
-    symbols: list[str],
+    symbols: list[str | Instrument],
     strategy_config: dict | None = None,
     blocking: bool = True,
+    account_id: str = "main",
     base_currency: str = "USDT",
     capital: float = 100_000,
     commissions: str | None = None,
     use_testnet: bool = False,
 ) -> IStrategyContext:
     # TODO: setup proper loggers to write out to files
-    instruments = [lookup.find_symbol(exchange.upper(), s.upper()) for s in symbols]
+    instruments = symbols if isinstance(symbols[0], Instrument) else _get_instruments(symbols, exchange)
     instruments = [i for i in instruments if i is not None]
 
     logs_writer = InMemoryLogsWriter("test", "test", "0")
@@ -64,7 +68,10 @@ def run_ccxt_paper_trading(
     _exchange = get_ccxt_exchange(exchange, use_testnet=use_testnet)
 
     trading_service = SimulatedTrading(
-        exchange, commissions=commissions, simulation_initial_time=pd.Timestamp.now().asm8
+        account_processor=CcxtAccountProcessor(account_id, _exchange, base_currency),
+        exchange_name=exchange,
+        commissions=commissions,
+        simulation_initial_time=pd.Timestamp.now().asm8,
     )
 
     broker = CcxtBrokerServiceProvider(_exchange, trading_service)
@@ -100,25 +107,48 @@ def run_ccxt_paper_trading(
 def run_ccxt_trading(
     strategy: IStrategy,
     exchange: str,
-    symbols: list[str],
-    credentials: dict,
+    symbols: list[str | Instrument],
+    credentials: dict | None = None,
     strategy_config: dict | None = None,
     blocking: bool = True,
     account_id: str = "main",
     base_currency: str = "USDT",
     commissions: str | None = None,
     use_testnet: bool = False,
+    paper: bool = False,
+    paper_capital: float = 100_000,
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext:
+    logger.info(f"Running {'paper' if paper else 'live'} strategy '{strategy.__name__}' on {exchange} exchange...")
+    credentials = credentials if not paper else {}
+    assert paper or credentials, "Credentials are required for live trading"
+
     # TODO: setup proper loggers to write out to files
-    instruments = _get_instruments(symbols, exchange)
+    instruments = symbols if isinstance(symbols[0], Instrument) else _get_instruments(symbols, exchange)
+    instruments = [i for i in instruments if i is not None]
 
     logs_writer = InMemoryLogsWriter("test", "test", "0")
     stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
 
     _exchange = get_ccxt_exchange(exchange, use_testnet=use_testnet, loop=loop, **credentials)
-    account = CcxtAccountProcessor(account_id, _exchange, base_currency)
-    trading_service = CcxtTradingConnector(_exchange, account, commissions)
+    if paper:
+        trading_service = SimulatedTrading(
+            account_processor=CcxtAccountProcessor(account_id, _exchange, base_currency),
+            exchange_name=exchange,
+            commissions=commissions,
+            simulation_initial_time=pd.Timestamp.now().asm8,
+        )
+        account = BasicAccountProcessor(
+            account_id=trading_service.get_account_id(),
+            base_currency=base_currency,
+            initial_capital=paper_capital,
+        )
+        logger.debug(f"Setup paper account...")
+    else:
+        account = CcxtAccountProcessor(account_id, _exchange, base_currency)
+        logger.debug(f"Setup live {'testnet ' if use_testnet else ''}account...")
+        trading_service = CcxtTradingConnector(_exchange, account, commissions)
+
     broker = CcxtBrokerServiceProvider(_exchange, trading_service)
 
     ctx = StrategyContext(
@@ -157,7 +187,7 @@ def _get_instruments(symbols: list[str], exchange: str) -> list[Instrument]:
     return instruments
 
 
-def load_strategy_config(filename: str) -> Struct:
+def load_strategy_config(filename: str, account: str) -> Struct:
     with open(filename, "r") as f:
         content = yaml.safe_load(f)
 
@@ -169,11 +199,11 @@ def load_strategy_config(filename: str) -> Struct:
         name=name,
         parameters=config.get("parameters", dict()),
         connector=config["connector"],
-        exchange=config["exchange"],
-        account=config.get("account"),
-        md_subscr=config["subscription"],
-        strategy_trigger=config["trigger"],
-        strategy_fit_trigger=config.get("fit", ""),
+        exchange=config["parameters"]["exchange"],
+        account=account,
+        # md_subscr=config["subscription"], # todo: ask where to get?
+        strategy_trigger=config["parameters"]["trigger_at"],
+        strategy_fit_trigger=config["parameters"].get("fit_at", ""),
         portfolio_logger=config.get("logger", None),
         log_positions_interval=config.get("log_positions_interval", None),
         log_portfolio_interval=config.get("log_portfolio_interval", None),
@@ -188,6 +218,20 @@ def load_strategy_config(filename: str) -> Struct:
         r.instruments = _instruments_for_exchange(r.exchange, universe)
 
     return r
+
+
+def get_account_env_config(account_id: str, env_file: str) -> dict | None:
+    env_f = find_dotenv(env_file) or find_dotenv(Path(env_file).name)
+    if not env_f:
+        logger.error(f"Can't find {env_file} file for reading {account_id} account info")
+        return None
+    env_data = dotenv_values(env_f)
+    account_data = {}
+    for name, value in env_data.items():
+        if name.upper().startswith(account_id.upper()):
+            account_data[name.split("__")[-1]] = value
+    account_data["account_id"] = account_id
+    return account_data
 
 
 def get_account_config(account_id: str, accounts_cfg_file: str) -> dict | None:
@@ -217,8 +261,24 @@ def get_account_config(account_id: str, accounts_cfg_file: str) -> dict | None:
     return cfg | {"account_id": account_id, "reserves": reserves}
 
 
+def get_strategy(config_file: str, search_paths: list, account: str) -> (IStrategy, Struct):
+    cfg = load_strategy_config(config_file, account)
+    search_paths.append(Path(config_file).parent)
+    try:
+        for p in search_paths:
+            if exists(pe := expanduser(p)):
+                add_project_to_system_path(pe)
+        strategy = class_import(cfg.strategy)
+    except Exception as err:
+        logger.error(str(err))
+        return None
+
+    return strategy, cfg
+
+
 def create_strategy_context(config_file: str, accounts_cfg_file: str, search_paths: list) -> StrategyContext | None:
     cfg = load_strategy_config(config_file)
+    search_paths.append(Path(config_file).parent)
     try:
         for p in search_paths:
             if exists(pe := expanduser(p)):
@@ -367,7 +427,15 @@ def exit():
 
 @click.command()
 @click.argument("filename", type=click.Path(exists=True))
-@click.option("--accounts", "-a", default="accounts.cfg", type=click.STRING, help="Live accounts configuration file")
+@click.option("--account", "-a", type=click.STRING, help="Account id for trading", default=None, show_default=True)
+@click.option(
+    "--acc_file",
+    "-f",
+    default=".env",
+    type=click.STRING,
+    help="env file with live accounts configuration data",
+    show_default=True,
+)
 @click.option(
     "--paths",
     "-p",
@@ -377,31 +445,51 @@ def exit():
     help="Live accounts configuration file",
 )
 @click.option("--jupyter", "-j", is_flag=True, default=False, help="Run strategy in jupyter console", show_default=True)
-def run(filename: str, accounts: str, paths: list, jupyter: bool):
+@click.option("--testnet", "-t", is_flag=True, default=False, help="Use testnet for trading", show_default=True)
+@click.option("--paper", "-p", is_flag=True, default=False, help="Use paper trading mode", show_default=True)
+def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, testnet: bool, paper: bool):
+    if not account and not paper:
+        logger.error("Account id is required for live trading")
+        return
+    paths = list(paths)
+
     if jupyter:
-        _run_in_jupyter(filename, accounts, paths)
+        _run_in_jupyter(filename, acc_file, paths)
         return
 
     # - show Qubx logo with current version
     logo()
 
-    # - create context
-    ctx = create_strategy_context(filename, accounts, paths)
-    if ctx is None:
+    strategy, cfg = get_strategy(filename, paths, account)
+    if not all([strategy, cfg]):
+        logger.error("Can't load strategy")
         return
 
-    # - run main loop
-    try:
-        ctx.start()
+    logger.add(LOGFILE + cfg.name + "_{time}.log", format=formatter, rotation="100 MB", colorize=False)
 
-        # - just wake up every 60 sec and check if it's OK
-        while True:
-            time.sleep(60)
+    # - read account creds
+    acc_config = {}
+    if cfg.account is not None:
+        acc_config = get_account_env_config(account, acc_file)
+        if acc_config is None:
+            logger.error("Can't read account configuration")
+            return None
 
-    except KeyboardInterrupt:
-        ctx.stop()
-        time.sleep(1)
-        sys.exit(0)
+    # - check connector
+    conn = cfg.connector.lower()
+    match conn:
+        case "ccxt":
+            run_ccxt_trading(
+                strategy=strategy,
+                exchange=cfg.exchange,
+                symbols=cfg.instruments,
+                credentials=acc_config,
+                strategy_config=cfg.parameters,
+                use_testnet=testnet,
+                paper=paper,
+            )
+        case _:
+            raise ValueError(f"Connector {conn} is not supported yet !")
 
 
 if __name__ == "__main__":

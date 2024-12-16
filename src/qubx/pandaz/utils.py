@@ -90,7 +90,7 @@ def rolling_forward_test_split(
             yield (np.array(range(i - training_period, i)), np.array(range(i, i + test_period)))
 
 
-def generate_equal_date_ranges(start: str, end: str, freq, units):
+def generate_equal_date_ranges(start: str | pd.Timestamp, end: str | pd.Timestamp, freq, units):
     """
     Generator for date ranges:
 
@@ -103,7 +103,12 @@ def generate_equal_date_ranges(start: str, end: str, freq, units):
     2022-01-01 2022-05-17
     """
     _as_f = lambda x: pd.Timestamp(x).strftime("%Y-%m-%d")
-    if pd.Timestamp(end) - pd.Timestamp(start) < freq * pd.Timedelta(f"1{units}"):
+    if units in ["M", "Y"]:
+        offset = pd.DateOffset(years=freq) if units == "Y" else pd.DateOffset(months=freq)
+    else:
+        offset = pd.Timedelta(f"{freq}{units}")
+
+    if pd.Timestamp(end) - offset < pd.Timestamp(start):
         b = [start, end]
 
     for a, b in rolling_forward_test_split(pd.Series(0, pd.date_range(start, end)), freq, freq, units=units):

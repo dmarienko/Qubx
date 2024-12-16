@@ -1,3 +1,4 @@
+import os
 from typing import Any, Callable, Dict, List, Tuple
 from os import unlink
 import numpy as np
@@ -57,13 +58,18 @@ def fetch_file(url, local_file_storage, chunk_size=1024*1024, progress_bar=True)
     # if dest location not exists create it
     if not exists(local_file_storage):
         makedirs(local_file_storage)
-        
+
     response = requests.get(url, stream=True)
+    if response.status_code != 200:
+        logger.warning(f"Error while fetching {url}: {response.status_code}")
+        return None
     fpath = join(local_file_storage, file)
-    with open(fpath, "wb") as handle:
+    fpath_temp = join(local_file_storage, f"{file}_tmp")
+    with open(fpath_temp, "wb") as handle:
         iters = response.iter_content(chunk_size=chunk_size)
         for data in tqdm(iters) if progress_bar else iters:
             handle.write(data)
+    os.rename(fpath_temp, fpath)
     return fpath
 
 
