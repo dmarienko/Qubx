@@ -6,7 +6,7 @@ from qubx.core.helpers import CachedMarketDataHolder
 from qubx.core.interfaces import (
     IAccountProcessor,
     IBroker,
-    IMarketDataProvider,
+    IDataProvider,
     IPositionGathering,
     IStrategy,
     IStrategyContext,
@@ -21,7 +21,7 @@ from qubx.core.loggers import StrategyLogging
 class UniverseManager(IUniverseManager):
     _context: IStrategyContext
     _strategy: IStrategy
-    _broker: IMarketDataProvider
+    _broker: IDataProvider
     _trading_service: IBroker
     _cache: CachedMarketDataHolder
     _logging: StrategyLogging
@@ -35,7 +35,7 @@ class UniverseManager(IUniverseManager):
         self,
         context: IStrategyContext,
         strategy: IStrategy,
-        broker: IMarketDataProvider,
+        broker: IDataProvider,
         trading_service: IBroker,
         cache: CachedMarketDataHolder,
         logging: StrategyLogging,

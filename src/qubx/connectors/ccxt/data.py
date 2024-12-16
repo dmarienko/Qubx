@@ -20,7 +20,7 @@ from ccxt.pro import Exchange
 from qubx import logger
 from qubx.core.basics import CtrlChannel, DataType, Instrument, ITimeProvider, dt_64
 from qubx.core.helpers import BasicScheduler
-from qubx.core.interfaces import IMarketDataProvider
+from qubx.core.interfaces import IDataProvider
 from qubx.core.series import Bar, Quote
 from qubx.utils.misc import AsyncThreadLoop
 
@@ -36,7 +36,7 @@ from .utils import (
 )
 
 
-class CcxtDataProvider(IMarketDataProvider):
+class CcxtDataProvider(IDataProvider):
     time_provider: ITimeProvider
     _exchange: Exchange
     _scheduler: BasicScheduler | None = None

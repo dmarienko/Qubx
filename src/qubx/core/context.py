@@ -23,7 +23,7 @@ from qubx.core.helpers import (
 from qubx.core.interfaces import (
     IAccountProcessor,
     IBroker,
-    IMarketDataProvider,
+    IDataProvider,
     IMarketManager,
     IPositionGathering,
     IProcessingManager,
@@ -61,7 +61,7 @@ class StrategyContext(IStrategyContext):
 
     _broker: IBroker  # service for exchange API: orders managemewnt
     _logging: StrategyLogging  # recording all activities for the strat: execs, positions, portfolio
-    _data_provider: IMarketDataProvider  # market data provider
+    _data_provider: IDataProvider  # market data provider
     _cache: CachedMarketDataHolder
     _scheduler: BasicScheduler
     _initial_instruments: list[Instrument]
@@ -73,7 +73,7 @@ class StrategyContext(IStrategyContext):
         self,
         strategy: IStrategy,
         broker: IBroker,
-        data_provider: IMarketDataProvider,
+        data_provider: IDataProvider,
         account: IAccountProcessor,
         scheduler: BasicScheduler,
         instruments: list[Instrument],
@@ -99,7 +99,7 @@ class StrategyContext(IStrategyContext):
 
         __position_gathering = position_gathering if position_gathering is not None else SimplePositionGatherer()
 
-        self._subscription_manager = SubscriptionManager(broker=self._data_provider)
+        self._subscription_manager = SubscriptionManager(data_provider=self._data_provider)
         self.account.set_subscription_manager(self._subscription_manager)
 
         self._market_data_provider = MarketDataProvider(

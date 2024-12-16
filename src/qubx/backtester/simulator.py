@@ -43,7 +43,7 @@ from qubx.core.helpers import BasicScheduler, extract_parameters_from_object, fu
 from qubx.core.interfaces import (
     IAccountProcessor,
     IBroker,
-    IMarketDataProvider,
+    IDataProvider,
     IStrategy,
     IStrategyContext,
     PositionsTracker,
@@ -316,7 +316,7 @@ class SimulatedTrading(IBroker):
                 self.send_execution_report(instrument, r)
 
 
-class SimulatedExchange(IMarketDataProvider):
+class SimulatedExchange(IDataProvider):
     trading_service: SimulatedTrading
     _last_quotes: Dict[Instrument, Optional[Quote]]
     _readers: dict[str, DataReader]

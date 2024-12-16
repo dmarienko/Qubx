@@ -900,17 +900,6 @@ class FundingRate:
     index_price: float | None = None
 
 
-class LiveTimeProvider(ITimeProvider):
-    def __init__(self):
-        self._start_ntp_thread()
-
-    def time(self) -> dt_64:
-        return time_now()
-
-    def _start_ntp_thread(self):
-        start_ntp_thread()
-
-
 @dataclass
 class TimestampedDict:
     """
@@ -921,3 +910,14 @@ class TimestampedDict:
 
     time: dt_64
     data: dict[str, Any]
+
+
+class LiveTimeProvider(ITimeProvider):
+    def __init__(self):
+        self._start_ntp_thread()
+
+    def time(self) -> dt_64:
+        return time_now()
+
+    def _start_ntp_thread(self):
+        start_ntp_thread()

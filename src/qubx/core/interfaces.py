@@ -279,7 +279,7 @@ class IBroker:
         raise NotImplementedError("update_order is not implemented")
 
 
-class IMarketDataProvider:
+class IDataProvider:
     time_provider: ITimeProvider
     channel: CtrlChannel
 

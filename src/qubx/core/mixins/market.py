@@ -6,7 +6,7 @@ from qubx import lookup
 from qubx.core.basics import Instrument
 from qubx.core.helpers import CachedMarketDataHolder
 from qubx.core.interfaces import (
-    IMarketDataProvider,
+    IDataProvider,
     IMarketManager,
     IUniverseManager,
 )
@@ -17,14 +17,14 @@ from qubx.utils import convert_seconds_to_str
 
 class MarketDataProvider(IMarketManager):
     _cache: CachedMarketDataHolder
-    _broker: IMarketDataProvider
+    _broker: IDataProvider
     _universe_manager: IUniverseManager
     _aux_data_provider: DataReader | None
 
     def __init__(
         self,
         cache: CachedMarketDataHolder,
-        broker: IMarketDataProvider,
+        broker: IDataProvider,
         universe_manager: IUniverseManager,
         aux_data_provider: DataReader | None = None,
     ):

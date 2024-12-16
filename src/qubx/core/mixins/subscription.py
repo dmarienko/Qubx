@@ -2,12 +2,12 @@ from collections import defaultdict
 from typing import Any, Dict, List, Set, Tuple
 
 from qubx.core.basics import DataType, Instrument
-from qubx.core.interfaces import IMarketDataProvider, ISubscriptionManager
+from qubx.core.interfaces import IDataProvider, ISubscriptionManager
 from qubx.utils.misc import synchronized
 
 
 class SubscriptionManager(ISubscriptionManager):
-    _broker: IMarketDataProvider
+    _broker: IDataProvider
     _base_sub: str
     _is_simulation: bool
     _sub_to_warmup: dict[str, str]
@@ -20,7 +20,7 @@ class SubscriptionManager(ISubscriptionManager):
     _pending_stream_unsubscriptions: Dict[str, Set[Instrument]]
     _pending_warmups: Dict[Tuple[str, Instrument], str]
 
-    def __init__(self, data_provider: IMarketDataProvider, auto_subscribe: bool = True) -> None:
+    def __init__(self, data_provider: IDataProvider, auto_subscribe: bool = True) -> None:
         self._broker = data_provider
         self._is_simulation = data_provider.is_simulation
         self._base_sub = DataType.NONE if self._is_simulation else DataType.ORDERBOOK
