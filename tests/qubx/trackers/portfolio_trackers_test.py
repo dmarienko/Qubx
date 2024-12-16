@@ -1,12 +1,13 @@
 from typing import Any, List, Optional
 
+import numpy as np
 from pandas import Timestamp
 from pytest import approx
 
 from qubx import QubxLogConfig, logger, lookup
 from qubx.backtester.simulator import simulate
 from qubx.core.account import BasicAccountProcessor
-from qubx.core.basics import ZERO_COSTS, Deal, Instrument, ITimeProvider, Order, Position, Signal, TargetPosition
+from qubx.core.basics import ZERO_COSTS, Deal, Instrument, ITimeProvider, Order, Position, Signal, TargetPosition, dt_64
 from qubx.core.interfaces import IPositionGathering, IStrategy, IStrategyContext, PositionsTracker, TriggerEvent
 from qubx.core.metrics import portfolio_metrics
 from qubx.core.series import OHLCV, Quote
@@ -18,6 +19,7 @@ from qubx.trackers.composite import CompositeTracker, CompositeTrackerPerSide, L
 from qubx.trackers.rebalancers import PortfolioRebalancerTracker
 from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
 from qubx.trackers.sizers import FixedLeverageSizer, FixedRiskSizer, FixedSizer, LongShortRatioPortfolioSizer
+from tests.qubx.core.utils_test import DummyTimeProvider
 
 N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
 
@@ -66,7 +68,7 @@ class DebugStratageyCtx(IStrategyContext):
         self._d_qts = {i: None for i in self._instruments}  # type: ignore
         self._positions = {i: Position(i) for i in self.instruments}
         self.capital = capital
-        self.acc = BasicAccountProcessor("test", "USDT")
+        self.acc = BasicAccountProcessor("test", DummyTimeProvider(), "USDT")
         self.acc.update_balance("USDT", capital, 0)
         self.acc.attach_positions(*self.positions.values())
 
@@ -117,16 +119,16 @@ class DebugStratageyCtx(IStrategyContext):
         print(" >>> ", side, instrument, amount)
 
         order = Order(
-            f"test_{self._o_id}",
-            "MARKET",
-            instrument,
-            np.datetime64(0, "ns"),
-            amount,
-            price if price is not None else 0,
-            side,
-            "CLOSED",
-            "gtc",
-            "test1",
+            id=f"test_{self._o_id}",
+            type="MARKET",
+            instrument=instrument,
+            time=np.datetime64(0, "ns"),
+            quantity=amount,
+            price=price if price is not None else 0,
+            side=side,
+            status="CLOSED",
+            time_in_force="gtc",
+            client_id="test1",
         )
 
         self._o_id += 1

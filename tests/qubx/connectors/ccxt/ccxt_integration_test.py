@@ -9,13 +9,16 @@ import pandas as pd
 import pytest
 
 from qubx import QubxLogConfig, logger, lookup
-from qubx.backtester.simulator import SimulatedTrading
+from qubx.backtester.simulator import SimulatedBroker
+from qubx.connectors.ccxt.broker import CcxtBroker
 from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
+from qubx.connectors.ccxt.data import CcxtDataProvider
 from qubx.connectors.ccxt.trading import CcxtTradingConnector
-from qubx.core.basics import DataType, Instrument, MarketEvent, Trade, TriggerEvent
+from qubx.core.basics import DataType, Instrument, ITimeProvider, MarketEvent, Trade, TriggerEvent, dt_64
 from qubx.core.interfaces import IStrategy, IStrategyContext, Position
 from qubx.pandaz import scols
-from qubx.utils.runner import get_account_config, run_ccxt_paper_trading, run_ccxt_trading
+from qubx.utils.collections import TimeLimitedDeque
+from qubx.utils.runner import get_account_config, run_ccxt_trading
 
 
 async def wait(condition: Callable[[], bool] | None = None, timeout: int = 10, period: float = 1.0):
@@ -122,7 +125,7 @@ class TestCcxtTrading:
         # - Start strategy
         ctx = run_ccxt_trading(
             strategy=(stg := DebugStrategy()),
-            exchange=exchange,
+            exchange_name=exchange,
             symbols=symbols,
             credentials=self._creds[exchange],
             blocking=False,

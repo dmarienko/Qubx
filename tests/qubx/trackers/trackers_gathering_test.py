@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from pytest import approx
 
@@ -33,6 +34,7 @@ from qubx.ta.indicators import ema, sma
 from qubx.trackers.composite import CompositeTracker, CompositeTrackerPerSide, LongTracker
 from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
 from qubx.trackers.sizers import FixedLeverageSizer, FixedRiskSizer, FixedSizer
+from tests.qubx.core.utils_test import DummyTimeProvider
 
 N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
 
@@ -71,7 +73,7 @@ class DebugStratageyCtx(IStrategyContext):
         self.capital = capital
 
         positions = {i: Position(i) for i in instrs}
-        self.account = BasicAccountProcessor("test", "USDT")  # , initial_capital=10000.0)
+        self.account = BasicAccountProcessor("test", DummyTimeProvider(), "USDT")  # , initial_capital=10000.0)
         self.account.update_balance("USDT", capital, 0)
         self.account.attach_positions(*positions.values())
         self._n_orders = 0
@@ -82,6 +84,10 @@ class DebugStratageyCtx(IStrategyContext):
     @property
     def instruments(self) -> list[Instrument]:
         return self._instruments
+
+    @property
+    def positions(self) -> dict[Instrument, Position]:
+        return self.account.positions
 
     def quote(self, symbol: str) -> Quote | None:
         return Q("2020-01-01", 1000.0, 1000.5)
@@ -248,7 +254,6 @@ class TestTrackersAndGatherers:
             start="2024-01-01",
             stop="2024-01-03 13:00",
         )
-
         assert rep[2].executions_log.iloc[-1].price < rep[3].executions_log.iloc[-1].price
         assert t0.is_active(I) and t1.is_active(I)
         assert not t2.is_active(I) and not t3.is_active(I)

@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-from data.ccxt_responses import *
 from pytest import approx
 
 from qubx import lookup
@@ -11,7 +10,9 @@ from qubx.connectors.ccxt.utils import (
     ccxt_restore_position_from_deals,
 )
 from qubx.core.account import BasicAccountProcessor
-from qubx.core.basics import Deal, Instrument, Position
+from qubx.core.basics import ZERO_COSTS, CtrlChannel, Deal, Instrument, ITimeProvider, Position, dt_64
+from tests.qubx.connectors.ccxt.data.ccxt_responses import *
+from tests.qubx.core.utils_test import DummyTimeProvider
 
 N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
 
@@ -274,7 +275,12 @@ class TestStrats:
         assert N(pos2.quantity, instr2.lot_size) == vol2
 
     def test_account_processor_from_ccxt_reports(self):
-        acc = BasicAccountProcessor("TestAcc1", "USDT", 100)
+        acc = BasicAccountProcessor(
+            account_id="TestAcc1",
+            time_provider=DummyTimeProvider(),
+            base_currency="USDT",
+            initial_capital=100,
+        )
         acc.attach_positions(
             Position(lookup.find_symbol("BINANCE", "RAREUSDT")),  # type: ignore
             Position(lookup.find_symbol("BINANCE", "SUPERUSDT")),  # type: ignore

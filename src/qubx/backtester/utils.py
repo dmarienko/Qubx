@@ -2,14 +2,24 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, TypeAlias
 
+import numpy as np
 import pandas as pd
 import stackprinter
 
 from qubx import logger, lookup
-from qubx.core.basics import CtrlChannel, DataType, Instrument, ITimeProvider, TimestampedDict
+from qubx.core.basics import (
+    CtrlChannel,
+    DataType,
+    Instrument,
+    ITimeProvider,
+    Signal,
+    TimestampedDict,
+    TriggerEvent,
+    dt_64,
+)
 from qubx.core.exceptions import SimulationConfigError, SimulationError
 from qubx.core.helpers import BasicScheduler
-from qubx.core.interfaces import IStrategy, PositionsTracker
+from qubx.core.interfaces import IStrategy, IStrategyContext, PositionsTracker
 from qubx.core.series import OHLCV, Bar, Quote, Trade
 from qubx.core.utils import time_delta_to_str
 from qubx.data.readers import AsDict, DataReader, InMemoryDataFrameReader
@@ -136,6 +146,38 @@ class SimulatedCtrlChannel(CtrlChannel):
 
     def start(self):
         self.control.set()
+
+
+class SimulatedTimeProvider(ITimeProvider):
+    _current_time: dt_64
+
+    def __init__(self, initial_time: dt_64 | str):
+        self._current_time = np.datetime64(initial_time, "ns") if isinstance(initial_time, str) else initial_time
+
+    def time(self) -> dt_64:
+        return self._current_time
+
+    def set_time(self, time: dt_64):
+        self._current_time = max(time, self._current_time)
+
+
+class SignalsProxy(IStrategy):
+    """
+    Proxy strategy for generated signals.
+    """
+
+    timeframe: str = "1m"
+
+    def on_init(self, ctx: IStrategyContext):
+        ctx.set_base_subscription(DataType.OHLC[self.timeframe])
+
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> list[Signal] | None:
+        if event.data and event.type == "event":
+            signal = event.data.get("order")
+            # - TODO: also need to think about how to pass stop/take here
+            if signal is not None and event.instrument:
+                return [event.instrument.signal(signal)]
+        return None
 
 
 def find_instruments_and_exchanges(

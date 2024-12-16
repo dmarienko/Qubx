@@ -12,7 +12,7 @@ from croniter import croniter
 
 from qubx import logger
 from qubx.core.basics import SW, CtrlChannel, DataType, Instrument
-from qubx.core.series import OHLCV, Bar, OrderBook, Quote, TimeSeries, Trade
+from qubx.core.series import OHLCV, Bar, OrderBook, Quote, Trade
 from qubx.utils.time import convert_seconds_to_str, convert_tf_str_td64
 
 
@@ -406,6 +406,30 @@ def set_parameters_to_object(strategy: Any, **kwargs):
 
     if _log_info:
         logger.debug(f"<yellow>{strategy.__class__.__name__}</yellow> new parameters:" + _log_info)
+
+
+def extract_price(update: float | Quote | Trade | Bar) -> float:
+    """Extract the price from various types of market data updates.
+
+    Args:
+        update: The market data update, which can be a float, Quote, Trade, or Bar.
+
+    Returns:
+        float: The extracted price.
+
+    Raises:
+        ValueError: If the update type is unknown.
+    """
+    if isinstance(update, float):
+        return update
+    elif isinstance(update, Quote) or isinstance(update, OrderBook):
+        return update.mid_price()
+    elif isinstance(update, Trade):
+        return update.price
+    elif isinstance(update, Bar):
+        return update.close
+    else:
+        raise ValueError(f"Unknown update type: {type(update)}")
 
 
 def full_qualified_class_name(obj: object):
