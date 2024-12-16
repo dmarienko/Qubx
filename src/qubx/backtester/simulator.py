@@ -398,7 +398,7 @@ class SimulatedExchange(IBrokerServiceProvider):
                 if s == i.symbol or s == str(i) or s == f"{i.exchange}:{i.symbol}" or str(s) == str(i):
                     _start, _end = pd.Timestamp(start), pd.Timestamp(end)
                     _start_idx, _end_idx = v.index.get_indexer([_start, _end], method="ffill")
-                    sel = v.iloc[max(_start_idx, 0) : _end_idx]  # sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
+                    sel = v.iloc[max(_start_idx, 0) : _end_idx + 1]  # we need to select last one too
 
                     self._to_process[i] = list(zip(sel.index, sel.values))
                     _s_inst = i
@@ -489,11 +489,6 @@ class SimulatedExchange(IBrokerServiceProvider):
                 cc.send((None, "service_time", None))
 
         cc.send((instrument, data_type, data))
-
-        # - TODO: not sure why we need it here ???
-        if not is_hist:
-            if q is not None and data_type != "quote":
-                cc.send((instrument, "quote", q))
 
         return cc.control.is_set()
 

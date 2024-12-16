@@ -87,9 +87,9 @@ class Issue3(IStrategy):
 
     def on_init(self, ctx: IStrategyContext) -> None:
         ctx.set_base_subscription(DataType.OHLC["1h"])
-        # ctx.set_base_subscription(Subtype.OHLC_TICKS["1h"])
         self._fits_called = 0
         self._triggers_called = 0
+        self._market_ohlc_called = 0
         self._market_events = []
 
     def on_event(self, ctx: IStrategyContext, event: TriggerEvent):
@@ -97,7 +97,7 @@ class Issue3(IStrategy):
         self._last_trigger_event = event
 
     def on_market_data(self, ctx: IStrategyContext, event: MarketEvent):
-        print(event.type)
+        # print(event.type)
         if event.type == DataType.QUOTE:
             self._market_quotes_called += 1
 
@@ -212,12 +212,12 @@ class Test6_HistOHLC(IStrategy):
         return i
 
     def on_fit(self, ctx: IStrategyContext):
-        print(f" - - - - - - - ||| FIT : {ctx.time()}")
+        logger.info(f" - - - - - - - ||| <r>FIT</r> at {ctx.time()}")
         self._out_fit |= self.get_ohlc(ctx, self._U[0])
         ctx.set_universe(self._U[0])
 
     def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> list[Signal]:
-        print(f" - - - - - - - {ctx.time()}")
+        logger.info(f" - - - - - - - ||| <g>TRIGGER</g> at {ctx.time()}")
         self._out |= self.get_ohlc(ctx, ctx.instruments)
         return []
 
@@ -225,7 +225,7 @@ class Test6_HistOHLC(IStrategy):
         closes = defaultdict(dict)
         for i in instruments:
             data = ctx.ohlc(i, "1d", 4)
-            print(f":: :: :: {i.symbol} :: :: ::\n{str(data)}")
+            logger.info(f":: :: :: {i.symbol} :: :: ::\n{str(data)}")
             closes[pd.Timestamp(data[0].time, unit="ns")] |= {i.symbol: data[0].close}
         return closes
 
@@ -290,8 +290,9 @@ class TestSimulator:
             n_jobs=1,
         )
 
-        # +1 because first event is used for on_fit and skipped for on_market_data
-        assert (stg._triggers_called + 1) * 4 == stg._market_quotes_called + 1, "Got Errors during the simulation"
+        # - no quotes arrived - it subscribed to OHLC only
+        assert stg._market_quotes_called == 0, "Got Errors during the simulation"
+        assert (stg._triggers_called) * 4 == stg._market_ohlc_called, "Got Errors during the simulation"
 
     def test_ohlc_quote_update(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
@@ -341,16 +342,15 @@ class TestSimulator:
         simulate({ "Issue5": (stg := Test6_HistOHLC()), },
             ld, 
             capital=100_000, instruments=["BINANCE.UM:BTCUSDT"], commissions="vip0_usdt",
-            start="2023-07-01", stop="2023-07-04",
+            start="2023-07-01", stop="2023-07-04 23:59",
             debug="DEBUG", silent=True, n_jobs=1,
         )
         # fmt: on
 
-        r = ld_test[["BTCUSDT", "ETHUSDT"], "2023-06-30":"2023-07-03 23:59:59"]("1d")  # type: ignore
-        # print(r.display(-1))
+        r = ld_test[["BTCUSDT", "ETHUSDT"], "2023-07-01":"2023-07-03 23:59:59"]("1d")  # type: ignore
         assert all(pd.DataFrame.from_dict(stg._out_fit, orient="index") == r.close)
 
-        r = ld_test[["BTCUSDT", "ETHUSDT"], "2023-07-01":"2023-07-03 23:59:59"]("1d")  # type: ignore
+        r = ld_test[["BTCUSDT", "ETHUSDT"], "2023-07-02":"2023-07-03 23:59:59"]("1d")  # type: ignore
         assert all(pd.DataFrame.from_dict(stg._out, orient="index") == r.close)
 
     def test_ohlc_tick_data_subscription(self):
