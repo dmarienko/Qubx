@@ -32,3 +32,7 @@ class QueueTimeout(BaseError):
 
 class SimulationError(Exception):
     pass
+
+
+class SimulationConfigError(Exception):
+    pass

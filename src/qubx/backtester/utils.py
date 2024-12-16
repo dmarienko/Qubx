@@ -7,11 +7,11 @@ import stackprinter
 
 from qubx import logger, lookup
 from qubx.core.basics import CtrlChannel, DataType, Instrument, ITimeProvider, TimestampedDict
-from qubx.core.exceptions import SimulationError
+from qubx.core.exceptions import SimulationConfigError, SimulationError
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy, PositionsTracker
 from qubx.core.series import OHLCV, Bar, Quote, Trade
-from qubx.core.utils import recognize_timeframe, time_delta_to_str
+from qubx.core.utils import time_delta_to_str
 from qubx.data.readers import AsDict, DataReader, InMemoryDataFrameReader
 from qubx.utils.time import infer_series_frequency, timedelta_to_crontab
 
@@ -57,22 +57,6 @@ def _type(obj: Any) -> SetupTypes:
     else:
         t = SetupTypes.UKNOWN
     return t
-
-
-def _is_strategy(obj):
-    return _type(obj) == SetupTypes.STRATEGY
-
-
-def _is_tracker(obj):
-    return _type(obj) == SetupTypes.TRACKER
-
-
-def _is_signal(obj):
-    return _type(obj) == SetupTypes.SIGNAL
-
-
-def _is_signal_or_strategy(obj):
-    return _is_signal(obj) or _is_strategy(obj)
 
 
 @dataclass
@@ -185,143 +169,9 @@ def find_instruments_and_exchanges(
                 _instrs.append(i)
 
             case _:
-                raise SimulationError(f"Unsupported type for {i} only str or Instrument instances are allowed!")
+                raise SimulationConfigError(f"Unsupported type for {i} only str or Instrument instances are allowed!")
 
     return _instrs, list(set(_exchanges))
-
-
-def recognize_simulation_configuration(
-    name: str,
-    configs: StrategiesDecls_t,
-    instruments: list[Instrument],
-    exchange: str,
-    capital: float,
-    leverage: float,
-    basic_currency: str,
-    commissions: str,
-) -> list[SimulationSetup]:
-    """
-    Recognize and create setups based on the provided simulation configuration.
-
-    This function processes the given configuration and creates a list of SimulationSetup
-    objects that represent different simulation scenarios. It handles various types of
-    configurations including dictionaries, lists, signals, and strategies.
-
-    Parameters:
-    name (str): The name of the simulation setup.
-    configs (VariableStrategyConfig): The configuration for the simulation. Can be a
-        strategy, signals, or a nested structure of these.
-    instruments (list[Instrument]): List of available instruments for the simulation.
-    exchange (str): The name of the exchange to be used.
-    capital (float): The initial capital for the simulation.
-    leverage (float): The leverage to be used in the simulation.
-    basic_currency (str): The base currency for the simulation.
-    commissions (str): The commission structure to be applied.
-
-    Returns:
-    list[SimulationSetup]: A list of SimulationSetup objects, each representing a
-        distinct simulation configuration based on the input parameters.
-
-    Raises:
-    ValueError: If the signal structure is invalid or if an instrument cannot be found
-        for a given signal.
-    """
-
-    def _possible_instruments_ids(i: Instrument) -> set[str]:
-        return set((i.symbol, str(i), f"{i.exchange}:{i.symbol}"))
-
-    def _name_in_instruments(n, instrs: list[Instrument]) -> bool:
-        return any([n in _possible_instruments_ids(i) for i in instrs])
-
-    def _check_signals_structure(s: pd.Series | pd.DataFrame) -> pd.Series | pd.DataFrame:
-        if isinstance(s, pd.Series):
-            # - it's possible to put anything to series name, so we convert it to string
-            s.name = str(s.name)
-            if not _name_in_instruments(s.name, instruments):
-                raise ValueError(f"Can't find instrument for signal's name: '{s.name}'")
-
-        if isinstance(s, pd.DataFrame):
-            s.columns = s.columns.map(lambda x: str(x))
-            for col in s.columns:
-                if not _name_in_instruments(col, instruments):
-                    raise ValueError(f"Can't find instrument for signal's name: '{col}'")
-        return s
-
-    def _pick_instruments(s: pd.Series | pd.DataFrame) -> list[Instrument]:
-        if isinstance(s, pd.Series):
-            _instrs = [i for i in instruments if s.name in _possible_instruments_ids(i)]
-
-        elif isinstance(s, pd.DataFrame):
-            _s_cols = set(s.columns)
-            _instrs = [i for i in instruments if _possible_instruments_ids(i) & _s_cols]
-
-        else:
-            raise ValueError("Invalid signals or strategy configuration")
-
-        return list(set(_instrs))
-
-    r = list()
-
-    # fmt: off
-    if isinstance(configs, dict):
-        for n, v in configs.items():
-            _n = (name + "/") if name else ""
-            r.extend(
-                recognize_simulation_configuration(
-                    _n + n, v, instruments, exchange, capital, leverage, basic_currency, commissions
-                )
-            )
-
-    elif isinstance(configs, (list, tuple)):
-        if len(configs) == 2 and _is_signal_or_strategy(configs[0]) and _is_tracker(configs[1]):
-            c0, c1 = configs[0], configs[1]
-            _s = _check_signals_structure(c0)   # type: ignore
-
-            if _is_signal(c0):
-                _t = SetupTypes.SIGNAL_AND_TRACKER
-
-            if _is_strategy(c0):
-                _t = SetupTypes.STRATEGY_AND_TRACKER
-
-            # - extract actual symbols that have signals
-            r.append(
-                SimulationSetup(
-                    _t, name, _s, c1,   # type: ignore
-                    _pick_instruments(_s) if _is_signal(c0) else instruments,
-                    exchange, capital, leverage, basic_currency, commissions,
-                )
-            )
-        else:
-            for j, s in enumerate(configs):
-                r.extend(
-                    recognize_simulation_configuration(
-                        # name + "/" + str(j), s, instruments, exchange, capital, leverage, basic_currency, commissions
-                        name, s, instruments, exchange, capital, leverage, basic_currency, commissions, # type: ignore
-                    )
-                )
-
-    elif _is_strategy(configs):
-        r.append(
-            SimulationSetup(
-                SetupTypes.STRATEGY,
-                name, configs, None, instruments,
-                exchange, capital, leverage, basic_currency, commissions,
-            )
-        )
-
-    elif _is_signal(configs):
-        # - check structure of signals
-        c1 = _check_signals_structure(configs)  # type: ignore
-        r.append(
-            SimulationSetup(
-                SetupTypes.SIGNAL,
-                name, c1, None, _pick_instruments(c1),
-                exchange, capital, leverage, basic_currency, commissions,
-            )
-        )
-
-    # fmt: on
-    return r
 
 
 class _StructureSniffer:
@@ -330,10 +180,57 @@ class _StructureSniffer:
     def __init__(self, _probe_size: int = 50) -> None:
         self._probe_size = _probe_size
 
-    def _has_columns(self, v: pd.DataFrame, columns: list[str]):
+    def _is_strategy(self, obj) -> bool:
+        return _type(obj) == SetupTypes.STRATEGY
+
+    def _is_tracker(self, obj) -> bool:
+        return _type(obj) == SetupTypes.TRACKER
+
+    def _is_signal(self, obj) -> bool:
+        return _type(obj) == SetupTypes.SIGNAL
+
+    def _is_signal_or_strategy(self, obj) -> bool:
+        return self._is_signal(obj) or self._is_strategy(obj)
+
+    def _possible_instruments_ids(self, i: Instrument) -> set[str]:
+        return set((i.symbol, str(i), f"{i.exchange}:{i.symbol}"))
+
+    def _pick_instruments(self, instruments: list[Instrument], s: pd.Series | pd.DataFrame) -> list[Instrument]:
+        if isinstance(s, pd.Series):
+            _instrs = [i for i in instruments if s.name in self._possible_instruments_ids(i)]
+
+        elif isinstance(s, pd.DataFrame):
+            _s_cols = set(s.columns)
+            _instrs = [i for i in instruments if self._possible_instruments_ids(i) & _s_cols]
+
+        else:
+            raise SimulationConfigError("Invalid signals or strategy configuration")
+
+        return list(set(_instrs))
+
+    def _name_in_instruments(self, n, instrs: list[Instrument]) -> bool:
+        return any([n in self._possible_instruments_ids(i) for i in instrs])
+
+    def _check_signals_structure(
+        self, instruments: list[Instrument], s: pd.Series | pd.DataFrame
+    ) -> pd.Series | pd.DataFrame:
+        if isinstance(s, pd.Series):
+            # - it's possible to put anything to series name, so we convert it to string
+            s.name = str(s.name)
+            if not self._name_in_instruments(s.name, instruments):
+                raise SimulationConfigError(f"Can't find instrument for signal's name: '{s.name}'")
+
+        if isinstance(s, pd.DataFrame):
+            s.columns = s.columns.map(lambda x: str(x))
+            for col in s.columns:
+                if not self._name_in_instruments(col, instruments):
+                    raise SimulationConfigError(f"Can't find instrument for signal's name: '{col}'")
+        return s
+
+    def _has_columns(self, v: pd.DataFrame, columns: list[str]) -> bool:
         return all([c in v.columns for c in columns])
 
-    def _has_keys(self, v: dict[str, Any], keys: list[str]):
+    def _has_keys(self, v: dict[str, Any], keys: list[str]) -> bool:
         return all([c in v.keys() for c in keys])
 
     def _sniff_list(self, v: list[Any]) -> str:
@@ -425,44 +322,113 @@ class _StructureSniffer:
         logger.warning(f"Failed to read probe data for symbol: {symbol}")
         return DataType.NONE
 
-    def extract_types(
-        self,
-        data: dict[str, Any],
-        time: str | None = None,
-    ) -> dict[str, str]:
-        """
-        Tries to infer data types from provided data and instruments.
-        """
-        _types = {}
-        for k, v in data.items():
-            match v:
-                case DataReader():
-                    _types[k] = (self._sniff_reader(k, v, time), "reader")
 
-                case pd.DataFrame():
-                    _types[k] = (self._sniff_pandas(v), "dataframe")
+def recognize_simulation_configuration(
+    name: str,
+    configs: StrategiesDecls_t,
+    instruments: list[Instrument],
+    exchange: str,
+    capital: float,
+    leverage: float,
+    basic_currency: str,
+    commissions: str,
+) -> list[SimulationSetup]:
+    """
+    Recognize and create setups based on the provided simulation configuration.
 
-                case OHLCV():
-                    _types[k] = (self._sniff_pandas(v.pd()), "dataframe")
+    This function processes the given configuration and creates a list of SimulationSetup
+    objects that represent different simulation scenarios. It handles various types of
+    configurations including dictionaries, lists, signals, and strategies.
 
-                case list():
-                    _types[k] = (self._sniff_list(v), "list")
+    Parameters:
+    - name (str): The name of the simulation setup.
+    - configs (VariableStrategyConfig): The configuration for the simulation. Can be a
+        strategy, signals, or a nested structure of these.
+    - instruments (list[Instrument]): List of available instruments for the simulation.
+    - exchange (str): The name of the exchange to be used.
+    - capital (float): The initial capital for the simulation.
+    - leverage (float): The leverage to be used in the simulation.
+    - basic_currency (str): The base currency for the simulation.
+    - commissions (str): The commission structure to be applied.
 
-                case dict():
-                    _types[k] = (self._sniff_dicts(v), "dict")
+    Returns:
+    - list[SimulationSetup]: A list of SimulationSetup objects, each representing a
+        distinct simulation configuration based on the input parameters.
 
-                case _:
-                    logger.warning(f"Unsupported data type: {type(v)} for symbol: {k}")
-                    _types[k] = (DataType.NONE, None)
+    Raises:
+    - SimulationConfigError: If the signal structure is invalid or if an instrument cannot be found
+        for a given signal.
+    """
 
-        return _types
+    r = list()
+    _sniffer = _StructureSniffer()
+
+    # fmt: off
+    if isinstance(configs, dict):
+        for n, v in configs.items():
+            _n = (name + "/") if name else ""
+            r.extend(
+                recognize_simulation_configuration(
+                    _n + n, v, instruments, exchange, capital, leverage, basic_currency, commissions
+                )
+            )
+
+    elif isinstance(configs, (list, tuple)):
+        if len(configs) == 2 and _sniffer._is_signal_or_strategy(configs[0]) and _sniffer._is_tracker(configs[1]):
+            c0, c1 = configs[0], configs[1]
+            _s = _sniffer._check_signals_structure(instruments, c0)   # type: ignore
+
+            if _sniffer._is_signal(c0):
+                _t = SetupTypes.SIGNAL_AND_TRACKER
+
+            if _sniffer._is_strategy(c0):
+                _t = SetupTypes.STRATEGY_AND_TRACKER
+
+            # - extract actual symbols that have signals
+            r.append(
+                SimulationSetup(
+                    _t, name, _s, c1,   # type: ignore
+                    _sniffer._pick_instruments(instruments, _s) if _sniffer._is_signal(c0) else instruments,
+                    exchange, capital, leverage, basic_currency, commissions,
+                )
+            )
+        else:
+            for j, s in enumerate(configs):
+                r.extend(
+                    recognize_simulation_configuration(
+                        # name + "/" + str(j), s, instruments, exchange, capital, leverage, basic_currency, commissions
+                        name, s, instruments, exchange, capital, leverage, basic_currency, commissions, # type: ignore
+                    )
+                )
+
+    elif _sniffer._is_strategy(configs):
+        r.append(
+            SimulationSetup(
+                SetupTypes.STRATEGY,
+                name, configs, None, instruments,
+                exchange, capital, leverage, basic_currency, commissions,
+            )
+        )
+
+    elif _sniffer._is_signal(configs):
+        # - check structure of signals
+        c1 = _sniffer._check_signals_structure(instruments, configs)  # type: ignore
+        r.append(
+            SimulationSetup(
+                SetupTypes.SIGNAL,
+                name, c1, None, _sniffer._pick_instruments(instruments, c1),
+                exchange, capital, leverage, basic_currency, commissions,
+            )
+        )
+
+    # fmt: on
+    return r
 
 
 def _detect_defaults_from_subscriptions(
     requests: dict[str, tuple[str, DataReader]],
 ) -> tuple[str, str, dict[str, DataReader]]:
     def _tf(x):
-        # return pd.Timedelta(DataType.from_str(x)[1].get("timeframe", "nat"))
         _p = DataType.from_str(x)[1]
         return pd.Timedelta(_p["timeframe"]) if "timeframe" in _p else None
 
@@ -491,7 +457,7 @@ def _detect_defaults_from_subscriptions(
                 _in_base_tf = _tf(_src)
 
                 if not _in_base_tf:
-                    SimulationError(f"ohlc data specified for {_src} but it's timeframe was not detected")
+                    SimulationConfigError(f"ohlc data specified for {_src} but it's timeframe was not detected")
 
                 if not _out_tf:
                     _out_tf = _in_base_tf
@@ -510,7 +476,7 @@ def _detect_defaults_from_subscriptions(
                 _out_tf = _tf(_t)
                 _base_subscr = _src
                 if _out_tf is None:
-                    raise SimulationError(f"ohlc output data timeframe is not specified for {_t}")
+                    raise SimulationConfigError(f"ohlc output data timeframe is not specified for {_t}")
 
             case (DataType.QUOTE, DataType.OHLC):
                 _t_readers[DataType.OHLC_QUOTES] = _r
@@ -540,7 +506,7 @@ def _detect_defaults_from_subscriptions(
                 _base_subscr = DataType.OHLC_QUOTES
 
     if not _base_subscr:
-        raise SimulationError("Can't detect base subscription in provided spec")
+        raise SimulationConfigError("Can't detect base subscription in provided spec")
 
     _default_trigger_schedule = ""  # default trigger on every event
     if _out_tf:
@@ -568,6 +534,28 @@ def recognize_simulation_data_config(
     instruments: list[Instrument],
     exchange: str,
 ) -> tuple[str, str, dict[str, DataReader]]:
+    """
+    Recognizes and configures simulation data based on the provided declarations.
+
+    This function processes the given data declarations and determines the appropriate
+    data readers and configurations for simulation. It supports various data types and
+    structures, including DataReaders, pandas DataFrames, and dictionaries.
+
+    Parameters:
+    - decls (DataDecls_t): The data declarations for the simulation. Can be a DataReader,
+        pandas DataFrame, or a dictionary of these.
+    - instruments (list[Instrument]): List of available instruments for the simulation.
+    - exchange (str): The name of the exchange to be used.
+
+    Returns:
+    - tuple[str, str, dict[str, DataReader]]: A tuple containing the default trigger schedule,
+        the base subscription type, and a dictionary of available subscription types with
+        their corresponding DataReaders.
+
+    Raises:
+    - SimulationConfigError: If the data provider type is unsupported or if a requested data type
+        cannot be produced from the supported data type.
+    """
     sniffer = _StructureSniffer()
     _requested_types = []
     _requests = {}
@@ -589,11 +577,11 @@ def recognize_simulation_data_config(
             _is_dict_of_pandas = False
 
             for _requested_type, _provider in decls.items():
-                # - if we already have this type declared, skip it
-                # - it prevents to have duplicated ohlc (and potentially other data types with parametrization)
+                # - if we already have this type declared, skip it#-
+                # - it prevents to have duplicated ohlc (and potentially other data types with parametrization)#-
                 _t = DataType.from_str(_requested_type)[0]
                 if _t != DataType.NONE and _t in _requested_types:
-                    raise SimulationError(f"Type {_t} already declared")
+                    raise SimulationConfigError(f"Type {_t} already declared")
 
                 _requested_types.append(_t)
 
@@ -603,19 +591,21 @@ def recognize_simulation_data_config(
                         _available_symbols = _provider.get_symbols(exchange, DataType.from_str(_supported_data_type)[0])
                         _requests[_requested_type] = (_supported_data_type, _provider)
                         if not _is_transformable(_requested_type, _supported_data_type):
-                            raise SimulationError(f"Can't produce {_requested_type} from {_supported_data_type}")
+                            raise SimulationConfigError(f"Can't produce {_requested_type} from {_supported_data_type}")
 
-                    case dict():  # must be {instr: Df | OHLCV}
+                    case dict():
                         try:
                             _reader = InMemoryDataFrameReader(_provider, exchange)
                             _available_symbols = _reader.get_symbols(exchange, None)
                             _supported_data_type = sniffer._sniff_reader(_available_symbols[0], _reader)
                             _requests[_requested_type] = (_supported_data_type, _reader)
                             if not _is_transformable(_requested_type, _supported_data_type):
-                                raise SimulationError(f"Can't produce {_requested_type} from {_supported_data_type}")
+                                raise SimulationConfigError(
+                                    f"Can't produce {_requested_type} from {_supported_data_type}"
+                                )
 
                         except Exception as e:
-                            raise SimulationError(
+                            raise SimulationConfigError(
                                 f"Error in declared data provider for: {_requested_type} -> {type(_provider)} ({str(e)})"
                             )
 
@@ -624,7 +614,7 @@ def recognize_simulation_data_config(
                         break
 
                     case _:
-                        raise SimulationError(f"Unsupported data provider type: {type(_provider)}")
+                        raise SimulationConfigError(f"Unsupported data provider type: {type(_provider)}")
 
             if _is_dict_of_pandas:
                 try:
@@ -633,15 +623,15 @@ def recognize_simulation_data_config(
                     _supported_data_type = sniffer._sniff_reader(_available_symbols[0], _reader)
                     _requests[DataType.OHLC] = (_supported_data_type, _reader)
                     if not _is_transformable(_requested_type, _supported_data_type):
-                        raise SimulationError(f"Can't produce {_requested_type} from {_supported_data_type}")
+                        raise SimulationConfigError(f"Can't produce {_requested_type} from {_supported_data_type}")
 
                 except Exception as e:
-                    raise SimulationError(
+                    raise SimulationConfigError(
                         f"Error in declared data provider for: {_requested_type} -> {type(_provider)} ({str(e)})"
                     )
 
         case _:
-            raise SimulationError(f"Can't recognize declared data provider: {type(decls)}")
+            raise SimulationConfigError(f"Can't recognize declared data provider: {type(decls)}")
 
-    # trigger_time, base_subscription, available subscription_types
+    # trigger_time, base_subscription, available subscription_types#-
     return _detect_defaults_from_subscriptions(_requests)
