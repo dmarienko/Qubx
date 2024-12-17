@@ -5,7 +5,7 @@ from typing import Any, Iterable, Iterator, TypeAlias
 import pandas as pd
 
 from qubx import logger
-from qubx.core.basics import BatchEvent, DataType, Instrument, dt_64
+from qubx.core.basics import BatchEvent, DataType, Instrument, TimestampedDict, dt_64
 from qubx.core.series import Bar, OrderBook, Quote, Trade
 from qubx.data.readers import (
     AsDict,
@@ -15,23 +15,22 @@ from qubx.data.readers import (
     DataTransformer,
     RestoredBarsFromOHLC,
     RestoreQuotesFromOHLC,
-    RestoreTicksFromOHLC,
     RestoreTradesFromOHLC,
 )
 
-_T: TypeAlias = Quote | Trade | Bar | OrderBook
-_D: TypeAlias = tuple[str, int, _T] | tuple
+InData: TypeAlias = Quote | Trade | Bar | OrderBook | TimestampedDict
+SlicerOutData: TypeAlias = tuple[str, int, InData] | tuple
 
 
-class IteratedDataStreamsSlicer(Iterator[_D]):
+class IteratedDataStreamsSlicer(Iterator[SlicerOutData]):
     """
     This class manages seamless iteration over multiple time-series data streams,
     ensuring that events are processed in the correct chronological order regardless of their source.
     It supports adding / removing new data streams to the slicer on the fly (during the itration).
     """
 
-    _iterators: dict[str, Iterator[list[_T]]]
-    _buffers: dict[str, list[_T]]
+    _iterators: dict[str, Iterator[list[InData]]]
+    _buffers: dict[str, list[InData]]
     _keys: deque[str]
     _iterating: bool
 
@@ -41,7 +40,7 @@ class IteratedDataStreamsSlicer(Iterator[_D]):
         self._keys = deque()
         self._iterating = False
 
-    def put(self, data: dict[str, Iterator[list[_T]]]):
+    def put(self, data: dict[str, Iterator[list[InData]]]):
         _rebuild = False
         for k, vi in data.items():
             if k not in self._keys:
@@ -86,10 +85,10 @@ class IteratedDataStreamsSlicer(Iterator[_D]):
         _init_seq = dict(sorted(_init_seq.items(), key=lambda item: item[1]))
         self._keys = deque(_init_seq.keys())
 
-    def _load_next_chunk_to_buffer(self, index: str) -> list[_T]:
+    def _load_next_chunk_to_buffer(self, index: str) -> list[InData]:
         return list(reversed(next(self._iterators[index])))
 
-    def _pop_top(self, k: str) -> _T:
+    def _pop_top(self, k: str) -> InData:
         v = (data := self._buffers[k]).pop()
         if not data:
             try:
@@ -103,7 +102,7 @@ class IteratedDataStreamsSlicer(Iterator[_D]):
                 self._keys.remove(k)
         return v
 
-    def __next__(self) -> _D:
+    def __next__(self) -> SlicerOutData:
         if not self._keys:
             self._iterating = False
             raise StopIteration
@@ -439,20 +438,21 @@ class IterableSimulationData(Iterator):
         self._slicing_iterator = iter(self._slicer_ctrl)
         return self
 
-    def __next__(self) -> tuple[Instrument, str, Any]:  # type: ignore
+    def __next__(self) -> tuple[Instrument, str, InData, bool]:  # type: ignore
         try:
             while data := next(self._slicing_iterator):  # type: ignore
                 k, t, v = data
                 instr, fetcher, subt = self._instruments[k]
                 data_type = fetcher._producing_data_type
+                _is_historical = False
                 if t < self._current_time:  # type: ignore
-                    data_type = f"hist_{data_type}"
+                    _is_historical = True
                 else:
                     # only update the current time if the event is not historical
                     self._current_time = t
 
-                return instr, data_type, v
-        except StopIteration as e:
+                return instr, data_type, v, _is_historical
+        except StopIteration as e:  # noqa: F841
             raise StopIteration
 
 
@@ -468,7 +468,7 @@ class EventBatcher:
         self._batch_settings = {**self._BATCH_SETTINGS, **kwargs}
         self._batch_settings = {k: pd.Timedelta(v) for k, v in self._batch_settings.items()}
 
-    def __iter__(self) -> Iterator[tuple[Instrument, str, Any]]:
+    def __iter__(self) -> Iterator[tuple[Instrument, str, Any, bool]]:
         if self._passthrough:
             _iter = iter(self.source_iterator) if isinstance(self.source_iterator, Iterable) else self.source_iterator
             yield from _iter
@@ -476,40 +476,41 @@ class EventBatcher:
 
         last_instrument: Instrument = None  # type: ignore
         last_data_type: str = None  # type: ignore
+        last_hist: bool | None = None
         buffer = []
-        for instrument, data_type, event in self.source_iterator:
+        for instrument, data_type, event, hist in self.source_iterator:
             time: dt_64 = event.time  # type: ignore
 
             if data_type not in self._batch_settings:
                 if buffer:
-                    yield last_instrument, last_data_type, self._batch_event(buffer)
+                    yield last_instrument, last_data_type, self._batch_event(buffer), hist
                     buffer = []
-                yield instrument, data_type, event
-                last_instrument, last_data_type = instrument, data_type
+                yield instrument, data_type, event, hist
+                last_instrument, last_data_type, last_hist = instrument, data_type, hist
                 continue
 
             if instrument != last_instrument:
                 if buffer:
-                    yield last_instrument, last_data_type, self._batch_event(buffer)
-                last_instrument, last_data_type = instrument, data_type
+                    yield last_instrument, last_data_type, self._batch_event(buffer), hist
+                last_instrument, last_data_type, last_hist = instrument, data_type, hist
                 buffer = [event]
                 continue
 
             if buffer and data_type != last_data_type:
-                yield instrument, last_data_type, buffer
+                yield instrument, last_data_type, buffer, hist
                 buffer = [event]
-                last_instrument, last_data_type = instrument, data_type
+                last_instrument, last_data_type, last_hist = instrument, data_type, hist
                 continue
 
             last_instrument, last_data_type = instrument, data_type
             buffer.append(event)
             if pd.Timedelta(time - buffer[0].time) >= self._batch_settings[data_type]:
-                yield instrument, data_type, self._batch_event(buffer)
+                yield instrument, data_type, self._batch_event(buffer), hist
                 buffer = []
-                last_instrument, last_data_type = None, None  # type: ignore
+                last_instrument, last_data_type, last_hist = None, None, None  # type: ignore
 
         if buffer:
-            yield last_instrument, last_data_type, self._batch_event(buffer)
+            yield last_instrument, last_data_type, self._batch_event(buffer), last_hist  # type: ignore
 
     @staticmethod
     def _batch_event(buffer: list[Any]) -> Any:

@@ -649,7 +649,7 @@ class CtrlChannel:
     name: str
     lock: Lock
 
-    def __init__(self, name: str, sentinel=(None, None, None)):
+    def __init__(self, name: str, sentinel=(None, None, None, None)):
         self.name = name
         self.control = Event()
         self.lock = Lock()

@@ -368,8 +368,8 @@ class StrategyContext(IStrategyContext):
         self._subscription_manager.auto_subscribe = value
 
     # IProcessingManager delegation
-    def process_data(self, instrument: Instrument, d_type: str, data: Any):
-        return self._processing_manager.process_data(instrument, d_type, data)
+    def process_data(self, instrument: Instrument, d_type: str, data: Any, is_historical: bool):
+        return self._processing_manager.process_data(instrument, d_type, data, is_historical)
 
     def set_fit_schedule(self, schedule: str):
         return self._processing_manager.set_fit_schedule(schedule)
@@ -389,8 +389,8 @@ class StrategyContext(IStrategyContext):
         while channel.control.is_set():
             with SW("StrategyContext._process_incoming_data"):
                 # - waiting for incoming market data
-                instrument, d_type, data = channel.receive()
-                if self.process_data(instrument, d_type, data):
+                instrument, d_type, data, hist = channel.receive()
+                if self.process_data(instrument, d_type, data, hist):
                     channel.stop()
                     break
         logger.info("(StrategyContext) Market data processing stopped")

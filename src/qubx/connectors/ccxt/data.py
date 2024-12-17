@@ -278,9 +278,6 @@ class CcxtDataProvider(IDataProvider):
             _name += f" ({kwargs_str})"
         return _name
 
-    def _get_hist_type(self, sub_type: str) -> str:
-        return f"hist_{sub_type}"
-
     async def _stop_subscriber(self, sub_type: str, sub_name: str) -> None:
         try:
             self._is_sub_name_enabled[sub_name] = False  # stop the subscriber
@@ -367,8 +364,9 @@ class CcxtDataProvider(IDataProvider):
         channel.send(
             (
                 instrument,
-                self._get_hist_type(DataType.OHLC[timeframe]),
+                DataType.OHLC[timeframe],
                 [Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]) for oh in ohlcv],
+                True,
             )
         )
 
@@ -378,8 +376,9 @@ class CcxtDataProvider(IDataProvider):
         channel.send(
             (
                 instrument,
-                self._get_hist_type(DataType.TRADE),
+                DataType.TRADE,
                 [ccxt_convert_trade(trade) for trade in trades],
+                True,
             )
         )
 
@@ -428,6 +427,7 @@ class CcxtDataProvider(IDataProvider):
                                 instrument,
                                 sub_type,
                                 Bar(oh[0] * 1_000_000, oh[1], oh[2], oh[3], oh[4], oh[6], oh[7]),
+                                False,  # not historical bar
                             )
                         )
 
@@ -459,7 +459,7 @@ class CcxtDataProvider(IDataProvider):
             exch_symbol = trades[0]["symbol"]
             instrument = ccxt_find_instrument(exch_symbol, self._exchange, _symbol_to_instrument)
             for trade in trades:
-                channel.send((instrument, sub_type, ccxt_convert_trade(trade)))
+                channel.send((instrument, sub_type, ccxt_convert_trade(trade), False))
 
         async def un_watch_trades(instruments: list[Instrument]):
             symbols = [_instr_to_ccxt_symbol[i] for i in instruments]
@@ -493,7 +493,7 @@ class CcxtDataProvider(IDataProvider):
                 return
             quote = ob.to_quote()
             self._last_quotes[instrument] = quote
-            channel.send((instrument, sub_type, ob))
+            channel.send((instrument, sub_type, ob, False))
 
         async def un_watch_orderbook(instruments: list[Instrument]):
             symbols = [_instr_to_ccxt_symbol[i] for i in instruments]
@@ -524,7 +524,7 @@ class CcxtDataProvider(IDataProvider):
                 instrument = ccxt_find_instrument(exch_symbol, self._exchange, _symbol_to_instrument)
                 quote = ccxt_convert_ticker(ccxt_ticker, instrument)
                 self._last_quotes[instrument] = quote
-                channel.send((instrument, sub_type, quote))
+                channel.send((instrument, sub_type, quote, False))
 
         async def un_watch_quote(instruments: list[Instrument]):
             symbols = [_instr_to_ccxt_symbol[i] for i in instruments]
@@ -554,7 +554,7 @@ class CcxtDataProvider(IDataProvider):
             for liquidation in liquidations:
                 try:
                     instrument = ccxt_find_instrument(liquidation["symbol"], self._exchange, _symbol_to_instrument)
-                    channel.send((instrument, sub_type, ccxt_convert_liquidation(liquidation)))
+                    channel.send((instrument, sub_type, ccxt_convert_liquidation(liquidation), False))
                 except CcxtLiquidationParsingError:
                     logger.debug(f"Could not parse liquidation {liquidation}")
                     continue
@@ -590,7 +590,7 @@ class CcxtDataProvider(IDataProvider):
                     instrument_to_funding_rate[instrument] = ccxt_convert_funding_rate(info)
                 except CcxtSymbolNotRecognized:
                     continue
-            channel.send((None, sub_type, instrument_to_funding_rate))
+            channel.send((None, sub_type, instrument_to_funding_rate, False))
 
         async def un_watch_funding_rates():
             unwatch = getattr(self._exchange, "un_watch_funding_rates", lambda: None)()

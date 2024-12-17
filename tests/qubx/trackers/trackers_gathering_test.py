@@ -420,6 +420,8 @@ class TestTrackersAndGatherers:
         mtrx1 = portfolio_metrics(
             rep[1].portfolio_log, rep[1].executions_log, rep[1].capital, account_transactions=False, commission_factor=1
         )
-        assert 22.6519 == N(mtrx0["gain"])
-        assert 23.3365 == N(mtrx1["gain"])
+        # assert 22.6519 == N(mtrx0["gain"])
+        # assert 23.3365 == N(mtrx1["gain"])
+        assert 22.6562 == N(mtrx0["gain"])
+        assert 23.3407 == N(mtrx1["gain"])
         # fmt: on

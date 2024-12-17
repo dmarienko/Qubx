@@ -92,14 +92,14 @@ class SimulatedDataProvider(IDataProvider):
         prev_dt = pd.Timestamp(start)
 
         if silent:
-            for instrument, data_type, event in qiter:
-                if not _run(instrument, data_type, event):
+            for instrument, data_type, event, is_hist in qiter:
+                if not _run(instrument, data_type, event, is_hist):
                     break
         else:
             _p = 0
             with tqdm(total=100, desc="Simulating", unit="%", leave=False) as pbar:
-                for instrument, data_type, event in qiter:
-                    if not _run(instrument, data_type, event):
+                for instrument, data_type, event, is_hist in qiter:
+                    if not _run(instrument, data_type, event, is_hist):
                         break
                     dt = pd.Timestamp(event.time)
                     # update only if date has changed
@@ -228,8 +228,7 @@ class SimulatedDataProvider(IDataProvider):
 
         return bars
 
-    def _run_generated_signals(self, instrument: Instrument, data_type: str, data: Any) -> bool:
-        is_hist = data_type.startswith("hist")
+    def _run_generated_signals(self, instrument: Instrument, data_type: str, data: Any, is_hist) -> bool:
         if is_hist:
             raise ValueError("Historical data is not supported for pre-generated signals !")
 
@@ -241,21 +240,20 @@ class SimulatedDataProvider(IDataProvider):
         cc = self.channel
 
         # - we need to send quotes for invoking portfolio logging etc
-        cc.send((instrument, data_type, data))
+        cc.send((instrument, data_type, data, is_hist))
         sigs = self._to_process[instrument]
         _current_time = self.time_provider.time()
         while sigs and sigs[0][0].as_unit("ns").asm8 <= _current_time:
-            cc.send((instrument, "event", {"order": sigs[0][1]}))
+            cc.send((instrument, "event", {"order": sigs[0][1]}, is_hist))
             sigs.pop(0)
 
         return cc.control.is_set()
 
-    def _run_as_strategy(self, instrument: Instrument, data_type: str, data: Any) -> bool:
+    def _run_as_strategy(self, instrument: Instrument, data_type: str, data: Any, is_hist: bool) -> bool:
         t = data.time  # type: ignore
         self.time_provider.set_time(np.datetime64(t, "ns"))
 
         q = self._account.emulate_quote_from_data(instrument, np.datetime64(t, "ns"), data)
-        is_hist = data_type.startswith("hist")
         cc = self.channel
 
         if not is_hist and q is not None:
@@ -264,8 +262,8 @@ class SimulatedDataProvider(IDataProvider):
             # we have to schedule possible crons before sending the data event itself
             if self._scheduler.check_and_run_tasks():
                 # - push nothing - it will force to process last event
-                cc.send((None, "service_time", None))
+                cc.send((None, "service_time", None, False))
 
-        cc.send((instrument, data_type, data))
+        cc.send((instrument, data_type, data, is_hist))
 
         return cc.control.is_set()

@@ -96,7 +96,7 @@ class TestAccountProcessorStuff:
         broker = SimulatedBroker(channel, account)
 
         class PrintCallback:
-            def process_data(self, instrument: Instrument, d_type: str, data: Any):
+            def process_data(self, instrument: Instrument, d_type: str, data: Any, is_hist: bool):
                 match d_type:
                     case "deals":
                         account.process_deals(instrument, data)
