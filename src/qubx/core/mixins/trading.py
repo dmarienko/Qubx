@@ -5,17 +5,17 @@ from qubx.core.interfaces import IAccountProcessor, IBroker, ITimeProvider, ITra
 
 class TradingManager(ITradingManager):
     _time_provider: ITimeProvider
-    _trading_service: IBroker
+    _broker: IBroker
     _account: IAccountProcessor
     _strategy_name: str
 
     _order_id: int | None = None
 
     def __init__(
-        self, time_provider: ITimeProvider, trading_service: IBroker, account: IAccountProcessor, strategy_name: str
+        self, time_provider: ITimeProvider, broker: IBroker, account: IAccountProcessor, strategy_name: str
     ) -> None:
         self._time_provider = time_provider
-        self._trading_service = trading_service
+        self._broker = broker
         self._account = account
         self._strategy_name = strategy_name
 
@@ -44,7 +44,7 @@ class TradingManager(ITradingManager):
             f"(StrategyContext) sending {type} {side} for {size_adj} of <green>{instrument.symbol}</green> @ {price} ..."
         )
         client_id = self._generate_order_client_id(instrument.symbol)
-        order = self._trading_service.send_order(
+        order = self._broker.send_order(
             instrument=instrument,
             order_side=side,
             order_type=type,
@@ -70,15 +70,15 @@ class TradingManager(ITradingManager):
     def cancel_order(self, order_id: str) -> None:
         if not order_id:
             return
-        self._trading_service.cancel_order(order_id)
+        self._broker.cancel_order(order_id)
 
     def cancel_orders(self, instrument: Instrument) -> None:
         for o in self._account.get_orders(instrument).values():
-            self._trading_service.cancel_order(o.id)
+            self._broker.cancel_order(o.id)
 
     def _generate_order_client_id(self, symbol: str) -> str:
         if self._order_id is None:
-            self._order_id = self._time_provider.time().item() // 100_000_000
+            self._order_id = self._time_provider.time().astype("int64") // 100_000_000
         assert self._order_id is not None
         self._order_id += 1
         return "_".join(["qubx", symbol, str(self._order_id)])

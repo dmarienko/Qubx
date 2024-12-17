@@ -127,7 +127,7 @@ class StrategyContext(IStrategyContext):
         )
         self._trading_manager = TradingManager(
             time_provider=self,
-            trading_service=self._broker,
+            broker=self._broker,
             account=self.account,
             strategy_name=self.strategy.__class__.__name__,
         )

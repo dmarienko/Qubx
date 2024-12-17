@@ -3,6 +3,7 @@ from typing import Any
 import pytest
 
 from qubx import lookup
+from qubx.backtester.broker import SimulatedAccountProcessor
 from qubx.backtester.simulator import (
     SimulatedBroker,
     SimulatedCtrlChannel,
@@ -10,6 +11,7 @@ from qubx.backtester.simulator import (
     find_instruments_and_exchanges,
     simulate,
 )
+from qubx.backtester.utils import SimulatedScheduler, SimulatedTimeProvider, recognize_simulation_data_config
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import Instrument, ITimeProvider, dt_64
 from qubx.core.context import StrategyContext
@@ -33,25 +35,38 @@ def run_debug_sim(
     initial_capital: float,
     base_currency: str,
 ) -> tuple[IStrategyContext, InMemoryLogsWriter]:
-    broker = SimulatedBroker(exchange, commissions, np.datetime64(start, "ns"))
-    broker = SimulatedDataProvider(exchange, broker, data_reader)
     instruments, _ = find_instruments_and_exchanges(symbols, exchange)
-    account = BasicAccountProcessor(
-        account_id=broker.get_trading_service().get_account_id(),
+    name = "test"
+    tcc = lookup.fees.find(exchange.lower(), commissions)
+    assert tcc is not None
+    time_provider = SimulatedTimeProvider(start)
+    channel = SimulatedCtrlChannel("data")
+    account = SimulatedAccountProcessor(
+        account_id=name,
+        channel=channel,
         base_currency=base_currency,
         initial_capital=initial_capital,
+        time_provider=time_provider,
+        tcc=tcc,
     )
+    broker = SimulatedBroker(channel, account)
+    scheduler = SimulatedScheduler(channel, lambda: time_provider.time().item())
+    _schedule, _base_subscription, _typed_readers = recognize_simulation_data_config(data_reader, instruments, exchange)
+    data_provider = SimulatedDataProvider("dummy", channel, scheduler, time_provider, account, _typed_readers)
     logs_writer = InMemoryLogsWriter(strategy_id, strategy_id, "0")
     strategy_logging = StrategyLogging(logs_writer)
     ctx = StrategyContext(
         strategy=strategy,
-        data_provider=broker,
+        broker=broker,
+        data_provider=data_provider,
         account=account,
+        scheduler=scheduler,
+        time_provider=time_provider,
         instruments=instruments,
         logging=strategy_logging,
     )
     ctx.start()
-    broker.run(start, stop)
+    data_provider.run(start, stop)
     return ctx, logs_writer
 
 
@@ -66,27 +81,33 @@ class TestAccountProcessorStuff:
     @pytest.fixture
     def trading_manager(self) -> TradingManager:
         name = "test"
-        account = BasicAccountProcessor(
+        channel = SimulatedCtrlChannel("data")
+        account = SimulatedAccountProcessor(
             account_id=name,
+            channel=channel,
             base_currency="USDT",
             initial_capital=self.INITIAL_CAPITAL,
+            time_provider=DummyTimeProvider(),
         )
-        trading_service = SimulatedBroker(account, name)
-
-        channel = SimulatedCtrlChannel("data")
-        trading_service.set_communication_channel(channel)
+        broker = SimulatedBroker(channel, account)
 
         class PrintCallback:
             def process_data(self, instrument: Instrument, d_type: str, data: Any):
+                match d_type:
+                    case "deals":
+                        account.process_deals(instrument, data)
+                    case "order":
+                        account.process_order(data)
+
                 print(data)
 
         channel.register(PrintCallback())
 
-        return TradingManager(DummyTimeProvider(), trading_service, name)
+        return TradingManager(DummyTimeProvider(), broker, account, name)
 
     def test_spot_account_processor(self, trading_manager: TradingManager):
-        trading_service = trading_manager._trading_service
-        account = trading_service.account
+        account = trading_manager._account
+        time_provider = trading_manager._time_provider
 
         # - check initial state
         assert account.get_total_capital() == self.INITIAL_CAPITAL
@@ -103,9 +124,9 @@ class TestAccountProcessorStuff:
         i1 = self.get_instrument("BINANCE", "BTCUSDT")
 
         # - update instrument price
-        trading_service.update_position_price(
+        account.update_position_price(
+            time_provider.time(),
             i1,
-            trading_service.time(),
             100_000.0,
         )
 
@@ -144,14 +165,14 @@ class TestAccountProcessorStuff:
         assert account.get_balances()["BTC"].free == pytest.approx(0)
 
     def test_swap_account_processor(self, trading_manager: TradingManager):
-        trading_service = trading_manager._trading_service
-        account = trading_service.account
+        account = trading_manager._account
+        time_provider = trading_manager._time_provider
 
         i1 = self.get_instrument("BINANCE.UM", "BTCUSDT")
 
-        trading_service.update_position_price(
+        account.update_position_price(
+            time_provider.time(),
             i1,
-            trading_service.time(),
             100_000.0,
         )
 
@@ -172,9 +193,9 @@ class TestAccountProcessorStuff:
         assert account.get_total_required_margin() == pytest.approx(50_000 * i1.maint_margin)
 
         # increase price 2x
-        trading_service.update_position_price(
+        account.update_position_price(
+            time_provider.time(),
             i1,
-            trading_service.time(),
             200_000.0,
         )
 
@@ -204,30 +225,30 @@ class TestAccountProcessorStuff:
         )
 
         # 1. Check account in the beginning
-        assert 0 == ctx.account.get_net_leverage()
-        assert 0 == ctx.account.get_gross_leverage()
-        assert initial_capital == ctx.account.get_capital()
-        assert initial_capital == ctx.account.get_total_capital()
+        assert 0 == ctx.get_net_leverage()
+        assert 0 == ctx.get_gross_leverage()
+        assert initial_capital == ctx.get_capital()
+        assert initial_capital == ctx.get_total_capital()
 
         # 2. Execute a trade and check account
         leverage = 0.5
         instrument = ctx.instruments[0]
         quote = ctx.quote(instrument)
         assert quote is not None
-        capital = ctx.account.get_total_capital()
+        capital = ctx.get_total_capital()
         amount_in_base = capital * leverage
         amount = ctx.instruments[0].round_size_down(amount_in_base / quote.mid_price())
         leverage_adj = amount * quote.ask / capital
         ctx.trade(instrument, amount)
 
         # make the assertions work for floats
-        assert np.isclose(leverage_adj, ctx.account.get_net_leverage())
-        assert np.isclose(leverage_adj, ctx.account.get_gross_leverage())
+        assert np.isclose(leverage_adj, ctx.get_net_leverage())
+        assert np.isclose(leverage_adj, ctx.get_gross_leverage())
         assert np.isclose(
             initial_capital - amount * quote.ask,
-            ctx.account.get_capital(),
+            ctx.get_capital(),
         )
-        assert np.isclose(initial_capital, ctx.account.get_total_capital())
+        assert np.isclose(initial_capital, ctx.get_total_capital())
 
         # 3. Exit trade and check account
         ctx.trade(instrument, -amount)
@@ -237,10 +258,10 @@ class TestAccountProcessorStuff:
         trade_pnl = -tick_size / quote.ask * leverage
         new_capital = initial_capital * (1 + trade_pnl)
 
-        assert 0 == ctx.account.get_net_leverage()
-        assert 0 == ctx.account.get_gross_leverage()
-        assert np.isclose(new_capital, ctx.account.get_capital())
-        assert ctx.account.get_capital() == ctx.account.get_total_capital()
+        assert 0 == ctx.get_net_leverage()
+        assert 0 == ctx.get_gross_leverage()
+        assert np.isclose(new_capital, ctx.get_capital())
+        assert ctx.get_capital() == ctx.get_total_capital()
 
     def test_commissions(self):
         initial_capital = 10_000
