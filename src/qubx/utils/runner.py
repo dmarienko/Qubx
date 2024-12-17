@@ -65,7 +65,7 @@ def run_ccxt_trading(
     use_testnet: bool = False,
     paper: bool = False,
     paper_capital: float = 100_000,
-    log: Literal["csv", "memory"] = "memory",
+    log: str = Literal["InMemoryLogsWriter", "CsvFileLogsWriter"],
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext:
     strategy_id = strategy_id or uuid.uuid4().hex[:8]  # todo: not sure, but if take from tags cannot distinguish between different runs
@@ -79,15 +79,8 @@ def run_ccxt_trading(
     )
     instruments = [i for i in instruments if i is not None]
 
-    match log:
-        case "csv":
-            logger.debug(f"Setup CSV logger for {account_id} account...")
-            logs_writer = CsvFileLogsWriter(account_id=account_id, strategy_id=strategy_id, run_id="0", log_folder=LOGFILE)
-        case "memory":
-            logger.debug(f"Setup InMemory logger for {account_id} account...")
-            logs_writer = InMemoryLogsWriter(account_id=account_id, strategy_id=strategy_id, run_id="0")
-        case _:
-            raise ValueError(f"Unsupported logger type: {log}")
+    logs_writer = globals().get(log, InMemoryLogsWriter)(account_id=account_id, strategy_id=strategy_id, run_id="0")
+    logger.debug(f"Setup <g>{logs_writer.__class__.__name__}</g> logger...")
     stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
 
     channel = CtrlChannel("databus", sentinel=(None, None, None))
@@ -418,8 +411,7 @@ def exit():
 @click.option("--jupyter", "-j", is_flag=True, default=False, help="Run strategy in jupyter console", show_default=True)
 @click.option("--testnet", "-t", is_flag=True, default=False, help="Use testnet for trading", show_default=True)
 @click.option("--paper", "-p", is_flag=True, default=False, help="Use paper trading mode", show_default=True)
-@click.option("--log", "-l", type=click.Choice(["csv", "memory"]), default="csv", help="Log type", show_default=True)
-def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, testnet: bool, paper: bool, log: str):
+def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, testnet: bool, paper: bool):
     if not account and not paper:
         logger.error("Account id is required for live trading")
         return
@@ -460,7 +452,7 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
                 account_id=account,
                 use_testnet=testnet,
                 paper=paper,
-                log=log,
+                log=cfg.portfolio_logger,
             )
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
