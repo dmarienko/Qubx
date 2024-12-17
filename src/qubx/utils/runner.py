@@ -1,5 +1,6 @@
 import asyncio
 import configparser
+import os
 import socket
 import sys
 import time
@@ -191,14 +192,15 @@ def load_strategy_config(filename: str, account: str) -> Struct:
 
 def get_account_env_config(account_id: str, env_file: str) -> dict | None:
     env_f = find_dotenv(env_file) or find_dotenv(Path(env_file).name)
-    if not env_f:
-        logger.error(f"Can't find {env_file} file for reading {account_id} account info")
-        return None
     env_data = dotenv_values(env_f)
+    env_data.update(os.environ)
     account_data = {}
     for name, value in env_data.items():
-        if name.upper().startswith(account_id.upper()):
+        if name.upper().startswith(f"{account_id.upper()}__"):
             account_data[name.split("__")[-1]] = value
+    if not account_data:
+        logger.error(f"No records for {account_id} found in env")
+        # return None
     account_data["account_id"] = account_id
     return account_data
 
