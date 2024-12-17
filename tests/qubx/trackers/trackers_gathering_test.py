@@ -396,6 +396,7 @@ class TestTrackersAndGatherers:
                     T("2024-01-10 16:09:00.970000"): 1,
                     T("2024-01-10 16:12:34.233000"): 1,
                     T("2024-01-10 19:04:00.905000"): 1,
+                    # T("2024-01-10 19:16:00.905000"): 1,
                     T("2024-01-10 19:44:37.785000"): 1,
                     T("2024-01-10 20:06:00.322000"): 1,
                 }
@@ -419,7 +420,8 @@ class TestTrackersAndGatherers:
         mtrx1 = portfolio_metrics(
             rep[1].portfolio_log, rep[1].executions_log, rep[1].capital, account_transactions=False, commission_factor=1
         )
-        assert N(mtrx0["gain"]) == 22.6519
-        assert N(mtrx1["gain"]) == 23.3365
-
+        # assert 22.6519 == N(mtrx0["gain"])
+        # assert 23.3365 == N(mtrx1["gain"])
+        assert 22.6562 == N(mtrx0["gain"])
+        assert 23.3407 == N(mtrx1["gain"])
         # fmt: on

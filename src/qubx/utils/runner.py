@@ -101,7 +101,7 @@ def run_ccxt_trading(
         aux_reader = class_import(aux_config["reader"])(**kwargs)
     logger.debug(f"Setup <g>{aux_reader.__class__.__name__}</g> reader...") if aux_reader is not None else None
 
-    channel = CtrlChannel("databus", sentinel=(None, None, None))
+    channel = CtrlChannel("databus", sentinel=(None, None, None, None))
     time_provider = LiveTimeProvider()
     scheduler = BasicScheduler(channel, lambda: time_provider.time().item())
     exchange = get_ccxt_exchange(exchange_name, use_testnet=use_testnet, loop=loop, **(credentials or {}))

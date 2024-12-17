@@ -483,9 +483,9 @@ class CcxtAccountProcessor(BasicAccountProcessor):
                 instrument = ccxt_find_instrument(report["symbol"], self.exchange, _symbol_to_instrument)
                 order = ccxt_convert_order_info(instrument, report)
                 deals = ccxt_extract_deals_from_exec(report)
-                channel.send((instrument, "order", order))
+                channel.send((instrument, "order", order, False))
                 if deals:
-                    channel.send((instrument, "deals", deals))
+                    channel.send((instrument, "deals", deals, False))
 
         await self._listen_to_stream(
             subscriber=_watch_executions,

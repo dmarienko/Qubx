@@ -241,8 +241,8 @@ class TestSimulatedDataStuff:
         assert set(isd.get_instruments_for_subscription(DataType.ALL)) == set([s1, s2, s3])
 
         # get subs for instrument
-        assert isd.get_subscriptions_for_instrument(s3) == list(
-            set([DataType.OHLC["1h"], DataType.OHLC["4h"], DataType.OHLC["1d"]])
+        assert set(isd.get_subscriptions_for_instrument(s3)) == set(
+            [DataType.OHLC["1h"], DataType.OHLC["4h"], DataType.OHLC["1d"]]
         )
 
         assert isd.get_instruments_for_subscription(DataType.OHLC["4h"]) == [s3]
@@ -254,8 +254,8 @@ class TestSimulatedDataStuff:
         isd.remove_instruments_from_subscription(DataType.OHLC["1h"], [s1, s2, s3])
         assert isd.get_instruments_for_subscription(DataType.OHLC["1h"]) == []
 
-        assert isd.get_subscriptions_for_instrument(None) == list(
-            set([DataType.OHLC["4h"], DataType.OHLC_QUOTES["4h"], DataType.OHLC["1d"]])
+        assert set(isd.get_subscriptions_for_instrument(None)) == set(
+            [DataType.OHLC["4h"], DataType.OHLC_QUOTES["4h"], DataType.OHLC["1d"]]
         )
 
     def test_iterable_simulation_data_queue_with_warmup(self):
@@ -275,9 +275,10 @@ class TestSimulatedDataStuff:
         for d in isd.create_iterable("2023-07-01", "2023-07-02"):
             t = pd.Timestamp(d[2].time, "ns")
             data_type = d[1]
-            if data_type.startswith("hist"):
+            is_hist = d[3]
+            if is_hist:
                 _n_hist += 1
-            print(t, d[0], d[1])
+            print(t, d[0], data_type, "HIST" if is_hist else "")
         assert _n_hist == 3 * 4
 
     def test_iterable_simulation_custom_subscription_type(self):
@@ -303,6 +304,7 @@ class TestSimulatedDataStuff:
         for d in isd.create_iterable("2023-07-01", "2023-07-02"):
             t = pd.Timestamp(d[2].time, "ns")
             data_type = d[1]
+            is_hist = d[3]
             _n_r += 1
 
             if _n_r == 20:
@@ -310,26 +312,25 @@ class TestSimulatedDataStuff:
                 isd.set_typed_reader("some_my_custom_data", custom_reader_2)
                 isd.set_warmup_period("some_my_custom_data", "24h")
                 isd.add_instruments_for_subscription("some_my_custom_data", [s4])
-            print(t, d[0], data_type)
+            print(t, d[0], data_type, "HIST" if is_hist else "")
 
             if "some_my_custom_data" == data_type:
                 got_live = True
-
-            if "hist_some_my_custom_data" in data_type:
-                got_hist = True
+                if is_hist:
+                    got_hist = True
 
         assert got_live
         assert got_hist
 
     def test_batching_basic(self):
         events = [
-            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(1, offset="ms"), "data1")),
-            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(2, offset="ms"), "data2")),
-            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(5, offset="ms"), "data3")),
-            ("ETHUSDT", "trade", DummyTimeEvent(get_event_dt(7, offset="s"), "data4")),
-            ("ETHUSDT", "trade", DummyTimeEvent(get_event_dt(7.9, offset="s"), "data4")),
-            ("BTCUSDT", "ohlc", DummyTimeEvent(get_event_dt(9, offset="s"), "data5")),
-            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(11, offset="s"), "data6")),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(1, offset="ms"), "data1"), False),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(2, offset="ms"), "data2"), False),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(5, offset="ms"), "data3"), False),
+            ("ETHUSDT", "trade", DummyTimeEvent(get_event_dt(7, offset="s"), "data4"), False),
+            ("ETHUSDT", "trade", DummyTimeEvent(get_event_dt(7.9, offset="s"), "data4"), False),
+            ("BTCUSDT", "ohlc", DummyTimeEvent(get_event_dt(9, offset="s"), "data5"), False),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(11, offset="s"), "data6"), False),
         ]
 
         # test 1
@@ -346,6 +347,7 @@ class TestSimulatedDataStuff:
                         DummyTimeEvent(get_event_dt(5, offset="ms"), "data3"),
                     ],
                 ),
+                False,
             ),
             (
                 "ETHUSDT",
@@ -357,9 +359,10 @@ class TestSimulatedDataStuff:
                         DummyTimeEvent(get_event_dt(7.9, offset="s"), "data4"),
                     ],
                 ),
+                False,
             ),
-            ("BTCUSDT", "ohlc", DummyTimeEvent(get_event_dt(9, offset="s"), "data5")),
-            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(11, offset="s"), "data6")),
+            ("BTCUSDT", "ohlc", DummyTimeEvent(get_event_dt(9, offset="s"), "data5"), False),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(11, offset="s"), "data6"), False),
         ]
         assert expected_events == batched_events
 
@@ -369,15 +372,15 @@ class TestSimulatedDataStuff:
 
     def test_batching_leftover_trades(self):
         events = [
-            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(1, offset="ms"), "data1")),
-            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(2, offset="ms"), "data2")),
-            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(5, offset="ms"), "data3")),
-            ("ETHUSDT", "trade", DummyTimeEvent(get_event_dt(7, offset="s"), "data4")),
-            ("ETHUSDT", "trade", DummyTimeEvent(get_event_dt(7.9, offset="s"), "data4")),
-            ("BTCUSDT", "ohlc", DummyTimeEvent(get_event_dt(9, offset="s"), "data5")),
-            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(11, offset="s"), "data6")),
-            ("ETHUSDT", "ohlc", DummyTimeEvent(get_event_dt(12, offset="s"), "data5")),
-            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(13, offset="s"), "data6")),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(1, offset="ms"), "data1"), False),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(2, offset="ms"), "data2"), False),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(5, offset="ms"), "data3"), False),
+            ("ETHUSDT", "trade", DummyTimeEvent(get_event_dt(7, offset="s"), "data4"), False),
+            ("ETHUSDT", "trade", DummyTimeEvent(get_event_dt(7.9, offset="s"), "data4"), False),
+            ("BTCUSDT", "ohlc", DummyTimeEvent(get_event_dt(9, offset="s"), "data5"), False),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(11, offset="s"), "data6"), False),
+            ("ETHUSDT", "ohlc", DummyTimeEvent(get_event_dt(12, offset="s"), "data5"), False),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(13, offset="s"), "data6"), False),
         ]
         expected_events = [
             (
@@ -391,6 +394,7 @@ class TestSimulatedDataStuff:
                         DummyTimeEvent(get_event_dt(5, offset="ms"), "data3"),
                     ],
                 ),
+                False,
             ),
             (
                 "ETHUSDT",
@@ -402,11 +406,12 @@ class TestSimulatedDataStuff:
                         DummyTimeEvent(get_event_dt(7.9, offset="s"), "data4"),
                     ],
                 ),
+                False,
             ),
-            ("BTCUSDT", "ohlc", DummyTimeEvent(get_event_dt(9, offset="s"), "data5")),
-            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(11, offset="s"), "data6")),
-            ("ETHUSDT", "ohlc", DummyTimeEvent(get_event_dt(12, offset="s"), "data5")),
-            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(13, offset="s"), "data6")),
+            ("BTCUSDT", "ohlc", DummyTimeEvent(get_event_dt(9, offset="s"), "data5"), False),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(11, offset="s"), "data6"), False),
+            ("ETHUSDT", "ohlc", DummyTimeEvent(get_event_dt(12, offset="s"), "data5"), False),
+            ("BTCUSDT", "trade", DummyTimeEvent(get_event_dt(13, offset="s"), "data6"), False),
         ]
         actual_output = list(EventBatcher(events))
         assert expected_events == actual_output

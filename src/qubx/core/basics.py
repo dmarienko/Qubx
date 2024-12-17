@@ -469,7 +469,7 @@ class Position:
 
     @property
     def notional_value(self) -> float:
-        return self.quantity * self.last_update_price
+        return self.quantity * self.last_update_price / self.last_update_conversion_rate
 
     def _price(self, update: Quote | Trade) -> float:
         if isinstance(update, Quote):
@@ -527,11 +527,7 @@ class Position:
                     self.__pos_incr_qty + _abs_qty_open
                 )
                 # - round position average price to be in line with how it's calculated by broker
-                self.position_avg_price = (
-                    self.instrument.round_price_down(pos_avg_price_raw)
-                    if direction < 0
-                    else self.instrument.round_price_up(pos_avg_price_raw)
-                )
+                self.position_avg_price = self.instrument.round_price_down(pos_avg_price_raw)
                 self.__pos_incr_qty += _abs_qty_open
 
             # - update position and position's price
@@ -653,7 +649,7 @@ class CtrlChannel:
     name: str
     lock: Lock
 
-    def __init__(self, name: str, sentinel=(None, None, None)):
+    def __init__(self, name: str, sentinel=(None, None, None, None)):
         self.name = name
         self.control = Event()
         self.lock = Lock()

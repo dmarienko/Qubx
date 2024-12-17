@@ -347,7 +347,7 @@ class BasicScheduler:
         now = self.time_sec()
 
         # - send notification to channel
-        self._chan.send((None, event, (prev_time_sec, trig_time)))
+        self._chan.send((None, event, (prev_time_sec, trig_time), False))
 
         # - try to arm this event again
         self._arm_schedule(event, now)

@@ -100,6 +100,7 @@ class TestBasics:
             (0.1621, 50.0),
         ]:
             p.change_position_by(0, _s, _p)
+
         p.update_market_price(0, 0.1538, 1)
         # - 2024-10-12: fixed after part position closing fix
         assert p.position_avg_price == 0.1647  # , p.r_pnl, p.pnl - p.r_pnl, p.commissions, p.market_value

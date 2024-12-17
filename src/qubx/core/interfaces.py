@@ -790,7 +790,7 @@ class IAccountProcessor(IAccountViewer):
 class IProcessingManager:
     """Manages event processing."""
 
-    def process_data(self, instrument: Instrument, d_type: str, data: Any) -> bool:
+    def process_data(self, instrument: Instrument, d_type: str, data: Any, is_historical: bool) -> bool:
         """
         Process incoming data.
 

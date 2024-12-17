@@ -77,6 +77,6 @@ class SimulatedBroker(IBroker):
         raise NotImplementedError("Not implemented yet")
 
     def _send_exec_report(self, instrument: Instrument, report: OmeReport):
-        self.channel.send((instrument, "order", report.order))
+        self.channel.send((instrument, "order", report.order, False))
         if report.exec is not None:
-            self.channel.send((instrument, "deals", [report.exec]))
+            self.channel.send((instrument, "deals", [report.exec], False))

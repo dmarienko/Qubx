@@ -2,6 +2,7 @@ from qubx import logger
 from qubx.backtester.ome import OrdersManagementEngine
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
+    ZERO_COSTS,
     CtrlChannel,
     Instrument,
     Order,
@@ -28,7 +29,7 @@ class SimulatedAccountProcessor(BasicAccountProcessor):
         base_currency: str,
         initial_capital: float,
         time_provider: ITimeProvider,
-        tcc: TransactionCostsCalculator,
+        tcc: TransactionCostsCalculator = ZERO_COSTS,
         accurate_stop_orders_execution: bool = False,
     ) -> None:
         super().__init__(
@@ -74,6 +75,8 @@ class SimulatedAccountProcessor(BasicAccountProcessor):
         return self.positions[instrument]
 
     def update_position_price(self, time: dt_64, instrument: Instrument, price: float) -> None:
+        super().update_position_price(time, instrument, price)
+
         # - first we need to update OME with new quote.
         # - if update is not a quote we need 'emulate' it.
         # - actually if SimulatedExchangeService is used in backtesting mode it will recieve only quotes
@@ -127,5 +130,5 @@ class SimulatedAccountProcessor(BasicAccountProcessor):
             if r.exec is not None:
                 self.order_to_instrument.pop(r.order.id)
                 # - process methods will be called from stg context
-                self._channel.send((instrument, "order", r.order))
-                self._channel.send((instrument, "deals", [r.exec]))
+                self._channel.send((instrument, "order", r.order, False))
+                self._channel.send((instrument, "deals", [r.exec], False))

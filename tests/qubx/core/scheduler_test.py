@@ -106,7 +106,7 @@ class TestScheduler:
 
         t1, t2 = 0, 0
         while c.control.is_set():
-            s, event, data = c.receive()
+            s, event, data, _ = c.receive()
             print(event, data)
             if event == "test-1":
                 t1 += 1
