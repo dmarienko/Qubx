@@ -5,6 +5,7 @@ import sys
 import time
 from os.path import exists, expanduser
 from pathlib import Path
+from typing import Literal
 
 import click
 import pandas as pd
@@ -22,7 +23,7 @@ from qubx.core.basics import CtrlChannel, Instrument, LiveTimeProvider
 from qubx.core.context import StrategyContext
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy
-from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging
+from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging, CsvFileLogsWriter
 from qubx.utils.marketdata.ccxt import ccxt_build_qubx_exchange_name
 from qubx.utils.misc import Struct, add_project_to_system_path, logo, version
 
@@ -61,6 +62,7 @@ def run_ccxt_trading(
     use_testnet: bool = False,
     paper: bool = False,
     paper_capital: float = 100_000,
+    log: Literal["csv", "memory"] = "memory",
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext:
     logger.info(f"Running {'paper' if paper else 'live'} strategy on {exchange_name} exchange...")
@@ -73,7 +75,15 @@ def run_ccxt_trading(
     )
     instruments = [i for i in instruments if i is not None]
 
-    logs_writer = InMemoryLogsWriter("test", "test", "0")
+    match log:
+        case "csv":
+            logger.debug(f"Setup CSV logger for {account_id} account...")
+            logs_writer = CsvFileLogsWriter(account_id=account_id, strategy_id="test", run_id="0", log_folder=LOGFILE)
+        case "memory":
+            logger.debug(f"Setup InMemory logger for {account_id} account...")
+            logs_writer = InMemoryLogsWriter(account_id=account_id, strategy_id="test", run_id="0")
+        case _:
+            raise ValueError(f"Unsupported logger type: {log}")
     stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
 
     channel = CtrlChannel("databus", sentinel=(None, None, None))
@@ -403,7 +413,8 @@ def exit():
 @click.option("--jupyter", "-j", is_flag=True, default=False, help="Run strategy in jupyter console", show_default=True)
 @click.option("--testnet", "-t", is_flag=True, default=False, help="Use testnet for trading", show_default=True)
 @click.option("--paper", "-p", is_flag=True, default=False, help="Use paper trading mode", show_default=True)
-def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, testnet: bool, paper: bool):
+@click.option("--log", "-l", type=click.Choice(["csv", "memory"]), default="csv", help="Log type", show_default=True)
+def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, testnet: bool, paper: bool, log: str):
     if not account and not paper:
         logger.error("Account id is required for live trading")
         return
@@ -443,6 +454,7 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
                 strategy_config=cfg.parameters,
                 use_testnet=testnet,
                 paper=paper,
+                log=log,
             )
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
