@@ -26,6 +26,7 @@ from qubx.core.context import StrategyContext
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy
 from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging, CsvFileLogsWriter
+from qubx.data.helpers import __KNOWN_READERS
 from qubx.utils.marketdata.ccxt import ccxt_build_qubx_exchange_name
 from qubx.utils.misc import Struct, add_project_to_system_path, logo, version
 
@@ -65,6 +66,7 @@ def run_ccxt_trading(
     use_testnet: bool = False,
     paper: bool = False,
     paper_capital: float = 100_000,
+    aux_config: dict | None = None,
     log: str = Literal["InMemoryLogsWriter", "CsvFileLogsWriter"],
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext:
@@ -82,6 +84,22 @@ def run_ccxt_trading(
     logs_writer = globals().get(log, InMemoryLogsWriter)(account_id=account_id, strategy_id=strategy_id, run_id="0")
     logger.debug(f"Setup <g>{logs_writer.__class__.__name__}</g> logger...")
     stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
+
+    aux_reader = None
+    if "::" in aux_config.get("reader", ""):
+        # like: mqdb::nebula or csv::/data/rawdata/
+        db_conn, path = aux_config["reader"].split("::")
+        kwargs = aux_config.get("args", {})
+        reader = __KNOWN_READERS.get(db_conn, **kwargs)
+        if reader is None:
+            logger.error(f"Unknown reader {db_conn} - try to use {__KNOWN_READERS.keys()} only")
+        else:
+            aux_reader = reader(path)
+    elif aux_config.get("reader") is not None:
+        # like: sty.data.readers.MyCustomDataReader
+        kwargs = aux_config.get("args", {})
+        aux_reader = class_import(aux_config["reader"])(**kwargs)
+    logger.debug(f"Setup <g>{aux_reader.__class__.__name__}</g> reader...") if aux_reader is not None else None
 
     channel = CtrlChannel("databus", sentinel=(None, None, None))
     time_provider = LiveTimeProvider()
@@ -121,6 +139,7 @@ def run_ccxt_trading(
         instruments=instruments,
         logging=stg_logging,
         config=strategy_config,
+        aux_data_provider=aux_reader,
     )
 
     if blocking:
@@ -167,6 +186,7 @@ def load_strategy_config(filename: str, account: str) -> Struct:
         # md_subscr=config["subscription"], # todo: ask where to get?
         strategy_trigger=config["parameters"]["trigger_at"],
         strategy_fit_trigger=config["parameters"].get("fit_at", ""),
+        aux=config.get("aux", None),
         portfolio_logger=config.get("logger", None),
         log_positions_interval=config.get("log_positions_interval", None),
         log_portfolio_interval=config.get("log_portfolio_interval", None),
@@ -452,6 +472,7 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
                 account_id=account,
                 use_testnet=testnet,
                 paper=paper,
+                aux_config=cfg.aux,
                 log=cfg.portfolio_logger,
             )
         case _:
