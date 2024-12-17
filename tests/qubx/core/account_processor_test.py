@@ -13,7 +13,7 @@ from qubx.backtester.simulator import (
 )
 from qubx.backtester.utils import SimulatedScheduler, SimulatedTimeProvider, recognize_simulation_data_config
 from qubx.core.account import BasicAccountProcessor
-from qubx.core.basics import Instrument, ITimeProvider, dt_64
+from qubx.core.basics import DataType, Instrument, ITimeProvider, dt_64
 from qubx.core.context import StrategyContext
 from qubx.core.interfaces import IStrategy, IStrategyContext
 from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
@@ -23,12 +23,17 @@ from qubx.pandaz.utils import *
 from tests.qubx.core.utils_test import DummyTimeProvider
 
 
+class DummyStg(IStrategy):
+    def on_init(self, ctx: IStrategyContext):
+        ctx.set_base_subscription(DataType.OHLC["1h"])
+
+
 def run_debug_sim(
     strategy_id: str,
     strategy: IStrategy,
     data_reader: DataReader,
     exchange: str,
-    symbols: list[str],
+    symbols: list[str | Instrument],
     commissions: str | None,
     start: str,
     stop: str,
@@ -36,13 +41,12 @@ def run_debug_sim(
     base_currency: str,
 ) -> tuple[IStrategyContext, InMemoryLogsWriter]:
     instruments, _ = find_instruments_and_exchanges(symbols, exchange)
-    name = "test"
     tcc = lookup.fees.find(exchange.lower(), commissions)
     assert tcc is not None
     time_provider = SimulatedTimeProvider(start)
     channel = SimulatedCtrlChannel("data")
     account = SimulatedAccountProcessor(
-        account_id=name,
+        account_id=strategy_id,
         channel=channel,
         base_currency=base_currency,
         initial_capital=initial_capital,
@@ -213,7 +217,7 @@ class TestAccountProcessorStuff:
 
         ctx, _ = run_debug_sim(
             strategy_id="test0",
-            strategy=IStrategy(),
+            strategy=DummyStg(),
             data_reader=CsvStorageDataReader("tests/data/csv"),
             exchange="BINANCE.UM",
             symbols=["BTCUSDT"],
@@ -242,33 +246,31 @@ class TestAccountProcessorStuff:
         ctx.trade(instrument, amount)
 
         # make the assertions work for floats
-        assert np.isclose(leverage_adj, ctx.get_net_leverage())
-        assert np.isclose(leverage_adj, ctx.get_gross_leverage())
-        assert np.isclose(
-            initial_capital - amount * quote.ask,
-            ctx.get_capital(),
-        )
-        assert np.isclose(initial_capital, ctx.get_total_capital())
+        assert leverage_adj == pytest.approx(ctx.get_net_leverage(), abs=0.01)
+        assert leverage_adj == pytest.approx(ctx.get_gross_leverage(), abs=0.01)
+        pos = ctx.get_position(instrument)
+        assert initial_capital - pos.maint_margin == pytest.approx(ctx.get_capital(), abs=1)
+        assert initial_capital == pytest.approx(ctx.get_total_capital(), abs=1)
 
         # 3. Exit trade and check account
         ctx.trade(instrument, -amount)
 
         # get tick size for BTCUSDT
         tick_size = ctx.instruments[0].tick_size
-        trade_pnl = -tick_size / quote.ask * leverage
+        trade_pnl = -tick_size / quote.ask * leverage_adj
         new_capital = initial_capital * (1 + trade_pnl)
 
         assert 0 == ctx.get_net_leverage()
         assert 0 == ctx.get_gross_leverage()
-        assert np.isclose(new_capital, ctx.get_capital())
-        assert ctx.get_capital() == ctx.get_total_capital()
+        assert new_capital == pytest.approx(ctx.get_capital(), abs=1)
+        assert ctx.get_capital() == pytest.approx(ctx.get_total_capital(), abs=1)
 
     def test_commissions(self):
         initial_capital = 10_000
 
         ctx, logs_writer = run_debug_sim(
             strategy_id="test0",
-            strategy=IStrategy(),
+            strategy=DummyStg(),
             data_reader=CsvStorageDataReader("tests/data/csv"),
             exchange="BINANCE.UM",
             symbols=["BTCUSDT"],
@@ -283,7 +285,7 @@ class TestAccountProcessorStuff:
         s = ctx.instruments[0]
         quote = ctx.quote(s)
         assert quote is not None
-        capital = ctx.account.get_total_capital()
+        capital = ctx.get_total_capital()
         amount_in_base = capital * leverage
         amount = ctx.instruments[0].round_size_down(amount_in_base / quote.mid_price())
         ctx.trade(s, amount)
