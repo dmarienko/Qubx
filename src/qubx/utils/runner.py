@@ -3,6 +3,7 @@ import configparser
 import socket
 import sys
 import time
+import uuid
 from os.path import exists, expanduser
 from pathlib import Path
 from typing import Literal
@@ -57,6 +58,7 @@ def run_ccxt_trading(
     strategy_config: dict | None = None,
     blocking: bool = True,
     account_id: str = "main",
+    strategy_id: str | None = None,
     base_currency: str = "USDT",
     commissions: str | None = None,
     use_testnet: bool = False,
@@ -65,7 +67,8 @@ def run_ccxt_trading(
     log: Literal["csv", "memory"] = "memory",
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext:
-    logger.info(f"Running {'paper' if paper else 'live'} strategy on {exchange_name} exchange...")
+    strategy_id = strategy_id or uuid.uuid4().hex[:8]  # todo: not sure, but if take from tags cannot distinguish between different runs
+    logger.info(f"Running {'paper' if paper else 'live'} strategy on {exchange_name} exchange ({strategy_id=})...")
     credentials = credentials if not paper else {}
     assert paper or credentials, "Credentials are required for live trading"
 
@@ -78,10 +81,10 @@ def run_ccxt_trading(
     match log:
         case "csv":
             logger.debug(f"Setup CSV logger for {account_id} account...")
-            logs_writer = CsvFileLogsWriter(account_id=account_id, strategy_id="test", run_id="0", log_folder=LOGFILE)
+            logs_writer = CsvFileLogsWriter(account_id=account_id, strategy_id=strategy_id, run_id="0", log_folder=LOGFILE)
         case "memory":
             logger.debug(f"Setup InMemory logger for {account_id} account...")
-            logs_writer = InMemoryLogsWriter(account_id=account_id, strategy_id="test", run_id="0")
+            logs_writer = InMemoryLogsWriter(account_id=account_id, strategy_id=strategy_id, run_id="0")
         case _:
             raise ValueError(f"Unsupported logger type: {log}")
     stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
@@ -452,6 +455,7 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
                 symbols=cfg.instruments,
                 credentials=acc_config,
                 strategy_config=cfg.parameters,
+                account_id=account,
                 use_testnet=testnet,
                 paper=paper,
                 log=log,
