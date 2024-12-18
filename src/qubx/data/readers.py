@@ -1260,12 +1260,15 @@ class QuestDBConnector(DataReader):
         return vol_stats.set_index("symbol")["quote_volume"]
 
     def get_fundamental_data(
-        self, exchange: str, symbols: list[str] | None, start: str | pd.Timestamp | None = None, stop: str | pd.Timestamp | None = None, timeframe: str = "1d"
+        self,
+        exchange: str,
+        symbols: list[str] | None = None,
+        start: str | pd.Timestamp | None = None,
+        stop: str | pd.Timestamp | None = None,
+        timeframe: str = "1d",
     ) -> pd.DataFrame:
         table_name = {"BINANCE.UM": "binance.umfutures.fundamental"}[exchange]
-        query = (
-            f"select timestamp, symbol, metric, last(value) as value from {table_name}"
-        )
+        query = f"select timestamp, symbol, metric, last(value) as value from {table_name}"
         if start or stop:
             conditions = []
             if start:
