@@ -1212,7 +1212,7 @@ class QuestDBConnector(DataReader):
         assert len(symbols) > 0, "No symbols provided"
         quoted_symbols = [f"'{s.lower()}'" for s in symbols]
         where = f"where symbol in ({', '.join(quoted_symbols)}) and timestamp >= '{start}' and timestamp < '{stop}'"
-        table_name = QuestDBSqlCandlesBuilder().get_table_name(f"{exchange}:{symbols[0]}")
+        table_name = QuestDBSqlCandlesBuilder().get_table_name(f"{exchange}:{list(symbols)[0]}")
 
         _rsmpl = f"sample by {QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(timeframe)}"
 
@@ -1260,10 +1260,15 @@ class QuestDBConnector(DataReader):
         return vol_stats.set_index("symbol")["quote_volume"]
 
     def get_fundamental_data(
-        self, exchange: str, start: str | pd.Timestamp | None = None, stop: str | pd.Timestamp | None = None
+        self,
+        exchange: str,
+        symbols: list[str] | None = None,
+        start: str | pd.Timestamp | None = None,
+        stop: str | pd.Timestamp | None = None,
+        timeframe: str = "1d",
     ) -> pd.DataFrame:
         table_name = {"BINANCE.UM": "binance.umfutures.fundamental"}[exchange]
-        query = f"select * from {table_name}"
+        query = f"select timestamp, symbol, metric, last(value) as value from {table_name}"
         if start or stop:
             conditions = []
             if start:
@@ -1271,6 +1276,10 @@ class QuestDBConnector(DataReader):
             if stop:
                 conditions.append(f"timestamp < '{stop}'")
             query += " where " + " and ".join(conditions)
+        if symbols:
+            query += f" and symbol in ({', '.join(symbols)})"
+        _rsmpl = f"sample by {QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(timeframe)}"
+        query += f" {_rsmpl}"
         df = self.execute(query)
         if df.empty:
             return pd.DataFrame()

@@ -1,10 +1,13 @@
 import asyncio
 import configparser
+import os
 import socket
 import sys
 import time
+import uuid
 from os.path import exists, expanduser
 from pathlib import Path
+from typing import Literal
 
 import click
 import pandas as pd
@@ -22,7 +25,8 @@ from qubx.core.basics import CtrlChannel, Instrument, LiveTimeProvider
 from qubx.core.context import StrategyContext
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy
-from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging
+from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging, CsvFileLogsWriter
+from qubx.data.helpers import __KNOWN_READERS
 from qubx.utils.marketdata.ccxt import ccxt_build_qubx_exchange_name
 from qubx.utils.misc import Struct, add_project_to_system_path, logo, version
 
@@ -56,14 +60,18 @@ def run_ccxt_trading(
     strategy_config: dict | None = None,
     blocking: bool = True,
     account_id: str = "main",
+    strategy_id: str | None = None,
     base_currency: str = "USDT",
     commissions: str | None = None,
     use_testnet: bool = False,
     paper: bool = False,
     paper_capital: float = 100_000,
+    aux_config: dict | None = None,
+    log: str = Literal["InMemoryLogsWriter", "CsvFileLogsWriter"],
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext:
-    logger.info(f"Running {'paper' if paper else 'live'} strategy on {exchange_name} exchange...")
+    strategy_id = strategy_id or uuid.uuid4().hex[:8]  # todo: not sure, but if take from tags cannot distinguish between different runs
+    logger.info(f"Running {'paper' if paper else 'live'} strategy on {exchange_name} exchange ({strategy_id=})...")
     credentials = credentials if not paper else {}
     assert paper or credentials, "Credentials are required for live trading"
 
@@ -73,13 +81,32 @@ def run_ccxt_trading(
     )
     instruments = [i for i in instruments if i is not None]
 
-    logs_writer = InMemoryLogsWriter("test", "test", "0")
+    logs_writer = globals().get(log, InMemoryLogsWriter)(account_id=account_id, strategy_id=strategy_id, run_id="0")
+    logger.debug(f"Setup <g>{logs_writer.__class__.__name__}</g> logger...")
     stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
+
+    aux_reader = None
+    if "::" in aux_config.get("reader", ""):
+        # like: mqdb::nebula or csv::/data/rawdata/
+        db_conn, path = aux_config["reader"].split("::")
+        kwargs = aux_config.get("args", {})
+        reader = __KNOWN_READERS.get(db_conn, **kwargs)
+        if reader is None:
+            logger.error(f"Unknown reader {db_conn} - try to use {__KNOWN_READERS.keys()} only")
+        else:
+            aux_reader = reader(path)
+    elif aux_config.get("reader") is not None:
+        # like: sty.data.readers.MyCustomDataReader
+        kwargs = aux_config.get("args", {})
+        aux_reader = class_import(aux_config["reader"])(**kwargs)
+    logger.debug(f"Setup <g>{aux_reader.__class__.__name__}</g> reader...") if aux_reader is not None else None
 
     channel = CtrlChannel("databus", sentinel=(None, None, None, None))
     time_provider = LiveTimeProvider()
     scheduler = BasicScheduler(channel, lambda: time_provider.time().item())
     exchange = get_ccxt_exchange(exchange_name, use_testnet=use_testnet, loop=loop, **(credentials or {}))
+    if exchange.apiKey:
+        logger.info(f"Connected {exchange_name} exchange with {exchange.apiKey[:2]}...{exchange.apiKey[-2:]} API key")
 
     # - find proper fees calculator
     qubx_exchange_name = ccxt_build_qubx_exchange_name(exchange_name)
@@ -114,6 +141,7 @@ def run_ccxt_trading(
         instruments=instruments,
         logging=stg_logging,
         config=strategy_config,
+        aux_data_provider=aux_reader,
     )
 
     if blocking:
@@ -160,6 +188,7 @@ def load_strategy_config(filename: str, account: str) -> Struct:
         # md_subscr=config["subscription"], # todo: ask where to get?
         strategy_trigger=config["parameters"]["trigger_at"],
         strategy_fit_trigger=config["parameters"].get("fit_at", ""),
+        aux=config.get("aux", None),
         portfolio_logger=config.get("logger", None),
         log_positions_interval=config.get("log_positions_interval", None),
         log_portfolio_interval=config.get("log_portfolio_interval", None),
@@ -178,14 +207,15 @@ def load_strategy_config(filename: str, account: str) -> Struct:
 
 def get_account_env_config(account_id: str, env_file: str) -> dict | None:
     env_f = find_dotenv(env_file) or find_dotenv(Path(env_file).name)
-    if not env_f:
-        logger.error(f"Can't find {env_file} file for reading {account_id} account info")
-        return None
     env_data = dotenv_values(env_f)
+    env_data.update(os.environ)
     account_data = {}
     for name, value in env_data.items():
-        if name.upper().startswith(account_id.upper()):
+        if name.upper().startswith(f"{account_id.upper()}__"):
             account_data[name.split("__")[-1]] = value
+    if not account_data:
+        logger.error(f"No records for {account_id} found in env")
+        # return None
     account_data["account_id"] = account_id
     return account_data
 
@@ -441,8 +471,11 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
                 symbols=cfg.instruments,
                 credentials=acc_config,
                 strategy_config=cfg.parameters,
+                account_id=account,
                 use_testnet=testnet,
                 paper=paper,
+                aux_config=cfg.aux,
+                log=cfg.portfolio_logger,
             )
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")

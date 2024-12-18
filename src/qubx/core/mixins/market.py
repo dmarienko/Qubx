@@ -15,10 +15,10 @@ from qubx.data.readers import DataReader
 from qubx.utils import convert_seconds_to_str
 
 
-class MarketDataProvider(IMarketManager):
+class MarketManager(IMarketManager):
     _time_provider: ITimeProvider
     _cache: CachedMarketDataHolder
-    _broker: IDataProvider
+    _data_provider: IDataProvider
     _universe_manager: IUniverseManager
     _aux_data_provider: DataReader | None
 
@@ -26,13 +26,13 @@ class MarketDataProvider(IMarketManager):
         self,
         time_provider: ITimeProvider,
         cache: CachedMarketDataHolder,
-        broker: IDataProvider,
+        data_provider: IDataProvider,
         universe_manager: IUniverseManager,
         aux_data_provider: DataReader | None = None,
     ):
         self._time_provider = time_provider
         self._cache = cache
-        self._broker = broker
+        self._data_provider = data_provider
         self._universe_manager = universe_manager
         self._aux_data_provider = aux_data_provider
 
@@ -57,7 +57,7 @@ class MarketDataProvider(IMarketManager):
             _timeframe_ns = pd.Timedelta(timeframe).asm8.item()
 
             # - check if we need to fetch more data
-            if (_last_bar_time + _timeframe_ns <= self._broker.time_provider.time().item()) or (
+            if (_last_bar_time + _timeframe_ns <= self._data_provider.time_provider.time().item()) or (
                 length and _l_rc < length
             ):
                 _need_history_request = True
@@ -67,12 +67,12 @@ class MarketDataProvider(IMarketManager):
 
         # - send request for historical data
         if _need_history_request and length is not None:
-            bars = self._broker.get_ohlc(instrument, timeframe, length)
+            bars = self._data_provider.get_ohlc(instrument, timeframe, length)
             rc = self._cache.update_by_bars(instrument, timeframe, bars)
         return rc
 
     def quote(self, instrument: Instrument) -> Quote | None:
-        return self._broker.get_quote(instrument)
+        return self._data_provider.get_quote(instrument)
 
     def get_data(self, instrument: Instrument, sub_type: str) -> List[Any]:
         return self._cache.get_data(instrument, sub_type)

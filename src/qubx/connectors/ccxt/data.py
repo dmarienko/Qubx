@@ -105,7 +105,6 @@ class CcxtDataProvider(IDataProvider):
         reset: bool = False,
     ) -> None:
         _updated_instruments = set(instruments)
-
         # - update symbol to instrument mapping
         self._symbol_to_instrument.update({i.symbol: i for i in instruments})
 
@@ -118,23 +117,21 @@ class CcxtDataProvider(IDataProvider):
         self._subscribe(_updated_instruments, subscription_type)
 
     def unsubscribe(self, subscription_type: str, instruments: List[Instrument]) -> None:
-        _current_instruments = self.get_subscribed_instruments(subscription_type)
-        _updated_instruments = set(_current_instruments).difference(instruments)
-        self._subscribe(_updated_instruments, subscription_type)
+        # _current_instruments = self.get_subscribed_instruments(subscription_type)
+        # _updated_instruments = set(_current_instruments).difference(instruments)
+        # self._subscribe(_updated_instruments, subscription_type)
+        # unsubscribe functionality is handled for ccxt via subscribe with reset=True
+        pass
 
     def get_subscriptions(self, instrument: Instrument | None = None) -> List[str]:
-        return (
-            [sub for sub, instrs in self._subscriptions.items() if instrument in instrs]
-            if instrument is not None
-            else list(self._subscriptions.keys())
-        )
+        if instrument is not None:
+            return [sub for sub, instrs in self._subscriptions.items() if instrument in instrs]
+        return [sub for sub, instruments in self._subscriptions.items() if instruments]
 
-    def get_subscribed_instruments(self, subscription_type: str | None = None) -> List[Instrument]:
-        return (
-            list(self._subscriptions.get(subscription_type, set()))
-            if subscription_type is not None
-            else list(self.subscribed_instruments)
-        )
+    def get_subscribed_instruments(self, subscription_type: str | None = None) -> list[Instrument]:
+        if not subscription_type:
+            return list(self.subscribed_instruments)
+        return list(self._subscriptions[subscription_type]) if subscription_type in self._subscriptions else []
 
     def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
         sub = subscription_type.lower()
@@ -224,12 +221,7 @@ class CcxtDataProvider(IDataProvider):
         _subscriber = self._subscribers.get(_sub_type)
         if _subscriber is None:
             raise ValueError(f"Subscription type {sub_type} is not supported")
-        self._resubscribe_stream(_sub_type, self.channel, instruments, **_params)
-        self._subscriptions[sub_type] = instruments
 
-    def _resubscribe_stream(
-        self, sub_type: str, channel: CtrlChannel, instruments: Set[Instrument] | None = None, **kwargs
-    ) -> None:
         if sub_type in self._sub_to_coro:
             logger.debug(f"Canceling existing {sub_type} subscription for {self._subscriptions[sub_type]}")
             self._loop.submit(self._stop_subscriber(sub_type, self._sub_to_name[sub_type]))
@@ -239,15 +231,15 @@ class CcxtDataProvider(IDataProvider):
         if instruments is not None and len(instruments) == 0:
             return
 
-        self._subscribe_stream(sub_type, channel, instruments=instruments, **kwargs)
-
-    def _subscribe_stream(self, sub_type: str, channel: CtrlChannel, **kwargs) -> None:
-        _subscriber = self._subscribers[sub_type]
+        kwargs = {"instruments": instruments, **_params}
+        _subscriber = self._subscribers[_sub_type]
         _subscriber_params = set(_subscriber.__code__.co_varnames[: _subscriber.__code__.co_argcount])
         # - get only parameters that are needed for subscriber
         kwargs = {k: v for k, v in kwargs.items() if k in _subscriber_params}
-        self._sub_to_name[sub_type] = (name := self._get_subscription_name(sub_type, **kwargs))
-        self._sub_to_coro[sub_type] = self._loop.submit(_subscriber(self, name, sub_type, channel, **kwargs))
+        self._sub_to_name[sub_type] = (name := self._get_subscription_name(_sub_type, **kwargs))
+        self._sub_to_coro[sub_type] = self._loop.submit(_subscriber(self, name, _sub_type, self.channel, **kwargs))
+
+        self._subscriptions[sub_type] = instruments
 
     def _time_msec_nbars_back(self, timeframe: str, nbarsback: int = 1) -> int:
         return (self.time_provider.time() - nbarsback * pd.Timedelta(timeframe)).asm8.item() // 1000000
@@ -298,12 +290,13 @@ class CcxtDataProvider(IDataProvider):
             if sub_name in self._sub_to_unsubscribe:
                 logger.debug(f"Unsubscribing from {sub_name}")
                 await self._sub_to_unsubscribe[sub_name]()
+                del self._sub_to_unsubscribe[sub_name]
 
-            del self._sub_to_unsubscribe[sub_name]
             del self._is_sub_name_enabled[sub_name]
             logger.debug(f"Unsubscribed from {sub_name}")
         except Exception as e:
-            logger.error(f"Error stopping {sub_name} : {e}")
+            logger.error(f"Error stopping {sub_name}")
+            logger.exception(e)
 
     async def _listen_to_stream(
         self,
@@ -338,10 +331,10 @@ class CcxtDataProvider(IDataProvider):
                 await asyncio.sleep(1)
                 continue
             except Exception as e:
-                if not channel.control.is_set():
+                if not channel.control.is_set() or not self._is_sub_name_enabled[name]:
                     # If the channel is closed, then ignore all exceptions and exit
                     break
-                logger.error(f"exception in {name} : {e}")
+                logger.error(f"Exception in {name}")
                 logger.exception(e)
                 n_retry += 1
                 if n_retry >= self.max_ws_retries:
@@ -431,16 +424,18 @@ class CcxtDataProvider(IDataProvider):
                             )
                         )
 
-        async def un_watch_ohlcv(instruments: list[Instrument]):
-            _symbol_timeframe_pairs = [[_instr_to_ccxt_symbol[i], _exchange_timeframe] for i in instruments]
-            await self._exchange.un_watch_ohlcv_for_symbols(_symbol_timeframe_pairs)
+        # ohlc subscription reuses the same connection always, unsubscriptions don't work properly
+        # but it's likely not very needed
+        # async def un_watch_ohlcv(instruments: list[Instrument]):
+        #     _symbol_timeframe_pairs = [[_instr_to_ccxt_symbol[i], _exchange_timeframe] for i in instruments]
+        #     await self._exchange.un_watch_ohlcv_for_symbols(_symbol_timeframe_pairs)
 
         await self._listen_to_stream(
             subscriber=self._call_by_market_type(watch_ohlcv, instruments),
             exchange=self._exchange,
             channel=channel,
             name=name,
-            unsubscriber=self._call_by_market_type(un_watch_ohlcv, instruments),
+            # unsubscriber=self._call_by_market_type(un_watch_ohlcv, instruments),
         )
 
     async def _subscribe_trade(

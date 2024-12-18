@@ -291,6 +291,7 @@ def instrument_to_ccxt_symbol(instr: Instrument) -> str:
 def ccxt_find_instrument(
     symbol: str, exchange: cxp.Exchange, symbol_to_instrument: Dict[str, Instrument] | None = None
 ) -> Instrument:
+    instrument = None
     if symbol_to_instrument is not None:
         instrument = symbol_to_instrument.get(symbol)
         if instrument is not None:
