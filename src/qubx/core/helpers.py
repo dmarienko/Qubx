@@ -408,11 +408,11 @@ def set_parameters_to_object(strategy: Any, **kwargs):
         logger.debug(f"<yellow>{strategy.__class__.__name__}</yellow> new parameters:" + _log_info)
 
 
-def extract_price(update: float | Quote | Trade | Bar) -> float:
+def extract_price(update: float | Quote | Trade | Bar | OrderBook) -> float:
     """Extract the price from various types of market data updates.
 
     Args:
-        update: The market data update, which can be a float, Quote, Trade, or Bar.
+        update: The market data update, which can be a float, Quote, Trade, Bar or OrderBook.
 
     Returns:
         float: The extracted price.
@@ -428,6 +428,8 @@ def extract_price(update: float | Quote | Trade | Bar) -> float:
         return update.price
     elif isinstance(update, Bar):
         return update.close
+    elif isinstance(update, OrderBook):
+        return update.mid_price()
     else:
         raise ValueError(f"Unknown update type: {type(update)}")
 

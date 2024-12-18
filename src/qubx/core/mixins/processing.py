@@ -289,7 +289,7 @@ class ProcessingManager(IProcessingManager):
         )
         self._cache.update(instrument, event_type, data, update_ohlc=_update_ohlc)
         # update trackers, gatherers on base data and on Quote (always)
-        if not is_historical and (is_base_data or isinstance(data, Quote)):
+        if not is_historical and (is_base_data or isinstance(data, Quote) or isinstance(data, Bar)):
             _data = data if not isinstance(data, OrderBook) else data.to_quote()
             self._account.update_position_price(self._time_provider.time(), instrument, extract_price(_data))
             target_positions = self.__process_and_log_target_positions(
@@ -311,6 +311,7 @@ class ProcessingManager(IProcessingManager):
             # if this is the final quote of a bar which should be considered as base data
             if self._trig_bar_freq_nsec is None:
                 self._trig_bar_freq_nsec = pd.Timedelta(timeframe).as_unit("ns").asm8.item()
+
             t = self._time_provider.time().item()
             assert self._trig_bar_freq_nsec is not None
             # shifting by 1sec in ns
