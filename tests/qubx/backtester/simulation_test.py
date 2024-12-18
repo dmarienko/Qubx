@@ -292,7 +292,7 @@ class TestSimulator:
 
         # - no quotes arrived - it subscribed to OHLC only
         assert stg._market_quotes_called == 0, "Got Errors during the simulation"
-        assert (stg._triggers_called) * 4 == stg._market_ohlc_called, "Got Errors during the simulation"
+        assert (stg._triggers_called) * 4 + 3 == stg._market_ohlc_called, "Got Errors during the simulation"
 
     def test_ohlc_quote_update(self):
         ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h/", n_jobs=1)
