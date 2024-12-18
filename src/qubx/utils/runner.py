@@ -105,6 +105,8 @@ def run_ccxt_trading(
     time_provider = LiveTimeProvider()
     scheduler = BasicScheduler(channel, lambda: time_provider.time().item())
     exchange = get_ccxt_exchange(exchange_name, use_testnet=use_testnet, loop=loop, **(credentials or {}))
+    if exchange.apiKey:
+        logger.info(f"Connected {exchange_name} exchange with {exchange.apiKey[:2]}...{exchange.apiKey[-2:]} API key")
 
     # - find proper fees calculator
     qubx_exchange_name = ccxt_build_qubx_exchange_name(exchange_name)
