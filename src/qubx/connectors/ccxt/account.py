@@ -118,24 +118,25 @@ class CcxtAccountProcessor(BasicAccountProcessor):
 
         self._is_running = True
 
-        # - start polling tasks
-        self._polling_tasks["balance"] = self._loop.submit(
-            self._poller("balance", self._update_balance, self.balance_interval)
-        )
-        self._polling_tasks["position"] = self._loop.submit(
-            self._poller("position", self._update_positions, self.position_interval)
-        )
+        if not self.exchange.isSandboxModeEnabled:
+            # - start polling tasks
+            self._polling_tasks["balance"] = self._loop.submit(
+                self._poller("balance", self._update_balance, self.balance_interval)
+            )
+            self._polling_tasks["position"] = self._loop.submit(
+                self._poller("position", self._update_positions, self.position_interval)
+            )
 
-        # - start initialization tasks
-        _init_tasks = [
-            self._loop.submit(self._init_spot_positions()),  # restore spot positions
-            self._loop.submit(self._init_open_orders()),  # fetch open orders
-        ]
+            # - start initialization tasks
+            _init_tasks = [
+                self._loop.submit(self._init_spot_positions()),  # restore spot positions
+                self._loop.submit(self._init_open_orders()),  # fetch open orders
+            ]
 
-        logger.info("Waiting for account polling tasks to be initialized")
-        _waiter = self._loop.submit(self._wait_for_init(*_init_tasks))
-        _waiter.result()
-        logger.info("Account polling tasks have been initialized")
+            logger.info("Waiting for account polling tasks to be initialized")
+            _waiter = self._loop.submit(self._wait_for_init(*_init_tasks))
+            _waiter.result()
+            logger.info("Account polling tasks have been initialized")
 
         # - start subscription polling task
         self._polling_tasks["subscription"] = self._loop.submit(
