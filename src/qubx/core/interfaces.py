@@ -28,11 +28,12 @@ from qubx.core.basics import (
     Position,
     Signal,
     TargetPosition,
+    Timestamped,
     TriggerEvent,
     dt_64,
 )
 from qubx.core.helpers import set_parameters_to_object
-from qubx.core.series import OHLCV, Bar, Quote, Trade
+from qubx.core.series import OHLCV, Bar, Quote
 
 
 class IAccountViewer:
@@ -933,7 +934,7 @@ class PositionsTracker:
         return self.get_position_sizer().calculate_target_positions(ctx, signals)
 
     def update(
-        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+        self, ctx: IStrategyContext, instrument: Instrument, update: Timestamped
     ) -> List[TargetPosition] | TargetPosition:
         """
         Tracker is being updated by new market data.

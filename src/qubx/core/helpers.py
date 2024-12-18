@@ -11,7 +11,7 @@ import pandas as pd
 from croniter import croniter
 
 from qubx import logger
-from qubx.core.basics import SW, CtrlChannel, DataType, Instrument
+from qubx.core.basics import SW, CtrlChannel, DataType, Instrument, Timestamped
 from qubx.core.series import OHLCV, Bar, OrderBook, Quote, Trade
 from qubx.utils.time import convert_seconds_to_str, convert_tf_str_td64
 
@@ -408,7 +408,7 @@ def set_parameters_to_object(strategy: Any, **kwargs):
         logger.debug(f"<yellow>{strategy.__class__.__name__}</yellow> new parameters:" + _log_info)
 
 
-def extract_price(update: float | Quote | Trade | Bar | OrderBook) -> float:
+def extract_price(update: float | Timestamped) -> float:
     """Extract the price from various types of market data updates.
 
     Args:

@@ -3,24 +3,57 @@ from datetime import datetime
 from enum import StrEnum
 from queue import Empty, Queue
 from threading import Event, Lock
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Literal, Optional, TypeAlias, Union
 
 import numpy as np
 import pandas as pd
 
 from qubx.core.exceptions import QueueTimeout
-from qubx.core.series import Quote, Trade, time_as_nsec
+from qubx.core.series import Bar, OrderBook, Quote, Trade, time_as_nsec
 from qubx.core.utils import prec_ceil, prec_floor, time_delta_to_str
 from qubx.utils.misc import Stopwatch
 from qubx.utils.ntp import start_ntp_thread, time_now
 
 dt_64 = np.datetime64
 td_64 = np.timedelta64
-ns_to_dt_64 = lambda ns: np.datetime64(ns, "ns")
 
 OPTION_FILL_AT_SIGNAL_PRICE = "fill_at_signal_price"
 
 SW = Stopwatch()
+
+
+@dataclass
+class Liquidation:
+    time: dt_64
+    quantity: float
+    price: float
+    side: int
+
+
+@dataclass
+class FundingRate:
+    time: dt_64
+    rate: float
+    interval: str
+    next_funding_time: dt_64
+    mark_price: float | None = None
+    index_price: float | None = None
+
+
+@dataclass
+class TimestampedDict:
+    """
+    Generic class for representing arbitrary data (as dict) with timestamp
+
+    TODO: probably we need to have generic interface for classes like Quote, Bar, .... etc
+    """
+
+    time: dt_64
+    data: dict[str, Any]
+
+
+# Alias for timestamped data types used in Qubx
+Timestamped: TypeAlias = Quote | Trade | Bar | OrderBook | TimestampedDict | FundingRate | Liquidation
 
 
 @dataclass
@@ -240,7 +273,7 @@ class Instrument:
 @dataclass
 class BatchEvent:
     time: dt_64 | pd.Timestamp
-    data: list[Any]
+    data: list[Timestamped]
 
 
 class TransactionCostsCalculator:
@@ -876,36 +909,6 @@ class TradingSessionResult:
             # _cfg = f"{{ {repr(self.name)}: {_class}({_params}) }}"
             # if instantiated: return eval(_cfg)
         return _cfg
-
-
-@dataclass
-class Liquidation:
-    time: dt_64
-    quantity: float
-    price: float
-    side: int
-
-
-@dataclass
-class FundingRate:
-    time: dt_64
-    rate: float
-    interval: str
-    next_funding_time: dt_64
-    mark_price: float | None = None
-    index_price: float | None = None
-
-
-@dataclass
-class TimestampedDict:
-    """
-    Generic class for representing arbitrary data (as dict) with timestamp
-
-    TODO: probably we need to have gebneric interface for classes like Quote, Bar, .... etc
-    """
-
-    time: dt_64
-    data: dict[str, Any]
 
 
 class LiveTimeProvider(ITimeProvider):

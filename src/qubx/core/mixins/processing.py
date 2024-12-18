@@ -8,6 +8,7 @@ import pandas as pd
 from qubx import logger
 from qubx.core.basics import (
     SW,
+    BatchEvent,
     DataType,
     Deal,
     Instrument,
@@ -15,6 +16,7 @@ from qubx.core.basics import (
     Order,
     Signal,
     TargetPosition,
+    Timestamped,
     TriggerEvent,
     dt_64,
 )
@@ -271,8 +273,27 @@ class ProcessingManager(IProcessingManager):
             signals = [signals]
         return signals
 
+    __SUBSCR_TO_DATA_MATCH_TABLE = {
+        DataType.OHLC: [Bar],
+        DataType.OHLC_QUOTES: [Quote, OrderBook],
+        DataType.OHLC_TRADES: [Trade],
+        DataType.QUOTE: [Quote],
+        DataType.TRADE: [Trade],
+        DataType.ORDERBOOK: [OrderBook],
+    }
+
+    def _is_base_data(self, data: Timestamped | BatchEvent) -> tuple[bool, bool, Timestamped]:
+        _base_ss = DataType.from_str(self._subscription_manager.get_base_subscription())[0]
+        _is_batch = isinstance(data, BatchEvent)
+        _d_probe = data.data[-1] if _is_batch else data
+        return (
+            type(_d_probe) in _rule if (_rule := self.__SUBSCR_TO_DATA_MATCH_TABLE.get(_base_ss)) else False,
+            _is_batch,
+            _d_probe,
+        )
+
     def __update_base_data(
-        self, instrument: Instrument, event_type: str, data: Any, is_historical: bool = False
+        self, instrument: Instrument, event_type: str, data: Timestamped, is_historical: bool = False
     ) -> bool:
         """
         Updates the base data cache with the provided data.
@@ -280,62 +301,28 @@ class ProcessingManager(IProcessingManager):
         Returns:
             bool: True if the data is base data and the strategy should be triggered, False otherwise.
         """
-        is_base_data = self.__is_base_data(data)
-        # update cached ohlc is this is base subscription or if we are in simulation and subscribed to ohlc
-        # and receive quotes
-        _update_ohlc = is_base_data or (
-            not is_historical
-            and self._is_simulation
-            and DataType.OHLC == self._subscription_manager.get_base_subscription()
-            and isinstance(data, Quote)
-        )
-        self._cache.update(instrument, event_type, data, update_ohlc=_update_ohlc)
-        # update trackers, gatherers on base data and on Quote (always)
-        if not is_historical and (is_base_data or isinstance(data, Quote) or isinstance(data, Bar)):
-            _data = data if not isinstance(data, OrderBook) else data.to_quote()
-            self._account.update_position_price(self._time_provider.time(), instrument, extract_price(_data))
+        is_base_data, is_batch, _update = self._is_base_data(data)
+        # logger.info(f"{_update} {is_base_data and not self._trigger_on_time_event}")
+
+        # update cached ohlc is this is base subscription
+        _update_ohlc = is_base_data
+        if is_batch:
+            for _u in data.data:  # type: ignore
+                self._cache.update(instrument, event_type, _u, update_ohlc=_update_ohlc)
+
+        else:
+            self._cache.update(instrument, event_type, _update, update_ohlc=_update_ohlc)
+
+        # update trackers, gatherers on base data
+        if not is_historical and is_base_data:
+            self._account.update_position_price(self._time_provider.time(), instrument, extract_price(_update))
             target_positions = self.__process_and_log_target_positions(
-                self._position_tracker.update(self._context, instrument, _data)
+                self._position_tracker.update(self._context, instrument, _update)
             )
             self.__process_signals_from_target_positions(target_positions)
             self._position_gathering.alter_positions(self._context, target_positions)
+
         return is_base_data and not self._trigger_on_time_event
-
-    def __is_base_data(self, data: Any) -> bool:
-        _sub_type = self._subscription_manager.get_base_subscription()
-        sub_type, sub_params = DataType.from_str(_sub_type)
-        timeframe = sub_params.get("timeframe")
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        # TODO - think about refactoring we need to get rid of it !!!
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        if self._is_simulation and DataType.OHLC == sub_type and timeframe:
-            # in simulate we transform OHLC into quotes, so we need to check
-            # if this is the final quote of a bar which should be considered as base data
-            if self._trig_bar_freq_nsec is None:
-                self._trig_bar_freq_nsec = pd.Timedelta(timeframe).as_unit("ns").asm8.item()
-
-            t = self._time_provider.time().item()
-            assert self._trig_bar_freq_nsec is not None
-            # shifting by 1sec in ns
-            _sim_step = (t + 1e9) // self._trig_bar_freq_nsec
-            if self._cur_sim_step is None:
-                self._cur_sim_step = _sim_step
-                return False
-            if _sim_step > self._cur_sim_step:
-                self._cur_sim_step = _sim_step
-                return True
-            return False
-
-        # TODO: handle batched events
-        return (
-            (sub_type == DataType.OHLC and isinstance(data, Bar))
-            or (sub_type == DataType.OHLC_QUOTES and isinstance(data, Quote))  # TEMPORARY: just to pass test
-            or (sub_type == DataType.OHLC_TRADES and isinstance(data, Trade))  # TEMPORARY: just to pass test
-            or (sub_type == DataType.QUOTE and isinstance(data, Quote))
-            or (sub_type == DataType.ORDERBOOK and isinstance(data, OrderBook))
-            or (sub_type == DataType.TRADE and isinstance(data, Trade))
-        )
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
     ###########################################################################
     # - Handlers for different types of incoming data

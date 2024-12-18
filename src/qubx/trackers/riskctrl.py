@@ -6,11 +6,10 @@ import numpy as np
 
 from qubx import logger
 from qubx.core.basics import Deal, Instrument, OrderStatus, Signal, TargetPosition
-from qubx.core.series import Bar, Quote, Trade
-from qubx.core.interfaces import IPositionSizer, PositionsTracker, IStrategyContext
-from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
-
+from qubx.core.interfaces import IPositionSizer, IStrategyContext, PositionsTracker
+from qubx.core.series import Bar, OrderBook, Quote, Trade
 from qubx.ta.indicators import atr
+from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
 
 
 class State(Enum):
@@ -48,11 +47,13 @@ class RiskController(PositionsTracker):
         super().__init__(sizer)
 
     @staticmethod
-    def _get_price(update: float | Quote | Trade | Bar, direction: int) -> float:
+    def _get_price(update: float | Quote | Trade | Bar | OrderBook, direction: int) -> float:
         if isinstance(update, float):
             return update
         elif isinstance(update, Quote):
             return update.ask if direction > 0 else update.bid
+        elif isinstance(update, OrderBook):
+            return update.top_ask if direction > 0 else update.top_bid
         elif isinstance(update, Trade):
             return update.price
         elif isinstance(update, Bar):
@@ -104,7 +105,7 @@ class ClientSideRiskController(RiskController):
     """
 
     def update(
-        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar | OrderBook
     ) -> List[TargetPosition] | TargetPosition:
         c = self._trackings.get(instrument)
         if c is None:
@@ -189,7 +190,7 @@ class BrokerSideRiskController(RiskController):
     """
 
     def update(
-        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar | OrderBook
     ) -> List[TargetPosition]:
         # fmt: off
         c = self._trackings.get(instrument)
@@ -347,7 +348,7 @@ class GenericRiskControllerDecorator(PositionsTracker, RiskCalculator):
         return self.riskctrl.is_active(instrument)
 
     def update(
-        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar | OrderBook
     ) -> List[TargetPosition] | TargetPosition:
         return self.riskctrl.update(ctx, instrument, update)
 
@@ -536,7 +537,7 @@ class MinAtrExitDistanceTracker(PositionsTracker):
         return targets
 
     def update(
-        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar | OrderBook
     ) -> List[TargetPosition] | TargetPosition:
         signal = self._signals.get(instrument)
         if signal is None or signal.signal != 0:

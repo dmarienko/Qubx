@@ -5,8 +5,7 @@ from typing import Any, Iterable, Iterator, TypeAlias
 import pandas as pd
 
 from qubx import logger
-from qubx.core.basics import BatchEvent, DataType, Instrument, TimestampedDict, dt_64
-from qubx.core.series import Bar, OrderBook, Quote, Trade
+from qubx.core.basics import BatchEvent, DataType, Instrument, Timestamped, dt_64
 from qubx.data.readers import (
     AsDict,
     AsQuotes,
@@ -18,8 +17,7 @@ from qubx.data.readers import (
     RestoreTradesFromOHLC,
 )
 
-InData: TypeAlias = Quote | Trade | Bar | OrderBook | TimestampedDict
-SlicerOutData: TypeAlias = tuple[str, int, InData] | tuple
+SlicerOutData: TypeAlias = tuple[str, int, Timestamped] | tuple
 
 
 class IteratedDataStreamsSlicer(Iterator[SlicerOutData]):
@@ -29,8 +27,8 @@ class IteratedDataStreamsSlicer(Iterator[SlicerOutData]):
     It supports adding / removing new data streams to the slicer on the fly (during the itration).
     """
 
-    _iterators: dict[str, Iterator[list[InData]]]
-    _buffers: dict[str, list[InData]]
+    _iterators: dict[str, Iterator[list[Timestamped]]]
+    _buffers: dict[str, list[Timestamped]]
     _keys: deque[str]
     _iterating: bool
 
@@ -40,7 +38,7 @@ class IteratedDataStreamsSlicer(Iterator[SlicerOutData]):
         self._keys = deque()
         self._iterating = False
 
-    def put(self, data: dict[str, Iterator[list[InData]]]):
+    def put(self, data: dict[str, Iterator[list[Timestamped]]]):
         _rebuild = False
         for k, vi in data.items():
             if k not in self._keys:
@@ -85,10 +83,10 @@ class IteratedDataStreamsSlicer(Iterator[SlicerOutData]):
         _init_seq = dict(sorted(_init_seq.items(), key=lambda item: item[1]))
         self._keys = deque(_init_seq.keys())
 
-    def _load_next_chunk_to_buffer(self, index: str) -> list[InData]:
+    def _load_next_chunk_to_buffer(self, index: str) -> list[Timestamped]:
         return list(reversed(next(self._iterators[index])))
 
-    def _pop_top(self, k: str) -> InData:
+    def _pop_top(self, k: str) -> Timestamped:
         v = (data := self._buffers[k]).pop()
         if not data:
             try:
@@ -438,7 +436,7 @@ class IterableSimulationData(Iterator):
         self._slicing_iterator = iter(self._slicer_ctrl)
         return self
 
-    def __next__(self) -> tuple[Instrument, str, InData, bool]:  # type: ignore
+    def __next__(self) -> tuple[Instrument, str, Timestamped, bool]:  # type: ignore
         try:
             while data := next(self._slicing_iterator):  # type: ignore
                 k, t, v = data

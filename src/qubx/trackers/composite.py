@@ -1,9 +1,9 @@
 from collections import defaultdict
 from typing import Callable
-from qubx.core.series import Bar, Quote, Trade
-from qubx.core.basics import Deal, Instrument, Signal, TargetPosition
-from qubx.core.interfaces import IPositionSizer, PositionsTracker, IStrategyContext
 
+from qubx.core.basics import Deal, Instrument, Signal, TargetPosition
+from qubx.core.interfaces import IPositionSizer, IStrategyContext, PositionsTracker
+from qubx.core.series import Bar, OrderBook, Quote, Trade
 
 Targets = list[TargetPosition] | TargetPosition | None
 
@@ -23,7 +23,7 @@ class CompositeTracker(PositionsTracker):
         return self._select_min_targets(_index_to_targets)
 
     def update(
-        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar | OrderBook
     ) -> list[TargetPosition]:
         _index_to_targets: dict[int, Targets] = {
             index: tracker.update(ctx, instrument, update) for index, tracker in enumerate(self.trackers)
@@ -103,7 +103,7 @@ class ConditionalTracker(PositionsTracker):
         return self.tracker.process_signals(ctx, filtered_signals)
 
     def update(
-        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar
+        self, ctx: IStrategyContext, instrument: Instrument, update: Quote | Trade | Bar | OrderBook
     ) -> list[TargetPosition] | TargetPosition:
         return self.tracker.update(ctx, instrument, update)
 
