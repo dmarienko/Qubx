@@ -41,7 +41,7 @@ from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.trackers.sizers import FixedSizer
 
 from .mixins import (
-    MarketDataProvider,
+    MarketManager,
     ProcessingManager,
     SubscriptionManager,
     TradingManager,
@@ -105,10 +105,10 @@ class StrategyContext(IStrategyContext):
         self._subscription_manager = SubscriptionManager(data_provider=self._data_provider)
         self.account.set_subscription_manager(self._subscription_manager)
 
-        self._market_data_provider = MarketDataProvider(
+        self._market_data_provider = MarketManager(
             time_provider=self._time_provider,
             cache=self._cache,
-            broker=self._data_provider,
+            data_provider=self._data_provider,
             universe_manager=self,
             aux_data_provider=aux_data_provider,
         )
@@ -349,6 +349,9 @@ class StrategyContext(IStrategyContext):
 
     def set_base_subscription(self, subscription_type: str):
         return self._subscription_manager.set_base_subscription(subscription_type)
+
+    def get_subscribed_instruments(self, subscription_type: str | None = None) -> list[Instrument]:
+        return self._subscription_manager.get_subscribed_instruments(subscription_type)
 
     def get_warmup(self, subscription_type: str) -> str:
         return self._subscription_manager.get_warmup(subscription_type)

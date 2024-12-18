@@ -1,9 +1,11 @@
+from typing import Dict, List
+
 import pandas as pd
+
 import ccxt
 import ccxt.pro as cxp
-from typing import List, Dict
+from ccxt.async_support.base.ws.cache import ArrayCache, ArrayCacheByTimestamp
 from ccxt.async_support.base.ws.client import Client
-from ccxt.async_support.base.ws.cache import ArrayCacheByTimestamp, ArrayCache
 
 
 class BinanceQV(cxp.binance):
@@ -180,7 +182,7 @@ class BinanceQVUSDM(cxp.binanceusdm, BinanceQV):
         self._funding_intervals = {str(s): str(info["interval"]) for s, info in symbol_to_info.items()}
 
 
-class BinancePortfolioMargin(BinanceQV):
+class BinancePortfolioMargin(BinanceQVUSDM):
     def describe(self):
         return self.deep_extend(
             super().describe(),
