@@ -49,7 +49,7 @@ class ProcessingManager(IProcessingManager):
     _cache: CachedMarketDataHolder
     _scheduler: BasicScheduler
 
-    _handlers: dict[str, Callable[["ProcessingManager", Instrument, str, Any, bool], TriggerEvent | None]]
+    _handlers: dict[str, Callable[["ProcessingManager", Instrument, str, Any], TriggerEvent | None]]
     _strategy_name: str
 
     _trigger_on_time_event: bool = False
@@ -125,14 +125,16 @@ class ProcessingManager(IProcessingManager):
         with SW("StrategyContext.handler"):
             if not d_type:
                 event = None
+            elif is_historical:
+                event = self._process_hist_event(instrument, d_type, data)
             elif handler:
-                event = handler(self, instrument, d_type, data, is_historical)
+                event = handler(self, instrument, d_type, data)
             else:
-                event = self._process_custom_event(instrument, d_type, data, is_historical)
+                event = self._process_custom_event(instrument, d_type, data)
 
         # - check if it still didn't call on_fit() for first time
         if not self._init_fit_was_called and not self._fit_is_running:
-            self._handle_fit(None, "fit", (None, self._time_provider.time()), False)
+            self._handle_fit(None, "fit", (None, self._time_provider.time()))
             return False
 
         if not event:
@@ -341,11 +343,8 @@ class ProcessingManager(IProcessingManager):
 
     # it's important that we call it with _process to not include in the handlers map
     def _process_custom_event(
-        self, instrument: Instrument | None, event_type: str, event_data: Any, is_historical: bool
+        self, instrument: Instrument | None, event_type: str, event_data: Any
     ) -> MarketEvent | None:
-        if is_historical and instrument is not None:
-            return self._process_hist_event(instrument, event_type[5:], event_data)
-
         if instrument is not None:
             self.__update_base_data(instrument, event_type, event_data)
 
@@ -369,23 +368,17 @@ class ProcessingManager(IProcessingManager):
             for data in event_data:
                 self.__update_base_data(instrument, event_type, data, is_historical=True)
 
-    def _handle_event(
-        self, instrument: Instrument, event_type: str, event_data: Any, is_historical: bool
-    ) -> TriggerEvent:
+    def _handle_event(self, instrument: Instrument, event_type: str, event_data: Any) -> TriggerEvent:
         return TriggerEvent(self._time_provider.time(), event_type, instrument, event_data)
 
-    def _handle_time(self, instrument: Instrument, event_type: str, data: dt_64, is_historical: bool) -> TriggerEvent:
+    def _handle_time(self, instrument: Instrument, event_type: str, data: dt_64) -> TriggerEvent:
         return TriggerEvent(self._time_provider.time(), event_type, instrument, data)
 
-    def _handle_service_time(
-        self, instrument: Instrument, event_type: str, data: dt_64, is_historical: bool
-    ) -> TriggerEvent | None:
+    def _handle_service_time(self, instrument: Instrument, event_type: str, data: dt_64) -> TriggerEvent | None:
         """It is used by simulation as a dummy to trigger actual time events."""
         pass
 
-    def _handle_fit(
-        self, instrument: Instrument | None, event_type: str, data: Tuple[dt_64 | None, dt_64], is_historical: bool
-    ) -> None:
+    def _handle_fit(self, instrument: Instrument | None, event_type: str, data: Tuple[dt_64 | None, dt_64]) -> None:
         """
         When scheduled fit event is happened - we need to invoke strategy on_fit method
         """
@@ -394,33 +387,29 @@ class ProcessingManager(IProcessingManager):
         self._fit_is_running = True
         self._run_in_thread_pool(self.__invoke_on_fit)
 
-    def _handle_ohlc(self, instrument: Instrument, event_type: str, bar: Bar, is_historical: bool) -> MarketEvent:
+    def _handle_ohlc(self, instrument: Instrument, event_type: str, bar: Bar) -> MarketEvent:
         base_update = self.__update_base_data(instrument, event_type, bar)
         return MarketEvent(self._time_provider.time(), event_type, instrument, bar, is_trigger=base_update)
 
-    def _handle_trade(self, instrument: Instrument, event_type: str, trade: Trade, is_historical: bool) -> MarketEvent:
+    def _handle_trade(self, instrument: Instrument, event_type: str, trade: Trade) -> MarketEvent:
         base_update = self.__update_base_data(instrument, event_type, trade)
         return MarketEvent(self._time_provider.time(), event_type, instrument, trade, is_trigger=base_update)
 
-    def _handle_orderbook(
-        self, instrument: Instrument, event_type: str, orderbook: OrderBook, is_historical: bool
-    ) -> MarketEvent:
+    def _handle_orderbook(self, instrument: Instrument, event_type: str, orderbook: OrderBook) -> MarketEvent:
         base_update = self.__update_base_data(instrument, event_type, orderbook)
         return MarketEvent(self._time_provider.time(), event_type, instrument, orderbook, is_trigger=base_update)
 
-    def _handle_quote(self, instrument: Instrument, event_type: str, quote: Quote, is_historical: bool) -> MarketEvent:
+    def _handle_quote(self, instrument: Instrument, event_type: str, quote: Quote) -> MarketEvent:
         base_update = self.__update_base_data(instrument, event_type, quote)
         return MarketEvent(self._time_provider.time(), event_type, instrument, quote, is_trigger=base_update)
 
     @SW.watch("StrategyContext.order")
-    def _handle_order(self, instrument: Instrument, event_type: str, order: Order, is_historical: bool) -> Order:
+    def _handle_order(self, instrument: Instrument, event_type: str, order: Order) -> Order:
         self._account.process_order(order)
         return order
 
     @SW.watch("StrategyContext")
-    def _handle_deals(
-        self, instrument: Instrument, event_type: str, deals: list[Deal], is_historical: bool
-    ) -> TriggerEvent | None:
+    def _handle_deals(self, instrument: Instrument, event_type: str, deals: list[Deal]) -> TriggerEvent | None:
         self._account.process_deals(instrument, deals)
         self._logging.save_deals(instrument, deals)
         if instrument is None:

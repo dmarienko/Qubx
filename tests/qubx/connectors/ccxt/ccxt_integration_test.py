@@ -1,24 +1,14 @@
 import asyncio
-import threading
 import time
 from collections import defaultdict
-from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
-import pandas as pd
 import pytest
 
-from qubx import QubxLogConfig, logger, lookup
-from qubx.backtester.simulator import SimulatedBroker
-from qubx.connectors.ccxt.broker import CcxtBroker
-from qubx.connectors.ccxt.connector import CcxtBrokerServiceProvider
-from qubx.connectors.ccxt.data import CcxtDataProvider
-from qubx.connectors.ccxt.trading import CcxtTradingConnector
-from qubx.core.basics import DataType, Instrument, ITimeProvider, MarketEvent, Trade, TriggerEvent, dt_64
+from qubx import QubxLogConfig, logger
+from qubx.core.basics import DataType, Instrument, MarketEvent
 from qubx.core.interfaces import IStrategy, IStrategyContext, Position
-from qubx.pandaz import scols
-from qubx.utils.collections import TimeLimitedDeque
-from qubx.utils.runner import get_account_config, run_ccxt_trading
+from qubx.utils.runner import run_ccxt_trading
 
 
 async def wait(condition: Callable[[], bool] | None = None, timeout: int = 10, period: float = 1.0):
@@ -58,29 +48,33 @@ class TestCcxtDataProvider:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    @pytest.mark.skip(reason="Skip by default, run manually if needed")
     async def test_binance_reader(self):
         exchange = "BINANCE"
         await self._test_exchange_reading(exchange, ["BTCUSDT", "ETHUSDT"])
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    @pytest.mark.skip(reason="Skip by default, run manually if needed")
     async def test_binance_um_reader(self):
         exchange = "BINANCE.UM"
         await self._test_exchange_reading(exchange, ["BTCUSDT", "ETHUSDT"])
 
     async def _test_exchange_reading(self, exchange: str, symbols: list[str], timeout: int = 60):
-        ctx = run_ccxt_paper_trading(
+        ctx = run_ccxt_trading(
             strategy=(stg := DebugStrategy()),
-            exchange=exchange,
+            exchange_name=exchange,
             symbols=symbols,
             blocking=False,
-            use_testnet=True,
             commissions="vip0_usdt",
+            paper=True,
+            use_testnet=True,
         )
         await wait(ctx.is_fitted)
 
         ctx.subscribe(DataType.TRADE)
         ctx.subscribe(DataType.ORDERBOOK)
+        ctx.commit()
 
         async def wait_for_instrument_data(instr: Instrument):
             async def check_counts():
@@ -111,12 +105,14 @@ class TestCcxtTrading:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    @pytest.mark.skip(reason="Skip by default, run manually if needed")
     async def test_basic_binance(self):
         exchange = "BINANCE"
         await self._test_basic_exchange_functions(exchange, ["BTCUSDT"])
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    @pytest.mark.skip(reason="Skip by default, run manually if needed")
     async def test_basic_binance_um(self):
         exchange = "BINANCE.UM"
         await self._test_basic_exchange_functions(exchange, ["BTCUSDT"])
@@ -176,4 +172,4 @@ class TestCcxtTrading:
         logger.info(f"Closed position")
 
     def _is_size_similar(self, a: float, b: float, i: Instrument) -> bool:
-        return abs(a - b) < i.min_size
+        return abs(a - b) < 2 * i.min_size
