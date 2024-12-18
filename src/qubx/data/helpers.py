@@ -299,7 +299,7 @@ class TimeGuardedWrapper(DataReader):
         return _list_to_chunked_iterator(xs, chunksize) if chunksize > 0 else xs
 
     def get_aux_data(self, data_id: str, **kwargs) -> Any:
-        return self._time_guarded_data(self._reader.get_aux_data(data_id, exchange=self._reader.exchange, **kwargs))
+        return self._time_guarded_data(self._reader.get_aux_data(data_id, **kwargs))
 
     def __getitem__(self, keys):
         return self._time_guarded_data(self._reader.__getitem__(keys), prev_bar=True)

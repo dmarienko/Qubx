@@ -1,14 +1,16 @@
-from typing import List, Dict
 from dataclasses import dataclass
 from operator import neg
+from typing import Dict, List
 
 import numpy as np
 from sortedcontainers import SortedDict
 
 from qubx import logger
 from qubx.core.basics import (
+    OPTION_FILL_AT_SIGNAL_PRICE,
     Deal,
     Instrument,
+    ITimeProvider,
     Order,
     OrderSide,
     OrderType,
@@ -16,14 +18,12 @@ from qubx.core.basics import (
     Signal,
     TransactionCostsCalculator,
     dt_64,
-    ITimeProvider,
-    OPTION_FILL_AT_SIGNAL_PRICE,
 )
-from qubx.core.series import Quote, Trade
 from qubx.core.exceptions import (
     ExchangeError,
     InvalidOrder,
 )
+from qubx.core.series import Quote, Trade
 
 
 @dataclass
@@ -127,11 +127,8 @@ class OrdersManagementEngine:
         time_in_force: str = "gtc",
         **options,
     ) -> OmeReport:
-
         if self.bbo is None:
-            raise ExchangeError(
-                f"Simulator is not ready for order management - no any quote for {self.instrument.symbol}"
-            )
+            raise ExchangeError(f"Simulator is not ready for order management - no quote for {self.instrument.symbol}")
 
         # - validate order parameters
         self._validate_order(order_side, order_type, amount, price, time_in_force)

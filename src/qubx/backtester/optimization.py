@@ -1,9 +1,9 @@
-from typing import Any, Dict, List, Sequence, Tuple, Type
-import numpy as np
 import re
-
-from types import FunctionType
 from itertools import product
+from types import FunctionType
+from typing import Any, Dict, List, Sequence, Tuple, Type
+
+import numpy as np
 
 
 def _wrap_single_list(param_grid: List | Dict) -> Dict[str, Any] | List:
@@ -167,7 +167,7 @@ def variate(clz: Type[Any] | List[Type[Any]], *args, conditions=None, **kwargs) 
     """
 
     def _cmprss(xs: str):
-        return "".join([x[0] for x in re.split("((?<!-)(?=[A-Z]))|_|(\d)", xs) if x])
+        return "".join([x[0] for x in re.split(r"((?<!-)(?=[A-Z]))|_|(\d)", xs) if x])
 
     if isinstance(clz, type):
         sfx = _cmprss(clz.__name__)

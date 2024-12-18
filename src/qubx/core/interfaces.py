@@ -195,6 +195,17 @@ class IAccountViewer:
         """
         ...
 
+    def get_reserved(self, instrument: Instrument) -> float:
+        """[Deprecated] Get reserved margin for a specific instrument.
+
+        Args:
+            instrument: The instrument to check
+
+        Returns:
+            float: Reserved margin for the instrument
+        """
+        return 0.0
+
 
 class IBroker:
     """Broker provider interface for managing trading operations.

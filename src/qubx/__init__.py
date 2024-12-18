@@ -1,10 +1,13 @@
+import os
+import sys
 from typing import Callable
-from qubx.utils import set_mpl_theme, runtime_env
-from qubx.utils.misc import install_pyx_recompiler_for_dev
 
+import stackprinter
 from loguru import logger
-import os, sys, stackprinter
+
 from qubx.core.lookups import FeesLookup, GlobalLookup, InstrumentsLookup
+from qubx.utils import runtime_env, set_mpl_theme
+from qubx.utils.misc import install_pyx_recompiler_for_dev
 
 # - TODO: import some main methods from packages
 
@@ -66,8 +69,8 @@ lookup = GlobalLookup(InstrumentsLookup(), FeesLookup())
 
 # registering magic for jupyter notebook
 if runtime_env() in ["notebook", "shell"]:
-    from IPython.core.magic import Magics, magics_class, line_magic, line_cell_magic
     from IPython.core.getipython import get_ipython
+    from IPython.core.magic import Magics, line_cell_magic, line_magic, magics_class
 
     @magics_class
     class QubxMagics(Magics):
@@ -136,7 +139,8 @@ if runtime_env() in ["notebook", "shell"]:
 
             """
             import multiprocessing as m
-            import time, re
+            import re
+            import time
 
             # create ext args
             name = None
@@ -151,7 +155,7 @@ if runtime_env() in ["notebook", "shell"]:
                         return
 
                 ipy = get_ipython()
-                for a in [x for x in re.split("[\ ,;]", line.strip()) if x]:
+                for a in [x for x in re.split(r"[\ ,;]", line.strip()) if x]:
                     ipy.push({a: self._get_manager().Value(None, None)})
 
             # code to run
