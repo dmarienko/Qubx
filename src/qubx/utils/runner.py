@@ -279,6 +279,7 @@ def get_account_config(account_id: str, accounts_cfg_file: str) -> dict | None:
 
 def get_strategy(config_file: str, search_paths: list, account: str) -> (IStrategy, Struct):
     cfg = load_strategy_config(config_file, account)
+    search_paths = list(search_paths)
     search_paths.append(Path(config_file).parent)
     try:
         for p in search_paths:
@@ -292,39 +293,82 @@ def get_strategy(config_file: str, search_paths: list, account: str) -> (IStrate
     return strategy, cfg
 
 
-def create_strategy_context(config_file: str, accounts_cfg_file: str, search_paths: list) -> StrategyContext | None:
-    cfg = load_strategy_config(config_file)
-    search_paths.append(Path(config_file).parent)
-    try:
-        for p in search_paths:
-            if exists(pe := expanduser(p)):
-                add_project_to_system_path(pe)
-        strategy = class_import(cfg.strategy)
-    except Exception as err:
-        logger.error(str(err))
-        return None
+def create_strategy_context(
+        filename: str,
+        account_id: str,
+        acc_file: str,
+        paths: list[Path],
+        strategy_id: str | None = None,
+        paper: bool = False,
+        testnet: bool = False,
+        base_currency: str = "USDT",
+        paper_capital: float = 100_000,
+        commissions: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+) -> StrategyContext | None:
+    strategy, cfg = get_strategy(filename, paths, account_id)
+    if not all([strategy, cfg]):
+        logger.error("Can't load strategy")
+        return
+    strategy_config, symbols, exchange_name, aux_config = cfg.parameters, cfg.instruments, cfg.exchange, cfg.aux
 
     logger.add(LOGFILE + cfg.name + "_{time}.log", format=formatter, rotation="100 MB", colorize=False)
 
     # - read account creds
     acc_config = {}
     if cfg.account is not None:
-        acc_config = get_account_config(cfg.account, accounts_cfg_file)
+        acc_config = get_account_env_config(account_id, acc_file)
         if acc_config is None:
+            logger.error("Can't read account configuration")
             return None
+
+    strategy_id = strategy_id or uuid.uuid4().hex[:8]  # todo: not sure, but if take from tags cannot distinguish between different runs
+    logger.info(f"Running {'paper' if paper else 'live'} strategy on {exchange_name} exchange ({strategy_id=})...")
+    acc_config = acc_config if not paper else {}
+    assert paper or acc_config, "Credentials are required for live trading"
+
+    instruments: list[Instrument] = (  # type: ignore
+        symbols if isinstance(symbols[0], Instrument) else _get_instruments(symbols, exchange_name)
+    )
+    instruments = [i for i in instruments if i is not None]
+
+    aux_reader = get_aux_reader(aux_config)
+    logger.debug(f"Setup <g>{aux_reader.__class__.__name__}</g> reader...") if aux_reader is not None else None
+
+    channel = CtrlChannel("databus", sentinel=(None, None, None, None))
+    time_provider = LiveTimeProvider()
+    scheduler = BasicScheduler(channel, lambda: time_provider.time().item())
+
+    # - find proper fees calculator
+    qubx_exchange_name = ccxt_build_qubx_exchange_name(exchange_name)
+    fees_calculator = lookup.fees.find(qubx_exchange_name.lower(), commissions)
+    assert fees_calculator is not None, f"Can't find fees calculator for {qubx_exchange_name} exchange"
 
     # - check connector
     conn = cfg.connector.lower()
     match conn:
         case "ccxt":
             # - TODO: we need some factory here
-            broker = CcxtBroker(cfg.exchange.lower(), **acc_config)
-            exchange_connector = CcxtDataProvider(cfg.exchange.lower(), broker, **acc_config)
+            exchange = get_ccxt_exchange(exchange_name, use_testnet=testnet, loop=loop, **(acc_config or {}))
+            if exchange.apiKey:
+                logger.info(
+                    f"Connected {exchange_name} exchange with {exchange.apiKey[:2]}...{exchange.apiKey[-2:]} API key")
+            account, broker, data_provider = get_ccxt_instances(
+                account_id,
+                base_currency,
+                channel,
+                exchange,
+                fees_calculator,
+                paper,
+                paper_capital,
+                time_provider,
+                testnet
+            )
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
 
     # - generate new run id
-    run_id = socket.gethostname() + "-" + str(broker.time_provider.time().item() // 100_000_000)
+    run_id = socket.gethostname() + "-" + str(time.time() if paper else broker.time_provider.time().item() // 100_000_000)
 
     # - get logger
     writer = None
@@ -334,25 +378,26 @@ def create_strategy_context(config_file: str, accounts_cfg_file: str, search_pat
             _w_class = "qubx.core.loggers." + _w_class
         try:
             w_class = class_import(_w_class)
-            writer = w_class(acc_config["account_id"], strategy.__name__, run_id)
+            writer = w_class(account_id, strategy.__name__, run_id)
         except Exception as err:
             logger.warning(f"Can't instantiate specified writer {_w_class}: {str(err)}")
-            writer = LogsWriter(acc_config["account_id"], strategy.__name__, run_id)
+            writer = LogsWriter(account_id, strategy.__name__, run_id)
+    stg_logging = StrategyLogging(writer, heartbeat_freq="1m")
 
     logger.info(
         f""" - - - <blue>Qubx</blue> (ver. <red>{version()}</red>) - - -\n - Strategy: {strategy}\n - Config: {cfg.parameters} """
     )
-    ctx = StrategyContextImpl(
-        strategy,
-        cfg.parameters,
-        exchange_connector,
-        instruments=cfg.instruments,
-        md_subscription=cfg.md_subscr,
-        trigger_spec=cfg.strategy_trigger,
-        fit_spec=cfg.strategy_fit_trigger,
-        logs_writer=writer,
-        positions_log_freq=cfg.log_positions_interval,
-        portfolio_log_freq=cfg.log_portfolio_interval,
+    ctx = StrategyContext(
+        strategy=strategy,
+        broker=broker,
+        data_provider=data_provider,
+        account=account,
+        scheduler=scheduler,
+        time_provider=time_provider,
+        instruments=instruments,
+        logging=stg_logging,
+        config=strategy_config,
+        aux_data_provider=aux_reader,
     )
 
     return ctx
