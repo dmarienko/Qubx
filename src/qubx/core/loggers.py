@@ -235,6 +235,7 @@ class PositionsDumper(_BaseIntervalDumper):
                     "instrument_id": i.symbol,
                     "pnl_quoted": p.total_pnl(),
                     "quantity": p.quantity,
+                    "notional": p.notional_value,
                     "realized_pnl_quoted": p.r_pnl,
                     "avg_position_price": p.position_avg_price if p.quantity != 0.0 else 0.0,
                     "current_price": p.last_update_price,
