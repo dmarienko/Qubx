@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import getpass
 import os
 import time
 from collections import OrderedDict, defaultdict, deque, namedtuple
@@ -70,6 +71,13 @@ def get_local_qubx_folder() -> str:
         _QUBX_FLDR = makedirs(os.getenv("QUBXSTORAGE", os.path.expanduser("~/.qubx")))
 
     return _QUBX_FLDR
+
+
+def get_current_user() -> str:
+    """
+    Get current user's username.
+    """
+    return getpass.getuser()
 
 
 def add_project_to_system_path(project_folder: str = "~/projects"):

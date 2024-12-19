@@ -5,15 +5,16 @@ import pandas as pd
 from joblib import delayed
 
 from qubx import QubxLogConfig, logger, lookup
-from qubx.core.basics import DataType, TradingSessionResult
+from qubx.core.basics import DataType
 from qubx.core.context import StrategyContext
 from qubx.core.exceptions import SimulationError
 from qubx.core.helpers import extract_parameters_from_object, full_qualified_class_name
 from qubx.core.interfaces import IStrategy
 from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
+from qubx.core.metrics import TradingSessionResult
 from qubx.data.helpers import InMemoryCachedReader, TimeGuardedWrapper
 from qubx.data.readers import DataReader
-from qubx.utils.misc import ProgressParallel
+from qubx.utils.misc import ProgressParallel, get_current_user
 
 from .account import SimulatedAccountProcessor
 from .broker import SimulatedBroker
@@ -346,4 +347,5 @@ def _run_setup(
         strategy_class=_s_class,
         parameters=_s_params,
         is_simulation=True,
+        author=get_current_user(),
     )
