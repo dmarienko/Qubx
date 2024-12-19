@@ -290,7 +290,7 @@ def get_strategy(config_file: str, search_paths: list, account: str) -> (IStrate
         strategy = class_import(cfg.strategy)
     except Exception as err:
         logger.error(str(err))
-        return None
+        return None, None
 
     return strategy, cfg
 
