@@ -26,6 +26,7 @@ from qubx.core.context import StrategyContext
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy
 from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging, CsvFileLogsWriter
+from qubx.data import DataReader
 from qubx.data.helpers import __KNOWN_READERS
 from qubx.utils.marketdata.ccxt import ccxt_build_qubx_exchange_name
 from qubx.utils.misc import Struct, add_project_to_system_path, logo, version
@@ -75,61 +76,43 @@ def run_ccxt_trading(
     credentials = credentials if not paper else {}
     assert paper or credentials, "Credentials are required for live trading"
 
-    # TODO: setup proper loggers to write out to files
     instruments: list[Instrument] = (  # type: ignore
         symbols if isinstance(symbols[0], Instrument) else _get_instruments(symbols, exchange_name)
     )
     instruments = [i for i in instruments if i is not None]
 
-    logs_writer = globals().get(log, InMemoryLogsWriter)(account_id=account_id, strategy_id=strategy_id, run_id="0")
-    logger.debug(f"Setup <g>{logs_writer.__class__.__name__}</g> logger...")
-    stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
-
-    aux_reader = None
-    if "::" in aux_config.get("reader", ""):
-        # like: mqdb::nebula or csv::/data/rawdata/
-        db_conn, path = aux_config["reader"].split("::")
-        kwargs = aux_config.get("args", {})
-        reader = __KNOWN_READERS.get(db_conn, **kwargs)
-        if reader is None:
-            logger.error(f"Unknown reader {db_conn} - try to use {__KNOWN_READERS.keys()} only")
-        else:
-            aux_reader = reader(path)
-    elif aux_config.get("reader") is not None:
-        # like: sty.data.readers.MyCustomDataReader
-        kwargs = aux_config.get("args", {})
-        aux_reader = class_import(aux_config["reader"])(**kwargs)
+    aux_reader = get_aux_reader(aux_config)
     logger.debug(f"Setup <g>{aux_reader.__class__.__name__}</g> reader...") if aux_reader is not None else None
 
     channel = CtrlChannel("databus", sentinel=(None, None, None, None))
     time_provider = LiveTimeProvider()
     scheduler = BasicScheduler(channel, lambda: time_provider.time().item())
-    exchange = get_ccxt_exchange(exchange_name, use_testnet=use_testnet, loop=loop, **(credentials or {}))
-    if exchange.apiKey:
-        logger.info(f"Connected {exchange_name} exchange with {exchange.apiKey[:2]}...{exchange.apiKey[-2:]} API key")
 
     # - find proper fees calculator
     qubx_exchange_name = ccxt_build_qubx_exchange_name(exchange_name)
     fees_calculator = lookup.fees.find(qubx_exchange_name.lower(), commissions)
     assert fees_calculator is not None, f"Can't find fees calculator for {qubx_exchange_name} exchange"
 
-    if paper:
-        account = SimulatedAccountProcessor(
-            account_id=account_id,
-            channel=channel,
-            base_currency=base_currency,
-            time_provider=time_provider,
-            tcc=fees_calculator,
-            initial_capital=paper_capital,
-        )
-        broker = SimulatedBroker(channel=channel, account=account)
-        logger.debug("Setup paper account...")
-    else:
-        account = CcxtAccountProcessor(account_id, exchange, channel, time_provider, base_currency, tcc=fees_calculator)
-        broker = CcxtBroker(exchange, channel, time_provider, account)
-        logger.debug(f"Setup live {'testnet ' if use_testnet else ''}account...")
+    exchange = get_ccxt_exchange(exchange_name, use_testnet=use_testnet, loop=loop, **(credentials or {}))
+    if exchange.apiKey:
+        logger.info(f"Connected {exchange_name} exchange with {exchange.apiKey[:2]}...{exchange.apiKey[-2:]} API key")
+    account, broker, data_provider = get_ccxt_instances(
+        account_id,
+        base_currency,
+        channel,
+        exchange,
+        fees_calculator,
+        paper,
+        paper_capital,
+        time_provider,
+        use_testnet
+    )
 
-    data_provider = CcxtDataProvider(exchange, time_provider, channel)
+    # - get logger
+    run_id = socket.gethostname() + "-" + str(time.time() if paper else broker.time_provider.time().item() // 100_000_000)
+    logs_writer = globals().get(log, InMemoryLogsWriter)(account_id=account_id, strategy_id=strategy_id, run_id=run_id)
+    logger.debug(f"Setup <g>{logs_writer.__class__.__name__}</g> logger...")
+    stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
 
     ctx = StrategyContext(
         strategy=strategy,
@@ -155,6 +138,54 @@ def run_ccxt_trading(
         ctx.start()
 
     return ctx
+
+
+def get_ccxt_instances(
+        account_id,
+        base_currency,
+        channel,
+        exchange,
+        fees_calculator,
+        paper,
+        paper_capital,
+        time_provider,
+        use_testnet
+):
+    if paper:
+        account = SimulatedAccountProcessor(
+            account_id=account_id,
+            channel=channel,
+            base_currency=base_currency,
+            time_provider=time_provider,
+            tcc=fees_calculator,
+            initial_capital=paper_capital,
+        )
+        broker = SimulatedBroker(channel=channel, account=account)
+        logger.debug("Setup paper account...")
+    else:
+        account = CcxtAccountProcessor(account_id, exchange, channel, time_provider, base_currency, tcc=fees_calculator)
+        broker = CcxtBroker(exchange, channel, time_provider, account)
+        logger.debug(f"Setup live {'testnet ' if use_testnet else ''}account...")
+    data_provider = CcxtDataProvider(exchange, time_provider, channel)
+    return account, broker, data_provider
+
+
+def get_aux_reader(aux_config: dict) -> DataReader | None:
+    aux_reader = None
+    if "::" in aux_config.get("reader", ""):
+        # like: mqdb::nebula or csv::/data/rawdata/
+        db_conn, path = aux_config["reader"].split("::")
+        kwargs = aux_config.get("args", {})
+        reader = __KNOWN_READERS.get(db_conn, **kwargs)
+        if reader is None:
+            logger.error(f"Unknown reader {db_conn} - try to use {__KNOWN_READERS.keys()} only")
+        else:
+            aux_reader = reader(path)
+    elif aux_config.get("reader") is not None:
+        # like: sty.data.readers.MyCustomDataReader
+        kwargs = aux_config.get("args", {})
+        aux_reader = class_import(aux_config["reader"])(**kwargs)
+    return aux_reader
 
 
 def _get_instruments(symbols: list[str], exchange: str) -> list[Instrument]:
