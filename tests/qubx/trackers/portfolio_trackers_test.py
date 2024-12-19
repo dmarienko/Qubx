@@ -57,12 +57,13 @@ class TestingPositionGatherer(IPositionGathering):
 
 
 class DebugStratageyCtx(IStrategyContext):
-    _exchange: str = "BINANCE"
+    _exchange: str
     _d_qts: Dict[Instrument, Quote]
     _c_time: int = 0
     _o_id: int = 10000
 
-    def __init__(self, symbols: List[str], capital) -> None:
+    def __init__(self, symbols: List[str], capital, exchange: str = "BINANCE") -> None:
+        self._exchange = exchange
         self._instruments = [x for s in symbols if (x := lookup.find_symbol(self._exchange, s)) is not None]
         self._symbol_to_instrument = {i.symbol: i for i in self._instruments}
         self._d_qts = {i: None for i in self._instruments}  # type: ignore
@@ -142,8 +143,8 @@ class DebugStratageyCtx(IStrategyContext):
         _p_l, _p_s = 0, 0
         for p in self.positions.values():
             print(f"\t{p}")
-            _p_l += abs(p.market_value_funds) if p.market_value_funds > 0 else 0
-            _p_s += abs(p.market_value_funds) if p.market_value_funds < 0 else 0
+            _p_l += abs(p.notional_value) if p.notional_value > 0 else 0
+            _p_s += abs(p.notional_value) if p.notional_value < 0 else 0
         print(f"\tTOTAL net value: {_p_l + _p_s} | L: {_p_l} S: {_p_s}")
         return _p_l, _p_s
 
@@ -290,3 +291,49 @@ class TestPortfolioRelatedStuff:
 
         # - long exposure ~ cap / 2
         assert N(_v_l, 10) == ctx.acc.get_total_capital() / 2
+
+    def test_LongShortRatioPortfolioSizer_Perp(self):
+        ctx = DebugStratageyCtx(
+            exchange="BINANCE.UM",
+            symbols=["ADAUSDT", "CRVUSDT", "NEARUSDT", "ETHUSDT", "XRPUSDT", "LTCUSDT"],
+            capital=100000.0,
+        )
+        prt = PortfolioRebalancerTracker(100_000, 10, LongShortRatioPortfolioSizer(longs_to_shorts_ratio=1))
+        g = SimplePositionGatherer()
+
+        # - market data
+        ctx.push(
+            {
+                "ADAUSDT": Q("2022-01-01", 2.5774),
+                "CRVUSDT": Q("2022-01-01", 5.569),
+                "NEARUSDT": Q("2022-01-01", 14.7149),
+                "ETHUSDT": Q("2022-01-01", 3721.67),
+                "XRPUSDT": Q("2022-01-01", 0.8392),
+                "LTCUSDT": Q("2022-01-01", 149.08),
+            }
+        )
+
+        # - 'trade'
+        c_positions = g.alter_positions(
+            ctx,
+            prt.process_signals(
+                ctx,
+                S(
+                    ctx,
+                    # - how it comes from the strategy
+                    {
+                        "ADAUSDT": 0.6143356287746169,
+                        "CRVUSDT": 0.07459699350250036,
+                        "NEARUSDT": 0.31106737772288284,
+                        "ETHUSDT": -0.33,
+                        "XRPUSDT": -0.33,
+                        "LTCUSDT": -0.33,
+                    },
+                ),
+            ),
+        )
+
+        _v_l, _v_s = ctx.pos_board()
+
+        # - expected ratio should be close near 1
+        assert N(_v_l / _v_s, 10) == 1.0

@@ -842,7 +842,7 @@ def tearsheet(
         )
 
 
-def get_equity(
+def get_cum_pnl(
     sessions: TradingSessionResult | list[TradingSessionResult],
     account_transactions: bool = True,
     timeframe: str | None = None,

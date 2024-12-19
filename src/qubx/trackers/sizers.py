@@ -47,7 +47,7 @@ class FixedLeverageSizer(IPositionSizer):
         self.leverage = leverage
 
     def calculate_target_positions(self, ctx: IStrategyContext, signals: List[Signal]) -> List[TargetPosition]:
-        total_capital = ctx.account.get_total_capital()
+        total_capital = ctx.get_total_capital()
         positions = []
         for signal in signals:
             q = ctx.quote(signal.instrument)
@@ -93,7 +93,7 @@ class FixedRiskSizer(IPositionSizer):
                     _direction = np.sign(signal.signal)
                     # - hey, we can't trade using negative balance ;)
                     _cap = max(
-                        ctx.account.get_total_capital() if self.reinvest_profit else ctx.account.get_capital(), 0
+                        ctx.get_total_capital() if self.reinvest_profit else ctx.get_capital(), 0
                     )
                     _entry = _q.ask if _direction > 0 else _q.bid
                     # fmt: off
