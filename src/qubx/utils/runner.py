@@ -67,7 +67,7 @@ def run_ccxt_trading(
     paper: bool = False,
     paper_capital: float = 100_000,
     aux_config: dict | None = None,
-    log: str = str,
+    log: str = "InMemoryLogsWriter",
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext:
     strategy_id = strategy_id or uuid.uuid4().hex[:8]  # todo: not sure, but if take from tags cannot distinguish between different runs
