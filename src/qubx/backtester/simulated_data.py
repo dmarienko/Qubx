@@ -224,8 +224,6 @@ class DataFetcher:
         _requests = self._specs if not to_load else set(self._make_request_id(i) for i in to_load)
         _r_iters = {}
 
-        # logger.debug(f"{self._fetcher_id} loading {_requests}")
-
         for _r in _requests:  # - TODO: replace this loop with multi-instrument request after DataReader refactoring
             if _r in self._specs:
                 _start = pd.Timestamp(start)
@@ -245,7 +243,10 @@ class DataFetcher:
                 if self._timeframe:
                     _args["timeframe"] = self._timeframe
 
-                _r_iters[self._fetcher_id + "." + _r] = self._reader.read(**_args)  # type: ignore
+                try:
+                    _r_iters[self._fetcher_id + "." + _r] = self._reader.read(**_args)  # type: ignore
+                except Exception as e:
+                    logger.error(f">>> (DataFetcher::load) - failed to load <g>'{self._fetcher_id}'</g> data: {e}")
             else:
                 raise IndexError(
                     f"Instrument {_r} is not subscribed for this data {self._requested_data_type} in {self._fetcher_id} !"

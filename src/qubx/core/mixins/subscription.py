@@ -9,7 +9,6 @@ from qubx.utils.misc import synchronized
 class SubscriptionManager(ISubscriptionManager):
     _data_provider: IDataProvider
     _base_sub: str
-    _is_simulation: bool
     _sub_to_warmup: dict[str, str]
     _auto_subscribe: bool
 
@@ -20,10 +19,14 @@ class SubscriptionManager(ISubscriptionManager):
     _pending_stream_unsubscriptions: Dict[str, Set[Instrument]]
     _pending_warmups: Dict[Tuple[str, Instrument], str]
 
-    def __init__(self, data_provider: IDataProvider, auto_subscribe: bool = True) -> None:
+    def __init__(
+        self,
+        data_provider: IDataProvider,
+        auto_subscribe: bool = True,
+        default_base_subscription: DataType = DataType.NONE,
+    ) -> None:
         self._data_provider = data_provider
-        self._is_simulation = data_provider.is_simulation
-        self._base_sub = DataType.NONE if self._is_simulation else DataType.ORDERBOOK
+        self._base_sub = default_base_subscription
         self._sub_to_warmup = {}
         self._pending_warmups = {}
         self._pending_global_subscriptions = set()

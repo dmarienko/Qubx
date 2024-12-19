@@ -102,7 +102,10 @@ class StrategyContext(IStrategyContext):
 
         __position_gathering = position_gathering if position_gathering is not None else SimplePositionGatherer()
 
-        self._subscription_manager = SubscriptionManager(data_provider=self._data_provider)
+        self._subscription_manager = SubscriptionManager(
+            data_provider=self._data_provider,
+            default_base_subscription=DataType.ORDERBOOK if not self._data_provider.is_simulation else DataType.NONE,
+        )
         self.account.set_subscription_manager(self._subscription_manager)
 
         self._market_data_provider = MarketManager(

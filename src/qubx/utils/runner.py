@@ -25,7 +25,7 @@ from qubx.core.basics import CtrlChannel, Instrument, LiveTimeProvider
 from qubx.core.context import StrategyContext
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy
-from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging, CsvFileLogsWriter
+from qubx.core.loggers import CsvFileLogsWriter, InMemoryLogsWriter, LogsWriter, StrategyLogging
 from qubx.data.helpers import __KNOWN_READERS
 from qubx.utils.marketdata.ccxt import ccxt_build_qubx_exchange_name
 from qubx.utils.misc import Struct, add_project_to_system_path, logo, version
@@ -70,7 +70,9 @@ def run_ccxt_trading(
     log: str = Literal["InMemoryLogsWriter", "CsvFileLogsWriter"],
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext:
-    strategy_id = strategy_id or uuid.uuid4().hex[:8]  # todo: not sure, but if take from tags cannot distinguish between different runs
+    strategy_id = (
+        strategy_id or uuid.uuid4().hex[:8]
+    )  # todo: not sure, but if take from tags cannot distinguish between different runs
     logger.info(f"Running {'paper' if paper else 'live'} strategy on {exchange_name} exchange ({strategy_id=})...")
     credentials = credentials if not paper else {}
     assert paper or credentials, "Credentials are required for live trading"
@@ -335,12 +337,14 @@ def _run_in_jupyter(filename: str, accounts: str, paths: list):
     try:
         from jupyter_console.app import ZMQTerminalIPythonApp
     except ImportError:
-        logger.error("Can't find <red>ZMQTerminalIPythonApp</red> module - try to install jupyter package first")
+        logger.error(
+            "Can't find <r>ZMQTerminalIPythonApp</r> module - try to install <g>jupyter-console</g> package first"
+        )
         return
     try:
         import nest_asyncio
     except ImportError:
-        logger.error("Can't find <red>nest_asyncio</red> module - try to install it first")
+        logger.error("Can't find <r>nest_asyncio</r> module - try to install it first")
         return
 
     class TerminalRunner(ZMQTerminalIPythonApp):
@@ -355,60 +359,19 @@ def _run_in_jupyter(filename: str, accounts: str, paths: list):
             super().initialize(argv=[])
             self.shell.run_cell(self.init_code)
 
-    logger.info("Running in Jupyter console")
-    TerminalRunner.launch_instance(
-        init_code=f"""
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-import qubx
-%qubxd
-import pandas as pd
-import nest_asyncio; nest_asyncio.apply()
-from qubx.utils.misc import dequotify, quotify
-from qubx.utils.runner import create_strategy_context
-from qubx.pandaz.utils import *
-import qubx.pandaz.ta as pta
+    _base = Path(__file__).parent.absolute()
+    with open(_base / "_jupyter_runner.pyt", "r") as f:
+        content = f.read()
 
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-ctx = create_strategy_context('{filename}', '{accounts}', {paths})
-ctx.start()
-
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-def orders(symbol=None):
-    return ctx.exchange_service.get_orders(symbol)
-
-def trade(symbol, qty, price=None, tif='gtc'):
-    return ctx.trade(symbol, qty, price, tif)
-
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-def pnl_report(all=True):
-    from tabulate import tabulate
-    d = dict()
-    for s, p in ctx.positions.items():
-        mv = round(p.market_value_funds, 3)
-        if mv != 0.0 or all:
-            d[dequotify(s)] = dict(
-                Position=round(p.quantity, p.instrument.size_precision),  
-                PnL=p.total_pnl(), 
-                AvgPrice=round(p.position_avg_price_funds, p.instrument.price_precision), 
-                LastPrice=round(p.last_update_price, p.instrument.price_precision),
-                MktValue=mv
-            )
-    d = pd.DataFrame.from_dict(d).T
-    # d = d[d['PnL'] != 0.0]
-    if d.empty:
-        print('-(no open positions yet)-')
-        return
-    d = d.sort_values('PnL' ,ascending=False)
-    # d = pd.concat((d, pd.Series(dict(TOTAL=d['PnL'].sum()), name='PnL'))).fillna('')
-    d = pd.concat((d, scols(pd.Series(dict(TOTAL=d['PnL'].sum()), name='PnL'), pd.Series(dict(TOTAL=d['MktValue'].sum()), name='MktValue')))).fillna('')
-    print(tabulate(d, ['Position', 'PnL', 'AvgPrice', 'LastPrice', 'MktValue'], tablefmt='rounded_grid'))
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-__exit = exit
-def exit():
-    ctx.stop(); __exit()
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-"""
+    content_with_values = content.format_map(
+        {
+            "filename": filename,
+            "accounts": accounts,
+            "paths": str(paths),
+        }
     )
+    logger.info("Running in Jupyter console")
+    TerminalRunner.launch_instance(content_with_values)
 
 
 @click.command()
