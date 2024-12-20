@@ -1,5 +1,6 @@
 import asyncio
 import configparser
+import inspect
 import os
 import socket
 import sys
@@ -30,7 +31,7 @@ from qubx.data.helpers import __KNOWN_READERS
 from qubx.utils.marketdata.ccxt import ccxt_build_qubx_exchange_name
 from qubx.utils.misc import Struct, add_project_to_system_path, logo, version
 
-LOGFILE = "logs/"
+LOGPATH = "logs"
 
 
 def class_import(name):
@@ -68,6 +69,7 @@ def run_ccxt_trading(
     paper_capital: float = 100_000,
     aux_config: dict | None = None,
     log: str = "InMemoryLogsWriter",
+    log_folder: str = "logs",
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext:
     strategy_id = (
@@ -110,10 +112,8 @@ def run_ccxt_trading(
     )
 
     # - get logger
-    run_id = socket.gethostname() + "-" + str(time.time() if paper else broker.time_provider.time().item() // 100_000_000)
-    logs_writer = globals().get(log, InMemoryLogsWriter)(account_id=account_id, strategy_id=strategy_id, run_id=run_id)
-    logger.debug(f"Setup <g>{logs_writer.__class__.__name__}</g> logger...")
-    stg_logging = StrategyLogging(logs_writer, heartbeat_freq="1m")
+    run_id = socket.gethostname() + "-" + str(int(time.time()*10**9) if paper else broker.time_provider.time().item() // 100_000_000)
+    stg_logging = get_logger(log, account_id, run_id, strategy, log_folder)
 
     ctx = StrategyContext(
         strategy=strategy,
@@ -314,7 +314,9 @@ def create_strategy_context(
         return
     strategy_config, symbols, exchange_name, aux_config = cfg.parameters, cfg.instruments, cfg.exchange, cfg.aux
 
-    logger.add(LOGFILE + cfg.name + "_{time}.log", format=formatter, rotation="100 MB", colorize=False)
+    log_id = time.strftime("%Y%m%d%H%M%S", time.gmtime())
+    log_folder = f"{LOGPATH.removesuffix('/')}/run_{log_id}"
+    logger.add(f"{log_folder}/strategy/{cfg.name}_" +"{time}.log", format=formatter, rotation="100 MB", colorize=False)
 
     # - read account creds
     acc_config = {}
@@ -370,21 +372,12 @@ def create_strategy_context(
             raise ValueError(f"Connector {conn} is not supported yet !")
 
     # - generate new run id
-    run_id = socket.gethostname() + "-" + str(time.time() if paper else broker.time_provider.time().item() // 100_000_000)
+    run_id = socket.gethostname() + "-" + str(int(time.time()*10**9) if paper else broker.time_provider.time().item() // 100_000_000)
 
     # - get logger
     writer = None
     _w_class = cfg.portfolio_logger
-    if _w_class is not None:
-        if "." not in _w_class:
-            _w_class = "qubx.core.loggers." + _w_class
-        try:
-            w_class = class_import(_w_class)
-            writer = w_class(account_id, strategy.__name__, run_id)
-        except Exception as err:
-            logger.warning(f"Can't instantiate specified writer {_w_class}: {str(err)}")
-            writer = LogsWriter(account_id, strategy.__name__, run_id)
-    stg_logging = StrategyLogging(writer, heartbeat_freq="1m")
+    stg_logging = get_logger(_w_class, account_id, run_id, strategy, log_folder)
 
     logger.info(
         f""" - - - <blue>Qubx</blue> (ver. <red>{version()}</red>) - - -\n - Strategy: {strategy}\n - Config: {cfg.parameters} """
@@ -403,6 +396,25 @@ def create_strategy_context(
     )
 
     return ctx
+
+
+def get_logger(logger_name: str, account_id: str, run_id: str, strategy: IStrategy, log_folder: str = "logs") -> StrategyLogging:
+    if logger_name is not None:
+        _w_class = logger_name if "." in logger_name else "qubx.core.loggers." + logger_name
+        try:
+            w_class = class_import(_w_class)
+            logs_kwargs = {"account_id": account_id, "strategy_id": strategy.__name__, "run_id": run_id}
+            if "log_folder" in inspect.signature(w_class).parameters:
+                logs_kwargs["log_folder"] = log_folder
+            writer = w_class(**logs_kwargs)
+            logger.debug(f"Setup <g>{writer.__class__.__name__}</g> logger...")
+        except Exception as err:
+            logger.warning(f"Can't instantiate specified writer {logger_name}: {str(err)}")
+            writer = LogsWriter(account_id, strategy.__name__, run_id)
+    else:
+        writer = InMemoryLogsWriter(account_id, strategy.__name__, run_id)
+    stg_logging = StrategyLogging(writer, heartbeat_freq="1m")
+    return stg_logging
 
 
 def _run_in_jupyter(filename: str, accounts: str, paths: list):
@@ -489,7 +501,9 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
         logger.error("Can't load strategy")
         return
 
-    logger.add(LOGFILE + cfg.name + "_{time}.log", format=formatter, rotation="100 MB", colorize=False)
+    log_id = time.strftime("%Y%m%d%H%M%S", time.gmtime())
+    log_folder = f"{LOGPATH.removesuffix('/')}/run_{log_id}"
+    logger.add(f"{log_folder}/strategy/{cfg.name}_" +"{time}.log", format=formatter, rotation="100 MB", colorize=False)
 
     # - read account creds
     acc_config = {}
@@ -514,6 +528,7 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
                 paper=paper,
                 aux_config=cfg.aux,
                 log=cfg.portfolio_logger,
+                log_folder=log_folder
             )
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
