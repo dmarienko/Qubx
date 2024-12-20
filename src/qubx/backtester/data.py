@@ -267,3 +267,6 @@ class SimulatedDataProvider(IDataProvider):
         cc.send((instrument, data_type, data, is_hist))
 
         return cc.control.is_set()
+
+    def exchange(self) -> str:
+        return self._exchange_id

@@ -334,6 +334,10 @@ class StrategyContext(IStrategyContext):
     def instruments(self):
         return self._universe_manager.instruments
 
+    @property
+    def exchanges(self) -> list[str]:
+        return self._trading_manager.exchanges()
+
     # ISubscriptionManager delegation
     def subscribe(self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None):
         return self._subscription_manager.subscribe(subscription_type, instruments)

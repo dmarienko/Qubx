@@ -18,9 +18,11 @@ class SimulatedBroker(IBroker):
         self,
         channel: CtrlChannel,
         account: SimulatedAccountProcessor,
+        exchange_id: str = "simulated",
     ) -> None:
         self.channel = channel
         self._account = account
+        self._exchange_id = exchange_id
 
     @property
     def is_simulated_trading(self) -> bool:
@@ -80,3 +82,6 @@ class SimulatedBroker(IBroker):
         self.channel.send((instrument, "order", report.order, False))
         if report.exec is not None:
             self.channel.send((instrument, "deals", [report.exec], False))
+
+    def exchange(self) -> str:
+        return self._exchange_id
