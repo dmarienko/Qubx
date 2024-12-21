@@ -26,6 +26,7 @@ from qubx.core.context import StrategyContext
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy
 from qubx.core.loggers import CsvFileLogsWriter, InMemoryLogsWriter, LogsWriter, StrategyLogging
+from qubx.core.loggers import CsvFileLogsWriter, InMemoryLogsWriter, LogsWriter, StrategyLogging
 from qubx.data import DataReader
 from qubx.data.helpers import __KNOWN_READERS
 from qubx.utils.marketdata.ccxt import ccxt_build_qubx_exchange_name
@@ -267,7 +268,7 @@ def get_account_config(account_id: str, accounts_cfg_file: str) -> dict | None:
     return cfg | {"account_id": account_id, "reserves": reserves}
 
 
-def get_strategy(config_file: str, search_paths: list, account: str) -> (IStrategy, Struct):
+def get_strategy(config_file: str, search_paths: list, account: str) -> tuple[IStrategy, Struct]:
     cfg = load_strategy_config(config_file, account)
     search_paths = list(search_paths)
     search_paths.append(Path(config_file).parent)
@@ -295,11 +296,11 @@ def create_strategy_context(
     paper_capital: float = 100_000,
     commissions: str | None = None,
     loop: asyncio.AbstractEventLoop | None = None,
-) -> StrategyContext | None:
+) -> StrategyContext:
     strategy, cfg = get_strategy(filename, paths, account_id)
     if not all([strategy, cfg]):
         logger.error("Can't load strategy")
-        return
+        raise ValueError("Can't load strategy")
     strategy_config, symbols, exchange_name, aux_config = cfg.parameters, cfg.instruments, cfg.exchange, cfg.aux
 
     log_id = time.strftime("%Y%m%d%H%M%S", time.gmtime())
@@ -312,7 +313,7 @@ def create_strategy_context(
         acc_config = get_account_env_config(account_id, acc_file)
         if acc_config is None:
             logger.error("Can't read account configuration")
-            return None
+            raise ValueError("Can't read account configuration")
 
     strategy_id = (
         strategy_id or uuid.uuid4().hex[:8]
@@ -455,10 +456,15 @@ def _run_in_jupyter(filename: str, accounts: str, paths: list):
         }
     )
     logger.info("Running in Jupyter console")
-    TerminalRunner.launch_instance(content_with_values)
+    TerminalRunner.launch_instance(init_code=content_with_values)
 
 
-@click.command()
+@click.group()
+def main():
+    pass
+
+
+@main.command()
 @click.argument("filename", type=click.Path(exists=True))
 @click.option("--account", "-a", type=click.STRING, help="Account id for trading", default=None, show_default=True)
 @click.option(
@@ -481,6 +487,9 @@ def _run_in_jupyter(filename: str, accounts: str, paths: list):
 @click.option("--testnet", "-t", is_flag=True, default=False, help="Use testnet for trading", show_default=True)
 @click.option("--paper", "-p", is_flag=True, default=False, help="Use paper trading mode", show_default=True)
 def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, testnet: bool, paper: bool):
+    """
+    Run strategy in live trading mode with specified configuration.
+    """
     if not account and not paper:
         logger.error("Account id is required for live trading")
         return
@@ -532,4 +541,4 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
 
 
 if __name__ == "__main__":
-    run()
+    main()
