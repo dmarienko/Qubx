@@ -25,7 +25,7 @@ from qubx.core.basics import CtrlChannel, Instrument, LiveTimeProvider
 from qubx.core.context import StrategyContext
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy
-from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging, CsvFileLogsWriter
+from qubx.core.loggers import CsvFileLogsWriter, InMemoryLogsWriter, LogsWriter, StrategyLogging
 from qubx.data import DataReader
 from qubx.data.helpers import __KNOWN_READERS
 from qubx.utils.marketdata.ccxt import ccxt_build_qubx_exchange_name
@@ -100,19 +100,15 @@ def run_ccxt_trading(
     if exchange.apiKey:
         logger.info(f"Connected {exchange_name} exchange with {exchange.apiKey[:2]}...{exchange.apiKey[-2:]} API key")
     account, broker, data_provider = get_ccxt_instances(
-        account_id,
-        base_currency,
-        channel,
-        exchange,
-        fees_calculator,
-        paper,
-        paper_capital,
-        time_provider,
-        use_testnet
+        account_id, base_currency, channel, exchange, fees_calculator, paper, paper_capital, time_provider, use_testnet
     )
 
     # - get logger
-    run_id = socket.gethostname() + "-" + str(int(time.time()*10**9) if paper else broker.time_provider.time().item() // 100_000_000)
+    run_id = (
+        socket.gethostname()
+        + "-"
+        + str(int(time.time() * 10**9) if paper else broker.time_provider.time().item() // 100_000_000)
+    )
     stg_logging = get_logger(log, account_id, run_id, strategy, log_folder)
 
     ctx = StrategyContext(
@@ -142,15 +138,7 @@ def run_ccxt_trading(
 
 
 def get_ccxt_instances(
-        account_id,
-        base_currency,
-        channel,
-        exchange,
-        fees_calculator,
-        paper,
-        paper_capital,
-        time_provider,
-        use_testnet
+    account_id, base_currency, channel, exchange, fees_calculator, paper, paper_capital, time_provider, use_testnet
 ):
     if paper:
         account = SimulatedAccountProcessor(
@@ -161,7 +149,7 @@ def get_ccxt_instances(
             tcc=fees_calculator,
             initial_capital=paper_capital,
         )
-        broker = SimulatedBroker(channel=channel, account=account)
+        broker = SimulatedBroker(channel=channel, account=account, exchange_id=exchange.upper())
         logger.debug("Setup paper account...")
     else:
         account = CcxtAccountProcessor(account_id, exchange, channel, time_provider, base_currency, tcc=fees_calculator)
@@ -296,17 +284,17 @@ def get_strategy(config_file: str, search_paths: list, account: str) -> (IStrate
 
 
 def create_strategy_context(
-        filename: str,
-        account_id: str,
-        acc_file: str,
-        paths: list[Path],
-        strategy_id: str | None = None,
-        paper: bool = False,
-        testnet: bool = False,
-        base_currency: str = "USDT",
-        paper_capital: float = 100_000,
-        commissions: str | None = None,
-        loop: asyncio.AbstractEventLoop | None = None,
+    filename: str,
+    account_id: str,
+    acc_file: str,
+    paths: list[Path],
+    strategy_id: str | None = None,
+    paper: bool = False,
+    testnet: bool = False,
+    base_currency: str = "USDT",
+    paper_capital: float = 100_000,
+    commissions: str | None = None,
+    loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext | None:
     strategy, cfg = get_strategy(filename, paths, account_id)
     if not all([strategy, cfg]):
@@ -316,7 +304,7 @@ def create_strategy_context(
 
     log_id = time.strftime("%Y%m%d%H%M%S", time.gmtime())
     log_folder = f"{LOGPATH.removesuffix('/')}/run_{log_id}"
-    logger.add(f"{log_folder}/strategy/{cfg.name}_" +"{time}.log", format=formatter, rotation="100 MB", colorize=False)
+    logger.add(f"{log_folder}/strategy/{cfg.name}_" + "{time}.log", format=formatter, rotation="100 MB", colorize=False)
 
     # - read account creds
     acc_config = {}
@@ -326,7 +314,9 @@ def create_strategy_context(
             logger.error("Can't read account configuration")
             return None
 
-    strategy_id = strategy_id or uuid.uuid4().hex[:8]  # todo: not sure, but if take from tags cannot distinguish between different runs
+    strategy_id = (
+        strategy_id or uuid.uuid4().hex[:8]
+    )  # todo: not sure, but if take from tags cannot distinguish between different runs
     logger.info(f"Running {'paper' if paper else 'live'} strategy on {exchange_name} exchange ({strategy_id=})...")
     acc_config = acc_config if not paper else {}
     assert paper or acc_config, "Credentials are required for live trading"
@@ -356,7 +346,8 @@ def create_strategy_context(
             exchange = get_ccxt_exchange(exchange_name, use_testnet=testnet, loop=loop, **(acc_config or {}))
             if exchange.apiKey:
                 logger.info(
-                    f"Connected {exchange_name} exchange with {exchange.apiKey[:2]}...{exchange.apiKey[-2:]} API key")
+                    f"Connected {exchange_name} exchange with {exchange.apiKey[:2]}...{exchange.apiKey[-2:]} API key"
+                )
             account, broker, data_provider = get_ccxt_instances(
                 account_id,
                 base_currency,
@@ -366,13 +357,17 @@ def create_strategy_context(
                 paper,
                 paper_capital,
                 time_provider,
-                testnet
+                testnet,
             )
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
 
     # - generate new run id
-    run_id = socket.gethostname() + "-" + str(int(time.time()*10**9) if paper else broker.time_provider.time().item() // 100_000_000)
+    run_id = (
+        socket.gethostname()
+        + "-"
+        + str(int(time.time() * 10**9) if paper else broker.time_provider.time().item() // 100_000_000)
+    )
 
     # - get logger
     writer = None
@@ -398,7 +393,9 @@ def create_strategy_context(
     return ctx
 
 
-def get_logger(logger_name: str, account_id: str, run_id: str, strategy: IStrategy, log_folder: str = "logs") -> StrategyLogging:
+def get_logger(
+    logger_name: str, account_id: str, run_id: str, strategy: IStrategy, log_folder: str = "logs"
+) -> StrategyLogging:
     if logger_name is not None:
         _w_class = logger_name if "." in logger_name else "qubx.core.loggers." + logger_name
         try:
@@ -503,7 +500,7 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
 
     log_id = time.strftime("%Y%m%d%H%M%S", time.gmtime())
     log_folder = f"{LOGPATH.removesuffix('/')}/run_{log_id}"
-    logger.add(f"{log_folder}/strategy/{cfg.name}_" +"{time}.log", format=formatter, rotation="100 MB", colorize=False)
+    logger.add(f"{log_folder}/strategy/{cfg.name}_" + "{time}.log", format=formatter, rotation="100 MB", colorize=False)
 
     # - read account creds
     acc_config = {}
@@ -528,7 +525,7 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
                 paper=paper,
                 aux_config=cfg.aux,
                 log=cfg.portfolio_logger,
-                log_folder=log_folder
+                log_folder=log_folder,
             )
         case _:
             raise ValueError(f"Connector {conn} is not supported yet !")
