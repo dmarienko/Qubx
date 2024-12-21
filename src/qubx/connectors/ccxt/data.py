@@ -423,6 +423,14 @@ class CcxtDataProvider(IDataProvider):
                                 False,  # not historical bar
                             )
                         )
+                    if not (
+                        self.has_subscription(instrument, DataType.ORDERBOOK)
+                        or self.has_subscription(instrument, DataType.QUOTE)
+                    ):
+                        _price = ohlcvs[-1][4]
+                        _s2 = instrument.tick_size / 2.0
+                        _bid, _ask = _price - _s2, _price + _s2
+                        self._last_quotes[instrument] = Quote(oh[0] * 1_000_000, _bid, _ask, 0.0, 0.0)
 
         # ohlc subscription reuses the same connection always, unsubscriptions don't work properly
         # but it's likely not very needed
