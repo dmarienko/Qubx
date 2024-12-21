@@ -269,4 +269,4 @@ class SimulatedDataProvider(IDataProvider):
         return cc.control.is_set()
 
     def exchange(self) -> str:
-        return self._exchange_id
+        return self._exchange_id.upper()

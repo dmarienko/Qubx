@@ -84,4 +84,4 @@ class SimulatedBroker(IBroker):
             self.channel.send((instrument, "deals", [report.exec], False))
 
     def exchange(self) -> str:
-        return self._exchange_id
+        return self._exchange_id.upper()
