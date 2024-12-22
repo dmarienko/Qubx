@@ -607,3 +607,6 @@ class CcxtDataProvider(IDataProvider):
             name=name,
             unsubscriber=un_watch_funding_rates,
         )
+
+    def exchange(self) -> str:
+        return self._exchange_id.upper()

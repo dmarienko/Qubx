@@ -82,3 +82,6 @@ class TradingManager(ITradingManager):
         assert self._order_id is not None
         self._order_id += 1
         return "_".join(["qubx", symbol, str(self._order_id)])
+
+    def exchanges(self) -> list[str]:
+        return [self._broker.exchange()]

@@ -26,6 +26,7 @@ from qubx.core.context import StrategyContext
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy
 from qubx.core.loggers import CsvFileLogsWriter, InMemoryLogsWriter, LogsWriter, StrategyLogging
+from qubx.core.loggers import CsvFileLogsWriter, InMemoryLogsWriter, LogsWriter, StrategyLogging
 from qubx.data import DataReader
 from qubx.data.helpers import __KNOWN_READERS
 from qubx.utils.marketdata.ccxt import ccxt_build_qubx_exchange_name
@@ -149,7 +150,7 @@ def get_ccxt_instances(
             tcc=fees_calculator,
             initial_capital=paper_capital,
         )
-        broker = SimulatedBroker(channel=channel, account=account)
+        broker = SimulatedBroker(channel=channel, account=account, exchange_id=exchange.upper())
         logger.debug("Setup paper account...")
     else:
         account = CcxtAccountProcessor(account_id, exchange, channel, time_provider, base_currency, tcc=fees_calculator)
