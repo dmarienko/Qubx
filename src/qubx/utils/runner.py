@@ -6,15 +6,15 @@ import socket
 import sys
 import time
 import uuid
-from dataclasses import dataclass
 from os.path import exists, expanduser
 from pathlib import Path
 from typing import Tuple
+import ccxt.pro as cxp
 
 import click
-import pandas as pd
 import yaml
 from dotenv import dotenv_values, find_dotenv, load_dotenv
+from pydantic import BaseModel
 
 from qubx import formatter, logger, lookup
 from qubx.backtester.account import SimulatedAccountProcessor
@@ -23,7 +23,7 @@ from qubx.connectors.ccxt.account import CcxtAccountProcessor
 from qubx.connectors.ccxt.broker import CcxtBroker
 from qubx.connectors.ccxt.data import CcxtDataProvider
 from qubx.connectors.ccxt.factory import get_ccxt_exchange
-from qubx.core.basics import CtrlChannel, Instrument, LiveTimeProvider
+from qubx.core.basics import CtrlChannel, Instrument, LiveTimeProvider, TransactionCostsCalculator
 from qubx.core.context import StrategyContext
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy
@@ -36,25 +36,23 @@ from qubx.utils.misc import Struct, add_project_to_system_path, logo, version
 LOGPATH = "logs"
 
 
-@dataclass
-class ExchangeConfig:
+class ExchangeConfig(BaseModel):
     name: str
     connector: str
     universe: list[str]
     instruments: list[Instrument] | None = None
 
 
-@dataclass
-class StrategyConfig:
+class StrategyConfig(BaseModel):
     strategy: str
     name: str
-    parameters: dict
-    exchange: ExchangeConfig
+    exchanges: list[ExchangeConfig]
     account: str
-    aux: dict
-    portfolio_logger: str
-    log_positions_interval: str
-    log_portfolio_interval: str
+    parameters: dict | None = None
+    aux: dict | None = None
+    logger: str | None = None
+    log_positions_interval: str | None = None
+    log_portfolio_interval: str | None = None
 
 
 def class_import(name):
@@ -79,7 +77,7 @@ def _instruments_for_exchange(exch: str, symbols: list) -> list:
 def run_ccxt_trading(
     strategy: IStrategy,
     exchange_name: str,
-    symbols: list[str | Instrument],
+    symbols: list[str],
     credentials: dict | None = None,
     strategy_config: dict | None = None,
     blocking: bool = True,
@@ -165,15 +163,15 @@ def run_ccxt_trading(
 
 
 def get_ccxt_instances(
-        account_id,
-        base_currency,
-        channel,
-        exchange,
-        fees_calculator,
-        paper,
-        paper_capital,
-        time_provider,
-        use_testnet
+        account_id: str,
+        base_currency: str,
+        channel: CtrlChannel,
+        exchange: cxp.Exchange,
+        fees_calculator: TransactionCostsCalculator,
+        paper: bool,
+        paper_capital: float,
+        time_provider: LiveTimeProvider,
+        use_testnet: bool = False
 ):
     if paper:
         account = SimulatedAccountProcessor(
@@ -226,35 +224,29 @@ def _get_instruments(symbols: list[str], exchange: str) -> list[Instrument]:
     return instruments
 
 
-def load_strategy_config(filename: str, account: str) -> list[StrategyConfig]:
-    with open(filename, "r") as f:
-        content = yaml.safe_load(f)
+def load_strategy_config(filename: str, account: str) -> StrategyConfig:
+    try:
+        with open(filename, "r") as f:
+            content = yaml.safe_load(f)
+    except Exception as exc:
+        logger.error(f"Can't read strategy config from {filename} file: {str(exc)}")
+        raise exc
 
-    config = content["config"]
-    strat = config["strategy"]
+    config_raw = content["config"]
+    strat = config_raw["strategy"]
     name = strat.split(".")[-1]
-    str_configs = []
+    config_raw["name"] = name
+    excs = []
+    for exc, exc_data in config_raw["exchanges"].items():
+        exc_data["name"] = exc
+        exc_data["instruments"] = _instruments_for_exchange(exc, exc_data["universe"])
+        exc_data["instruments"] = [i for i in exc_data["instruments"] if i is not None]
+        excs.append(ExchangeConfig.model_validate(exc_data))
+    config_raw["exchanges"] = excs
+    config_raw["account"] = account
 
-    for exchange, data in config["exchanges"].items():
-        r = StrategyConfig(
-            strategy=strat,
-            name=name,
-            parameters=config.get("parameters", dict()),
-            exchange=ExchangeConfig(
-                name=exchange,
-                connector=data.get("connector"),
-                universe=data.get("universe"),
-            ),
-            account=account,
-            aux=config.get("aux", None),
-            portfolio_logger=config.get("logger", None),
-            log_positions_interval=config.get("log_positions_interval", None),
-            log_portfolio_interval=config.get("log_portfolio_interval", None),
-        )
-        r.exchange.instruments = _instruments_for_exchange(r.exchange.name, r.exchange.universe)
-        str_configs.append(r)
-
-    return str_configs
+    str_config = StrategyConfig.model_validate(config_raw)
+    return str_config
 
 
 def get_account_env_config(account_id: str, env_file: str) -> dict | None:
@@ -264,7 +256,7 @@ def get_account_env_config(account_id: str, env_file: str) -> dict | None:
     account_data = {}
     for name, value in env_data.items():
         if name.upper().startswith(f"{account_id.upper()}__"):
-            account_data[name.split("__")[-1]] = value
+            account_data[name.split("__")[-1].lower()] = value
     if not account_data:
         logger.error(f"No records for {account_id} found in env")
         # return None
@@ -299,11 +291,8 @@ def get_account_config(account_id: str, accounts_cfg_file: str) -> dict | None:
     return cfg | {"account_id": account_id, "reserves": reserves}
 
 
-def get_strategy(config_file: str, search_paths: list, account: str, exchange: str) -> Tuple[IStrategy, StrategyConfig]:
-    cfgs = load_strategy_config(config_file, account)
-    cfg = next((c for c in cfgs if c.exchange.name == exchange), None)
-    if cfg is None:
-        raise ValueError(f"Can't find strategy for {exchange} exchange in {config_file} file")
+def get_strategy(config_file: str, search_paths: list, account: str) -> Tuple[IStrategy, StrategyConfig]:
+    cfg = load_strategy_config(config_file, account)
     search_paths = list(search_paths)
     search_paths.append(Path(config_file).parent)
     try:
@@ -320,8 +309,7 @@ def get_strategy(config_file: str, search_paths: list, account: str, exchange: s
 
 def create_strategy_context(
         strategy: IStrategy,
-        account_id: str,
-        acc_file: str,
+        acc_config: dict,
         cfg: StrategyConfig,
         strategy_id: str | None = None,
         paper: bool = False,
@@ -331,29 +319,20 @@ def create_strategy_context(
         commissions: str | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
 ) -> StrategyContext | None:
-    strategy_config, symbols, exchange_name, aux_config = cfg.parameters, cfg.exchange.instruments, cfg.exchange, cfg.aux
+    exch_cfg = next((e for e in cfg.exchanges if e.name == acc_config["exchange"]), None)
+    if exch_cfg is None:
+        logger.error(f"Can't find exchange configuration for {cfg.exchange.name}")
+        return
+    strategy_config, symbols, exchange_name, aux_config = cfg.parameters, exch_cfg.instruments, exch_cfg.name, cfg.aux
 
     log_id = time.strftime("%Y%m%d%H%M%S", time.gmtime())
     log_folder = f"{LOGPATH.removesuffix('/')}/run_{log_id}"
     logger.add(f"{log_folder}/strategy/{cfg.name}_" +"{time}.log", format=formatter, rotation="100 MB", colorize=False)
 
-    # - read account creds
-    acc_config = {}
-    if cfg.account is not None:
-        acc_config = get_account_env_config(account_id, acc_file)
-        if acc_config is None:
-            logger.error("Can't read account configuration")
-            return None
-
     strategy_id = strategy_id or uuid.uuid4().hex[:8]  # todo: not sure, but if take from tags cannot distinguish between different runs
     logger.info(f"Running {'paper' if paper else 'live'} strategy on {exchange_name} exchange ({strategy_id=})...")
-    acc_config = acc_config if not paper else {}
-    assert paper or acc_config, "Credentials are required for live trading"
-
-    instruments: list[Instrument] = (  # type: ignore
-        symbols if isinstance(symbols[0], Instrument) else _get_instruments(symbols, exchange_name)
-    )
-    instruments = [i for i in instruments if i is not None]
+    creds = {k: v for k, v in acc_config.items() if k.upper() in ["APIKEY", "SECRET"]}
+    assert paper or creds, "Credentials are required for live trading"
 
     aux_reader = get_aux_reader(aux_config)
     logger.debug(f"Setup <g>{aux_reader.__class__.__name__}</g> reader...") if aux_reader is not None else None
@@ -368,16 +347,15 @@ def create_strategy_context(
     assert fees_calculator is not None, f"Can't find fees calculator for {qubx_exchange_name} exchange"
 
     # - check connector
-    conn = cfg.connector.lower()
-    match conn:
+    match exch_cfg.connector.lower():
         case "ccxt":
             # - TODO: we need some factory here
-            exchange = get_ccxt_exchange(exchange_name, use_testnet=testnet, loop=loop, **(acc_config or {}))
+            exchange = get_ccxt_exchange(exchange_name, use_testnet=testnet, loop=loop, **(creds))
             if exchange.apiKey:
                 logger.info(
                     f"Connected {exchange_name} exchange with {exchange.apiKey[:2]}...{exchange.apiKey[-2:]} API key")
             account, broker, data_provider = get_ccxt_instances(
-                account_id,
+                acc_config["account_id"],
                 base_currency,
                 channel,
                 exchange,
@@ -388,15 +366,14 @@ def create_strategy_context(
                 testnet
             )
         case _:
-            raise ValueError(f"Connector {conn} is not supported yet !")
+            raise ValueError(f"Connector {exch_cfg.connector} is not supported yet !")
 
     # - generate new run id
     run_id = socket.gethostname() + "-" + str(int(time.time()*10**9) if paper else broker.time_provider.time().item() // 100_000_000)
 
     # - get logger
-    writer = None
-    _w_class = cfg.portfolio_logger
-    stg_logging = get_logger(_w_class, account_id, run_id, strategy, log_folder)
+    _w_class = cfg.logger
+    stg_logging = get_logger(_w_class, acc_config["account_id"], run_id, strategy, log_folder)
 
     logger.info(
         f""" - - - <blue>Qubx</blue> (ver. <red>{version()}</red>) - - -\n - Strategy: {strategy}\n - Config: {cfg.parameters} """
@@ -408,7 +385,7 @@ def create_strategy_context(
         account=account,
         scheduler=scheduler,
         time_provider=time_provider,
-        instruments=instruments,
+        instruments=exch_cfg.instruments,
         logging=stg_logging,
         config=strategy_config,
         aux_data_provider=aux_reader,
@@ -515,37 +492,37 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
     # - show Qubx logo with current version
     logo()
 
+    strategy, cfg = get_strategy(filename, paths, account)
+
     # - read account creds
     acc_config = get_account_env_config(account, acc_file)
     if acc_config is None:
         logger.error("Can't read account configuration")
         return None
 
-    strategy, cfg = get_strategy(filename, paths, account, acc_config["exchange"])
-
     log_id = time.strftime("%Y%m%d%H%M%S", time.gmtime())
     log_folder = f"{LOGPATH.removesuffix('/')}/run_{log_id}"
     logger.add(f"{log_folder}/strategy/{cfg.name}_" +"{time}.log", format=formatter, rotation="100 MB", colorize=False)
 
-    # - check connector
-    conn = cfg.exchange.connector.lower()
-    match conn:
-        case "ccxt":
-            run_ccxt_trading(
-                strategy=strategy,
-                exchange_name=cfg.exchange.name,
-                symbols=cfg.exchange.instruments,
-                credentials=acc_config,
-                strategy_config=cfg.parameters,
-                account_id=account,
-                use_testnet=testnet,
-                paper=paper,
-                aux_config=cfg.aux,
-                log=cfg.portfolio_logger,
-                log_folder=log_folder
-            )
-        case _:
-            raise ValueError(f"Connector {conn} is not supported yet !")
+    ctx = create_strategy_context(
+        strategy=strategy,
+        acc_config=acc_config,
+        cfg=cfg,
+        strategy_id=None,
+        paper=paper,
+        testnet=testnet,
+        base_currency="USDT",
+        paper_capital=100_000,
+        commissions=acc_config.get("commissions"),
+        loop=None,
+    )
+
+    try:
+        ctx.start(blocking=True)
+    except KeyboardInterrupt:
+        logger.info("Stopped by user")
+    finally:
+        ctx.stop()
 
 
 if __name__ == "__main__":
