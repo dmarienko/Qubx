@@ -232,12 +232,11 @@ class SimulatedDataProvider(IDataProvider):
         if is_hist:
             raise ValueError("Historical data is not supported for pre-generated signals !")
 
-        t = data.time  # type: ignore
-        self.time_provider.set_time(np.datetime64(t, "ns"))
-
-        q = self._account.emulate_quote_from_data(instrument, np.datetime64(t, "ns"), data)
-        self._last_quotes[instrument] = q
         cc = self.channel
+
+        t = np.datetime64(data.time, "ns")
+        self.time_provider.set_time(t)
+        self._last_quotes[instrument] = self._account.emulate_quote_from_data(instrument, t, data)
 
         # - we need to send quotes for invoking portfolio logging etc
         cc.send((instrument, data_type, data, is_hist))
@@ -250,13 +249,12 @@ class SimulatedDataProvider(IDataProvider):
         return cc.control.is_set()
 
     def _run_as_strategy(self, instrument: Instrument, data_type: str, data: Any, is_hist: bool) -> bool:
-        t = data.time  # type: ignore
-        self.time_provider.set_time(np.datetime64(t, "ns"))
-
-        q = self._account.emulate_quote_from_data(instrument, np.datetime64(t, "ns"), data)
         cc = self.channel
 
-        if not is_hist and q is not None:
+        t = np.datetime64(data.time, "ns")
+        self.time_provider.set_time(t)
+
+        if not is_hist and (q := self._account.emulate_quote_from_data(instrument, t, data)) is not None:
             self._last_quotes[instrument] = q
 
             # we have to schedule possible crons before sending the data event itself
