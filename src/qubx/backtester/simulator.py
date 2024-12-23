@@ -227,7 +227,7 @@ def _run_setup(
         accurate_stop_orders_execution=accurate_stop_orders_execution,
     )
     scheduler = SimulatedScheduler(channel, lambda: time_provider.time().item())
-    broker = SimulatedBroker(channel, account)
+    broker = SimulatedBroker(channel, account, setup.exchange)
     data_provider = SimulatedDataProvider(
         exchange_id=setup.exchange,
         channel=channel,

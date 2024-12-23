@@ -27,7 +27,7 @@ from qubx.core.basics import CtrlChannel, Instrument, LiveTimeProvider, Transact
 from qubx.core.context import StrategyContext
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy
-from qubx.core.loggers import InMemoryLogsWriter, LogsWriter, StrategyLogging, CsvFileLogsWriter
+from qubx.core.loggers import CsvFileLogsWriter, InMemoryLogsWriter, LogsWriter, StrategyLogging
 from qubx.data import DataReader
 from qubx.data.helpers import __KNOWN_READERS
 from qubx.utils.marketdata.ccxt import ccxt_build_qubx_exchange_name
@@ -363,7 +363,7 @@ def create_strategy_context(
                 paper,
                 paper_capital,
                 time_provider,
-                testnet
+                testnet,
             )
         case _:
             raise ValueError(f"Connector {exch_cfg.connector} is not supported yet !")
@@ -454,10 +454,15 @@ def _run_in_jupyter(filename: str, accounts: str, paths: list):
         }
     )
     logger.info("Running in Jupyter console")
-    TerminalRunner.launch_instance(content_with_values)
+    TerminalRunner.launch_instance(init_code=content_with_values)
 
 
-@click.command()
+@click.group()
+def main():
+    pass
+
+
+@main.command()
 @click.argument("filename", type=click.Path(exists=True))
 @click.option("--account", "-a", type=click.STRING, help="Account id for trading", default=None, show_default=True)
 @click.option(
@@ -480,6 +485,9 @@ def _run_in_jupyter(filename: str, accounts: str, paths: list):
 @click.option("--testnet", "-t", is_flag=True, default=False, help="Use testnet for trading", show_default=True)
 @click.option("--paper", "-p", is_flag=True, default=False, help="Use paper trading mode", show_default=True)
 def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, testnet: bool, paper: bool):
+    """
+    Run strategy in live trading mode with specified configuration.
+    """
     if not account and not paper:
         logger.error("Account id is required for live trading")
         return
@@ -526,4 +534,4 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
 
 
 if __name__ == "__main__":
-    run()
+    main()

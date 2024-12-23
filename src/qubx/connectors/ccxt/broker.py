@@ -22,7 +22,7 @@ from .utils import ccxt_convert_order_info, instrument_to_ccxt_symbol
 
 
 class CcxtBroker(IBroker):
-    exchange: cxp.Exchange
+    _exchange: cxp.Exchange
 
     _positions: dict[Instrument, Position]
     _loop: AsyncThreadLoop
@@ -34,7 +34,7 @@ class CcxtBroker(IBroker):
         time_provider: ITimeProvider,
         account: IAccountProcessor,
     ):
-        self.exchange = exchange
+        self._exchange = exchange
         self.ccxt_exchange_id = str(exchange.name)
         self.channel = channel
         self.time_provider = time_provider
@@ -73,7 +73,7 @@ class CcxtBroker(IBroker):
         r: dict[str, Any] | None = None
         try:
             r = self._loop.submit(
-                self.exchange.create_order(
+                self._exchange.create_order(
                     symbol=ccxt_symbol,
                     type=order_type,  # type: ignore
                     side=order_side,  # type: ignore
@@ -109,7 +109,7 @@ class CcxtBroker(IBroker):
             try:
                 logger.info(f"Canceling order {order_id} ...")
                 r = self._loop.submit(
-                    self.exchange.cancel_order(order_id, symbol=instrument_to_ccxt_symbol(order.instrument))
+                    self._exchange.cancel_order(order_id, symbol=instrument_to_ccxt_symbol(order.instrument))
                 ).result()
             except Exception as err:
                 logger.error(f"Canceling [{order}] exception : {err}")
@@ -122,3 +122,9 @@ class CcxtBroker(IBroker):
 
     def update_order(self, order_id: str, price: float | None = None, amount: float | None = None) -> Order:
         raise NotImplementedError("Not implemented yet")
+
+    def exchange(self) -> str:
+        """
+        Return the name of the exchange this broker is connected to.
+        """
+        return self.ccxt_exchange_id.upper()

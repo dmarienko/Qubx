@@ -289,6 +289,12 @@ class IBroker:
         """
         raise NotImplementedError("update_order is not implemented")
 
+    def exchange(self) -> str:
+        """
+        Return the name of the exchange this broker is connected to.
+        """
+        raise NotImplementedError("exchange() is not implemented")
+
 
 class IDataProvider:
     time_provider: ITimeProvider
@@ -398,6 +404,12 @@ class IDataProvider:
         Close the data provider.
         """
         ...
+
+    def exchange(self) -> str:
+        """
+        Return the name of the exchange this provider reads data
+        """
+        raise NotImplementedError("exchange() is not implemented")
 
 
 class IMarketManager(ITimeProvider):
@@ -546,6 +558,8 @@ class ITradingManager:
             instrument: The instrument to cancel orders for
         """
         ...
+
+    def exchanges(self) -> list[str]: ...
 
 
 class IUniverseManager:
@@ -874,6 +888,13 @@ class IStrategyContext(
     def is_simulation(self) -> bool:
         """
         Check if the strategy is running in simulation mode.
+        """
+        ...
+
+    @property
+    def exchanges(self) -> list[str]:
+        """
+        Returns a list of exchanges in this context. There is one exchange in the most cases.
         """
         ...
 
