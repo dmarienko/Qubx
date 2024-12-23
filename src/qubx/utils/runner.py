@@ -3,7 +3,6 @@ import configparser
 import inspect
 import os
 import socket
-import sys
 import time
 import uuid
 from os.path import exists, expanduser
@@ -133,7 +132,11 @@ def run_ccxt_trading(
     )
 
     # - get logger
-    run_id = socket.gethostname() + "-" + str(int(time.time()*10**9) if paper else broker.time_provider.time().item() // 100_000_000)
+    run_id = (
+        socket.gethostname()
+        + "-"
+        + str(int(time.time() * 10**9) if paper else broker.time_provider.time().item() // 100_000_000)
+    )
     stg_logging = get_logger(log, account_id, run_id, strategy, log_folder)
 
     ctx = StrategyContext(
@@ -182,7 +185,7 @@ def initialize_ccxt_components(
             tcc=fees_calculator,
             initial_capital=paper_capital,
         )
-        broker = SimulatedBroker(channel=channel, account=account)
+        broker = SimulatedBroker(channel=channel, account=account, exchange_id=exchange.name.upper())
         logger.debug("Setup paper account...")
     else:
         account = CcxtAccountProcessor(account_id, exchange, channel, time_provider, base_currency, tcc=fees_calculator)
@@ -327,7 +330,7 @@ def create_strategy_context(
 
     log_id = time.strftime("%Y%m%d%H%M%S", time.gmtime())
     log_folder = f"{LOGPATH.removesuffix('/')}/run_{log_id}"
-    logger.add(f"{log_folder}/strategy/{cfg.name}_" +"{time}.log", format=formatter, rotation="100 MB", colorize=False)
+    logger.add(f"{log_folder}/strategy/{cfg.name}_" + "{time}.log", format=formatter, rotation="100 MB", colorize=False)
 
     strategy_id = strategy_id or uuid.uuid4().hex[:8]  # todo: not sure, but if take from tags cannot distinguish between different runs
     logger.info(f"Running {'paper' if paper else 'live'} strategy on {exchange_name} exchange ({strategy_id=})...")
@@ -369,7 +372,11 @@ def create_strategy_context(
             raise ValueError(f"Connector {exch_cfg.connector} is not supported yet !")
 
     # - generate new run id
-    run_id = socket.gethostname() + "-" + str(int(time.time()*10**9) if paper else broker.time_provider.time().item() // 100_000_000)
+    run_id = (
+        socket.gethostname()
+        + "-"
+        + str(int(time.time() * 10**9) if paper else broker.time_provider.time().item() // 100_000_000)
+    )
 
     # - get logger
     _w_class = cfg.logger
@@ -510,7 +517,7 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
 
     log_id = time.strftime("%Y%m%d%H%M%S", time.gmtime())
     log_folder = f"{LOGPATH.removesuffix('/')}/run_{log_id}"
-    logger.add(f"{log_folder}/strategy/{cfg.name}_" +"{time}.log", format=formatter, rotation="100 MB", colorize=False)
+    logger.add(f"{log_folder}/strategy/{cfg.name}_" + "{time}.log", format=formatter, rotation="100 MB", colorize=False)
 
     ctx = create_strategy_context(
         strategy=strategy,
