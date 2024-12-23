@@ -120,7 +120,7 @@ def run_ccxt_trading(
     exchange = get_ccxt_exchange(exchange_name, use_testnet=use_testnet, loop=loop, **(credentials or {}))
     if exchange.apiKey:
         logger.info(f"Connected {exchange_name} exchange with {exchange.apiKey[:2]}...{exchange.apiKey[-2:]} API key")
-    account, broker, data_provider = get_ccxt_instances(
+    account, broker, data_provider = initialize_ccxt_components(
         account_id,
         base_currency,
         channel,
@@ -162,7 +162,7 @@ def run_ccxt_trading(
     return ctx
 
 
-def get_ccxt_instances(
+def initialize_ccxt_components(
         account_id: str,
         base_currency: str,
         channel: CtrlChannel,
@@ -291,7 +291,7 @@ def get_account_config(account_id: str, accounts_cfg_file: str) -> dict | None:
     return cfg | {"account_id": account_id, "reserves": reserves}
 
 
-def get_strategy(config_file: str, search_paths: list, account: str) -> Tuple[IStrategy, StrategyConfig]:
+def get_strategy_configs(config_file: str, search_paths: list, account: str) -> Tuple[IStrategy, StrategyConfig]:
     cfg = load_strategy_config(config_file, account)
     search_paths = list(search_paths)
     search_paths.append(Path(config_file).parent)
@@ -354,7 +354,7 @@ def create_strategy_context(
             if exchange.apiKey:
                 logger.info(
                     f"Connected {exchange_name} exchange with {exchange.apiKey[:2]}...{exchange.apiKey[-2:]} API key")
-            account, broker, data_provider = get_ccxt_instances(
+            account, broker, data_provider = initialize_ccxt_components(
                 acc_config["account_id"],
                 base_currency,
                 channel,
@@ -492,7 +492,7 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
     # - show Qubx logo with current version
     logo()
 
-    strategy, cfg = get_strategy(filename, paths, account)
+    strategy, cfg = get_strategy_configs(filename, paths, account)
 
     # - read account creds
     acc_config = get_account_env_config(account, acc_file)
