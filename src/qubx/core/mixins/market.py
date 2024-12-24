@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import Any
 
 import pandas as pd
 
@@ -74,7 +74,7 @@ class MarketManager(IMarketManager):
     def quote(self, instrument: Instrument) -> Quote | None:
         return self._data_provider.get_quote(instrument)
 
-    def get_data(self, instrument: Instrument, sub_type: str) -> List[Any]:
+    def get_data(self, instrument: Instrument, sub_type: str) -> list[Any]:
         return self._cache.get_data(instrument, sub_type)
 
     def get_aux_data(self, data_id: str, **parameters) -> pd.DataFrame | None:
@@ -83,5 +83,5 @@ class MarketManager(IMarketManager):
     def get_instruments(self) -> list[Instrument]:
         return self._universe_manager.instruments
 
-    def get_instrument(self, symbol: str, exchange: str) -> Instrument | None:
+    def query_instrument(self, symbol: str, exchange: str) -> Instrument | None:
         return lookup.find_symbol(exchange, symbol)
