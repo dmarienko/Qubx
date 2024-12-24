@@ -1,3 +1,4 @@
+import builtins
 import os
 import pytest
 import yaml
@@ -140,6 +141,7 @@ class TestLoadStrategyConfig:
                 Path(filename).unlink(missing_ok=True)
         assert "exchanges" in str(exc_info.value)
 
+
 class TestLoadAccountEnvConfig:
     @pytest.mark.parametrize("account_id", ["BNC-TEST1", "bnc-test1", "bnc-TeSt1"])
     def test_load_account_env_config_case_insensitive(
@@ -179,7 +181,6 @@ class TestLoadAccountEnvConfig:
                         env_file=".env"
                     )
 
-        assert account_data is not None
-        assert len(account_data) == 1  # only 'account_id'
+        assert account_data is None
         mock_logger_error.assert_called_once()
-        assert "No records for BNC-TEST1 found in env" in str(mock_logger_error.call_args[0][0])
+        assert "Can't find exchange for" in str(mock_logger_error.call_args[0][0])

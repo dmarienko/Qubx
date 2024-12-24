@@ -260,9 +260,9 @@ def load_account_env_config(account_id: str, env_file: str) -> dict | None:
     for name, value in env_data.items():
         if name.upper().startswith(f"{account_id.upper()}__"):
             account_data[name.split("__")[-1].lower()] = value
-    if not account_data:
-        logger.error(f"No records for {account_id} found in env")
-        # return None
+    if "exchange" not in [k.lower() for k in account_data.keys()]:
+        logger.error(f"Can't find exchange for {account_id} account")
+        return None
     account_data["account_id"] = account_id
     return account_data
 
@@ -470,8 +470,16 @@ def main():
 
 
 @main.command()
-@click.argument("filename", type=click.Path(exists=True))
-@click.option("--account", "-a", type=click.STRING, help="Account id for trading", default=None, show_default=True)
+@click.argument("filename", type=click.Path(exists=True), required=True)
+@click.option(
+    "--account",
+    "-a",
+    type=click.STRING,
+    help="Account id for trading",
+    default=None,
+    show_default=True,
+    required=True,
+)
 @click.option(
     "--acc_file",
     "-f",
