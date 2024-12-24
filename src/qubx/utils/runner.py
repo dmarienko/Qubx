@@ -167,15 +167,23 @@ def run_ccxt_trading(
 
 def initialize_ccxt_components(
         account_id: str,
+        exchange_name: str,
+        creds: dict,
         base_currency: str,
         channel: CtrlChannel,
-        exchange: cxp.Exchange,
         fees_calculator: TransactionCostsCalculator,
         paper: bool,
         paper_capital: float,
         time_provider: LiveTimeProvider,
-        use_testnet: bool = False
+        use_testnet: bool = False,
+        loop: asyncio.AbstractEventLoop | None = None,
 ):
+    exchange = get_ccxt_exchange(exchange_name, use_testnet=use_testnet, loop=loop, **(creds))
+    if exchange.apiKey:
+        logger.info(
+            f"Preparing connection to {exchange_name} exchange with "
+            f"{exchange.apiKey[:2]}...{exchange.apiKey[-2:]} API key"
+        )
     if paper:
         account = SimulatedAccountProcessor(
             account_id=account_id,
@@ -353,20 +361,18 @@ def create_strategy_context(
     match exch_cfg.connector.lower():
         case "ccxt":
             # - TODO: we need some factory here
-            exchange = get_ccxt_exchange(exchange_name, use_testnet=testnet, loop=loop, **(creds))
-            if exchange.apiKey:
-                logger.info(
-                    f"Connected {exchange_name} exchange with {exchange.apiKey[:2]}...{exchange.apiKey[-2:]} API key")
             account, broker, data_provider = initialize_ccxt_components(
                 acc_config["account_id"],
+                exchange_name,
+                creds,
                 base_currency,
                 channel,
-                exchange,
                 fees_calculator,
                 paper,
                 paper_capital,
                 time_provider,
                 testnet,
+                loop,
             )
         case _:
             raise ValueError(f"Connector {exch_cfg.connector} is not supported yet !")
