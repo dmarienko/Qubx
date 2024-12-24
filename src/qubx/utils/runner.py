@@ -233,7 +233,7 @@ def load_strategy_config(filename: str, account: str) -> StrategyConfig:
             content = yaml.safe_load(f)
     except Exception as exc:
         logger.error(f"Can't read strategy config from {filename} file: {str(exc)}")
-        raise exc
+        raise Exception(f"Can't read strategy config from {filename} file: {str(exc)}") from exc
 
     config_raw = content["config"]
     strat = config_raw["strategy"]
@@ -252,7 +252,7 @@ def load_strategy_config(filename: str, account: str) -> StrategyConfig:
     return str_config
 
 
-def get_account_env_config(account_id: str, env_file: str) -> dict | None:
+def load_account_env_config(account_id: str, env_file: str) -> dict | None:
     env_f = find_dotenv(env_file) or find_dotenv(Path(env_file).name)
     env_data = dotenv_values(env_f)
     env_data.update(os.environ)
@@ -510,7 +510,7 @@ def run(filename: str, account: str, acc_file: str, paths: list, jupyter: bool, 
     strategy, cfg = get_strategy_configs(filename, paths, account)
 
     # - read account creds
-    acc_config = get_account_env_config(account, acc_file)
+    acc_config = load_account_env_config(account, acc_file)
     if acc_config is None:
         logger.error("Can't read account configuration")
         return None
