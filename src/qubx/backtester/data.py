@@ -13,6 +13,7 @@ from qubx.core.basics import (
     Instrument,
     TimestampedDict,
 )
+from qubx.core.exceptions import SimulationError
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IDataProvider
 from qubx.core.series import Bar, Quote, time_as_nsec
@@ -80,10 +81,10 @@ class SimulatedDataProvider(IDataProvider):
 
         if self._pregenerated_signals:
             self._prepare_generated_signals(start, end)
-            _run = self._run_generated_signals
+            _run = self._process_generated_signals
             enable_event_batching = False  # no batching for pre-generated signals
         else:
-            _run = self._run_as_strategy
+            _run = self._process_strategy
 
         qiter = EventBatcher(self._data_source.create_iterable(start, end), passthrough=not enable_event_batching)
         start, end = pd.Timestamp(start), pd.Timestamp(end)
@@ -190,15 +191,16 @@ class SimulatedDataProvider(IDataProvider):
                 if s == i.symbol or s == str(i) or s == f"{i.exchange}:{i.symbol}" or str(s) == str(i):
                     _start, _end = pd.Timestamp(start), pd.Timestamp(end)
                     _start_idx, _end_idx = v.index.get_indexer([_start, _end], method="ffill")
-                    sel = v.iloc[max(_start_idx, 0) : _end_idx + 1]  # sel = v[pd.Timestamp(start) : pd.Timestamp(end)]
+                    sel = v.iloc[max(_start_idx, 0) : _end_idx + 1]
 
+                    # TODO: check if data has exec_price - it means we have deals
                     self._to_process[i] = list(zip(sel.index, sel.values))
                     _s_inst = i
                     break
 
             if _s_inst is None:
                 logger.error(f"Can't find instrument for pregenerated signals with id '{s}'")
-                raise ValueError(f"Can't find instrument for pregenerated signals with id '{s}'")
+                raise SimulationError(f"Can't find instrument for pregenerated signals with id '{s}'")
 
     def _convert_records_to_bars(
         self, records: list[TimestampedDict], cut_time_ns: int, timeframe_ns: int
@@ -228,40 +230,41 @@ class SimulatedDataProvider(IDataProvider):
 
         return bars
 
-    def _run_generated_signals(self, instrument: Instrument, data_type: str, data: Any, is_hist) -> bool:
-        if is_hist:
-            raise ValueError("Historical data is not supported for pre-generated signals !")
-
+    def _process_generated_signals(self, instrument: Instrument, data_type: str, data: Any, is_hist: bool) -> bool:
         cc = self.channel
-
         t = np.datetime64(data.time, "ns")
-        self.time_provider.set_time(t)
-        self._last_quotes[instrument] = self._account.emulate_quote_from_data(instrument, t, data)
 
-        # - we need to send quotes for invoking portfolio logging etc
+        if not is_hist:
+            # - signals for this instrument
+            sigs = self._to_process[instrument]
+
+            while sigs and t >= (_signal_time := sigs[0][0].as_unit("ns").asm8):
+                self.time_provider.set_time(_signal_time)
+                cc.send((instrument, "event", {"order": sigs[0][1]}, False))
+                sigs.pop(0)
+
+            if q := self._account.emulate_quote_from_data(instrument, t, data):
+                self._last_quotes[instrument] = q
+
+        self.time_provider.set_time(t)
         cc.send((instrument, data_type, data, is_hist))
-        sigs = self._to_process[instrument]
-        _current_time = self.time_provider.time()
-        while sigs and sigs[0][0].as_unit("ns").asm8 <= _current_time:
-            cc.send((instrument, "event", {"order": sigs[0][1]}, is_hist))
-            sigs.pop(0)
 
         return cc.control.is_set()
 
-    def _run_as_strategy(self, instrument: Instrument, data_type: str, data: Any, is_hist: bool) -> bool:
+    def _process_strategy(self, instrument: Instrument, data_type: str, data: Any, is_hist: bool) -> bool:
         cc = self.channel
-
         t = np.datetime64(data.time, "ns")
+
+        if not is_hist:
+            if t >= (_next_exp_time := self._scheduler.next_expected_event_time()):
+                # - we use exact event's time
+                self.time_provider.set_time(_next_exp_time)
+                self._scheduler.check_and_run_tasks()
+
+            if q := self._account.emulate_quote_from_data(instrument, t, data):
+                self._last_quotes[instrument] = q
+
         self.time_provider.set_time(t)
-
-        if not is_hist and (q := self._account.emulate_quote_from_data(instrument, t, data)) is not None:
-            self._last_quotes[instrument] = q
-
-            # we have to schedule possible crons before sending the data event itself
-            if self._scheduler.check_and_run_tasks():
-                # - push nothing - it will force to process last event
-                cc.send((None, "service_time", None, False))
-
         cc.send((instrument, data_type, data, is_hist))
 
         return cc.control.is_set()

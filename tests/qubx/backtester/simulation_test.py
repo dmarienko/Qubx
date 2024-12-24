@@ -175,7 +175,7 @@ class Issue5(IStrategy):
         print(f"On Event: {ctx.time()}\n{str(data)}")
 
         # - at 00:00 bar[0] must be previous day's bar !
-        if data[0].time >= ctx.time().item() - pd.Timedelta("1d").asm8:
+        if data[0].time > ctx.time().item() - pd.Timedelta("1d").asm8:
             self._err_time += 1
 
         # - check bar's consitency
@@ -329,7 +329,7 @@ class TestSimulator:
         assert stg._err_time == 0, "Got wrong OHLC bars time"
         assert stg._err_bars == 0, "OHLC bars were not consistent"
 
-        r = ld[["BTCUSDT"], "2023-06-30":"2023-07-10"]("1d")["BTCUSDT"]  # type: ignore
+        r = ld[["BTCUSDT"], "2023-06-22":"2023-07-10"]("1d")["BTCUSDT"]  # type: ignore
         assert all(
             stg._out.pd()[["open", "high", "low", "close"]] == r[["open", "high", "low", "close"]]
         ), "Out OHLC differ"

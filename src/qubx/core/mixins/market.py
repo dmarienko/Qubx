@@ -57,7 +57,7 @@ class MarketManager(IMarketManager):
             _timeframe_ns = pd.Timedelta(timeframe).asm8.item()
 
             # - check if we need to fetch more data
-            if (_last_bar_time + _timeframe_ns <= self._data_provider.time_provider.time().item()) or (
+            if (_last_bar_time + _timeframe_ns < self._data_provider.time_provider.time().item()) or (
                 length and _l_rc < length
             ):
                 _need_history_request = True
