@@ -61,27 +61,27 @@ def simulate(
     Backtest utility for trading strategies or signals using historical data.
 
     Args:
-        strategies (StrategiesDecls_t): Trading strategy or signals configuration.
-        data (DataDecls_t): Historical data for simulation, either as a dictionary of DataFrames or a DataReader object.
-        capital (float): Initial capital for the simulation.
-        instruments (list[SymbolOrInstrument_t] | dict[ExchangeName_t, list[SymbolOrInstrument_t]]): List of trading instruments or a dictionary mapping exchanges to instrument lists.
-        commissions (str): Commission structure for trades.
-        start (str | pd.Timestamp): Start time of the simulation.
-        stop (str | pd.Timestamp | None): End time of the simulation. If None, simulates until the last accessible data.
-        exchange (ExchangeName_t | None): Exchange name if not specified in the instruments list.
-        base_currency (str): Base currency for the simulation, default is "USDT".
-        leverage (float): Leverage factor for trading, default is 1.0.
-        n_jobs (int): Number of parallel jobs for simulation, default is 1.
-        silent (bool): If True, suppresses output during simulation.
-        enable_event_batching (bool): If True, enables event batching for optimization.
-        aux_data (DataReader | None): Auxiliary data provider (default is None).
-        accurate_stop_orders_execution (bool): If True, enables more accurate stop order execution simulation.
-        signal_timeframe (str): Timeframe for signals, default is "1Min".
-        open_close_time_indent_secs (int): Time indent in seconds for open/close times, default is 1.
-        debug (Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None): Logging level for debugging.
+        - strategies (StrategiesDecls_t): Trading strategy or signals configuration.
+        - data (DataDecls_t): Historical data for simulation, either as a dictionary of DataFrames or a DataReader object.
+        - capital (float): Initial capital for the simulation.
+        - instruments (list[SymbolOrInstrument_t] | dict[ExchangeName_t, list[SymbolOrInstrument_t]]): List of trading instruments or a dictionary mapping exchanges to instrument lists.
+        - commissions (str): Commission structure for trades.
+        - start (str | pd.Timestamp): Start time of the simulation.
+        - stop (str | pd.Timestamp | None): End time of the simulation. If None, simulates until the last accessible data.
+        - exchange (ExchangeName_t | None): Exchange name if not specified in the instruments list.
+        - base_currency (str): Base currency for the simulation, default is "USDT".
+        - leverage (float): Leverage factor for trading, default is 1.0.
+        - n_jobs (int): Number of parallel jobs for simulation, default is 1.
+        - silent (bool): If True, suppresses output during simulation.
+        - enable_event_batching (bool): If True, enables event batching for optimization.
+        - aux_data (DataReader | None): Auxiliary data provider (default is None).
+        - accurate_stop_orders_execution (bool): If True, enables more accurate stop order execution simulation.
+        - signal_timeframe (str): Timeframe for signals, default is "1Min".
+        - open_close_time_indent_secs (int): Time indent in seconds for open/close times, default is 1.
+        - debug (Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None): Logging level for debugging.
 
     Returns:
-        list[TradingSessionResult]: A list of TradingSessionResult objects containing the results of each simulation setup.
+        - list[TradingSessionResult]: A list of TradingSessionResult objects containing the results of each simulation setup.
     """
 
     # - setup logging
@@ -208,7 +208,7 @@ def _run_setup(
         f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {setup.exchange} for {setup.capital} x {setup.leverage} in {setup.base_currency}..."
     )
 
-    channel = SimulatedCtrlChannel("databus", sentinel=(None, None, None))
+    channel = SimulatedCtrlChannel("databus", sentinel=(None, None, None, None))
     tcc = lookup.fees.find(setup.exchange.lower(), setup.commissions)
     assert tcc is not None, f"Can't find transaction costs calculator for {setup.exchange} with {setup.commissions} !"
 
