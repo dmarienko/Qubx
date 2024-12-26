@@ -6,17 +6,18 @@ import pandas as pd
 import nest_asyncio;
 nest_asyncio.apply()
 
+from pathlib import Path
 from qubx.core.context import StrategyContext
 from qubx.utils.misc import dequotify, quotify
-from qubx.utils.runner import create_strategy_context
+from qubx.utils.runner import run_strategy_yaml
 from qubx.pandaz.utils import *
 import qubx.pandaz.ta as pta
 import qubx.ta.indicators as ta
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-ctx: StrategyContext = create_strategy_context('{filename}', 'test', '{accounts}', {paths}) # type: ignore
+account_file = Path('{account_file}') if '{account_file}' != 'None' else None
+ctx: StrategyContext = run_strategy_yaml(Path('{config_file}'), account_file, {paper}) # type: ignore
 assert ctx is not None, 'Strategy context is not created'
-ctx.start()
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 def orders(instrument: Instrument | None=None):
