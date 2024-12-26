@@ -2,14 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from qubx.utils.runner.accounts import AccountManager
+from qubx.utils.runner.accounts import AccountConfigurationManager
 
 CONFIGS_DIR = Path(__file__).parent / "configs"
 
 
 def test_account_config_parsing():
     basic_toml = CONFIGS_DIR / "accounts.toml"
-    manager = AccountManager(basic_toml)
+    manager = AccountConfigurationManager(basic_toml)
 
     # binance pm
     bpm = manager.get_exchange_credentials("BINANCE.PM")
@@ -36,4 +36,4 @@ def test_account_config_parsing():
 def test_invalid_account_config():
     invalid_toml = CONFIGS_DIR / "invalid_accounts.toml"
     with pytest.raises(ValueError):
-        AccountManager(invalid_toml)
+        AccountConfigurationManager(invalid_toml)

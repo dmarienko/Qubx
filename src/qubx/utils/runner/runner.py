@@ -20,7 +20,7 @@ from qubx.data.helpers import __KNOWN_READERS
 from qubx.utils.misc import class_import
 from qubx.utils.runner.configs import ExchangeConfig, load_strategy_config_from_yaml
 
-from .accounts import AccountManager
+from .accounts import AccountConfigurationManager
 from .configs import AuxConfig, LoggingConfig, StrategyConfig
 
 
@@ -44,7 +44,7 @@ def run_strategy_yaml(
     if account_file is not None and not account_file.exists():
         raise FileNotFoundError(f"Account configuration file not found: {account_file}")
 
-    acc_manager = AccountManager(account_file, config_file.parent, search_qubx_dir=True)
+    acc_manager = AccountConfigurationManager(account_file, config_file.parent, search_qubx_dir=True)
     stg_config = load_strategy_config_from_yaml(config_file)
     return run_strategy(stg_config, acc_manager, paper=paper, blocking=blocking)
 
@@ -89,7 +89,7 @@ def run_strategy_yaml_in_jupyter(config_file: Path, account_file: Path | None = 
 
 def run_strategy(
     config: StrategyConfig,
-    account_manager: AccountManager,
+    account_manager: AccountConfigurationManager,
     paper: bool = False,
     blocking: bool = False,
 ) -> IStrategyContext:
@@ -118,7 +118,7 @@ def run_strategy(
 
 def create_strategy_context(
     config: StrategyConfig,
-    account_manager: AccountManager,
+    account_manager: AccountConfigurationManager,
     paper: bool = False,
 ) -> IStrategyContext:
     """
@@ -242,7 +242,7 @@ def _get_aux_reader(aux_config: AuxConfig | None) -> DataReader | None:
         return class_import(_reader_name)(**aux_config.args)
 
 
-def _create_tcc(exchange_name: str, account_manager: AccountManager) -> TransactionCostsCalculator:
+def _create_tcc(exchange_name: str, account_manager: AccountConfigurationManager) -> TransactionCostsCalculator:
     settings = account_manager.get_exchange_settings(exchange_name)
     tcc = lookup.fees.find(exchange_name, settings.commissions)
     assert tcc is not None, f"Can't find fees calculator for {exchange_name} exchange"
@@ -254,7 +254,7 @@ def _create_data_provider(
     exchange_config: ExchangeConfig,
     time_provider: ITimeProvider,
     channel: CtrlChannel,
-    account_manager: AccountManager,
+    account_manager: AccountConfigurationManager,
 ) -> IDataProvider:
     settings = account_manager.get_exchange_settings(exchange_name)
     match exchange_config.connector.lower():
@@ -270,7 +270,7 @@ def _create_account_processor(
     exchange_config: ExchangeConfig,
     channel: CtrlChannel,
     time_provider: ITimeProvider,
-    account_manager: AccountManager,
+    account_manager: AccountConfigurationManager,
     tcc: TransactionCostsCalculator,
     paper: bool,
 ) -> IAccountProcessor:
@@ -309,7 +309,7 @@ def _create_broker(
     channel: CtrlChannel,
     time_provider: ITimeProvider,
     account: IAccountProcessor,
-    account_manager: AccountManager,
+    account_manager: AccountConfigurationManager,
     paper: bool,
 ) -> IBroker:
     if paper:

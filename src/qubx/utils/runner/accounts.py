@@ -24,7 +24,7 @@ class AccountConfiguration(BaseModel):
     accounts: list[ExchangeCredentials]
 
 
-class AccountManager:
+class AccountConfigurationManager:
     """
     Manages account configurations.
     """
