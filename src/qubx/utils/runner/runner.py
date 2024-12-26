@@ -28,7 +28,6 @@ def run_strategy_yaml(
     config_file: Path,
     account_file: Path | None = None,
     paper: bool = False,
-    jupyter: bool = False,
     blocking: bool = False,
 ) -> IStrategyContext:
     """
@@ -47,14 +46,51 @@ def run_strategy_yaml(
 
     acc_manager = AccountManager(account_file, config_file.parent, search_qubx_dir=True)
     stg_config = load_strategy_config_from_yaml(config_file)
-    return run_strategy(stg_config, acc_manager, paper=paper, jupyter=jupyter, blocking=blocking)
+    return run_strategy(stg_config, acc_manager, paper=paper, blocking=blocking)
+
+
+def run_strategy_yaml_in_jupyter(config_file: Path, account_file: Path | None = None, paper: bool = False) -> None:
+    """
+    Helper for run this in jupyter console
+    """
+    try:
+        from jupyter_console.app import ZMQTerminalIPythonApp
+    except ImportError:
+        logger.error(
+            "Can't find <r>ZMQTerminalIPythonApp</r> module - try to install <g>jupyter-console</g> package first"
+        )
+        return
+    try:
+        import nest_asyncio
+    except ImportError:
+        logger.error("Can't find <r>nest_asyncio</r> module - try to install it first")
+        return
+
+    class TerminalRunner(ZMQTerminalIPythonApp):
+        def __init__(self, **kwargs) -> None:
+            self.init_code = kwargs.pop("init_code")
+            super().__init__(**kwargs)
+
+        def init_banner(self):
+            pass
+
+        def initialize(self, argv=None):
+            super().initialize(argv=[])
+            self.shell.run_cell(self.init_code)
+
+    _base = Path(__file__).parent.absolute()
+    with open(_base / "_jupyter_runner.pyt", "r") as f:
+        content = f.read()
+
+    content_with_values = content.format_map({"config_file": config_file, "account_file": account_file, "paper": paper})
+    logger.info("Running in Jupyter console")
+    TerminalRunner.launch_instance(init_code=content_with_values)
 
 
 def run_strategy(
     config: StrategyConfig,
     account_manager: AccountManager,
     paper: bool = False,
-    jupyter: bool = False,
     blocking: bool = False,
 ) -> IStrategyContext:
     """
@@ -301,47 +337,3 @@ def _create_instruments_for_exchange(exchange_name: str, exchange_config: Exchan
     instruments = [lookup.find_symbol(exchange_name, symbol.upper()) for symbol in symbols]
     instruments = [i for i in instruments if i is not None]
     return instruments
-
-
-def _run_in_jupyter(filename: str, accounts: str, paths: list):
-    """
-    Helper for run this in jupyter console
-    """
-    try:
-        from jupyter_console.app import ZMQTerminalIPythonApp
-    except ImportError:
-        logger.error(
-            "Can't find <r>ZMQTerminalIPythonApp</r> module - try to install <g>jupyter-console</g> package first"
-        )
-        return
-    try:
-        import nest_asyncio
-    except ImportError:
-        logger.error("Can't find <r>nest_asyncio</r> module - try to install it first")
-        return
-
-    class TerminalRunner(ZMQTerminalIPythonApp):
-        def __init__(self, **kwargs) -> None:
-            self.init_code = kwargs.pop("init_code")
-            super().__init__(**kwargs)
-
-        def init_banner(self):
-            pass
-
-        def initialize(self, argv=None):
-            super().initialize(argv=[])
-            self.shell.run_cell(self.init_code)
-
-    _base = Path(__file__).parent.absolute()
-    with open(_base / "_jupyter_runner.pyt", "r") as f:
-        content = f.read()
-
-    content_with_values = content.format_map(
-        {
-            "filename": filename,
-            "accounts": accounts,
-            "paths": str(paths),
-        }
-    )
-    logger.info("Running in Jupyter console")
-    TerminalRunner.launch_instance(init_code=content_with_values)

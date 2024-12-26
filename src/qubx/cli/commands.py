@@ -3,7 +3,7 @@ from pathlib import Path
 import click
 
 from qubx.utils.misc import add_project_to_system_path, logo
-from qubx.utils.runner.runner import run_strategy_yaml
+from qubx.utils.runner.runner import run_strategy_yaml, run_strategy_yaml_in_jupyter
 
 
 @click.group()
@@ -36,10 +36,13 @@ def run(config_file: Path, account_file: Path | None, paper: bool, jupyter: bool
     - If exists, accounts.toml located in the same folder with the config searched.\n
     - If neither of the above are provided, the accounts.toml in the ~/qubx/accounts.toml path is searched.
     """
-    logo()
     add_project_to_system_path()
     add_project_to_system_path(str(config_file.parent))
-    run_strategy_yaml(config_file, account_file, paper, jupyter, blocking=True)
+    if jupyter:
+        run_strategy_yaml_in_jupyter(config_file, account_file, paper)
+    else:
+        logo()
+        run_strategy_yaml(config_file, account_file, paper, blocking=True)
 
 
 if __name__ == "__main__":
