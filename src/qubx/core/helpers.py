@@ -1,5 +1,6 @@
 import re
 import sched
+import sys
 import time
 from collections import defaultdict, deque
 from inspect import isfunction
@@ -277,9 +278,6 @@ def process_schedule_spec(spec_str: str | None) -> Dict[str, Any]:
     return config
 
 
-_SEC2TS = lambda t: pd.Timestamp(t, unit="s")  # noqa: E731
-
-
 class BasicScheduler:
     """
     Basic scheduler functionality. It helps to create scheduled event task
@@ -290,6 +288,8 @@ class BasicScheduler:
     _ns_time_fun: Callable[[], float]
     _crons: dict[str, croniter]
     _is_started: bool
+    _next_nearest_time: np.datetime64
+    _next_times: dict[str, float]
 
     def __init__(self, channel: CtrlChannel, time_provider_ns: Callable[[], float]):
         self._chan = channel
@@ -297,6 +297,8 @@ class BasicScheduler:
         self._scdlr = sched.scheduler(self.time_sec)
         self._crons = dict()
         self._is_started = False
+        self._next_nearest_time = np.datetime64(sys.maxsize, "ns")
+        self._next_times = dict()
 
     def time_sec(self) -> float:
         return self._ns_time_fun() / 1000000000.0
@@ -308,6 +310,12 @@ class BasicScheduler:
 
         if self._is_started:
             self._arm_schedule(event_name, self.time_sec())
+
+    def next_expected_event_time(self) -> np.datetime64:
+        """
+        Returns the next scheduled event time
+        """
+        return self._next_nearest_time
 
     def get_schedule_for_event(self, event_name: str) -> str | None:
         if event_name in self._crons:
@@ -336,9 +344,11 @@ class BasicScheduler:
         next_time = iter.get_next(start_time=start_time)
         if next_time:
             self._scdlr.enterabs(next_time, 1, self._trigger, (event, prev_time, next_time))
-            # logger.debug(
-            #     f"Now is <red>{_SEC2TS(self.time_sec())}</red> next ({event}) at <cyan>{_SEC2TS(next_time)}</cyan>"
-            # )
+
+            # - update next nearest time
+            self._next_times[event] = next_time
+            self._next_nearest_time = np.datetime64(int(min(self._next_times.values()) * 1000000000), "ns")
+
             return True
         logger.debug(f"({event}) task is not scheduled")
         return False

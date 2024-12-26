@@ -179,7 +179,7 @@ class TestBacktesterStuff:
         i1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         assert i1 is not None
         # s2 = shift_series(sigs, "4Min59Sec").rename(i1) / 100  # type: ignore
-        s2 = shift_series(sigs, "5Min1Sec").rename(i1) / 100  # type: ignore
+        s2 = shift_series(sigs, "5Min").rename(i1) / 100  # type: ignore
 
         # fmt: off
         rep1 = simulate(

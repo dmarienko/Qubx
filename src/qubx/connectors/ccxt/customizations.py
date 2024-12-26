@@ -1,8 +1,5 @@
 from typing import Dict, List
 
-import pandas as pd
-
-import ccxt
 import ccxt.pro as cxp
 from ccxt.async_support.base.ws.cache import ArrayCache, ArrayCacheByTimestamp
 from ccxt.async_support.base.ws.client import Client

@@ -465,19 +465,19 @@ class IMarketManager(ITimeProvider):
         ...
 
     def get_instruments(self) -> list[Instrument]:
-        """Get list of all available instruments.
+        """Get list of subscribed instruments.
 
         Returns:
-            list[Instrument]: List of available instruments
+            list[Instrument]: List of subscribed instruments
         """
         ...
 
-    def get_instrument(self, symbol: str, exchange: str) -> Instrument | None:
-        """Get instrument by symbol and exchange.
+    def query_instrument(self, symbol: str, exchange: str | None = None) -> Instrument | None:
+        """Query instrument in lookup by symbol and exchange.
 
         Args:
             symbol: The symbol to look up
-            exchange: The exchange to look up
+            exchange: The exchange to look up or None (current exchange is used)
 
         Returns:
             Instrument | None: The instrument if found, None otherwise

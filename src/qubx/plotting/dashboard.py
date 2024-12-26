@@ -117,7 +117,7 @@ class TradingDashboard:
                 logger.info(f"Strategy running: {self.ctx.is_running()}, Strategy fitted: {self.ctx.is_fitted()}")
                 return {}
 
-            instrument = self.ctx.get_instrument(symbol, "BINANCE.UM")
+            instrument = self.ctx.query_instrument(symbol, "BINANCE.UM")
             if instrument is None:
                 logger.error(f"Could not find instrument for symbol: {symbol}")
                 return {}

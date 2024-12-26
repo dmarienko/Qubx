@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from qubx import lookup
+from qubx import logger, lookup
 from qubx.backtester.simulated_data import EventBatcher, IterableSimulationData, IteratedDataStreamsSlicer
 from qubx.core.basics import BatchEvent, DataType
 from qubx.data.helpers import loader
@@ -415,3 +415,57 @@ class TestSimulatedDataStuff:
         ]
         actual_output = list(EventBatcher(events))
         assert expected_events == actual_output
+
+    def test_iterable_simulation_data_last_historical_search(self):
+        ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h", n_jobs=1)
+        isd = IterableSimulationData({"ohlc": ld}, open_close_time_indent_secs=300)
+
+        s1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        s2 = lookup.find_symbol("BINANCE.UM", "ETHUSDT")
+        s3 = lookup.find_symbol("BINANCE.UM", "LTCUSDT")
+        assert s1 is not None and s2 is not None and s3 is not None
+
+        # set warmup period
+        isd.set_warmup_period(DataType.OHLC["4h"], "24h")
+        isd.add_instruments_for_subscription(DataType.OHLC["4h"], [s1, s2])
+
+        # iteration is not statred yet - so history must be empty
+        assert not isd.peek_historical_data(s1, DataType.OHLC["4h"])
+
+        _n = 0
+        for d in isd.create_iterable("2023-07-01", "2023-07-02"):
+            instr, data_type, t, is_hist = d[0], d[1], pd.Timestamp(d[2].time, "ns"), d[3]
+            _n += 1
+            logger.info(
+                f"[{_n}] <y>{instr.symbol}</y> <g>{t.strftime('%H:%M:%S.%f')}</g> {d[0]} {data_type} {'<r>HIST</r>' if is_hist else ''}"
+            )
+            if _n == 60:
+                isd.add_instruments_for_subscription(DataType.OHLC["4h"], [s3])
+                h_data = isd.peek_historical_data(s3, DataType.OHLC["4h"])
+                s_data = "\n".join([f"\t - {np.datetime64(v.time, 'ns')}({v})" for v in h_data])
+                logger.info(f"History {len(h_data)}: \n{s_data}")
+                assert len(h_data) == 25
+                assert h_data[-1].time < isd._current_time  # type: ignore
+
+    def test_iterable_simulation_data_last_historical_search_no_warmup(self):
+        ld = loader("BINANCE.UM", "1h", source="csv::tests/data/csv_1h", n_jobs=1)
+        isd = IterableSimulationData({"ohlc": ld}, open_close_time_indent_secs=300)
+
+        s1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
+        s2 = lookup.find_symbol("BINANCE.UM", "ETHUSDT")
+        s3 = lookup.find_symbol("BINANCE.UM", "LTCUSDT")
+        assert s1 is not None and s2 is not None and s3 is not None
+
+        isd.add_instruments_for_subscription(DataType.OHLC["4h"], [s1, s2])
+
+        _n = 0
+        for d in isd.create_iterable("2023-07-01", "2023-07-02"):
+            instr, data_type, t, is_hist = d[0], d[1], pd.Timestamp(d[2].time, "ns"), d[3]
+            _n += 1
+            logger.info(
+                f"[{_n}] <y>{instr.symbol}</y> <g>{t.strftime('%H:%M:%S.%f')}</g> {d[0]} {data_type} {'<r>HIST</r>' if is_hist else ''}"
+            )
+            if _n == 10:
+                isd.add_instruments_for_subscription(DataType.OHLC["4h"], [s3])
+                h_data = isd.peek_historical_data(s3, DataType.OHLC["4h"])
+                assert len(h_data) == 0

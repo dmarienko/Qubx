@@ -108,17 +108,18 @@ class SimulatedAccountProcessor(BasicAccountProcessor):
         if instrument not in self._half_tick_size:
             _ = self.get_position(instrument)
 
-        _ts2 = self._half_tick_size[instrument]
         if isinstance(data, Quote):
             return data
 
         elif isinstance(data, Trade):
+            _ts2 = self._half_tick_size[instrument]
             if data.taker:  # type: ignore
                 return Quote(timestamp, data.price - _ts2 * 2, data.price, 0, 0)  # type: ignore
             else:
                 return Quote(timestamp, data.price, data.price + _ts2 * 2, 0, 0)  # type: ignore
 
         elif isinstance(data, Bar):
+            _ts2 = self._half_tick_size[instrument]
             return Quote(timestamp, data.close - _ts2, data.close + _ts2, 0, 0)  # type: ignore
 
         elif isinstance(data, OrderBook):
@@ -128,6 +129,7 @@ class SimulatedAccountProcessor(BasicAccountProcessor):
             return self.emulate_quote_from_data(instrument, timestamp, data.data[-1])
 
         elif isinstance(data, float):
+            _ts2 = self._half_tick_size[instrument]
             return Quote(timestamp, data - _ts2, data + _ts2, 0, 0)
 
         else:
