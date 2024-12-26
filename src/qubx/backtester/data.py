@@ -133,11 +133,26 @@ class SimulatedDataProvider(IDataProvider):
         return True
 
     def subscribe(self, subscription_type: str, instruments: set[Instrument], reset: bool) -> None:
-        logger.debug(f" | subscribe: {subscription_type} -> {instruments}")
+        _new_instr = [i for i in instruments if not self.has_subscription(i, subscription_type)]
         self._data_source.add_instruments_for_subscription(subscription_type, list(instruments))
 
+        # - provide historical data and last quote for subscribed instruments
+        for i in _new_instr:
+            h_data = self._data_source.peek_historical_data(i, subscription_type)
+            if h_data:
+                # _s_type = DataType.from_str(subscription_type)[0]
+                last_update = h_data[-1]
+                if last_quote := self._account.emulate_quote_from_data(i, last_update.time, last_update):  # type: ignore
+                    # - send historical data to the channel
+                    self.channel.send((i, subscription_type, h_data, True))
+
+                    # - set last quote
+                    self._last_quotes[i] = last_quote
+
+                    logger.debug(f" | subscribed {subscription_type} {i} -> {last_quote}")
+
     def unsubscribe(self, subscription_type: str, instruments: set[Instrument] | Instrument | None = None) -> None:
-        logger.debug(f" | unsubscribe: {subscription_type} -> {instruments}")
+        # logger.debug(f" | unsubscribe: {subscription_type} -> {instruments}")
         if instruments is not None:
             self._data_source.remove_instruments_from_subscription(
                 subscription_type, [instruments] if isinstance(instruments, Instrument) else list(instruments)
@@ -148,12 +163,12 @@ class SimulatedDataProvider(IDataProvider):
 
     def get_subscriptions(self, instrument: Instrument) -> list[str]:
         _s_lst = self._data_source.get_subscriptions_for_instrument(instrument)
-        logger.debug(f" | get_subscriptions {instrument} -> {_s_lst}")
+        # logger.debug(f" | get_subscriptions {instrument} -> {_s_lst}")
         return _s_lst
 
     def get_subscribed_instruments(self, subscription_type: str | None = None) -> list[Instrument]:
         _in_lst = self._data_source.get_instruments_for_subscription(subscription_type or DataType.ALL)
-        logger.debug(f" | get_subscribed_instruments {subscription_type} -> {_in_lst}")
+        # logger.debug(f" | get_subscribed_instruments {subscription_type} -> {_in_lst}")
         return _in_lst
 
     def warmup(self, configs: dict[tuple[str, Instrument], str]) -> None:
