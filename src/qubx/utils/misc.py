@@ -115,6 +115,21 @@ def add_project_to_system_path(project_folder: str = "~/projects"):
             print(f"Qube> Cant find {project_folder} folder for adding to python path !")
 
 
+def class_import(name: str):
+    """
+    Import class by its name.
+
+    For example:
+    >>> class_import("qubx.core.data.DataProvider")
+    <class 'qubx.core.data.DataProvider'>
+    """
+    components = name.split(".")
+    clz = components[-1]
+    mod = __import__(".".join(components[:-1]), fromlist=[clz])
+    mod = getattr(mod, clz)
+    return mod
+
+
 def is_localhost(host):
     return host.lower() == "localhost" or host == "127.0.0.1"
 
