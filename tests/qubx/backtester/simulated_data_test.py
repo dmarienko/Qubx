@@ -429,6 +429,9 @@ class TestSimulatedDataStuff:
         isd.set_warmup_period(DataType.OHLC["4h"], "24h")
         isd.add_instruments_for_subscription(DataType.OHLC["4h"], [s1, s2])
 
+        # iteration is not statred yet - so history must be empty
+        assert not isd.peek_historical_data(s1, DataType.OHLC["4h"])
+
         _n = 0
         for d in isd.create_iterable("2023-07-01", "2023-07-02"):
             instr, data_type, t, is_hist = d[0], d[1], pd.Timestamp(d[2].time, "ns"), d[3]
