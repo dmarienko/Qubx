@@ -671,7 +671,7 @@ class ISubscriptionManager:
         """
         ...
 
-    def get_warmup(self, subscription_type: str) -> str:
+    def get_warmup(self, subscription_type: str) -> str | None:
         """
         Get the warmup period for a subscription type.
 
@@ -679,7 +679,7 @@ class ISubscriptionManager:
             subscription_type: Type of subscription (e.g. DataType.OHLC["1h"], etc.)
 
         Returns:
-            str: Warmup period
+            str: Warmup period or None if no warmup period is set
         """
         ...
 

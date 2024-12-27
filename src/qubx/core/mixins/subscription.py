@@ -129,8 +129,8 @@ class SubscriptionManager(ISubscriptionManager):
     def set_base_subscription(self, subscription_type: str) -> None:
         self._base_sub = subscription_type
 
-    def get_warmup(self, subscription_type: str) -> str:
-        return self._sub_to_warmup[subscription_type]
+    def get_warmup(self, subscription_type: str) -> str | None:
+        return self._sub_to_warmup.get(subscription_type)
 
     def set_warmup(self, configs: Dict[Any, str]) -> None:
         for subscription_type, period in configs.items():

@@ -22,6 +22,7 @@ from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IStrategy, IStrategyContext, PositionsTracker
 from qubx.core.series import OHLCV, Bar, Quote, Trade
 from qubx.core.utils import time_delta_to_str
+from qubx.data.helpers import InMemoryCachedReader, TimeGuardedWrapper
 from qubx.data.readers import AsDict, DataReader, InMemoryDataFrameReader
 from qubx.utils.time import infer_series_frequency, timedelta_to_crontab
 
@@ -71,6 +72,10 @@ def _type(obj: Any) -> SetupTypes:
 
 @dataclass
 class SimulationSetup:
+    """
+    Configuration of setups in the simulation.
+    """
+
     setup_type: SetupTypes
     name: str
     generator: StrategyOrSignals_t
@@ -81,9 +86,35 @@ class SimulationSetup:
     leverage: float
     base_currency: str
     commissions: str
+    signal_timeframe: str
+    accurate_stop_orders_execution: bool
+    enable_event_batching: bool
 
     def __str__(self) -> str:
         return f"{self.name} {self.setup_type} capital {self.capital} {self.base_currency} for [{','.join(map(lambda x: x.symbol, self.instruments))}] @ {self.exchange}[{self.commissions}]"
+
+
+# fmt: off
+@dataclass
+class SimulationDataConfig:
+    """
+    Configuration of data passed to the simulator.
+    """
+    default_trigger_schedule: str                          # default trigger schedule
+    default_base_subscription: str                         # the base subscription type
+    data_providers: dict[str, DataReader]                  # dictionary of available subscription types with DataReaders
+    default_warmups: dict[str, str]                        # default warmups periods
+    open_close_time_indent_secs: int                       # open/close ticks shift in seconds
+    aux_data_provider: InMemoryCachedReader | None = None  # auxiliary data provider
+
+    def get_timeguarded_aux_reader(self, time_provider: ITimeProvider) -> TimeGuardedWrapper | None:
+        _aux = None
+        if self.aux_data_provider is not None:
+            if not isinstance(self.aux_data_provider, InMemoryCachedReader):
+                logger.warning("Aux data provider should be an instance of InMemoryCachedReader ! Otherwise it can lead to unnecessary effects !")
+            _aux = TimeGuardedWrapper(self.aux_data_provider, time_guard=time_provider)
+        return _aux
+# fmt: on
 
 
 class SimulatedLogFormatter:
@@ -382,6 +413,9 @@ def recognize_simulation_configuration(
     leverage: float,
     basic_currency: str,
     commissions: str,
+    signal_timeframe: str,
+    accurate_stop_orders_execution: bool,
+    enable_event_batching: bool,
 ) -> list[SimulationSetup]:
     """
     Recognize and create setups based on the provided simulation configuration.
@@ -400,6 +434,9 @@ def recognize_simulation_configuration(
     - leverage (float): The leverage to be used in the simulation.
     - basic_currency (str): The base currency for the simulation.
     - commissions (str): The commission structure to be applied.
+    - signal_timeframe (str): Timeframe for generated signals.
+    - accurate_stop_orders_execution (bool): If True, enables more accurate stop order execution simulation.
+    - enable_event_batching (bool): If True, enables event batching for optimization.
 
     Returns:
     - list[SimulationSetup]: A list of SimulationSetup objects, each representing a
@@ -419,7 +456,8 @@ def recognize_simulation_configuration(
             _n = (name + "/") if name else ""
             r.extend(
                 recognize_simulation_configuration(
-                    _n + n, v, instruments, exchange, capital, leverage, basic_currency, commissions
+                    _n + n, v, instruments, exchange, capital, leverage, basic_currency, commissions, 
+                    signal_timeframe, accurate_stop_orders_execution, enable_event_batching
                 )
             )
 
@@ -431,6 +469,9 @@ def recognize_simulation_configuration(
             if _sniffer._is_signal(c0):
                 _t = SetupTypes.SIGNAL_AND_TRACKER
 
+                # - no batched historical data for generated signals, so disable it
+                enable_event_batching = False
+
             if _sniffer._is_strategy(c0):
                 _t = SetupTypes.STRATEGY_AND_TRACKER
 
@@ -439,7 +480,8 @@ def recognize_simulation_configuration(
                 SimulationSetup(
                     _t, name, _s, c1,   # type: ignore
                     _sniffer._pick_instruments(instruments, _s) if _sniffer._is_signal(c0) else instruments,
-                    exchange, capital, leverage, basic_currency, commissions,
+                    exchange, capital, leverage, basic_currency, commissions, 
+                    signal_timeframe, accurate_stop_orders_execution, enable_event_batching
                 )
             )
         else:
@@ -447,7 +489,8 @@ def recognize_simulation_configuration(
                 r.extend(
                     recognize_simulation_configuration(
                         # name + "/" + str(j), s, instruments, exchange, capital, leverage, basic_currency, commissions
-                        name, s, instruments, exchange, capital, leverage, basic_currency, commissions, # type: ignore
+                        name, s, instruments, exchange, capital, leverage, basic_currency, commissions,  # type: ignore
+                        signal_timeframe, accurate_stop_orders_execution, enable_event_batching 
                     )
                 )
 
@@ -456,7 +499,8 @@ def recognize_simulation_configuration(
             SimulationSetup(
                 SetupTypes.STRATEGY,
                 name, configs, None, instruments,
-                exchange, capital, leverage, basic_currency, commissions,
+                exchange, capital, leverage, basic_currency, commissions, 
+                signal_timeframe, accurate_stop_orders_execution, enable_event_batching
             )
         )
 
@@ -467,7 +511,8 @@ def recognize_simulation_configuration(
             SimulationSetup(
                 SetupTypes.SIGNAL,
                 name, c1, None, _sniffer._pick_instruments(instruments, c1),
-                exchange, capital, leverage, basic_currency, commissions,
+                exchange, capital, leverage, basic_currency, commissions, 
+                signal_timeframe, accurate_stop_orders_execution, False # - no batched historical data for generated signals, so disable it
             )
         )
 
@@ -475,9 +520,19 @@ def recognize_simulation_configuration(
     return r
 
 
+def _get_default_warmup_period(base_subscription: str, in_timeframe: pd.Timedelta | None) -> pd.Timedelta:
+    if in_timeframe is None or base_subscription in [DataType.QUOTE, DataType.TRADE, DataType.ORDERBOOK]:
+        return pd.Timedelta("1Min")
+
+    if in_timeframe < pd.Timedelta("1h"):
+        return 5 * in_timeframe
+
+    return 2 * in_timeframe
+
+
 def _detect_defaults_from_subscriptions(
-    requests: dict[str, tuple[str, DataReader]],
-) -> tuple[str, str, dict[str, DataReader]]:
+    requests: dict[str, tuple[str, DataReader]], open_close_time_indent_secs: int
+) -> SimulationDataConfig:
     def _tf(x):
         _p = DataType.from_str(x)[1]
         return pd.Timedelta(_p["timeframe"]) if "timeframe" in _p else None
@@ -562,7 +617,12 @@ def _detect_defaults_from_subscriptions(
     if _out_tf:
         _default_trigger_schedule = timedelta_to_crontab(pd.Timedelta(_out_tf))
 
-    return _default_trigger_schedule, _base_subscr, _t_readers
+    # - default warmups
+    _warmups = {str(_base_subscr): time_delta_to_str(_get_default_warmup_period(_base_subscr, _in_base_tf).asm8.item())}
+
+    return SimulationDataConfig(
+        _default_trigger_schedule, _base_subscr, _t_readers, _warmups, open_close_time_indent_secs
+    )
 
 
 def _is_transformable(_dest: str, _src: str) -> bool:
@@ -583,7 +643,9 @@ def recognize_simulation_data_config(
     decls: DataDecls_t,
     instruments: list[Instrument],
     exchange: str,
-) -> tuple[str, str, dict[str, DataReader]]:
+    open_close_time_indent_secs: int = 1,
+    aux_data: DataReader | None = None,
+) -> SimulationDataConfig:
     """
     Recognizes and configures simulation data based on the provided declarations.
 
@@ -687,5 +749,10 @@ def recognize_simulation_data_config(
         case _:
             raise SimulationConfigError(f"Can't recognize declared data provider: {type(decls)}")
 
-    # trigger_time, base_subscription, available subscription_types#-
-    return _detect_defaults_from_subscriptions(_requests)
+    # detect setup's defaults from declared data
+    _setup_defaults = _detect_defaults_from_subscriptions(_requests, open_close_time_indent_secs)
+
+    # - just pass it to config, TODO: we need to think how to handle auxiliary data provider better
+    _setup_defaults.aux_data_provider = aux_data  # type: ignore
+
+    return _setup_defaults

@@ -55,8 +55,10 @@ def run_debug_sim(
     )
     broker = SimulatedBroker(channel, account)
     scheduler = SimulatedScheduler(channel, lambda: time_provider.time().item())
-    _schedule, _base_subscription, _typed_readers = recognize_simulation_data_config(data_reader, instruments, exchange)
-    data_provider = SimulatedDataProvider("dummy", channel, scheduler, time_provider, account, _typed_readers)
+    _data_cfg = recognize_simulation_data_config(data_reader, instruments, exchange)
+    data_provider = SimulatedDataProvider(
+        "dummy", channel, scheduler, time_provider, account, readers=_data_cfg.data_providers
+    )
     logs_writer = InMemoryLogsWriter(strategy_id, strategy_id, "0")
     strategy_logging = StrategyLogging(logs_writer)
     ctx = StrategyContext(
