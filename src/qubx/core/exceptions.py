@@ -22,11 +22,11 @@ class NotSupported(ExchangeError):
     pass
 
 
-class SimulatorError(BaseError):
+class QueueTimeout(BaseError):
     pass
 
 
-class QueueTimeout(BaseError):
+class StrategyExceededMaxNumberOfRuntimeErrors(Exception):
     pass
 
 

@@ -3,8 +3,6 @@ from multiprocessing.pool import ThreadPool
 from types import FunctionType
 from typing import Any, Callable, List, Tuple
 
-import pandas as pd
-
 from qubx import logger
 from qubx.core.basics import (
     SW,
@@ -19,6 +17,7 @@ from qubx.core.basics import (
     TriggerEvent,
     dt_64,
 )
+from qubx.core.exceptions import StrategyExceededMaxNumberOfRuntimeErrors
 from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, extract_price, process_schedule_spec
 from qubx.core.interfaces import (
     IAccountProcessor,
@@ -169,23 +168,27 @@ class ProcessingManager(IProcessingManager):
                     _signals = self._wrap_signal_list(self._strategy.on_event(self._context, _trigger_event))
                     signals.extend(_signals)
 
+                    # - we reset failures counter when we successfully process on_event
+                    self._fails_counter = 0
+
                 if isinstance(event, Order):
                     _signals = self._wrap_signal_list(self._strategy.on_order_update(self._context, event))
                     signals.extend(_signals)
 
                 self._subscription_manager.commit()  # apply pending operations
 
-                self._fails_counter = 0
             except Exception as strat_error:
                 # - probably we need some cooldown interval after exception to prevent flooding
                 logger.error(f"Strategy {self._strategy_name} raised an exception: {strat_error}")
                 logger.opt(colors=False).error(traceback.format_exc())
 
-                #  - we stop execution after let's say maximal number of errors in a row
+                #  - we stop execution after maximal number of errors in a row
                 self._fails_counter += 1
                 if self._fails_counter >= self.MAX_NUMBER_OF_STRATEGY_FAILURES:
-                    logger.error("STRATEGY FAILURES IN THE ROW EXCEEDED MAX ALLOWED NUMBER - STOPPING ...")
-                    return True
+                    logger.error(
+                        f"STRATEGY FAILED {self.MAX_NUMBER_OF_STRATEGY_FAILURES} TIMES IN THE ROW - STOPPING ..."
+                    )
+                    raise StrategyExceededMaxNumberOfRuntimeErrors()
 
         # - process and execute signals if they are provided
         if signals:
