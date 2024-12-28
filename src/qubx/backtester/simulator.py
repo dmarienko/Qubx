@@ -209,7 +209,7 @@ def _run_setup(
         time_provider=simulated_clock,
         account=account,
         readers=data_setup.data_providers,
-        open_close_time_indent_secs=data_setup.open_close_time_indent_secs,
+        open_close_time_indent_secs=data_setup.adjusted_open_close_time_indent_secs,
     )
 
     # - it will store simulation results into memory

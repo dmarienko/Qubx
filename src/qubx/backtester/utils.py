@@ -103,6 +103,7 @@ class SimulationDataConfig:
     data_providers: dict[str, DataReader]                  # dictionary of available subscription types with DataReaders
     default_warmups: dict[str, str]                        # default warmups periods
     open_close_time_indent_secs: int                       # open/close ticks shift in seconds
+    adjusted_open_close_time_indent_secs: int              # adjusted open/close ticks shift in seconds
     aux_data_provider: InMemoryCachedReader | None = None  # auxiliary data provider
 
     def get_timeguarded_aux_reader(self, time_provider: ITimeProvider) -> TimeGuardedWrapper | None:
@@ -605,15 +606,45 @@ def _detect_defaults_from_subscriptions(
         raise SimulationConfigError("Can't detect base subscription in provided data specification")
 
     _default_trigger_schedule = ""  # default trigger on every event
+    adj_open_close_time_indent_secs = open_close_time_indent_secs
     if _out_tf:
-        _default_trigger_schedule = timedelta_to_crontab(pd.Timedelta(_out_tf))
+        _default_trigger_schedule = timedelta_to_crontab(_out_tf_tdelta := pd.Timedelta(_out_tf))
+
+        # - if strategy doesn't set it's own schedule then this default trigger schedule would be used for triggering on_event() method.
+        # - In this case we want that last price update was arrived before this trigger's time to have
+        # - most recent market data
+        adj_open_close_time_indent_secs = _adjust_open_close_time_indent_secs(
+            _out_tf_tdelta, open_close_time_indent_secs
+        )
 
     # - default warmups
     _warmups = {str(_base_subscr): time_delta_to_str(_get_default_warmup_period(_base_subscr, _in_base_tf).asm8.item())}
 
     return SimulationDataConfig(
-        _default_trigger_schedule, _base_subscr, _t_readers, _warmups, open_close_time_indent_secs
+        _default_trigger_schedule,
+        _base_subscr,
+        _t_readers,
+        _warmups,
+        open_close_time_indent_secs,
+        adj_open_close_time_indent_secs,
     )
+
+
+def _adjust_open_close_time_indent_secs(timeframe: pd.Timedelta, original_indent_secs: int) -> int:
+    # - if it triggers at daily+ bar let's assume this bar is 'closed' 5 min before exact closing time
+    if timeframe >= pd.Timedelta("1d"):
+        return max(original_indent_secs, 5 * 60)
+
+    # - if it triggers at 1Min+ bar let's assume this bar is 'closed' 5 sec before exact closing time
+    if timeframe >= pd.Timedelta("1min"):
+        return max(original_indent_secs, 5)
+
+    # - for all sub-minute timeframes just use 1 sec shift
+    if timeframe > pd.Timedelta("1s"):
+        return max(original_indent_secs, 1)
+
+    # - for rest just keep original indent
+    return original_indent_secs
 
 
 def _is_transformable(_dest: str, _src: str) -> bool:

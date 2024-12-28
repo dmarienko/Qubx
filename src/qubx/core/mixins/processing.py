@@ -17,7 +17,7 @@ from qubx.core.basics import (
     TriggerEvent,
     dt_64,
 )
-from qubx.core.exceptions import StrategyExceededMaxNumberOfRuntimeErrors
+from qubx.core.exceptions import StrategyExceededMaxNumberOfRuntimeFailuresError
 from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, extract_price, process_schedule_spec
 from qubx.core.interfaces import (
     IAccountProcessor,
@@ -185,7 +185,7 @@ class ProcessingManager(IProcessingManager):
                     logger.error(
                         f"STRATEGY FAILED {self.MAX_NUMBER_OF_STRATEGY_FAILURES} TIMES IN THE ROW - STOPPING ..."
                     )
-                    raise StrategyExceededMaxNumberOfRuntimeErrors()
+                    raise StrategyExceededMaxNumberOfRuntimeFailuresError()
 
         # - process and execute signals if they are provided
         if signals:

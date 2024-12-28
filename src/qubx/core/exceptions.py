@@ -26,7 +26,7 @@ class QueueTimeout(BaseError):
     pass
 
 
-class StrategyExceededMaxNumberOfRuntimeErrors(Exception):
+class StrategyExceededMaxNumberOfRuntimeFailuresError(Exception):
     pass
 
 
