@@ -6,7 +6,7 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 from qubx import logger
-from qubx.backtester.simulated_data import EventBatcher, IterableSimulationData
+from qubx.backtester.simulated_data import IterableSimulationData
 from qubx.core.basics import (
     CtrlChannel,
     DataType,
@@ -75,23 +75,22 @@ class SimulatedDataProvider(IDataProvider):
         start: str | pd.Timestamp,
         end: str | pd.Timestamp,
         silent: bool = False,
-        enable_event_batching: bool = True,
     ) -> None:
         logger.info(f"{self.__class__.__name__} ::: Simulation started at {start} :::")
 
         if self._pregenerated_signals:
             self._prepare_generated_signals(start, end)
             _run = self._process_generated_signals
-            enable_event_batching = False  # no batching for pre-generated signals
         else:
             _run = self._process_strategy
 
-        qiter = EventBatcher(self._data_source.create_iterable(start, end), passthrough=not enable_event_batching)
         start, end = pd.Timestamp(start), pd.Timestamp(end)
         total_duration = end - start
         update_delta = total_duration / 100
         prev_dt = pd.Timestamp(start)
 
+        # - date iteration
+        qiter = self._data_source.create_iterable(start, end)
         if silent:
             for instrument, data_type, event, is_hist in qiter:
                 if not _run(instrument, data_type, event, is_hist):

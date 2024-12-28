@@ -597,7 +597,6 @@ class TradingSessionResult:
     exchange: str                     # exchange name (TODO: need to think how to do with it for multiple exchanges)
     instruments: list[Instrument]     # instruments used at the start of the session (TODO: need to collect all traded instruments)
     capital: float
-    leverage: float
     base_currency: str
     commissions: str                   # used commissions ("vip0_usdt" etc)
     portfolio_log: pd.DataFrame        # portfolio log records
@@ -620,7 +619,6 @@ class TradingSessionResult:
         exchange: str,
         instruments: list[Instrument],
         capital: float,
-        leverage: float,
         base_currency: str,
         commissions: str,
         portfolio_log: pd.DataFrame,
@@ -639,7 +637,6 @@ class TradingSessionResult:
         self.exchange = exchange
         self.instruments = instruments
         self.capital = capital
-        self.leverage = leverage
         self.base_currency = base_currency
         self.commissions = commissions
         self.portfolio_log = portfolio_log
@@ -683,7 +680,6 @@ class TradingSessionResult:
             "stop": pd.Timestamp(self.stop).isoformat(),
             "exchange": self.exchange,
             "capital": self.capital,
-            "leverage": self.leverage,
             "base_currency": self.base_currency,
             "commissions": self.commissions,
             "strategy_class": self.strategy_class,
@@ -705,7 +701,7 @@ class TradingSessionResult:
 
         _s = "Simulation Report" if self.is_simulation else "Live"
         _name = f"{_s} for (<font color='red'>{self.name}.{self.id}</font>) generated <font color='green'>{str(self.creation_time)}</font>"
-        _cap = f"{self.capital} {self.base_currency} x {self.leverage} ({self.commissions} @ {self.exchange})"
+        _cap = f"{self.capital} {self.base_currency} ({self.commissions} @ {self.exchange})"
 
         _tmpl = f"""
             <style>
@@ -772,7 +768,7 @@ class TradingSessionResult:
         _t = f"[{self.start} - {self.stop}]" if self.is_simulation else ""
         r = f"""::: {_s} {self.id} ({self.name}) {_t}
  :   QUBX: {self.qubx_version}
- :   Capital: {self.capital} {self.base_currency} x {self.leverage} ({self.commissions} @ {self.exchange})
+ :   Capital: {self.capital} {self.base_currency} ({self.commissions} @ {self.exchange})
  :   Instruments: [{','.join(self.symbols)}]
  :   Generated: {len(self.signals_log)} signals, {len(self.executions_log)} executions
  :   Strategy: {self.config(False)}

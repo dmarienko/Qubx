@@ -1,11 +1,11 @@
 import math
 from collections import defaultdict, deque
-from typing import Any, Iterable, Iterator, TypeAlias
+from typing import Any, Iterator, TypeAlias
 
 import pandas as pd
 
 from qubx import logger
-from qubx.core.basics import BatchEvent, DataType, Instrument, Timestamped, dt_64
+from qubx.core.basics import DataType, Instrument, Timestamped, dt_64
 from qubx.core.exceptions import SimulationError
 from qubx.data.readers import (
     AsDict,
@@ -554,64 +554,3 @@ class IterableSimulationData(Iterator):
                 return instr, data_type, v, _is_historical
         except StopIteration as e:  # noqa: F841
             raise StopIteration
-
-
-class EventBatcher:
-    _BATCH_SETTINGS = {
-        "trade": "1Sec",
-        "orderbook": "1Sec",
-    }
-
-    def __init__(self, source_iterator: Iterator | Iterable, passthrough: bool = False, **kwargs):
-        self.source_iterator = source_iterator
-        self._passthrough = passthrough
-        self._batch_settings = {**self._BATCH_SETTINGS, **kwargs}
-        self._batch_settings = {k: pd.Timedelta(v) for k, v in self._batch_settings.items()}
-
-    def __iter__(self) -> Iterator[tuple[Instrument, str, Any, bool]]:
-        if self._passthrough:
-            _iter = iter(self.source_iterator) if isinstance(self.source_iterator, Iterable) else self.source_iterator
-            yield from _iter
-            return
-
-        last_instrument: Instrument = None  # type: ignore
-        last_data_type: str = None  # type: ignore
-        last_hist: bool | None = None
-        buffer = []
-        for instrument, data_type, event, hist in self.source_iterator:
-            time: dt_64 = event.time  # type: ignore
-
-            if data_type not in self._batch_settings:
-                if buffer:
-                    yield last_instrument, last_data_type, self._batch_event(buffer), hist
-                    buffer = []
-                yield instrument, data_type, event, hist
-                last_instrument, last_data_type, last_hist = instrument, data_type, hist
-                continue
-
-            if instrument != last_instrument:
-                if buffer:
-                    yield last_instrument, last_data_type, self._batch_event(buffer), hist
-                last_instrument, last_data_type, last_hist = instrument, data_type, hist
-                buffer = [event]
-                continue
-
-            if buffer and data_type != last_data_type:
-                yield instrument, last_data_type, buffer, hist
-                buffer = [event]
-                last_instrument, last_data_type, last_hist = instrument, data_type, hist
-                continue
-
-            last_instrument, last_data_type = instrument, data_type
-            buffer.append(event)
-            if pd.Timedelta(time - buffer[0].time) >= self._batch_settings[data_type]:
-                yield instrument, data_type, self._batch_event(buffer), hist
-                buffer = []
-                last_instrument, last_data_type, last_hist = None, None, None  # type: ignore
-
-        if buffer:
-            yield last_instrument, last_data_type, self._batch_event(buffer), last_hist  # type: ignore
-
-    @staticmethod
-    def _batch_event(buffer: list[Any]) -> Any:
-        return BatchEvent(buffer[-1].time, buffer) if len(buffer) > 1 else buffer[0]

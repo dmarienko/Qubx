@@ -72,7 +72,8 @@ class AccountConfigurationManager:
 
     def __repr__(self):
         exchanges = set(self._exchange_credentials.keys()) | set(self._exchange_settings.keys())
-        return f"AccountManager:\n{'\n'.join([f' - {exchange}' for exchange in exchanges])}"
+        _e_str = "\n".join([f" - {exchange}" for exchange in exchanges])
+        return f"AccountManager:\n{_e_str}"
 
     def _load(self, config: Path):
         config_dict = toml.load(config)

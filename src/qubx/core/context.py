@@ -362,7 +362,7 @@ class StrategyContext(IStrategyContext):
     def get_subscribed_instruments(self, subscription_type: str | None = None) -> list[Instrument]:
         return self._subscription_manager.get_subscribed_instruments(subscription_type)
 
-    def get_warmup(self, subscription_type: str) -> str:
+    def get_warmup(self, subscription_type: str) -> str | None:
         return self._subscription_manager.get_warmup(subscription_type)
 
     def set_warmup(self, configs: dict[Any, str]):

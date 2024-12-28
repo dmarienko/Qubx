@@ -7,14 +7,14 @@ from joblib import delayed
 from qubx import QubxLogConfig, logger, lookup
 from qubx.core.basics import DataType
 from qubx.core.context import StrategyContext
-from qubx.core.exceptions import SimulationError
+from qubx.core.exceptions import SimulationConfigError, SimulationError
 from qubx.core.helpers import extract_parameters_from_object, full_qualified_class_name
 from qubx.core.interfaces import IStrategy
 from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
 from qubx.core.metrics import TradingSessionResult
-from qubx.data.helpers import InMemoryCachedReader, TimeGuardedWrapper
 from qubx.data.readers import DataReader
 from qubx.utils.misc import ProgressParallel, get_current_user
+from qubx.utils.time import handle_start_stop
 
 from .account import SimulatedAccountProcessor
 from .broker import SimulatedBroker
@@ -28,6 +28,7 @@ from .utils import (
     SimulatedLogFormatter,
     SimulatedScheduler,
     SimulatedTimeProvider,
+    SimulationDataConfig,
     SimulationSetup,
     StrategiesDecls_t,
     SymbolOrInstrument_t,
@@ -47,10 +48,8 @@ def simulate(
     stop: str | pd.Timestamp | None = None,
     exchange: ExchangeName_t | None = None,
     base_currency: str = "USDT",
-    leverage: float = 1.0,  # TODO: we need to add support for leverage
     n_jobs: int = 1,
     silent: bool = False,
-    enable_event_batching: bool = True,
     aux_data: DataReader | None = None,
     accurate_stop_orders_execution: bool = False,
     signal_timeframe: str = "1Min",
@@ -70,10 +69,8 @@ def simulate(
         - stop (str | pd.Timestamp | None): End time of the simulation. If None, simulates until the last accessible data.
         - exchange (ExchangeName_t | None): Exchange name if not specified in the instruments list.
         - base_currency (str): Base currency for the simulation, default is "USDT".
-        - leverage (float): Leverage factor for trading, default is 1.0.
         - n_jobs (int): Number of parallel jobs for simulation, default is 1.
         - silent (bool): If True, suppresses output during simulation.
-        - enable_event_batching (bool): If True, enables event batching for optimization.
         - aux_data (DataReader | None): Auxiliary data provider (default is None).
         - accurate_stop_orders_execution (bool): If True, enables more accurate stop order execution simulation.
         - signal_timeframe (str): Timeframe for signals, default is "1Min".
@@ -108,138 +105,115 @@ def simulate(
     exchange = _exchanges[0]
 
     # - recognize provided data
-    _schedule, _base_subscription, _typed_readers = recognize_simulation_data_config(data, _instruments, exchange)
+    data_setup = recognize_simulation_data_config(data, _instruments, exchange, open_close_time_indent_secs, aux_data)
 
     # - recognize setup: it can be either a strategy or set of signals
-    setups = recognize_simulation_configuration(
-        "", strategies, _instruments, exchange, capital, leverage, base_currency, commissions
+    simulation_setups = recognize_simulation_configuration(
+        "",
+        strategies,
+        _instruments,
+        exchange,
+        capital,
+        base_currency,
+        commissions,
+        signal_timeframe,
+        accurate_stop_orders_execution,
     )
-    if not setups:
+    if not simulation_setups:
         logger.error(
             _msg
             := "Can't recognize setup - it should be a strategy, a set of signals or list of signals/strategies + tracker !"
         )
         raise SimulationError(_msg)
 
-    # - check stop time : here we try to backtest till now (may be we need to get max available time from data reader ?)
+    # - preprocess start and stop and convert to datetime if necessary
     if stop is None:
+        # - check stop time : here we try to backtest till now (may be we need to get max available time from data reader ?)
         stop = pd.Timestamp.now(tz="UTC").astimezone(None)
 
+    _start, _stop = handle_start_stop(start, stop, convert=pd.Timestamp)
+    assert isinstance(_start, pd.Timestamp) and isinstance(_stop, pd.Timestamp), "Invalid start and stop times"
+
     # - run simulations
-    return _run_setups(
-        setups,
-        start,
-        stop,
-        _typed_readers,
-        _schedule,
-        _base_subscription,
-        n_jobs=n_jobs,
-        silent=silent,
-        enable_event_batching=enable_event_batching,
-        accurate_stop_orders_execution=accurate_stop_orders_execution,
-        aux_data=aux_data,
-        signal_timeframe=signal_timeframe,
-        open_close_time_indent_secs=open_close_time_indent_secs,
-    )
+    return _run_setups(simulation_setups, data_setup, _start, _stop, n_jobs=n_jobs, silent=silent)
 
 
 def _run_setups(
-    setups: list[SimulationSetup],
-    start: str | pd.Timestamp,
-    stop: str | pd.Timestamp,
-    typed_data_config: dict[str, DataReader],
-    default_schedule: str,
-    default_base_subscription: str,
+    strategies_setups: list[SimulationSetup],
+    data_setup: SimulationDataConfig,
+    start: pd.Timestamp,
+    stop: pd.Timestamp,
     n_jobs: int = -1,
     silent: bool = False,
-    enable_event_batching: bool = True,
-    accurate_stop_orders_execution: bool = False,
-    aux_data: DataReader | None = None,
-    open_close_time_indent_secs=1,
-    **kwargs,
 ) -> list[TradingSessionResult]:
     # loggers don't work well with joblib and multiprocessing in general because they contain
     # open file handlers that cannot be pickled. I found a solution which requires the usage of enqueue=True
     # in the logger configuration and specifying backtest "multiprocessing" instead of the default "loky"
     # for joblib. But it works now.
     # See: https://stackoverflow.com/questions/59433146/multiprocessing-logging-how-to-use-loguru-with-joblib-parallel
-    _main_loop_silent = len(setups) == 1
+    _main_loop_silent = len(strategies_setups) == 1
     n_jobs = 1 if _main_loop_silent else n_jobs
 
-    reports = ProgressParallel(n_jobs=n_jobs, total=len(setups), silent=_main_loop_silent, backend="multiprocessing")(
-        delayed(_run_setup)(
-            id,
-            setup,
-            start,
-            stop,
-            typed_data_config,
-            default_schedule,
-            default_base_subscription,
-            silent=silent,
-            enable_event_batching=enable_event_batching,
-            accurate_stop_orders_execution=accurate_stop_orders_execution,
-            aux_data_provider=aux_data,
-            open_close_time_indent_secs=open_close_time_indent_secs,
-            **kwargs,
-        )
-        for id, setup in enumerate(setups)
+    reports = ProgressParallel(
+        n_jobs=n_jobs, total=len(strategies_setups), silent=_main_loop_silent, backend="multiprocessing"
+    )(
+        delayed(_run_setup)(id, f"Simulated-{id}", setup, data_setup, start, stop, silent=silent)
+        for id, setup in enumerate(strategies_setups)
     )
     return reports  # type: ignore
 
 
 def _run_setup(
     setup_id: int,
+    account_id: str,
     setup: SimulationSetup,
-    start: str | pd.Timestamp,
-    stop: str | pd.Timestamp,
-    typed_data_config: dict[str, DataReader],
-    default_schedule: str,
-    default_base_subscription: str,
-    silent: bool = False,
-    enable_event_batching: bool = True,
-    accurate_stop_orders_execution: bool = False,
-    aux_data_provider: InMemoryCachedReader | None = None,
-    signal_timeframe: str = "1Min",
-    open_close_time_indent_secs=1,
-    account_id: str = "Simulated0",
+    data_setup: SimulationDataConfig,
+    start: pd.Timestamp,
+    stop: pd.Timestamp,
+    silent: bool,
 ) -> TradingSessionResult:
     _stop = pd.Timestamp(stop)
-    logger.debug(
-        f"<red>{pd.Timestamp(start)}</red> Initiating simulated trading for {setup.exchange} for {setup.capital} x {setup.leverage} in {setup.base_currency}..."
-    )
+
+    # - fees for this exchange
+    tcc = lookup.fees.find(setup.exchange.lower(), setup.commissions)
+    if tcc is None:
+        raise SimulationConfigError(
+            f"Can't find transaction costs calculator for '{setup.exchange}' for specification '{setup.commissions}' !"
+        )
 
     channel = SimulatedCtrlChannel("databus", sentinel=(None, None, None, None))
-    tcc = lookup.fees.find(setup.exchange.lower(), setup.commissions)
-    assert tcc is not None, f"Can't find transaction costs calculator for {setup.exchange} with {setup.commissions} !"
-
-    time_provider = SimulatedTimeProvider(np.datetime64(start, "ns"))
+    simulated_clock = SimulatedTimeProvider(np.datetime64(start, "ns"))
 
     # - we want to see simulate time in log messages
-    QubxLogConfig.setup_logger(QubxLogConfig.get_log_level(), SimulatedLogFormatter(time_provider).formatter)
+    QubxLogConfig.setup_logger(QubxLogConfig.get_log_level(), SimulatedLogFormatter(simulated_clock).formatter)
+
+    logger.debug(
+        f"Preparing simulated trading on <g>{setup.exchange.upper()}</g> for {setup.capital} {setup.base_currency}..."
+    )
 
     account = SimulatedAccountProcessor(
         account_id=account_id,
         channel=channel,
         base_currency=setup.base_currency,
         initial_capital=setup.capital,
-        time_provider=time_provider,
+        time_provider=simulated_clock,
         tcc=tcc,
-        accurate_stop_orders_execution=accurate_stop_orders_execution,
+        accurate_stop_orders_execution=setup.accurate_stop_orders_execution,
     )
-    scheduler = SimulatedScheduler(channel, lambda: time_provider.time().item())
+    scheduler = SimulatedScheduler(channel, lambda: simulated_clock.time().item())
     broker = SimulatedBroker(channel, account, setup.exchange)
     data_provider = SimulatedDataProvider(
         exchange_id=setup.exchange,
         channel=channel,
         scheduler=scheduler,
-        time_provider=time_provider,
+        time_provider=simulated_clock,
         account=account,
-        readers=typed_data_config,
-        open_close_time_indent_secs=open_close_time_indent_secs,
+        readers=data_setup.data_providers,
+        open_close_time_indent_secs=data_setup.adjusted_open_close_time_indent_secs,
     )
 
     # - it will store simulation results into memory
-    logs_writer = InMemoryLogsWriter("test", setup.name, "0")
+    logs_writer = InMemoryLogsWriter(account_id, setup.name, "0")
     strat: IStrategy | None = None
 
     match setup.setup_type:
@@ -251,35 +225,28 @@ def _run_setup(
             strat.tracker = lambda ctx: setup.tracker  # type: ignore
 
         case SetupTypes.SIGNAL:
-            strat = SignalsProxy(timeframe=signal_timeframe)
+            strat = SignalsProxy(timeframe=setup.signal_timeframe)
             data_provider.set_generated_signals(setup.generator)  # type: ignore
+
             # - we don't need any unexpected triggerings
             _stop = min(setup.generator.index[-1], _stop)  # type: ignore
-
-            # - no historical data for generated signals, so disable it
-            enable_event_batching = False
 
         case SetupTypes.SIGNAL_AND_TRACKER:
-            strat = SignalsProxy(timeframe=signal_timeframe)
+            strat = SignalsProxy(timeframe=setup.signal_timeframe)
             strat.tracker = lambda ctx: setup.tracker
             data_provider.set_generated_signals(setup.generator)  # type: ignore
+
             # - we don't need any unexpected triggerings
             _stop = min(setup.generator.index[-1], _stop)  # type: ignore
-
-            # - no historical data for generated signals, so disable it
-            enable_event_batching = False
 
         case _:
             raise SimulationError(f"Unsupported setup type: {setup.setup_type} !")
 
-    # - check aux data provider
-    _aux_data = None
-    if aux_data_provider is not None:
-        if not isinstance(aux_data_provider, InMemoryCachedReader):
-            logger.error("Aux data provider should be an instance of InMemoryCachedReader! Skipping it.")
-        _aux_data = TimeGuardedWrapper(aux_data_provider, time_guard=time_provider)
+    if not isinstance(strat, IStrategy):
+        raise SimulationConfigError(f"Strategy should be an instance of IStrategy, but got {strat} !")
 
-    assert isinstance(strat, IStrategy), f"Strategy should be an instance of IStrategy, but got {strat} !"
+    # - get aux data provider
+    _aux_data = data_setup.get_timeguarded_aux_reader(simulated_clock)
 
     ctx = StrategyContext(
         strategy=strat,
@@ -287,7 +254,7 @@ def _run_setup(
         data_provider=data_provider,
         account=account,
         scheduler=scheduler,
-        time_provider=time_provider,
+        time_provider=simulated_clock,
         instruments=setup.instruments,
         logging=StrategyLogging(logs_writer),
         aux_data_provider=_aux_data,
@@ -295,16 +262,22 @@ def _run_setup(
 
     # - setup base subscription from spec
     if ctx.get_base_subscription() == DataType.NONE:
-        logger.debug(f" | Setting up default base subscription: {default_base_subscription}")
-        ctx.set_base_subscription(default_base_subscription)
+        logger.debug(f" | Setting up default base subscription: {data_setup.default_base_subscription}")
+        ctx.set_base_subscription(data_setup.default_base_subscription)
 
     # - set default on_event schedule if detected and strategy didn't set it's own schedule
-    if not ctx.get_event_schedule("time") and default_schedule:
-        logger.debug(f" | Setting default schedule: {default_schedule}")
-        ctx.set_event_schedule(default_schedule)
+    if not ctx.get_event_schedule("time") and data_setup.default_trigger_schedule:
+        logger.debug(f" | Setting default schedule: {data_setup.default_trigger_schedule}")
+        ctx.set_event_schedule(data_setup.default_trigger_schedule)
 
     # - start context at this point
     ctx.start()
+
+    # - apply default warmup periods if strategy didn't set them
+    for s in ctx.get_subscriptions():
+        if not ctx.get_warmup(s) and (_d_wt := data_setup.default_warmups.get(s)):
+            logger.debug(f"Strategy doesn't set warmup period for <c>{s}</c> so default <c>{_d_wt}</c> will be used")
+            ctx.set_warmup({s: _d_wt})
 
     def _is_known_type(t: str):
         try:
@@ -314,13 +287,13 @@ def _run_setup(
             return False
 
     # - if any custom data providers are in the data spec
-    for t, r in typed_data_config.items():
+    for t, r in data_setup.data_providers.items():
         if not _is_known_type(t) or t in [DataType.TRADE, DataType.OHLC_TRADES, DataType.OHLC_QUOTES, DataType.QUOTE]:
             logger.debug(f" | Subscribing to: {t}")
             ctx.subscribe(t, ctx.instruments)
 
     try:
-        data_provider.run(start, _stop, silent=silent, enable_event_batching=enable_event_batching)  # type: ignore
+        data_provider.run(start, _stop, silent=silent)  # type: ignore
     except KeyboardInterrupt:
         logger.error("Simulated trading interrupted by user !")
 
@@ -338,7 +311,6 @@ def _run_setup(
         setup.exchange,
         setup.instruments,
         setup.capital,
-        setup.leverage,
         setup.base_currency,
         setup.commissions,
         logs_writer.get_portfolio(as_plain_dataframe=True),
