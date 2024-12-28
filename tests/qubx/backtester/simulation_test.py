@@ -388,7 +388,7 @@ class TestSimulatorHelpers:
             }, # type: ignore
             [lookup.find_symbol("BINANCE.UM", s) for s in ["BTCUSDT", "BCHUSDT", "LTCUSDT"]],  # type: ignore
             "BINANCE.UM",
-            10_000, 1.0, "USDT", "vip0_usdt", "1Min", True, False)
+            10_000, "USDT", "vip0_usdt", "1Min", True, False)
 
         assert setups[0].setup_type == SetupTypes.SIGNAL, "Got wrong setup type"
         assert setups[1].setup_type == SetupTypes.SIGNAL, "Got wrong setup type"

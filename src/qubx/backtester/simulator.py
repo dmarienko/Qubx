@@ -48,7 +48,6 @@ def simulate(
     stop: str | pd.Timestamp | None = None,
     exchange: ExchangeName_t | None = None,
     base_currency: str = "USDT",
-    leverage: float = 1.0,  # TODO: we need to add support for leverage ?
     n_jobs: int = 1,
     silent: bool = False,
     enable_event_batching: bool = True,
@@ -71,7 +70,6 @@ def simulate(
         - stop (str | pd.Timestamp | None): End time of the simulation. If None, simulates until the last accessible data.
         - exchange (ExchangeName_t | None): Exchange name if not specified in the instruments list.
         - base_currency (str): Base currency for the simulation, default is "USDT".
-        - leverage (float): Leverage factor for trading, default is 1.0.
         - n_jobs (int): Number of parallel jobs for simulation, default is 1.
         - silent (bool): If True, suppresses output during simulation.
         - enable_event_batching (bool): If True, enables event batching for optimization.
@@ -118,7 +116,6 @@ def simulate(
         _instruments,
         exchange,
         capital,
-        leverage,
         base_currency,
         commissions,
         signal_timeframe,
@@ -194,7 +191,7 @@ def _run_setup(
     QubxLogConfig.setup_logger(QubxLogConfig.get_log_level(), SimulatedLogFormatter(simulated_clock).formatter)
 
     logger.debug(
-        f"Preparing simulated trading on <g>{setup.exchange.upper()}</g> for {setup.capital} x {setup.leverage} in {setup.base_currency}..."
+        f"Preparing simulated trading on <g>{setup.exchange.upper()}</g> for {setup.capital} {setup.base_currency}..."
     )
 
     account = SimulatedAccountProcessor(
@@ -317,7 +314,6 @@ def _run_setup(
         setup.exchange,
         setup.instruments,
         setup.capital,
-        setup.leverage,
         setup.base_currency,
         setup.commissions,
         logs_writer.get_portfolio(as_plain_dataframe=True),

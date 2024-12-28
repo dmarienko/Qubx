@@ -83,7 +83,6 @@ class SimulationSetup:
     instruments: list[Instrument]
     exchange: str
     capital: float
-    leverage: float
     base_currency: str
     commissions: str
     signal_timeframe: str
@@ -410,7 +409,6 @@ def recognize_simulation_configuration(
     instruments: list[Instrument],
     exchange: str,
     capital: float,
-    leverage: float,
     basic_currency: str,
     commissions: str,
     signal_timeframe: str,
@@ -431,7 +429,6 @@ def recognize_simulation_configuration(
     - instruments (list[Instrument]): List of available instruments for the simulation.
     - exchange (str): The name of the exchange to be used.
     - capital (float): The initial capital for the simulation.
-    - leverage (float): The leverage to be used in the simulation.
     - basic_currency (str): The base currency for the simulation.
     - commissions (str): The commission structure to be applied.
     - signal_timeframe (str): Timeframe for generated signals.
@@ -456,7 +453,7 @@ def recognize_simulation_configuration(
             _n = (name + "/") if name else ""
             r.extend(
                 recognize_simulation_configuration(
-                    _n + n, v, instruments, exchange, capital, leverage, basic_currency, commissions, 
+                    _n + n, v, instruments, exchange, capital, basic_currency, commissions, 
                     signal_timeframe, accurate_stop_orders_execution, enable_event_batching
                 )
             )
@@ -480,7 +477,7 @@ def recognize_simulation_configuration(
                 SimulationSetup(
                     _t, name, _s, c1,   # type: ignore
                     _sniffer._pick_instruments(instruments, _s) if _sniffer._is_signal(c0) else instruments,
-                    exchange, capital, leverage, basic_currency, commissions, 
+                    exchange, capital, basic_currency, commissions, 
                     signal_timeframe, accurate_stop_orders_execution, enable_event_batching
                 )
             )
@@ -488,8 +485,8 @@ def recognize_simulation_configuration(
             for j, s in enumerate(configs):
                 r.extend(
                     recognize_simulation_configuration(
-                        # name + "/" + str(j), s, instruments, exchange, capital, leverage, basic_currency, commissions
-                        name, s, instruments, exchange, capital, leverage, basic_currency, commissions,  # type: ignore
+                        # name + "/" + str(j), s, instruments, exchange, capital, basic_currency, commissions
+                        name, s, instruments, exchange, capital, basic_currency, commissions,  # type: ignore
                         signal_timeframe, accurate_stop_orders_execution, enable_event_batching 
                     )
                 )
@@ -499,7 +496,7 @@ def recognize_simulation_configuration(
             SimulationSetup(
                 SetupTypes.STRATEGY,
                 name, configs, None, instruments,
-                exchange, capital, leverage, basic_currency, commissions, 
+                exchange, capital, basic_currency, commissions, 
                 signal_timeframe, accurate_stop_orders_execution, enable_event_batching
             )
         )
@@ -511,7 +508,7 @@ def recognize_simulation_configuration(
             SimulationSetup(
                 SetupTypes.SIGNAL,
                 name, c1, None, _sniffer._pick_instruments(instruments, c1),
-                exchange, capital, leverage, basic_currency, commissions, 
+                exchange, capital, basic_currency, commissions, 
                 signal_timeframe, accurate_stop_orders_execution, False # - no batched historical data for generated signals, so disable it
             )
         )
