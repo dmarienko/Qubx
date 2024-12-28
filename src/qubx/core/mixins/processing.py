@@ -154,14 +154,11 @@ class ProcessingManager(IProcessingManager):
             )
             return False
 
-        signals: list[Signal] | Signal | None = None
+        signals: list[Signal] | Signal = []
         with SW("StrategyContext.on_event"):
             try:
                 if isinstance(event, MarketEvent):
                     signals = self._wrap_signal_list(self._strategy.on_market_data(self._context, event))
-
-                if signals is None:
-                    signals = []
 
                 if isinstance(event, TriggerEvent) or (isinstance(event, MarketEvent) and event.is_trigger):
                     _trigger_event = event.to_trigger() if isinstance(event, MarketEvent) else event
@@ -213,10 +210,10 @@ class ProcessingManager(IProcessingManager):
     @SW.watch("StrategyContext.on_fit")
     def __invoke_on_fit(self) -> None:
         try:
-            logger.debug(f"Invoking <green>{self._strategy_name}</green> on_fit")
+            logger.debug(f"Invoking <g>{self._strategy_name}</g> on_fit")
             self._strategy.on_fit(self._context)
             self._subscription_manager.commit()  # apply pending operations
-            logger.debug(f"<green>{self._strategy_name}</green> is fitted")
+            logger.debug(f"<g>{self._strategy_name}</g> is fitted")
         except Exception as strat_error:
             logger.error(f"Strategy {self._strategy_name} on_fit raised an exception: {strat_error}")
             logger.opt(colors=False).error(traceback.format_exc())
