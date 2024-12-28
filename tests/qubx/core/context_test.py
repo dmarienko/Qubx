@@ -19,7 +19,7 @@ class Tester1(IStrategy):
         logger.info(f"Exchange: {self._exch}")
 
     def on_fit(self, ctx: IStrategyContext):
-        instr = [ctx.get_instrument(s, ctx.exchanges[0]) for s in ["BTCUSDT", "ETHUSDT", "BCHUSDT"]]
+        instr = [ctx.query_instrument(s, ctx.exchanges[0]) for s in ["BTCUSDT", "ETHUSDT", "BCHUSDT"]]
         logger.info(str(instr))
         # logger.info(f" -> SET NEW UNIVERSE {','.join(i.symbol for i in self._to_test[self._idx])}")
         # self._idx += 1

@@ -1,11 +1,12 @@
 import math
 from collections import defaultdict, deque
-from typing import Any, Iterable, Iterator, TypeAlias
+from typing import Any, Iterator, TypeAlias
 
 import pandas as pd
 
 from qubx import logger
-from qubx.core.basics import BatchEvent, DataType, Instrument, Timestamped, dt_64
+from qubx.core.basics import DataType, Instrument, Timestamped, dt_64
+from qubx.core.exceptions import SimulationError
 from qubx.data.readers import (
     AsDict,
     AsQuotes,
@@ -86,21 +87,75 @@ class IteratedDataStreamsSlicer(Iterator[SlicerOutData]):
     def _load_next_chunk_to_buffer(self, index: str) -> list[Timestamped]:
         return list(reversed(next(self._iterators[index])))
 
+    def _remove_iterator(self, key: str):
+        self._buffers.pop(key)
+        self._iterators.pop(key)
+        self._keys.remove(key)
+
     def _pop_top(self, k: str) -> Timestamped:
+        """
+        Removes and returns the most recent timestamped data element from the buffer associated with the given key.
+        If the buffer is empty after popping, it attempts to load the next chunk of data into the buffer.
+        If no more data is available, the iterator associated with the key is removed.
+
+        Parameters:
+            k (str): The key identifying the data stream buffer to pop from.
+
+        Returns:
+            Timestamped: The most recent timestamped data element from the buffer.
+        """
         v = (data := self._buffers[k]).pop()
         if not data:
             try:
-                # - get next chunk of data
-                data.extend(self._load_next_chunk_to_buffer(k))
+                data.extend(self._load_next_chunk_to_buffer(k))  # - get next chunk of data
             except StopIteration:
-                # print(f" > Iterator[{k}] is empty")
-                # - remove iterable data
-                self._buffers.pop(k)
-                self._iterators.pop(k)
-                self._keys.remove(k)
+                self._remove_iterator(k)  # - remove iterable data
         return v
 
+    def fetch_before_time(self, key: str, time_ns: int) -> list[Timestamped]:
+        """
+        Fetches and returns all timestamped data elements from the buffer associated with the given key
+        that have a timestamp earlier than the specified time.
+
+        Parameters:
+            - key (str): The key identifying the data stream buffer to fetch from.
+            - time_ns (int): The timestamp in nanoseconds. All returned elements will have a timestamp less than this value.
+
+        Returns:
+            - list[Timestamped]: A list of timestamped data elements that occur before the specified time.
+        """
+        values = []
+        data = self._buffers[key]
+        if not data:
+            try:
+                data.extend(self._load_next_chunk_to_buffer(key))  # - get next chunk of data
+            except StopIteration:
+                self._remove_iterator(key)
+
+        # pull most past elements
+        v = data[-1]
+        while v.time < time_ns:
+            values.append(data.pop())
+            if not data:
+                try:
+                    data.extend(self._load_next_chunk_to_buffer(key))  # - get next chunk of data
+                except StopIteration:
+                    self._remove_iterator(key)
+                    break
+            v = data[-1]
+
+        return values
+
     def __next__(self) -> SlicerOutData:
+        """
+        Advances the iterator to the next available timestamped data element across all data streams.
+
+        Returns:
+            - SlicerOutData: A tuple containing the key of the data stream, the timestamp of the data element, and the data element itself.
+
+        Raises:
+            - StopIteration: If there are no more data elements to iterate over.
+        """
         if not self._keys:
             self._iterating = False
             raise StopIteration
@@ -217,10 +272,23 @@ class DataFetcher:
     def get_instruments_indices(self) -> list[str]:
         return [self._fetcher_id + "." + i for i in self._specs]
 
+    def get_instrument_index(self, instrument: Instrument) -> str:
+        return self._fetcher_id + "." + self._make_request_id(instrument)
+
     def load(
         self, start: str | pd.Timestamp, end: str | pd.Timestamp, to_load: list[Instrument] | None
     ) -> dict[str, Iterator]:
-        # - iterate over all instruments if no indices specified
+        """
+        Loads data for specified instruments within a given time range.
+
+        Parameters:
+            - start (str | pd.Timestamp): The start time for data loading, can be a string or a pandas Timestamp.
+            - end (str | pd.Timestamp): The end time for data loading, can be a string or a pandas Timestamp.
+            - to_load (list[Instrument] | None): A list of instruments to load data for. If None, data for all subscribed instruments is loaded.
+
+        Returns:
+            - dict[str, Iterator]: A dictionary where keys are instrument identifiers and values are iterators over the loaded data.
+        """
         _requests = self._specs if not to_load else set(self._make_request_id(i) for i in to_load)
         _r_iters = {}
 
@@ -330,8 +398,10 @@ class IterableSimulationData(Iterator):
         fetcher = self._subtyped_fetchers.get(_subt_key)
         if not fetcher:
             _reader = self._readers.get(_data_type)
+
             if _reader is None:
-                raise ValueError(f"No reader configured for data type: {_data_type}")
+                raise SimulationError(f"No reader configured for data type: {_data_type}")
+
             self._subtyped_fetchers[_subt_key] = (
                 fetcher := DataFetcher(
                     _subt_key,
@@ -356,6 +426,37 @@ class IterableSimulationData(Iterator):
                 self._stop,  # type: ignore
                 _instrs_to_preload,
             )
+
+    def peek_historical_data(self, instrument: Instrument, subscription: str) -> list[Timestamped]:
+        """
+        Retrieves historical data for a specified instrument and subscription type up to the current simulation time.
+
+        Parameters:
+            - instrument (Instrument): instrument for which historical data is requested.
+            - subscription (str): type of data subscription (e.g., OHLC, trades, quotes) for the instrument.
+
+        Returns:
+            - list[Timestamped]: A list of historical data elements for the specified instrument and subscription type
+            that occurred before the current simulation time. If the simulation is not running, returns an empty list.
+
+        Raises:
+            SimulationError: If the instrument does not have the specified subscription in the simulation data provider.
+        """
+        if not self.has_subscription(instrument, subscription):
+            raise SimulationError(
+                f"Instrument: {instrument} has no subscription: {subscription} in this simulation data provider"
+            )
+
+        if not self.is_running:
+            return []
+
+        _subt_key, _, _ = self._parse_subscription_spec(subscription)
+        _i_key = self._subtyped_fetchers[_subt_key].get_instrument_index(instrument)
+
+        assert self._slicer_ctrl is not None and self._current_time is not None
+
+        # fetch historical data for current time
+        return self._slicer_ctrl.fetch_before_time(_i_key, self._current_time)
 
     def get_instruments_for_subscription(self, subscription: str) -> list[Instrument]:
         if subscription == DataType.ALL:
@@ -453,64 +554,3 @@ class IterableSimulationData(Iterator):
                 return instr, data_type, v, _is_historical
         except StopIteration as e:  # noqa: F841
             raise StopIteration
-
-
-class EventBatcher:
-    _BATCH_SETTINGS = {
-        "trade": "1Sec",
-        "orderbook": "1Sec",
-    }
-
-    def __init__(self, source_iterator: Iterator | Iterable, passthrough: bool = False, **kwargs):
-        self.source_iterator = source_iterator
-        self._passthrough = passthrough
-        self._batch_settings = {**self._BATCH_SETTINGS, **kwargs}
-        self._batch_settings = {k: pd.Timedelta(v) for k, v in self._batch_settings.items()}
-
-    def __iter__(self) -> Iterator[tuple[Instrument, str, Any, bool]]:
-        if self._passthrough:
-            _iter = iter(self.source_iterator) if isinstance(self.source_iterator, Iterable) else self.source_iterator
-            yield from _iter
-            return
-
-        last_instrument: Instrument = None  # type: ignore
-        last_data_type: str = None  # type: ignore
-        last_hist: bool | None = None
-        buffer = []
-        for instrument, data_type, event, hist in self.source_iterator:
-            time: dt_64 = event.time  # type: ignore
-
-            if data_type not in self._batch_settings:
-                if buffer:
-                    yield last_instrument, last_data_type, self._batch_event(buffer), hist
-                    buffer = []
-                yield instrument, data_type, event, hist
-                last_instrument, last_data_type, last_hist = instrument, data_type, hist
-                continue
-
-            if instrument != last_instrument:
-                if buffer:
-                    yield last_instrument, last_data_type, self._batch_event(buffer), hist
-                last_instrument, last_data_type, last_hist = instrument, data_type, hist
-                buffer = [event]
-                continue
-
-            if buffer and data_type != last_data_type:
-                yield instrument, last_data_type, buffer, hist
-                buffer = [event]
-                last_instrument, last_data_type, last_hist = instrument, data_type, hist
-                continue
-
-            last_instrument, last_data_type = instrument, data_type
-            buffer.append(event)
-            if pd.Timedelta(time - buffer[0].time) >= self._batch_settings[data_type]:
-                yield instrument, data_type, self._batch_event(buffer), hist
-                buffer = []
-                last_instrument, last_data_type, last_hist = None, None, None  # type: ignore
-
-        if buffer:
-            yield last_instrument, last_data_type, self._batch_event(buffer), last_hist  # type: ignore
-
-    @staticmethod
-    def _batch_event(buffer: list[Any]) -> Any:
-        return BatchEvent(buffer[-1].time, buffer) if len(buffer) > 1 else buffer[0]

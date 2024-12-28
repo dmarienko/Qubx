@@ -3,12 +3,9 @@ from multiprocessing.pool import ThreadPool
 from types import FunctionType
 from typing import Any, Callable, List, Tuple
 
-import pandas as pd
-
 from qubx import logger
 from qubx.core.basics import (
     SW,
-    BatchEvent,
     DataType,
     Deal,
     Instrument,
@@ -20,6 +17,7 @@ from qubx.core.basics import (
     TriggerEvent,
     dt_64,
 )
+from qubx.core.exceptions import StrategyExceededMaxNumberOfRuntimeFailuresError
 from qubx.core.helpers import BasicScheduler, CachedMarketDataHolder, extract_price, process_schedule_spec
 from qubx.core.interfaces import (
     IAccountProcessor,
@@ -156,19 +154,19 @@ class ProcessingManager(IProcessingManager):
             )
             return False
 
-        signals: list[Signal] | Signal | None = None
+        signals: list[Signal] | Signal = []
         with SW("StrategyContext.on_event"):
             try:
                 if isinstance(event, MarketEvent):
                     signals = self._wrap_signal_list(self._strategy.on_market_data(self._context, event))
 
-                if signals is None:
-                    signals = []
-
                 if isinstance(event, TriggerEvent) or (isinstance(event, MarketEvent) and event.is_trigger):
                     _trigger_event = event.to_trigger() if isinstance(event, MarketEvent) else event
                     _signals = self._wrap_signal_list(self._strategy.on_event(self._context, _trigger_event))
                     signals.extend(_signals)
+
+                    # - we reset failures counter when we successfully process on_event
+                    self._fails_counter = 0
 
                 if isinstance(event, Order):
                     _signals = self._wrap_signal_list(self._strategy.on_order_update(self._context, event))
@@ -176,17 +174,18 @@ class ProcessingManager(IProcessingManager):
 
                 self._subscription_manager.commit()  # apply pending operations
 
-                self._fails_counter = 0
             except Exception as strat_error:
                 # - probably we need some cooldown interval after exception to prevent flooding
                 logger.error(f"Strategy {self._strategy_name} raised an exception: {strat_error}")
                 logger.opt(colors=False).error(traceback.format_exc())
 
-                #  - we stop execution after let's say maximal number of errors in a row
+                #  - we stop execution after maximal number of errors in a row
                 self._fails_counter += 1
                 if self._fails_counter >= self.MAX_NUMBER_OF_STRATEGY_FAILURES:
-                    logger.error("STRATEGY FAILURES IN THE ROW EXCEEDED MAX ALLOWED NUMBER - STOPPING ...")
-                    return True
+                    logger.error(
+                        f"STRATEGY FAILED {self.MAX_NUMBER_OF_STRATEGY_FAILURES} TIMES IN THE ROW - STOPPING ..."
+                    )
+                    raise StrategyExceededMaxNumberOfRuntimeFailuresError()
 
         # - process and execute signals if they are provided
         if signals:
@@ -211,10 +210,10 @@ class ProcessingManager(IProcessingManager):
     @SW.watch("StrategyContext.on_fit")
     def __invoke_on_fit(self) -> None:
         try:
-            logger.debug(f"Invoking <green>{self._strategy_name}</green> on_fit")
+            logger.debug(f"Invoking <g>{self._strategy_name}</g> on_fit")
             self._strategy.on_fit(self._context)
             self._subscription_manager.commit()  # apply pending operations
-            logger.debug(f"<green>{self._strategy_name}</green> is fitted")
+            logger.debug(f"<g>{self._strategy_name}</g> is fitted")
         except Exception as strat_error:
             logger.error(f"Strategy {self._strategy_name} on_fit raised an exception: {strat_error}")
             logger.opt(colors=False).error(traceback.format_exc())
@@ -286,13 +285,11 @@ class ProcessingManager(IProcessingManager):
         DataType.ORDERBOOK: [OrderBook],
     }
 
-    def _is_base_data(self, data: Timestamped | BatchEvent) -> tuple[bool, bool, Timestamped]:
+    def _is_base_data(self, data: Timestamped) -> tuple[bool, Timestamped]:
         _base_ss = DataType.from_str(self._subscription_manager.get_base_subscription())[0]
-        _is_batch = isinstance(data, BatchEvent)
-        _d_probe = data.data[-1] if _is_batch else data
+        _d_probe = data
         return (
             type(_d_probe) in _rule if (_rule := self.__SUBSCR_TO_DATA_MATCH_TABLE.get(_base_ss)) else False,
-            _is_batch,
             _d_probe,
         )
 
@@ -305,17 +302,12 @@ class ProcessingManager(IProcessingManager):
         Returns:
             bool: True if the data is base data and the strategy should be triggered, False otherwise.
         """
-        is_base_data, is_batch, _update = self._is_base_data(data)
+        is_base_data, _update = self._is_base_data(data)
         # logger.info(f"{_update} {is_base_data and not self._trigger_on_time_event}")
 
         # update cached ohlc is this is base subscription
         _update_ohlc = is_base_data
-        if is_batch:
-            for _u in data.data:  # type: ignore
-                self._cache.update(instrument, event_type, _u, update_ohlc=_update_ohlc)
-
-        else:
-            self._cache.update(instrument, event_type, _update, update_ohlc=_update_ohlc)
+        self._cache.update(instrument, event_type, _update, update_ohlc=_update_ohlc)
 
         # update trackers, gatherers on base data
         if not is_historical and is_base_data:

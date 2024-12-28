@@ -1,0 +1,25 @@
+[[defaults]]
+exchange = "BINANCE.PM"
+base_currency = "USDT"
+commissions = "vip0_usdt"
+
+[[accounts]]
+name = "bnc-pm-test1"
+exchange = "BINANCE.PM"
+api_key = "your_binance_pm_api_key"
+secret = "your_binance_pm_secret"
+
+[[accounts]]
+name = "bnc-um-test1"
+exchange = "BINANCE.UM"
+API_KEY = "your_binance_um_api_key"
+secret = "your_binance_um_secret"
+testnet = true
+
+[[accounts]]
+name = "kr-f-test"
+exchange = "KRAKEN.F"
+api_key = "your_kraken_f_api_key"
+secret = "your_kraken_f_secret"
+base_currency = "USD"
+commissions = "K0"

@@ -1,24 +1,16 @@
-from typing import Any, List, Optional
-
 import numpy as np
-from pandas import Timestamp
 from pytest import approx
 
-from qubx import QubxLogConfig, logger, lookup
-from qubx.backtester.simulator import simulate
+from qubx import logger, lookup
 from qubx.core.account import BasicAccountProcessor
-from qubx.core.basics import ZERO_COSTS, Deal, Instrument, ITimeProvider, Order, Position, Signal, TargetPosition, dt_64
+from qubx.core.basics import Deal, Instrument, Order, Position, Signal, TargetPosition
 from qubx.core.interfaces import IPositionGathering, IStrategy, IStrategyContext, PositionsTracker, TriggerEvent
-from qubx.core.metrics import portfolio_metrics
-from qubx.core.series import OHLCV, Quote
-from qubx.core.utils import recognize_time, time_to_str
+from qubx.core.series import Quote
+from qubx.core.utils import recognize_time
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.pandaz.utils import *
-from qubx.ta.indicators import ema, sma
-from qubx.trackers.composite import CompositeTracker, CompositeTrackerPerSide, LongTracker
 from qubx.trackers.rebalancers import PortfolioRebalancerTracker
-from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
-from qubx.trackers.sizers import FixedLeverageSizer, FixedRiskSizer, FixedSizer, LongShortRatioPortfolioSizer
+from qubx.trackers.sizers import LongShortRatioPortfolioSizer
 from tests.qubx.core.utils_test import DummyTimeProvider
 
 N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
@@ -28,8 +20,8 @@ def Q(time: str, p: float) -> Quote:
     return Quote(recognize_time(time), p, p, 0, 0)
 
 
-def S(ctx, sdict: dict):
-    return [ctx.get_instrument(s).signal(v) for s, v in sdict.items()]
+def S(ctx: IStrategyContext, sdict: dict):
+    return [ctx.query_instrument(s).signal(v) for s, v in sdict.items()]
 
 
 class TestingPositionGatherer(IPositionGathering):
@@ -46,7 +38,6 @@ class TestingPositionGatherer(IPositionGathering):
             # position.quantity = new_size
             q = ctx.quote(instrument)
             assert q is not None
-            position.update_position(ctx.time(), new_size, q.mid_price())
             r = ctx.trade(instrument, to_trade, at_price)
             logger.info(
                 f"{instrument.symbol} >>> (TESTS) Adjusting position from {current_position} to {new_size} : {r}"
@@ -58,11 +49,11 @@ class TestingPositionGatherer(IPositionGathering):
 
 class DebugStratageyCtx(IStrategyContext):
     _exchange: str
-    _d_qts: Dict[Instrument, Quote]
+    _d_qts: dict[Instrument, Quote]
     _c_time: int = 0
     _o_id: int = 10000
 
-    def __init__(self, symbols: List[str], capital, exchange: str = "BINANCE") -> None:
+    def __init__(self, symbols: list[str], capital, exchange: str = "BINANCE") -> None:
         self._exchange = exchange
         self._instruments = [x for s in symbols if (x := lookup.find_symbol(self._exchange, s)) is not None]
         self._symbol_to_instrument = {i.symbol: i for i in self._instruments}
@@ -74,11 +65,11 @@ class DebugStratageyCtx(IStrategyContext):
         self.acc.attach_positions(*self.positions.values())
 
     @property
-    def instruments(self) -> List[Instrument]:
+    def instruments(self) -> list[Instrument]:
         return self._instruments
 
     @property
-    def positions(self) -> Dict[Instrument, Position]:
+    def positions(self) -> dict[Instrument, Position]:
         return self._positions
 
     def quote(self, instrument: Instrument) -> Quote | None:
@@ -96,13 +87,13 @@ class DebugStratageyCtx(IStrategyContext):
     def get_reserved(self, instrument: Instrument) -> float:
         return 0.0
 
-    def get_instrument(self, instrument: str) -> Instrument:
+    def query_instrument(self, instrument: str) -> Instrument:
         return self._symbol_to_instrument[instrument]
 
-    def push(self, quotes: Dict[str, Quote]) -> None:
+    def push(self, quotes: dict[str, Quote]) -> None:
         for s, q in quotes.items():
-            self._d_qts[self.get_instrument(s)] = q
-            self.positions[self.get_instrument(s)].update_market_price_by_tick(q)
+            self._d_qts[self.query_instrument(s)] = q
+            self.positions[self.query_instrument(s)].update_market_price_by_tick(q)
             self._c_time = max(q.time, self._c_time)
 
     def reset(self):
@@ -156,8 +147,16 @@ class TestPortfolioRelatedStuff:
             30000,
         )
 
-        I = [ctx.get_instrument(s) for s in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]]
+        I = [ctx.query_instrument(s) for s in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]]
         assert I[0] is not None and I[1] is not None and I[2] is not None
+
+        ctx.push(
+            {
+                "BTCUSDT": Q("2022-01-01", 1),
+                "ETHUSDT": Q("2022-01-01", 1),
+                "SOLUSDT": Q("2022-01-01", 1),
+            }
+        )
 
         tracker = PortfolioRebalancerTracker(30000, 0)
         targets = tracker.process_signals(ctx, [I[0].signal(+0.5), I[1].signal(+0.3), I[2].signal(+0.2)])
@@ -165,7 +164,7 @@ class TestPortfolioRelatedStuff:
         gathering = TestingPositionGatherer()
         gathering.alter_positions(ctx, targets)
 
-        print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
+        # print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
         tracker.process_signals(
             ctx,
             [
@@ -175,7 +174,7 @@ class TestPortfolioRelatedStuff:
             ],
         )
 
-        print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
+        # print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
         targets = tracker.process_signals(
             ctx,
             [

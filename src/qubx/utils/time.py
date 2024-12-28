@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -130,7 +130,9 @@ def infer_series_frequency(series: Union[List, pd.DataFrame, pd.Series, pd.Datet
     return np.timedelta64(max(freqs, key=freqs.get))
 
 
-def handle_start_stop(s: Optional[str], e: Optional[str], convert=str) -> Tuple[str | None, str | None]:
+def handle_start_stop(
+    s: str | pd.Timestamp | None, e: str | pd.Timestamp | None, convert: Callable = str
+) -> tuple[str | pd.Timestamp | None, str | pd.Timestamp | None]:
     """
     Process start/stop times
 
@@ -157,7 +159,9 @@ def handle_start_stop(s: Optional[str], e: Optional[str], convert=str) -> Tuple[
 
     t0, d0 = _h_time_like(s) if s else (None, False)
     t1, d1 = _h_time_like(e) if e else (None, False)
-    converts = lambda xs: [convert(xs[0]) if xs[0] else None, convert(xs[1]) if xs[1] else None]
+
+    def _converts(xs):
+        return (convert(xs[0]) if xs[0] else None, convert(xs[1]) if xs[1] else None)
 
     if not t1 and not t0:
         return None, None
@@ -168,16 +172,16 @@ def handle_start_stop(s: Optional[str], e: Optional[str], convert=str) -> Tuple[
     if d0:
         if not t1:
             raise ValueError("First argument is delta but stop time is not defined !")
-        return converts(sorted([t1 - abs(t0), t1]))
+        return _converts(sorted([t1 - abs(t0), t1]))
     if d1:
         if not t0:
             raise ValueError("Second argument is delta but start time is not defined !")
-        return converts(sorted([t0, t0 + t1]))
+        return _converts(sorted([t0, t0 + t1]))
 
     if t0 and t1:
-        return converts(sorted([t0, t1]))
+        return _converts(sorted([t0, t1]))
 
-    return converts([t0, t1])
+    return _converts([t0, t1])
 
 
 def timedelta_to_crontab(td: pd.Timedelta) -> str:

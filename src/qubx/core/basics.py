@@ -270,12 +270,6 @@ class Instrument:
         return self.__str__()
 
 
-@dataclass
-class BatchEvent:
-    time: dt_64 | pd.Timestamp
-    data: list[Timestamped]
-
-
 class TransactionCostsCalculator:
     """
     A class for calculating transaction costs for a trading strategy.

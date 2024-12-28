@@ -3,7 +3,6 @@ from qubx.backtester.ome import OrdersManagementEngine
 from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
     ZERO_COSTS,
-    BatchEvent,
     CtrlChannel,
     Instrument,
     Order,
@@ -103,31 +102,30 @@ class SimulatedAccountProcessor(BasicAccountProcessor):
         return super().process_order(order, update_locked_value)
 
     def emulate_quote_from_data(
-        self, instrument: Instrument, timestamp: dt_64, data: float | Timestamped | BatchEvent
+        self, instrument: Instrument, timestamp: dt_64, data: float | Timestamped
     ) -> Quote | None:
         if instrument not in self._half_tick_size:
             _ = self.get_position(instrument)
 
-        _ts2 = self._half_tick_size[instrument]
         if isinstance(data, Quote):
             return data
 
         elif isinstance(data, Trade):
+            _ts2 = self._half_tick_size[instrument]
             if data.taker:  # type: ignore
                 return Quote(timestamp, data.price - _ts2 * 2, data.price, 0, 0)  # type: ignore
             else:
                 return Quote(timestamp, data.price, data.price + _ts2 * 2, 0, 0)  # type: ignore
 
         elif isinstance(data, Bar):
+            _ts2 = self._half_tick_size[instrument]
             return Quote(timestamp, data.close - _ts2, data.close + _ts2, 0, 0)  # type: ignore
 
         elif isinstance(data, OrderBook):
             return data.to_quote()
 
-        elif isinstance(data, BatchEvent):
-            return self.emulate_quote_from_data(instrument, timestamp, data.data[-1])
-
         elif isinstance(data, float):
+            _ts2 = self._half_tick_size[instrument]
             return Quote(timestamp, data - _ts2, data + _ts2, 0, 0)
 
         else:

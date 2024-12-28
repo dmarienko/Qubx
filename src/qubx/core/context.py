@@ -1,6 +1,6 @@
 import traceback
 from threading import Thread
-from typing import Any, Callable, Dict, List, Union
+from typing import Any, Callable
 
 from qubx import logger
 from qubx.core.basics import (
@@ -284,7 +284,7 @@ class StrategyContext(IStrategyContext):
     def quote(self, instrument: Instrument):
         return self._market_data_provider.quote(instrument)
 
-    def get_data(self, instrument: Instrument, sub_type: str) -> List[Any]:
+    def get_data(self, instrument: Instrument, sub_type: str) -> list[Any]:
         return self._market_data_provider.get_data(instrument, sub_type)
 
     def get_aux_data(self, data_id: str, **parameters):
@@ -293,8 +293,10 @@ class StrategyContext(IStrategyContext):
     def get_instruments(self):
         return self._market_data_provider.get_instruments()
 
-    def get_instrument(self, symbol: str, exchange: str):
-        return self._market_data_provider.get_instrument(symbol, exchange)
+    def query_instrument(self, symbol: str, exchange: str | None = None) -> Instrument | None:
+        return self._market_data_provider.query_instrument(
+            symbol, exchange if exchange is not None else self.exchanges[0]
+        )
 
     # ITradingManager delegation
     def trade(self, instrument: Instrument, amount: float, price: float | None = None, time_in_force="gtc", **options):
@@ -339,16 +341,16 @@ class StrategyContext(IStrategyContext):
         return self._trading_manager.exchanges()
 
     # ISubscriptionManager delegation
-    def subscribe(self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None):
+    def subscribe(self, subscription_type: str, instruments: list[Instrument] | Instrument | None = None):
         return self._subscription_manager.subscribe(subscription_type, instruments)
 
-    def unsubscribe(self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None):
+    def unsubscribe(self, subscription_type: str, instruments: list[Instrument] | Instrument | None = None):
         return self._subscription_manager.unsubscribe(subscription_type, instruments)
 
     def has_subscription(self, instrument: Instrument, subscription_type: str):
         return self._subscription_manager.has_subscription(instrument, subscription_type)
 
-    def get_subscriptions(self, instrument: Instrument | None = None) -> List[str]:
+    def get_subscriptions(self, instrument: Instrument | None = None) -> list[str]:
         return self._subscription_manager.get_subscriptions(instrument)
 
     def get_base_subscription(self) -> str:
@@ -360,7 +362,7 @@ class StrategyContext(IStrategyContext):
     def get_subscribed_instruments(self, subscription_type: str | None = None) -> list[Instrument]:
         return self._subscription_manager.get_subscribed_instruments(subscription_type)
 
-    def get_warmup(self, subscription_type: str) -> str:
+    def get_warmup(self, subscription_type: str) -> str | None:
         return self._subscription_manager.get_warmup(subscription_type)
 
     def set_warmup(self, configs: dict[Any, str]):
