@@ -50,7 +50,6 @@ def simulate(
     base_currency: str = "USDT",
     n_jobs: int = 1,
     silent: bool = False,
-    enable_event_batching: bool = True,
     aux_data: DataReader | None = None,
     accurate_stop_orders_execution: bool = False,
     signal_timeframe: str = "1Min",
@@ -72,7 +71,6 @@ def simulate(
         - base_currency (str): Base currency for the simulation, default is "USDT".
         - n_jobs (int): Number of parallel jobs for simulation, default is 1.
         - silent (bool): If True, suppresses output during simulation.
-        - enable_event_batching (bool): If True, enables event batching for optimization.
         - aux_data (DataReader | None): Auxiliary data provider (default is None).
         - accurate_stop_orders_execution (bool): If True, enables more accurate stop order execution simulation.
         - signal_timeframe (str): Timeframe for signals, default is "1Min".
@@ -120,7 +118,6 @@ def simulate(
         commissions,
         signal_timeframe,
         accurate_stop_orders_execution,
-        enable_event_batching,
     )
     if not simulation_setups:
         logger.error(
@@ -296,7 +293,7 @@ def _run_setup(
             ctx.subscribe(t, ctx.instruments)
 
     try:
-        data_provider.run(start, _stop, silent=silent, enable_event_batching=setup.enable_event_batching)  # type: ignore
+        data_provider.run(start, _stop, silent=silent)  # type: ignore
     except KeyboardInterrupt:
         logger.error("Simulated trading interrupted by user !")
 

@@ -87,7 +87,6 @@ class SimulationSetup:
     commissions: str
     signal_timeframe: str
     accurate_stop_orders_execution: bool
-    enable_event_batching: bool
 
     def __str__(self) -> str:
         return f"{self.name} {self.setup_type} capital {self.capital} {self.base_currency} for [{','.join(map(lambda x: x.symbol, self.instruments))}] @ {self.exchange}[{self.commissions}]"
@@ -413,7 +412,6 @@ def recognize_simulation_configuration(
     commissions: str,
     signal_timeframe: str,
     accurate_stop_orders_execution: bool,
-    enable_event_batching: bool,
 ) -> list[SimulationSetup]:
     """
     Recognize and create setups based on the provided simulation configuration.
@@ -433,7 +431,6 @@ def recognize_simulation_configuration(
     - commissions (str): The commission structure to be applied.
     - signal_timeframe (str): Timeframe for generated signals.
     - accurate_stop_orders_execution (bool): If True, enables more accurate stop order execution simulation.
-    - enable_event_batching (bool): If True, enables event batching for optimization.
 
     Returns:
     - list[SimulationSetup]: A list of SimulationSetup objects, each representing a
@@ -454,7 +451,7 @@ def recognize_simulation_configuration(
             r.extend(
                 recognize_simulation_configuration(
                     _n + n, v, instruments, exchange, capital, basic_currency, commissions, 
-                    signal_timeframe, accurate_stop_orders_execution, enable_event_batching
+                    signal_timeframe, accurate_stop_orders_execution
                 )
             )
 
@@ -466,9 +463,6 @@ def recognize_simulation_configuration(
             if _sniffer._is_signal(c0):
                 _t = SetupTypes.SIGNAL_AND_TRACKER
 
-                # - no batched historical data for generated signals, so disable it
-                enable_event_batching = False
-
             if _sniffer._is_strategy(c0):
                 _t = SetupTypes.STRATEGY_AND_TRACKER
 
@@ -478,7 +472,7 @@ def recognize_simulation_configuration(
                     _t, name, _s, c1,   # type: ignore
                     _sniffer._pick_instruments(instruments, _s) if _sniffer._is_signal(c0) else instruments,
                     exchange, capital, basic_currency, commissions, 
-                    signal_timeframe, accurate_stop_orders_execution, enable_event_batching
+                    signal_timeframe, accurate_stop_orders_execution
                 )
             )
         else:
@@ -487,7 +481,7 @@ def recognize_simulation_configuration(
                     recognize_simulation_configuration(
                         # name + "/" + str(j), s, instruments, exchange, capital, basic_currency, commissions
                         name, s, instruments, exchange, capital, basic_currency, commissions,  # type: ignore
-                        signal_timeframe, accurate_stop_orders_execution, enable_event_batching 
+                        signal_timeframe, accurate_stop_orders_execution
                     )
                 )
 
@@ -497,7 +491,7 @@ def recognize_simulation_configuration(
                 SetupTypes.STRATEGY,
                 name, configs, None, instruments,
                 exchange, capital, basic_currency, commissions, 
-                signal_timeframe, accurate_stop_orders_execution, enable_event_batching
+                signal_timeframe, accurate_stop_orders_execution
             )
         )
 
@@ -509,7 +503,7 @@ def recognize_simulation_configuration(
                 SetupTypes.SIGNAL,
                 name, c1, None, _sniffer._pick_instruments(instruments, c1),
                 exchange, capital, basic_currency, commissions, 
-                signal_timeframe, accurate_stop_orders_execution, False # - no batched historical data for generated signals, so disable it
+                signal_timeframe, accurate_stop_orders_execution
             )
         )
 

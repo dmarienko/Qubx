@@ -8,7 +8,6 @@ import pandas as pd
 from qubx import logger
 from qubx.core.basics import (
     SW,
-    BatchEvent,
     DataType,
     Deal,
     Instrument,
@@ -286,13 +285,11 @@ class ProcessingManager(IProcessingManager):
         DataType.ORDERBOOK: [OrderBook],
     }
 
-    def _is_base_data(self, data: Timestamped | BatchEvent) -> tuple[bool, bool, Timestamped]:
+    def _is_base_data(self, data: Timestamped) -> tuple[bool, Timestamped]:
         _base_ss = DataType.from_str(self._subscription_manager.get_base_subscription())[0]
-        _is_batch = isinstance(data, BatchEvent)
-        _d_probe = data.data[-1] if _is_batch else data
+        _d_probe = data
         return (
             type(_d_probe) in _rule if (_rule := self.__SUBSCR_TO_DATA_MATCH_TABLE.get(_base_ss)) else False,
-            _is_batch,
             _d_probe,
         )
 
@@ -305,17 +302,12 @@ class ProcessingManager(IProcessingManager):
         Returns:
             bool: True if the data is base data and the strategy should be triggered, False otherwise.
         """
-        is_base_data, is_batch, _update = self._is_base_data(data)
+        is_base_data, _update = self._is_base_data(data)
         # logger.info(f"{_update} {is_base_data and not self._trigger_on_time_event}")
 
         # update cached ohlc is this is base subscription
         _update_ohlc = is_base_data
-        if is_batch:
-            for _u in data.data:  # type: ignore
-                self._cache.update(instrument, event_type, _u, update_ohlc=_update_ohlc)
-
-        else:
-            self._cache.update(instrument, event_type, _update, update_ohlc=_update_ohlc)
+        self._cache.update(instrument, event_type, _update, update_ohlc=_update_ohlc)
 
         # update trackers, gatherers on base data
         if not is_historical and is_base_data:

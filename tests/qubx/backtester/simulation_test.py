@@ -365,7 +365,6 @@ class TestSimulator:
             {'quote': ld}, 
             aux_data=ld, capital=100_000, debug="DEBUG", n_jobs=1, instruments=["BINANCE.UM:BTCUSDT"], commissions="vip0_usdt",
             start="2023-06-01", stop="2023-06-02 1:00",
-            enable_event_batching=False,
             silent=True
         )
         # fmt: on
@@ -388,7 +387,7 @@ class TestSimulatorHelpers:
             }, # type: ignore
             [lookup.find_symbol("BINANCE.UM", s) for s in ["BTCUSDT", "BCHUSDT", "LTCUSDT"]],  # type: ignore
             "BINANCE.UM",
-            10_000, "USDT", "vip0_usdt", "1Min", True, False)
+            10_000, "USDT", "vip0_usdt", "1Min", True)
 
         assert setups[0].setup_type == SetupTypes.SIGNAL, "Got wrong setup type"
         assert setups[1].setup_type == SetupTypes.SIGNAL, "Got wrong setup type"
