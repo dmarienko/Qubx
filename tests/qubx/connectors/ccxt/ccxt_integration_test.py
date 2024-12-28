@@ -8,7 +8,6 @@ import pytest
 from qubx import QubxLogConfig, logger
 from qubx.core.basics import DataType, Instrument, MarketEvent
 from qubx.core.interfaces import IStrategy, IStrategyContext, Position
-from qubx.utils.runner import run_ccxt_trading
 
 
 async def wait(condition: Callable[[], bool] | None = None, timeout: int = 10, period: float = 1.0):
@@ -61,6 +60,8 @@ class TestCcxtDataProvider:
         await self._test_exchange_reading(exchange, ["BTCUSDT", "ETHUSDT"])
 
     async def _test_exchange_reading(self, exchange: str, symbols: list[str], timeout: int = 60):
+        from qubx.utils.runner import run_ccxt_trading
+
         ctx = run_ccxt_trading(
             strategy=(stg := DebugStrategy()),
             exchange_name=exchange,
@@ -118,6 +119,9 @@ class TestCcxtTrading:
         await self._test_basic_exchange_functions(exchange, ["BTCUSDT"])
 
     async def _test_basic_exchange_functions(self, exchange: str, symbols: list[str]):
+        # - temporary moved it here - otherwise it breaks the tests
+        from qubx.utils.runner import run_ccxt_trading
+
         # - Start strategy
         ctx = run_ccxt_trading(
             strategy=(stg := DebugStrategy()),
