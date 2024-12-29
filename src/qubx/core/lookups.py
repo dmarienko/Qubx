@@ -5,9 +5,8 @@ import json
 import os
 import re
 from datetime import datetime
-from typing import Dict, List, Optional
+from pathlib import Path
 
-import pandas as pd
 import stackprinter
 
 from qubx import logger
@@ -65,7 +64,7 @@ class _InstrumentDecoder(json.JSONDecoder):
 
 
 class InstrumentsLookup:
-    _lookup: Dict[str, Instrument]
+    _lookup: dict[str, Instrument]
     _path: str
 
     def __init__(self, path: str = makedirs(get_local_qubx_folder(), _DEF_INSTRUMENTS_FOLDER)) -> None:
@@ -90,7 +89,7 @@ class InstrumentsLookup:
 
         return data_exists
 
-    def find(self, exchange: str, base: str, quote: str, settle: Optional[str] = None) -> Optional[Instrument]:
+    def find(self, exchange: str, base: str, quote: str, settle: str | None = None) -> Instrument | None:
         for i in self._lookup.values():
             if i.exchange == exchange and (
                 (i.base == base and i.quote == quote) or (i.base == quote and i.quote == base)
@@ -102,7 +101,7 @@ class InstrumentsLookup:
                     return i
         return None
 
-    def find_symbol(self, exchange: str, symbol: str) -> Optional[Instrument]:
+    def find_symbol(self, exchange: str, symbol: str) -> Instrument | None:
         for i in self._lookup.values():
             if (i.exchange == exchange) and (i.symbol == symbol):
                 return i
@@ -111,7 +110,7 @@ class InstrumentsLookup:
     def find_instruments(self, exchange: str, quote: str | None = None) -> list[Instrument]:
         return [i for i in self._lookup.values() if i.exchange == exchange and (quote is None or i.quote == quote)]
 
-    def _save_to_json(self, path, instruments: List[Instrument]):
+    def _save_to_json(self, path, instruments: list[Instrument]):
         with open(path, "w") as f:
             json.dump(instruments, f, cls=_InstrumentEncoder, indent=4)
         logger.info(f"Saved {len(instruments)} to {path}")
@@ -129,7 +128,7 @@ class InstrumentsLookup:
             return self.find(instrument.exchange, instrument.quote, base_currency)
         return None
 
-    def __getitem__(self, spath: str) -> List[Instrument]:
+    def __getitem__(self, spath: str) -> list[Instrument]:
         res = []
         c = re.compile(spath)
         for k, v in self._lookup.items():
@@ -153,7 +152,14 @@ class InstrumentsLookup:
 
         from qubx.utils.marketdata.ccxt import ccxt_symbol_to_instrument
 
-        instruments = []
+        # - first we try to load packed data from QUBX resources
+        instruments = {}
+        _packed_data = _load_qubx_resources_as_json(f"instruments/symbols-{file_name}")
+        if _packed_data:
+            for i in _convert_binance_instruments_metadata_to_qubx(_packed_data):
+                instruments[i] = i
+
+        # - replace defaults with data from CCXT
         for exch, ccxt_name in exchange_to_ccxt_name.items():
             exch = exch.upper()
             ccxt_name = ccxt_name.lower()
@@ -164,10 +170,10 @@ class InstrumentsLookup:
                     continue
                 instr = ccxt_symbol_to_instrument(exch, v)
                 if not keep_types or instr.market_type in keep_types:
-                    instruments.append(instr)
+                    instruments[instr] = instr
 
         # - drop to file
-        self._save_to_json(os.path.join(path, f"{file_name}.json"), instruments)
+        self._save_to_json(os.path.join(path, f"{file_name}.json"), list(instruments.values()))
 
     def _update_kraken(self, path: str):
         self._ccxt_update(path, "kraken.f", {"kraken.f": "krakenfutures"})
@@ -293,7 +299,7 @@ class FeesLookup:
     Fees lookup
     """
 
-    _lookup: Dict[str, TransactionCostsCalculator]
+    _lookup: dict[str, TransactionCostsCalculator]
     _path: str
 
     def __init__(self, path: str = makedirs(get_local_qubx_folder(), _DEF_FEES_FOLDER)) -> None:
@@ -321,7 +327,7 @@ class FeesLookup:
 
         return data_exists
 
-    def __getitem__(self, spath: str) -> List[Instrument]:
+    def __getitem__(self, spath: str) -> list[Instrument]:
         res = []
         c = re.compile(spath)
         for k, v in self._lookup.items():
@@ -333,7 +339,7 @@ class FeesLookup:
         with open(os.path.join(self._path, "default.ini"), "w") as f:
             f.write(_DEFAULT_FEES)
 
-    def find(self, exchange: str, spec: str | None) -> Optional[TransactionCostsCalculator]:
+    def find(self, exchange: str, spec: str | None) -> TransactionCostsCalculator | None:
         if spec is None:
             return ZERO_COSTS
         key = f"{exchange}_{spec}"
@@ -352,17 +358,83 @@ class GlobalLookup:
     instruments: InstrumentsLookup
     fees: FeesLookup
 
-    def find_fees(self, exchange: str, spec: str | None) -> Optional[TransactionCostsCalculator]:
+    def find_fees(self, exchange: str, spec: str | None) -> TransactionCostsCalculator | None:
         return self.fees.find(exchange, spec)
 
-    def find_aux_instrument_for(self, instrument: Instrument, base_currency: str) -> Optional[Instrument]:
+    def find_aux_instrument_for(self, instrument: Instrument, base_currency: str) -> Instrument | None:
         return self.instruments.find_aux_instrument_for(instrument, base_currency)
 
-    def find_instrument(self, exchange: str, base: str, quote: str) -> Optional[Instrument]:
+    def find_instrument(self, exchange: str, base: str, quote: str) -> Instrument | None:
         return self.instruments.find(exchange, base, quote)
 
     def find_instruments(self, exchange: str, quote: str | None = None) -> list[Instrument]:
         return self.instruments.find_instruments(exchange, quote)
 
-    def find_symbol(self, exchange: str, symbol: str) -> Optional[Instrument]:
+    def find_symbol(self, exchange: str, symbol: str) -> Instrument | None:
         return self.instruments.find_symbol(exchange, symbol)
+
+
+def _load_qubx_resources_as_json(path: Path | str) -> list[dict]:
+    """
+    Reads a JSON file from resource module
+    """
+    import importlib.resources
+    import json
+
+    if isinstance(path, str):
+        path = Path(path)
+
+    if path.suffix != ".json":
+        path = path.with_suffix(path.suffix + ".json")
+
+    data = []
+    try:
+        res_path = importlib.resources.files("qubx.resources") / path
+        with res_path.open() as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.warning(f"Can't load resource file from {path} - {str(e)}")
+
+    return data
+
+
+def _convert_binance_instruments_metadata_to_qubx(data: list[dict]):
+    """
+    Converting tardis symbols meta-data to Qubx instruments
+    """
+    _excs = {
+        "binance-delivery": "BINANCE.CM",
+        "binance-futures": "BINANCE.UM",
+        "binance": "BINANCE",
+    }
+    r = []
+    for s in data:
+        match s["type"]:
+            case "perpetual":
+                _type = MarketType.SWAP
+            case "spot":
+                _type = MarketType.SPOT
+            case "future":
+                _type = MarketType.FUTURE
+            case _:
+                raise ValueError(f" -> Unknown type {s['type']}")
+        r.append(
+            Instrument(
+                s["datasetId"],
+                AssetType.CRYPTO,
+                _type,
+                _excs.get(s["exchange"], s["exchange"].upper()),
+                s["baseCurrency"],
+                s["quoteCurrency"],
+                s["quoteCurrency"],
+                s["datasetId"],
+                tick_size=s["priceIncrement"],
+                lot_size=s["minTradeAmount"],
+                min_size=s["amountIncrement"],
+                min_notional=0,  # we don't have this info from tardis
+                contract_size=s.get("contractMultiplier", 1.0),
+                onboard_date=s.get("availableSince", None),
+                delivery_date=s.get("availableTo", None),
+            )
+        )
+    return r
