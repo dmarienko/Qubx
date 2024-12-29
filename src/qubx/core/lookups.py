@@ -156,7 +156,7 @@ class InstrumentsLookup:
         instruments = {}
         _packed_data = _load_qubx_resources_as_json(f"instruments/symbols-{file_name}")
         if _packed_data:
-            for i in _convert_binance_instruments_metadata_to_qubx(_packed_data):
+            for i in _convert_instruments_metadata_to_qubx(_packed_data):
                 instruments[i] = i
 
         # - replace defaults with data from CCXT
@@ -178,6 +178,10 @@ class InstrumentsLookup:
     def _update_kraken(self, path: str):
         self._ccxt_update(path, "kraken.f", {"kraken.f": "krakenfutures"})
         self._ccxt_update(path, "kraken", {"kraken": "kraken"})
+
+    def _update_hyperliquid(self, path: str):
+        self._ccxt_update(path, "hyperliquid", {"hyperliquid": "hyperliquid"}, keep_types=[MarketType.SPOT])
+        self._ccxt_update(path, "hyperliquid.f", {"hyperliquid.f": "hyperliquid"}, keep_types=[MarketType.SWAP])
 
     def _update_binance(self, path: str):
         self._ccxt_update(path, "binance", {"binance": "binance"}, keep_types=[MarketType.SPOT, MarketType.MARGIN])
@@ -398,14 +402,19 @@ def _load_qubx_resources_as_json(path: Path | str) -> list[dict]:
     return data
 
 
-def _convert_binance_instruments_metadata_to_qubx(data: list[dict]):
+def _convert_instruments_metadata_to_qubx(data: list[dict]):
     """
     Converting tardis symbols meta-data to Qubx instruments
     """
     _excs = {
+        "binance": "BINANCE",
         "binance-delivery": "BINANCE.CM",
         "binance-futures": "BINANCE.UM",
-        "binance": "BINANCE",
+        "kraken": "KRAKEN",
+        "cryptofacilities": "KRAKEN.F",
+        "bitfinex": "BITFINEX",
+        "bitfinex-derivatives": "BITFINEX.F",
+        "hyperliquid": "HYPERLIQUID",
     }
     r = []
     for s in data:
