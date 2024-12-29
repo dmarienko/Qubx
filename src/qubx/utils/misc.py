@@ -2,13 +2,15 @@ import asyncio
 import concurrent.futures
 import getpass
 import os
+import sys
 import time
 from collections import OrderedDict, defaultdict, deque, namedtuple
 from collections.abc import Callable
 from functools import wraps
-from os.path import exists
+from os.path import abspath, exists, expanduser, relpath
+from pathlib import Path
 from threading import Lock
-from typing import Any, Awaitable, Dict, List, Union
+from typing import Any, Awaitable, Union
 
 import joblib
 import numpy as np
@@ -80,15 +82,26 @@ def get_current_user() -> str:
     return getpass.getuser()
 
 
+def this_project_root(path: str = ".") -> Path | None:
+    """
+    Tries to find current research project root.
+    This is convenient when need to get relative paths in notebook in research project.
+    """
+    _toml = Path("pyproject.toml")
+    _x = Path(abspath(expanduser(path)))
+    _terminator = str(_x.root)
+    while str(_x) != _terminator:
+        if (_x / _toml).exists():
+            return _x
+        _x = _x.parent
+    return None
+
+
 def add_project_to_system_path(project_folder: str = "~/projects"):
     """
     Add path to projects folder to system python path to be able importing any modules from project
     from test.Models.handy_utils import some_module
     """
-    import sys
-    from os.path import expanduser, relpath
-    from pathlib import Path
-
     # we want to track folders with these files as separate paths
     toml = Path("pyproject.toml")
     src = Path("src")
@@ -97,7 +110,7 @@ def add_project_to_system_path(project_folder: str = "~/projects"):
         prj = Path(relpath(expanduser(project_folder)))
     except ValueError as e:
         # This error can occur on Windows if user folder and python file are on different drives
-        print(f"Qube> Error during get path to projects folder:\n{e}")
+        print(f"Qubx> Error during get path to projects folder:\n{e}")
     else:
         insert_path_iff = lambda p: (sys.path.insert(0, p.as_posix()) if p.as_posix() not in sys.path else None)
         if prj.exists():
@@ -112,7 +125,7 @@ def add_project_to_system_path(project_folder: str = "~/projects"):
                     else:
                         insert_path_iff(di)
         else:
-            print(f"Qube> Cant find {project_folder} folder for adding to python path !")
+            print(f"Qubx> Cant find {project_folder} folder for adding to python path !")
 
 
 def class_import(name: str):
@@ -290,9 +303,9 @@ class Stopwatch:
     Stopwatch timer for performance
     """
 
-    starts: Dict[str | None, int] = {}
-    counts: Dict[str | None, int] = defaultdict(lambda: 0)
-    latencies: Dict[str | None, int] = {}
+    starts: dict[str | None, int] = {}
+    counts: dict[str | None, int] = defaultdict(lambda: 0)
+    latencies: dict[str | None, int] = {}
     _current_scope: str | None = None
 
     def __new__(cls):
@@ -377,7 +390,7 @@ class Stopwatch:
         return lats
 
 
-def quotify(sx: Union[str, List[str]], quote="USDT"):
+def quotify(sx: str | list[str], quote="USDT"):
     """
     Make XXX<quote> from anything if that anything doesn't end with <quote>
     """
@@ -388,7 +401,7 @@ def quotify(sx: Union[str, List[str]], quote="USDT"):
     raise ValueError("Can't process input data !")
 
 
-def dequotify(sx: Union[str, List[str]], quote="USDT"):
+def dequotify(sx: str | list[str], quote="USDT"):
     """
     Turns XXX<quote> to XXX (reverse of quotify)
     """

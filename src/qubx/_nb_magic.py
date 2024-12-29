@@ -86,6 +86,7 @@ if runtime_env() in ["notebook", "shell"]:
     )
     from qubx.utils.charting.lookinglass import LookingGlass
     from qubx.utils.charting.mpl_helpers import fig, ohlc_plot, plot_trends, sbp, subplot
+    from qubx.utils.misc import this_project_root
 
     # - setup short numpy output format
     np_fmt_short()
