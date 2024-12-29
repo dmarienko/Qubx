@@ -45,7 +45,9 @@ def ccxt_symbol_to_instrument(ccxt_exchange_name: str, market: dict[str, Any]) -
     if "liquidationFee" in inner_info:
         liquidation_fee = float(inner_info["liquidationFee"])
 
-    symbol = market["id"]
+    # symbol = market["id"]
+    # let's use unified symbol format across all exchanges / types: BASEQUOTE
+    symbol = market["base"] + market["quote"]
 
     # add some exchange specific formatting of symbol name
     tick_size = float(market["precision"]["price"] or 0.0)

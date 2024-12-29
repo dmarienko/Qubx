@@ -420,14 +420,14 @@ def _convert_binance_instruments_metadata_to_qubx(data: list[dict]):
                 raise ValueError(f" -> Unknown type {s['type']}")
         r.append(
             Instrument(
-                s["datasetId"],
+                s["baseCurrency"] + s["quoteCurrency"],
                 AssetType.CRYPTO,
                 _type,
                 _excs.get(s["exchange"], s["exchange"].upper()),
                 s["baseCurrency"],
                 s["quoteCurrency"],
                 s["quoteCurrency"],
-                s["datasetId"],
+                s["id"],
                 tick_size=s["priceIncrement"],
                 lot_size=s["minTradeAmount"],
                 min_size=s["amountIncrement"],
