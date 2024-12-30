@@ -115,7 +115,7 @@ if runtime_env() in ["notebook", "shell"]:
                     # - temporary workaround for vscode - dark theme not applying to ipywidgets in notebook
                     # - see https://github.com/microsoft/vscode-jupyter/issues/7161
                     if runtime_env() == "notebook":
-                        _vscode_clr_trick = """from IPython.display import display, HTML; display(HTML("<style> .cell-output-ipywidget-background { background-color: transparent !important; } :root { --jp-widgets-color: var(--vscode-editor-foreground); --jp-widgets-font-size: var(--vscode-editor-font-size); } </style>"))"""
+                        _vscode_clr_trick = """from IPython.display import display, HTML; display(HTML("<style> .cell-output-ipywidget-background { background-color: transparent !important; } :root { --jp-widgets-color: var(--vscode-editor-foreground); --jp-widgets-font-size: var(--vscode-editor-font-size); } .widget-hprogress, .jupyter-widget-hprogress { height: 16px; align-self: center; kj}</style>"))"""
                         exec(_vscode_clr_trick, self.shell.user_ns)
 
                 elif "light" in line.lower():
