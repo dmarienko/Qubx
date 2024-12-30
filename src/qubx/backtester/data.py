@@ -148,6 +148,9 @@ class SimulatedDataProvider(IDataProvider):
                     # - set last quote
                     self._last_quotes[i] = last_quote
 
+                    # - also need to pass this quote to OME !
+                    self._account._process_new_quote(i, last_quote)
+
                     logger.debug(f" | subscribed {subscription_type} {i} -> {last_quote}")
 
     def unsubscribe(self, subscription_type: str, instruments: set[Instrument] | Instrument | None = None) -> None:
