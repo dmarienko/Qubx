@@ -1,7 +1,7 @@
 import re
 from itertools import product
 from types import FunctionType
-from typing import Any, Dict, List, Sequence, Tuple, Type
+from typing import Any, Callable, Dict, List, Sequence, Tuple, Type
 
 import numpy as np
 
@@ -169,19 +169,19 @@ def variate(clz: Type[Any] | List[Type[Any]], *args, conditions=None, **kwargs) 
     def _cmprss(xs: str):
         return "".join([x[0] for x in re.split(r"((?<!-)(?=[A-Z]))|_|(\d)", xs) if x])
 
-    if isinstance(clz, type):
+    if isinstance(clz, (type, Callable)):
         sfx = _cmprss(clz.__name__)
-        _mk = lambda k, *args, **kwargs: k(*args, **kwargs)
+        _mk = lambda k, *args, **kwargs: k(*args, **kwargs)  # noqa: E731
     elif isinstance(clz, (list, tuple)) and clz and isinstance(clz[0], type):
         sfx = _cmprss(clz[0].__name__)
-        _mk = lambda k, *args, **kwargs: [k[0](*args, **kwargs), *k[1:]]
+        _mk = lambda k, *args, **kwargs: [k[0](*args, **kwargs), *k[1:]]  # noqa: E731
     else:
         raise ValueError(
             "Can't recognize data for variating: must be either a class type or a list where first element is class type"
         )
 
     to_excl = [s for s, v in kwargs.items() if not isinstance(v, (list, set, tuple, range))]
-    dic2str = lambda ds: [_cmprss(k) + "=" + str(v) for k, v in ds.items() if k not in to_excl]
+    dic2str = lambda ds: [_cmprss(k) + "=" + str(v) for k, v in ds.items() if k not in to_excl]  # noqa: E731
 
     return _dict(
         {
