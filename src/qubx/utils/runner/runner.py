@@ -243,6 +243,9 @@ def _get_aux_reader(aux_config: AuxConfig | None) -> DataReader | None:
 
 
 def _create_tcc(exchange_name: str, account_manager: AccountConfigurationManager) -> TransactionCostsCalculator:
+    if exchange_name == "BINANCE.PM":
+        # TODO: clean this up
+        exchange_name = "BINANCE.UM"
     settings = account_manager.get_exchange_settings(exchange_name)
     tcc = lookup.fees.find(exchange_name, settings.commissions)
     assert tcc is not None, f"Can't find fees calculator for {exchange_name} exchange"
