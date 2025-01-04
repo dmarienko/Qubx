@@ -187,6 +187,7 @@ class BinancePortfolioMargin(BinanceQVUSDM):
                 "options": {
                     "defaultType": "margin",
                     "portfolioMargin": True,
+                    "defaultSubType": None,
                 }
             },
         )
