@@ -46,7 +46,7 @@ class SimulatedAccountProcessor(BasicAccountProcessor):
         self._half_tick_size = {}
         self._fill_stop_order_at_price = accurate_stop_orders_execution
         if self._fill_stop_order_at_price:
-            logger.info(f"{self.__class__.__name__} emulates stop orders executions at exact price")
+            logger.info(f"[<y>{self.__class__.__name__}</y>] :: emulates stop orders executions at exact price")
 
     def get_orders(self, instrument: Instrument | None = None) -> list[Order]:
         if instrument is not None:

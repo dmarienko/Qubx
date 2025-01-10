@@ -83,10 +83,8 @@ class Signal:
         _s = f" stop: { self.stop }" if self.stop is not None else ""
         _t = f" take: { self.take }" if self.take is not None else ""
         _r = f" {self.reference_price:.2f}" if self.reference_price is not None else ""
-        _c = f" [{self.comment}]" if self.take is not None else ""
-        return (
-            f"{self.group}{_r} {self.signal:+f} {self.instrument.symbol}{_p}{_s}{_t} on {self.instrument.exchange}{_c}"
-        )
+        _c = f" ({self.comment})" if self.comment else ""
+        return f"{self.group}{_r} {self.signal:+f} {self.instrument}{_p}{_s}{_t}{_c}"
 
 
 @dataclass
@@ -139,7 +137,7 @@ class TargetPosition:
         return self._is_service
 
     def __str__(self) -> str:
-        return f"{'::: INFORMATIVE ::: ' if self.is_service else ''}Target for {self.signal} -> {self.target_position_size} at {self.time}"
+        return f"{'::: INFORMATIVE ::: ' if self.is_service else ''}Target {self.target_position_size:+f} for {self.signal}"
 
 
 class AssetType(StrEnum):

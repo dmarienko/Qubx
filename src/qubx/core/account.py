@@ -182,7 +182,7 @@ class BasicAccountProcessor(IAccountProcessor):
             self._unlock_limit_order_value(order)
 
         logger.debug(
-            f"[{order.instrument}] [{order.id}] Order {order.type} {order.side} {order.quantity} "
+            f"  [<y>{self.__class__.__name__}</y>] :: <g>{order.instrument}</g> Order <r>{order.id}</r> {order.type} {order.side} {order.quantity} "
             f"{ (' @ ' + str(order.price)) if order.price else '' } -> {order.status}"
         )
 
@@ -203,7 +203,9 @@ class BasicAccountProcessor(IAccountProcessor):
                     deal_cost += d.amount * d.price / conversion_rate
                     traded_amnt += d.amount
                     total_cost = deal_cost + fee_in_base
-                    logger.debug(f"  ::  traded {d.amount} for {instrument} @ {d.price} -> {realized_pnl:.2f}")
+                    logger.debug(
+                        f"  [<y>{self.__class__.__name__}</y>] :: traded {d.amount} for <g>{instrument}</g> @ {d.price} -> {realized_pnl:.2f}"
+                    )
                     if not instrument.is_futures():
                         self._balances[self.base_currency] -= total_cost
                         self._balances[instrument.base] += d.amount
@@ -234,7 +236,7 @@ class BasicAccountProcessor(IAccountProcessor):
             qty_opening = pos_change if prev_direction == direction else pos_change - qty_closing
             excess = abs(qty_opening) * order.price
 
-            # TODO: locking likely doesn't work correctly for spot accounts
+            # TODO: locking likely doesn't work correctly for spot accounts (Account)
             # Example: if we have 1 BTC at price 100k and set a limit order for 0.1 BTC at 110k
             # it will not lock 0.1 BTC
             if excess > 0:

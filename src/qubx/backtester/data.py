@@ -114,7 +114,9 @@ class SimulatedDataProvider(IDataProvider):
         logger.info(f"{self.__class__.__name__} ::: Simulation finished at {end} :::")
 
     def set_generated_signals(self, signals: pd.Series | pd.DataFrame):
-        logger.debug(f"Using pre-generated signals:\n {str(signals.count()).strip('ndtype: int64')}")
+        logger.debug(
+            f"[<y>{self.__class__.__name__}</y>] :: Using pre-generated signals:\n {str(signals.count()).strip('ndtype: int64')}"
+        )
         # - sanity check
         signals.index = pd.DatetimeIndex(signals.index)
 

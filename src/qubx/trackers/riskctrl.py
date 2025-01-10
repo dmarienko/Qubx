@@ -88,7 +88,7 @@ class RiskController(PositionsTracker):
         # - add first in waiting list
         self._waiting[signal.instrument] = SgnCtrl(signal, target, State.NEW)
         logger.debug(
-            f"<yellow>{self.__class__.__name__}</yellow> <g>new signal received:</g> <cyan><b>{target}</b></cyan> for {signal.instrument.symbol} take: {signal.take} stop: {signal.stop}"
+            f"[<y>{self.__class__.__name__}</y>(<g>{ signal.instrument }</g>)] :: new signal: <cyan><b>{target}</b></cyan>"
         )
 
         return True
@@ -130,7 +130,7 @@ class ClientSideRiskController(RiskController):
                     ):
                         c.status = State.RISK_TRIGGERED
                         logger.debug(
-                            f"<yellow>{self.__class__.__name__}</yellow> triggered <red>STOP LOSS</red> for <green>{instrument.symbol}</green> at {c.signal.stop}"
+                            f"[<y>{self.__class__.__name__}</y>(<g>{ c.signal.instrument }</g>)] :: triggered <red>STOP LOSS</red> at {c.signal.stop}"
                         )
                         return TargetPosition.zero(
                             ctx, instrument.signal(0, group="Risk Manager", comment="Stop triggered")
@@ -144,7 +144,7 @@ class ClientSideRiskController(RiskController):
                     ):
                         c.status = State.RISK_TRIGGERED
                         logger.debug(
-                            f"<yellow>{self.__class__.__name__}</yellow> triggered <green>TAKE PROFIT</green> for <green>{instrument.symbol}</green> at {c.signal.take}"
+                            f"[<y>{self.__class__.__name__}</y>(<g>{ c.signal.instrument }</g>)] :: triggered <g>TAKE PROFIT</g> at {c.signal.take}"
                         )
                         return TargetPosition.zero(
                             ctx,
@@ -156,9 +156,7 @@ class ClientSideRiskController(RiskController):
                         )
 
             case State.DONE:
-                logger.debug(
-                    f"<yellow>{self.__class__.__name__}</yellow> -- stops tracking -- <green>{instrument.symbol}</green>"
-                )
+                logger.debug(f"[<y>{self.__class__.__name__}</y>(<g>{ c.signal.instrument }</g>)] :: stop tracking")
                 self._trackings.pop(instrument)
 
         return []
@@ -173,7 +171,7 @@ class ClientSideRiskController(RiskController):
                 self._trackings[instrument] = c_w  # add to tracking
                 self._waiting.pop(instrument)  # remove from waiting
                 logger.debug(
-                    f"<yellow>{self.__class__.__name__}</yellow> -- starts tracking -- <cyan><b>{c_w.target}</b></cyan> of {c_w.signal.instrument.symbol} take: {c_w.signal.take} stop: {c_w.signal.stop}"
+                    f"[<y>{self.__class__.__name__}</y>(<g>{c_w.signal.instrument.symbol}</g>)] :: Start racking <cyan><b>{c_w.target}</b></cyan>"
                 )
                 return
 
@@ -207,7 +205,7 @@ class BrokerSideRiskController(RiskController):
 
                 # - remove from the tracking list
                 logger.debug(
-                    f"<yellow>{self.__class__.__name__}</yellow> -- stops tracking -- <green>{instrument.symbol}</green>"
+                    f"[<y>{self.__class__.__name__}</y>(<g>{instrument.symbol}</g>)] risk triggered - stop tracking"
                 )
                 self._trackings.pop(instrument)
 
@@ -227,7 +225,7 @@ class BrokerSideRiskController(RiskController):
 
             case State.DONE:
                 logger.debug(
-                    f"<yellow>{self.__class__.__name__}</yellow> -- stops tracking -- <green>{instrument.symbol}</green>"
+                    f"[<y>{self.__class__.__name__}</y>(<g>{instrument.symbol}</g>)] state is done - stop tracking"
                 )
                 self._trackings.pop(instrument)
 
@@ -245,7 +243,7 @@ class BrokerSideRiskController(RiskController):
     def __cncl_take(self, ctx: IStrategyContext, ctrl: SgnCtrl):
         if ctrl.take_order_id is not None:
             logger.debug(
-                f"<yellow>{self.__class__.__name__}</yellow> <m>-- canceling take order --</m> <red>{ctrl.take_order_id}</red> for {ctrl.signal.instrument.symbol}"
+                f"[<y>{self.__class__.__name__}(<g>{ctrl.signal.instrument.symbol}</g>)</y>] :: <m>canceling take order</m> <r>{ctrl.take_order_id}</r>"
             )
             ctx.cancel_order(ctrl.take_order_id)
             ctrl.take_order_id = None
@@ -269,7 +267,7 @@ class BrokerSideRiskController(RiskController):
                 if c_w.target.take:
                     try:
                         logger.debug(
-                            f"<yellow>{self.__class__.__name__}</yellow> is sending take limit order for <green>{instrument.symbol}</green> at {c_w.target.take}"
+                            f"[<yellow>{self.__class__.__name__}</yellow>(<g>{instrument.symbol}</g>)] :: sending take limit order at {c_w.target.take}"
                         )
                         order = ctx.trade(instrument, -pos, c_w.target.take)
                         c_w.take_order_id = order.id
@@ -278,13 +276,13 @@ class BrokerSideRiskController(RiskController):
                         if order.status == "CLOSED":
                             c_w.status = State.RISK_TRIGGERED
                             logger.debug(
-                                f"<yellow>{self.__class__.__name__}</yellow> <g>TAKE PROFIT</g> was exected immediately for <green>{instrument.symbol}</green> at {c_w.target.take}"
+                                f"[<yellow>{self.__class__.__name__}</yellow>(<g>{instrument.symbol}</g>)] :: <g>TAKE PROFIT</g> was exected immediately at {c_w.target.take}"
                             )
                             return
 
                     except Exception as e:
                         logger.error(
-                            f"<yellow>{self.__class__.__name__}</yellow> couldn't send take limit order for <green>{instrument.symbol}</green>: {str(e)}"
+                            f"[<yellow>{self.__class__.__name__}</yellow>(<g>{instrument.symbol}</g>)] :: couldn't send take limit order: {str(e)}"
                         )
 
                 if c_w.target.stop:
@@ -299,7 +297,7 @@ class BrokerSideRiskController(RiskController):
                         c_w.stop_order_id = order.id
                     except Exception as e:
                         logger.error(
-                            f"<yellow>{self.__class__.__name__}</yellow> couldn't send stop order for <green>{instrument.symbol}</green>: {str(e)}"
+                            f"[<yellow>{self.__class__.__name__}</yellow>(<g>{instrument.symbol}</g>)] :: couldn't send stop order: {str(e)}"
                         )
 
         # - check tracked signal
@@ -309,7 +307,7 @@ class BrokerSideRiskController(RiskController):
                     c_t.status = State.RISK_TRIGGERED
                     c_t.take_executed_price = deal.price
                     logger.debug(
-                        f"<yellow>{self.__class__.__name__}</yellow> triggered <green>TAKE PROFIT</green> (<red>{c_t.take_order_id}</red>) for <green>{instrument.symbol}</green> at {c_t.take_executed_price}"
+                        f"[<y>{self.__class__.__name__}</y>(<g>{instrument.symbol}</g>)] :: triggered <green>TAKE PROFIT</green> (<red>{c_t.take_order_id}</red>) at {c_t.take_executed_price}"
                     )
                     # - cancel stop if need
                     self.__cncl_stop(ctx, c_t)
@@ -318,7 +316,7 @@ class BrokerSideRiskController(RiskController):
                     c_t.status = State.RISK_TRIGGERED
                     c_t.stop_executed_price = deal.price
                     logger.debug(
-                        f"<yellow>{self.__class__.__name__}</yellow> triggered <magenta>STOP LOSS</magenta> (<red>{c_t.take_order_id}</red>) for <green>{instrument.symbol}</green> at {c_t.stop_executed_price}"
+                        f"[<y>{self.__class__.__name__}</y>(<g>{instrument.symbol}</g>)] :: triggered <magenta>STOP LOSS</magenta> (<red>{c_t.take_order_id}</red>) at {c_t.stop_executed_price}"
                     )
                     # - cancel take if need
                     self.__cncl_take(ctx, c_t)
@@ -531,7 +529,9 @@ class MinAtrExitDistanceTracker(PositionsTracker):
                 continue
 
             if self.__check_exit(ctx, s.instrument):
-                logger.debug(f"\t ::: <yellow>Min ATR distance reached</yellow> for {s.instrument.symbol}")
+                logger.debug(
+                    f"[<y>{self.__class__.__name__}</y>(<g>{s.instrument.symbol}</g>)] :: <y>Min ATR distance reached</y>"
+                )
                 targets.append(TargetPosition.zero(ctx, s))
 
         return targets
@@ -544,7 +544,9 @@ class MinAtrExitDistanceTracker(PositionsTracker):
             return []
         if not self.__check_exit(ctx, instrument):
             return []
-        logger.debug(f"\t ::: <yellow>Min ATR distance reached</yellow> for {instrument.symbol}")
+        logger.debug(
+            f"[<y>{self.__class__.__name__}</y>(<g>{instrument.symbol}</g>)] :: <y>Min ATR distance reached</y>"
+        )
         return TargetPosition.zero(
             ctx, instrument.signal(0, group="Risk Manager", comment=f"Original signal price: {signal.reference_price}")
         )

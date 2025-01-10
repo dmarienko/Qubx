@@ -182,7 +182,7 @@ class StrategyContext(IStrategyContext):
                 self._is_initialized = True
             except Exception as strat_error:
                 logger.error(
-                    f"(StrategyContext) Strategy {self.strategy.__class__.__name__} raised an exception in on_start: {strat_error}"
+                    f"[StrategyContext] :: Strategy {self.strategy.__class__.__name__} raised an exception in on_start: {strat_error}"
                 )
                 logger.error(traceback.format_exc())
                 return
@@ -191,7 +191,7 @@ class StrategyContext(IStrategyContext):
         if not self._data_provider.is_simulation:
             self._thread_data_loop = Thread(target=self.__process_incoming_data_loop, args=(databus,), daemon=True)
             self._thread_data_loop.start()
-            logger.info("(StrategyContext) strategy is started in thread")
+            logger.info("[StrategyContext] :: strategy is started in thread")
             if blocking:
                 self._thread_data_loop.join()
 
@@ -204,7 +204,7 @@ class StrategyContext(IStrategyContext):
                 self.strategy.on_stop(self)
             except Exception as strat_error:
                 logger.error(
-                    f"(StrategyContext) Strategy {self.strategy.__class__.__name__} raised an exception in on_stop: {strat_error}"
+                    f"[StrategyContext] :: Strategy {self.strategy.__class__.__name__} raised an exception in on_stop: {strat_error}"
                 )
                 logger.opt(colors=False).error(traceback.format_exc())
             self._thread_data_loop = None
@@ -397,7 +397,7 @@ class StrategyContext(IStrategyContext):
 
     # private methods
     def __process_incoming_data_loop(self, channel: CtrlChannel):
-        logger.info("(StrategyContext) Start processing market data")
+        logger.info("[StrategyContext] :: Start processing market data")
         while channel.control.is_set():
             with SW("StrategyContext._process_incoming_data"):
                 # - waiting for incoming market data
@@ -405,7 +405,7 @@ class StrategyContext(IStrategyContext):
                 if self.process_data(instrument, d_type, data, hist):
                     channel.stop()
                     break
-        logger.info("(StrategyContext) Market data processing stopped")
+        logger.info("[StrategyContext] :: Market data processing stopped")
 
     def __instantiate_strategy(self, strategy: IStrategy, config: dict[str, Any] | None) -> IStrategy:
         __strategy = strategy() if isinstance(strategy, type) else strategy

@@ -1,7 +1,4 @@
-import pandas as pd
-
-from qubx import logger, lookup
-from qubx.core.basics import DataType, Instrument, Position, TargetPosition
+from qubx.core.basics import DataType, Instrument, TargetPosition
 from qubx.core.helpers import CachedMarketDataHolder
 from qubx.core.interfaces import (
     IAccountProcessor,
@@ -150,7 +147,7 @@ class UniverseManager(IUniverseManager):
             _ = self._account.get_position(instrument)
 
             # - check if we need any aux instrument for calculating pnl ?
-            # TODO: test edge cases for aux symbols
+            # TODO: test edge cases for aux symbols (UniverseManager)
             # aux = lookup.find_aux_instrument_for(instrument, self._account.get_base_currency())
             # if aux is not None:
             #     instrument._aux_instrument = aux

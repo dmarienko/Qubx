@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from operator import neg
-from typing import Dict, List
 
 import numpy as np
 from sortedcontainers import SortedDict
@@ -14,8 +13,6 @@ from qubx.core.basics import (
     Order,
     OrderSide,
     OrderType,
-    Position,
-    Signal,
     TransactionCostsCalculator,
     dt_64,
 )
@@ -36,10 +33,10 @@ class OmeReport:
 class OrdersManagementEngine:
     instrument: Instrument
     time_service: ITimeProvider
-    active_orders: Dict[str, Order]
-    stop_orders: Dict[str, Order]
-    asks: SortedDict[float, List[str]]
-    bids: SortedDict[float, List[str]]
+    active_orders: dict[str, Order]
+    stop_orders: dict[str, Order]
+    asks: SortedDict[float, list[str]]
+    bids: SortedDict[float, list[str]]
     bbo: Quote | None  # current best bid/ask order book (simplest impl)
     __order_id: int
     __trade_id: int
@@ -78,10 +75,10 @@ class OrdersManagementEngine:
     def get_quote(self) -> Quote:
         return self.bbo
 
-    def get_open_orders(self) -> List[Order]:
+    def get_open_orders(self) -> list[Order]:
         return list(self.active_orders.values()) + list(self.stop_orders.values())
 
-    def update_bbo(self, quote: Quote) -> List[OmeReport]:
+    def update_bbo(self, quote: Quote) -> list[OmeReport]:
         timestamp = self.time_service.time()
         rep = []
 
@@ -151,7 +148,7 @@ class OrdersManagementEngine:
         return self._process_order(timestamp, order)
 
     def _dbg(self, message, **kwargs) -> None:
-        logger.debug(f"[OMS] {self.instrument.symbol} - {message}", **kwargs)
+        logger.debug(f"  [<y>OME</y>(<g>{self.instrument}</g>)] :: {message}", **kwargs)
 
     def _process_order(self, timestamp: dt_64, order: Order) -> OmeReport:
         if order.status in ["CLOSED", "CANCELED"]:
@@ -179,7 +176,7 @@ class OrdersManagementEngine:
             self.stop_orders[order.id] = order
 
         elif order.type == "STOP_LIMIT":
-            # TODO: check trigger conditions in options etc
+            # TODO: (OME) check trigger conditions in options etc
             raise NotImplementedError("'STOP_LIMIT' order is not supported in Qubx simulator yet !")
 
         # - if order must be "executed" immediately

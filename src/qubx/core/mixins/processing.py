@@ -210,12 +210,14 @@ class ProcessingManager(IProcessingManager):
     @SW.watch("StrategyContext.on_fit")
     def __invoke_on_fit(self) -> None:
         try:
-            logger.debug(f"Invoking <g>{self._strategy_name}</g> on_fit")
+            logger.debug(f"[<y>{self.__class__.__name__}</y>] :: Invoking <g>{self._strategy_name}</g> on_fit")
             self._strategy.on_fit(self._context)
             self._subscription_manager.commit()  # apply pending operations
-            logger.debug(f"<g>{self._strategy_name}</g> is fitted")
+            logger.debug(f"[<y>{self.__class__.__name__}</y>] :: <g>{self._strategy_name}</g> is fitted")
         except Exception as strat_error:
-            logger.error(f"Strategy {self._strategy_name} on_fit raised an exception: {strat_error}")
+            logger.error(
+                f"[{self.__class__.__name__}] :: Strategy {self._strategy_name} on_fit raised an exception: {strat_error}"
+            )
             logger.opt(colors=False).error(traceback.format_exc())
         finally:
             self._fit_is_running = False
@@ -396,11 +398,15 @@ class ProcessingManager(IProcessingManager):
         self._account.process_deals(instrument, deals)
         self._logging.save_deals(instrument, deals)
         if instrument is None:
-            logger.debug(f"Execution report for unknown instrument {instrument}")
+            logger.debug(
+                f"[<y>{self.__class__.__name__}</y>] :: Execution report for unknown instrument <r>{instrument}</r>"
+            )
             return
         for d in deals:
             # - notify position gatherer and tracker
             self._position_gathering.on_execution_report(self._context, instrument, d)
             self._position_tracker.on_execution_report(self._context, instrument, d)
-            logger.debug(f"Executed {d.amount} @ {d.price} of {instrument} for order <red>{d.order_id}</red>")
+            logger.debug(
+                f"[<y>{self.__class__.__name__}</y>(<g>{instrument}</g>)] :: executed <r>{d.order_id}</r> | {d.amount} @ {d.price}"
+            )
         return None

@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any
 
 from qubx.core.basics import DataType, Instrument
 from qubx.core.interfaces import IDataProvider, ISubscriptionManager
@@ -12,12 +12,12 @@ class SubscriptionManager(ISubscriptionManager):
     _sub_to_warmup: dict[str, str]
     _auto_subscribe: bool
 
-    _pending_global_subscriptions: Set[str]
-    _pending_global_unsubscriptions: Set[str]
+    _pending_global_subscriptions: set[str]
+    _pending_global_unsubscriptions: set[str]
 
-    _pending_stream_subscriptions: Dict[str, Set[Instrument]]
-    _pending_stream_unsubscriptions: Dict[str, Set[Instrument]]
-    _pending_warmups: Dict[Tuple[str, Instrument], str]
+    _pending_stream_subscriptions: dict[str, set[Instrument]]
+    _pending_stream_unsubscriptions: dict[str, set[Instrument]]
+    _pending_warmups: dict[tuple[str, Instrument], str]
 
     def __init__(
         self,
@@ -35,7 +35,7 @@ class SubscriptionManager(ISubscriptionManager):
         self._pending_stream_unsubscriptions = defaultdict(set)
         self._auto_subscribe = auto_subscribe
 
-    def subscribe(self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None) -> None:
+    def subscribe(self, subscription_type: str, instruments: list[Instrument] | Instrument | None = None) -> None:
         # - figure out which instruments to subscribe to (all or specific)
         if instruments is None:
             self._pending_global_subscriptions.add(subscription_type)
@@ -58,7 +58,7 @@ class SubscriptionManager(ISubscriptionManager):
         self._pending_stream_subscriptions[subscription_type].update(instruments)
         self._update_pending_warmups(subscription_type, instruments)
 
-    def unsubscribe(self, subscription_type: str, instruments: List[Instrument] | Instrument | None = None) -> None:
+    def unsubscribe(self, subscription_type: str, instruments: list[Instrument] | Instrument | None = None) -> None:
         if instruments is None:
             self._pending_global_unsubscriptions.add(subscription_type)
             return
@@ -113,14 +113,14 @@ class SubscriptionManager(ISubscriptionManager):
     def has_subscription(self, instrument: Instrument, subscription_type: str) -> bool:
         return self._data_provider.has_subscription(instrument, subscription_type)
 
-    def get_subscriptions(self, instrument: Instrument | None = None) -> List[str]:
+    def get_subscriptions(self, instrument: Instrument | None = None) -> list[str]:
         return list(
             set(self._data_provider.get_subscriptions(instrument))
             | {self.get_base_subscription()}
             | self._pending_global_subscriptions
         )
 
-    def get_subscribed_instruments(self, subscription_type: str | None = None) -> List[Instrument]:
+    def get_subscribed_instruments(self, subscription_type: str | None = None) -> list[Instrument]:
         return self._data_provider.get_subscribed_instruments(subscription_type)
 
     def get_base_subscription(self) -> str:
@@ -132,7 +132,7 @@ class SubscriptionManager(ISubscriptionManager):
     def get_warmup(self, subscription_type: str) -> str | None:
         return self._sub_to_warmup.get(subscription_type)
 
-    def set_warmup(self, configs: Dict[Any, str]) -> None:
+    def set_warmup(self, configs: dict[Any, str]) -> None:
         for subscription_type, period in configs.items():
             self._sub_to_warmup[subscription_type] = period
 
@@ -162,7 +162,7 @@ class SubscriptionManager(ISubscriptionManager):
             )
         )
 
-    def _update_pending_warmups(self, subscription_type: str, instruments: List[Instrument]) -> None:
+    def _update_pending_warmups(self, subscription_type: str, instruments: list[Instrument]) -> None:
         # TODO: refactor pending warmups in a way that would allow to subscribe and then call set_warmup in the same iteration
         # - ohlc is handled separately
         if DataType.from_str(subscription_type) != DataType.OHLC:

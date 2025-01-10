@@ -40,10 +40,11 @@ class TradingManager(ITradingManager):
             if (stp_type := options.get("stop_type")) is not None:
                 type = f"stop_{stp_type}"
 
-        logger.debug(
-            f"(StrategyContext) sending {type} {side} for {size_adj} of <green>{instrument.symbol}</green> @ {price} ..."
-        )
         client_id = self._generate_order_client_id(instrument.symbol)
+        logger.debug(
+            f"[<y>{self.__class__.__name__}</y>(<g>{instrument.symbol}</g>)] :: Sending {type} {side} {size_adj} { ' @ ' + str(price) if price else ''} -> (client_id: <r>{client_id})</r> ..."
+        )
+
         order = self._broker.send_order(
             instrument=instrument,
             order_side=side,
