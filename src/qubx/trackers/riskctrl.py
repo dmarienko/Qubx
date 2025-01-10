@@ -171,7 +171,7 @@ class ClientSideRiskController(RiskController):
                 self._trackings[instrument] = c_w  # add to tracking
                 self._waiting.pop(instrument)  # remove from waiting
                 logger.debug(
-                    f"[<y>{self.__class__.__name__}</y>(<g>{c_w.signal.instrument.symbol}</g>)] :: Start racking <cyan><b>{c_w.target}</b></cyan>"
+                    f"[<y>{self.__class__.__name__}</y>(<g>{c_w.signal.instrument.symbol}</g>)] :: Start tracking <cyan><b>{c_w.target}</b></cyan>"
                 )
                 return
 

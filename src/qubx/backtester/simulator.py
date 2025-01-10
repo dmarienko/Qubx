@@ -188,7 +188,7 @@ def _run_setup(
     QubxLogConfig.setup_logger(QubxLogConfig.get_log_level(), SimulatedLogFormatter(simulated_clock).formatter)
 
     logger.debug(
-        f"Preparing simulated trading on <g>{setup.exchange.upper()}</g> for {setup.capital} {setup.base_currency}..."
+        f"[<y>simulator</y>] :: Preparing simulated trading on <g>{setup.exchange.upper()}</g> for {setup.capital} {setup.base_currency}..."
     )
 
     account = SimulatedAccountProcessor(
@@ -262,12 +262,14 @@ def _run_setup(
 
     # - setup base subscription from spec
     if ctx.get_base_subscription() == DataType.NONE:
-        logger.debug(f" | Setting up default base subscription: {data_setup.default_base_subscription}")
+        logger.debug(
+            f"[<y>simulator</y>] :: Setting up default base subscription: {data_setup.default_base_subscription}"
+        )
         ctx.set_base_subscription(data_setup.default_base_subscription)
 
     # - set default on_event schedule if detected and strategy didn't set it's own schedule
     if not ctx.get_event_schedule("time") and data_setup.default_trigger_schedule:
-        logger.debug(f" | Setting default schedule: {data_setup.default_trigger_schedule}")
+        logger.debug(f"[<y>simulator</y>] :: Setting default schedule: {data_setup.default_trigger_schedule}")
         ctx.set_event_schedule(data_setup.default_trigger_schedule)
 
     # - start context at this point
@@ -276,7 +278,9 @@ def _run_setup(
     # - apply default warmup periods if strategy didn't set them
     for s in ctx.get_subscriptions():
         if not ctx.get_warmup(s) and (_d_wt := data_setup.default_warmups.get(s)):
-            logger.debug(f"Strategy doesn't set warmup period for <c>{s}</c> so default <c>{_d_wt}</c> will be used")
+            logger.debug(
+                f"[<y>simulator</y>] :: Strategy didn't set warmup period for <c>{s}</c> so default <c>{_d_wt}</c> will be used"
+            )
             ctx.set_warmup({s: _d_wt})
 
     def _is_known_type(t: str):
@@ -289,7 +293,7 @@ def _run_setup(
     # - if any custom data providers are in the data spec
     for t, r in data_setup.data_providers.items():
         if not _is_known_type(t) or t in [DataType.TRADE, DataType.OHLC_TRADES, DataType.OHLC_QUOTES, DataType.QUOTE]:
-            logger.debug(f" | Subscribing to: {t}")
+            logger.debug(f"[<y>simulator</y>] :: Subscribing to: {t}")
             ctx.subscribe(t, ctx.instruments)
 
     try:

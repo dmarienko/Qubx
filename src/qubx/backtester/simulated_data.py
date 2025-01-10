@@ -532,7 +532,9 @@ class IterableSimulationData(Iterator):
         _ct_timestap = pd.Timestamp(self._current_time, unit="ns")
 
         for f in self._subtyped_fetchers.values():
-            logger.debug(f"Preloading initial data for {f._fetcher_id} {self._start} : {self._stop} ...")
+            logger.debug(
+                f"  [<c>IteratedDataStreamsSlicer</c>] :: Preloading initial data for {f._fetcher_id} {self._start} : {self._stop} ..."
+            )
             self._slicer_ctrl += f.load(_ct_timestap, self._stop, None)  # type: ignore
 
         self._slicing_iterator = iter(self._slicer_ctrl)

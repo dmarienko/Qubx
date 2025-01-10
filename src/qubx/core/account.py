@@ -182,8 +182,8 @@ class BasicAccountProcessor(IAccountProcessor):
             self._unlock_limit_order_value(order)
 
         logger.debug(
-            f"  [<y>{self.__class__.__name__}</y>] :: <g>{order.instrument}</g> Order <r>{order.id}</r> {order.type} {order.side} {order.quantity} "
-            f"{ (' @ ' + str(order.price)) if order.price else '' } -> {order.status}"
+            f"  [<y>{self.__class__.__name__}</y>(<g>{order.instrument}</g>)] :: New status for order <r>{order.id}</r> -> <y>{order.status}</y> ({order.type} {order.side} {order.quantity}"
+            f"{ (' @ ' + str(order.price)) if order.price else '' })"
         )
 
     def process_deals(self, instrument: Instrument, deals: list[Deal]) -> None:
@@ -204,7 +204,7 @@ class BasicAccountProcessor(IAccountProcessor):
                     traded_amnt += d.amount
                     total_cost = deal_cost + fee_in_base
                     logger.debug(
-                        f"  [<y>{self.__class__.__name__}</y>] :: traded {d.amount} for <g>{instrument}</g> @ {d.price} -> {realized_pnl:.2f}"
+                        f"  [<y>{self.__class__.__name__}</y>(<g>{instrument}</g>)] :: traded {d.amount} @ {d.price} -> {realized_pnl:.2f} {self.base_currency} realized profit"
                     )
                     if not instrument.is_futures():
                         self._balances[self.base_currency] -= total_cost
