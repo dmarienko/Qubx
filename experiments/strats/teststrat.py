@@ -1,20 +1,21 @@
-from typing import List, Dict
-import pandas as pd
+from typing import Dict, List
+
 import numpy as np
+import pandas as pd
 from tabulate import tabulate
 
 from qubx import logger
-from qubx.core.interfaces import IStrategy, PositionsTracker, TriggerEvent, IStrategyContext
-from qubx.core.basics import Instrument, Position, Signal
-from qubx.pandaz import srows, scols, ohlc_resample, retain_columns_and_join
+from qubx.core.basics import Signal
+from qubx.core.interfaces import IStrategy, IStrategyContext, PositionsTracker, TriggerEvent
+from qubx.pandaz import ohlc_resample, retain_columns_and_join, scols, srows
 from qubx.trackers import Capital, PortfolioRebalancerTracker
-from qubx.utils.misc import quotify, dequotify
+from qubx.utils.misc import dequotify
 
 
 def priceframe(ctx: IStrategyContext, field: str, timeframe: str) -> pd.DataFrame:
     data = []
     for i in ctx.instruments:
-        d = ctx.ohlc(i.symbol, timeframe)
+        d = ctx.ohlc(i, timeframe)
         if hasattr(d, field):
             b = getattr(d, field).pd()
             data.append(b)
@@ -26,11 +27,10 @@ def priceframe(ctx: IStrategyContext, field: str, timeframe: str) -> pd.DataFram
 class FlipFlopStrat(IStrategy):
     capital_invested: float = 100.0
     trading_allowed: bool = False
-    _tracker: PortfolioRebalancerTracker
+    # _tracker: PortfolioRebalancerTracker
 
     def on_start(self, ctx: IStrategyContext):
         logger.info(f"> Started with capital {self.capital_invested}")
-        self._tracker = self.tracker(ctx)
 
     def on_fit(self, ctx: IStrategyContext):
         closes = priceframe(ctx, "close", "5Min")

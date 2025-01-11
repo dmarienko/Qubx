@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import numpy as np
 
@@ -10,6 +10,8 @@ from qubx.core.interfaces import IPositionSizer, IStrategyContext, PositionsTrac
 from qubx.core.series import Bar, OrderBook, Quote, Trade
 from qubx.ta.indicators import atr
 from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
+
+RiskControllingSide: TypeAlias = Literal["broker", "client"]
 
 
 class State(Enum):
@@ -361,6 +363,20 @@ class GenericRiskControllerDecorator(PositionsTracker, RiskCalculator):
     def calculate_risks(self, ctx: IStrategyContext, quote: Quote, signal: Signal) -> Signal | None:
         raise NotImplementedError("calculate_risks should be implemented by subclasses")
 
+    @staticmethod
+    def create_risk_controller_for_side(
+        risk_controlling_side: RiskControllingSide, risk_calculator: RiskCalculator, sizer: IPositionSizer
+    ) -> RiskController:
+        match risk_controlling_side:
+            case "broker":
+                return BrokerSideRiskController(risk_calculator, sizer)
+            case "client":
+                return ClientSideRiskController(risk_calculator, sizer)
+            case _:
+                raise ValueError(
+                    f"Invalid risk controlling side: {risk_controlling_side} only 'broker' or 'client' are supported"
+                )
+
 
 class StopTakePositionTracker(GenericRiskControllerDecorator):
     """
@@ -373,7 +389,7 @@ class StopTakePositionTracker(GenericRiskControllerDecorator):
         take_target: float | None = None,
         stop_risk: float | None = None,
         sizer: IPositionSizer = FixedSizer(1.0, amount_in_quote=False),
-        risk_controlling_side: str = "broker",
+        risk_controlling_side: RiskControllingSide = "broker",
     ) -> None:
         self.take_target = take_target
         self.stop_risk = stop_risk
@@ -381,12 +397,7 @@ class StopTakePositionTracker(GenericRiskControllerDecorator):
         self._stop_risk_fraction = stop_risk / 100 if stop_risk else None
 
         super().__init__(
-            sizer,
-            (
-                BrokerSideRiskController(self, sizer)
-                if risk_controlling_side == "broker"
-                else ClientSideRiskController(self, sizer)
-            ),
+            sizer, GenericRiskControllerDecorator.create_risk_controller_for_side(risk_controlling_side, self, sizer)
         )
 
     def calculate_risks(self, ctx: IStrategyContext, quote: Quote, signal: Signal) -> Signal | None:
@@ -415,8 +426,8 @@ class StopTakePositionTracker(GenericRiskControllerDecorator):
 class AtrRiskTracker(GenericRiskControllerDecorator):
     """
     ATR based risk management
-    Take at entry +/- ATR[1] * take_target
-    Stop at entry -/+ ATR[1] * stop_risk
+     - Take at entry +/- ATR[1] * take_target
+     - Stop at entry -/+ ATR[1] * stop_risk
     It may use either limit and stop orders for managing risk or market orders depending on 'risk_controlling_side' parameter.
     """
 
@@ -428,7 +439,7 @@ class AtrRiskTracker(GenericRiskControllerDecorator):
         atr_period: int,
         atr_smoother="sma",
         sizer: IPositionSizer = FixedSizer(1.0),
-        risk_controlling_side: Literal["client", "broker"] = "broker",
+        risk_controlling_side: RiskControllingSide = "broker",
     ) -> None:
         self.take_target = take_target
         self.stop_risk = stop_risk
@@ -437,12 +448,7 @@ class AtrRiskTracker(GenericRiskControllerDecorator):
         self.atr_smoother = atr_smoother
 
         super().__init__(
-            sizer,
-            (
-                BrokerSideRiskController(self, sizer)
-                if risk_controlling_side == "broker"
-                else ClientSideRiskController(self, sizer)
-            ),
+            sizer, GenericRiskControllerDecorator.create_risk_controller_for_side(risk_controlling_side, self, sizer)
         )
 
     def calculate_risks(self, ctx: IStrategyContext, quote: Quote, signal: Signal) -> Signal | None:
