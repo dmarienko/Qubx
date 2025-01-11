@@ -30,13 +30,13 @@ from qubx.data.readers import (
 )
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.pandaz.utils import *
-from qubx.ta.indicators import ema, sma
+from qubx.ta.indicators import sma
 from qubx.trackers.composite import CompositeTracker, CompositeTrackerPerSide, LongTracker
 from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
 from qubx.trackers.sizers import FixedLeverageSizer, FixedRiskSizer, FixedSizer
 from tests.qubx.core.utils_test import DummyTimeProvider
 
-N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
+N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)  # noqa: E731
 
 
 def Q(time: str, bid: float, ask: float) -> Quote:
@@ -423,3 +423,47 @@ class TestTrackersAndGatherers:
         assert 22.4721 == N(mtrx0["gain"])
         assert 23.5487 == N(mtrx1["gain"])
         # fmt: on
+
+    def test_composite_trackers_broker_side(self):
+        class ComplexCompositeTest(GuineaPig):
+            def tracker(self, ctx: IStrategyContext) -> PositionsTracker:
+                sizer = FixedLeverageSizer(1.0)
+                # fmt: off
+                return CompositeTrackerPerSide(
+                    long_trackers=[
+                        AtrRiskTracker(
+                            take_target=5, stop_risk=3, atr_timeframe="1h", atr_period=5,
+                            sizer=sizer, risk_controlling_side="broker",
+                        ),
+                        StopTakePositionTracker(stop_risk=10, sizer=sizer),
+                    ],
+                    short_trackers=[
+                        AtrRiskTracker(
+                            take_target=5, stop_risk=3, atr_timeframe="1h", atr_period=5,
+                            sizer=sizer, risk_controlling_side="broker",
+                        ),
+                        StopTakePositionTracker(stop_risk=10, sizer=sizer),
+                    ],
+                )
+                # fmt: on
+
+        assert (I := lookup.find_symbol("BINANCE.UM", "BTCUSDT")) is not None
+
+        strategy = ComplexCompositeTest(
+            tests={
+                "2023-07-05 00:00:00": I.signal(-1),
+            }
+        )
+
+        r = CsvStorageDataReader("tests/data/csv_1h")
+
+        rep = simulate(
+            strategies={"Composited": strategy},
+            data={"ohlc(1h)": r},
+            capital=10000,
+            instruments=["BINANCE.UM:BTCUSDT"],
+            commissions="vip0_usdt",
+            start="2023-07-01",
+            stop="2023-08-01",
+            debug="DEBUG",
+        )
