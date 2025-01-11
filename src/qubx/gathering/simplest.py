@@ -66,7 +66,7 @@ class SimplePositionGatherer(IPositionGathering):
             else:
                 self.entry_order_id = None
                 logger.debug(
-                    f"  [<y>{self.__class__.__name__}</y>(<g>{instrument}</g>)] :: Adjusting position from {current_position} to {new_size} : {r}"
+                    f"  [<y>{self.__class__.__name__}</y>(<g>{instrument}</g>)] :: Position is adjusted from {current_position} to {new_size} : {r}"
                 )
 
             current_position = new_size

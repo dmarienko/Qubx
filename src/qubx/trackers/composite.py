@@ -96,7 +96,7 @@ class ConditionalTracker(PositionsTracker):
                         take=signal.take,
                         reference_price=signal.reference_price,
                         group=signal.group,
-                        comment=signal.comment,
+                        comment=f"Closing opposite signal {signal.signal} {signal.comment}",
                         options=dict(allow_override=True),
                     )
                 )

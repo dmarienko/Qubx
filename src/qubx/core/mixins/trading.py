@@ -42,7 +42,7 @@ class TradingManager(ITradingManager):
 
         client_id = self._generate_order_client_id(instrument.symbol)
         logger.debug(
-            f"[<y>{self.__class__.__name__}</y>(<g>{instrument.symbol}</g>)] :: Sending {type} {side} {size_adj} { ' @ ' + str(price) if price else ''} -> (client_id: <r>{client_id})</r> ..."
+            f"  [<y>{self.__class__.__name__}</y>(<g>{instrument.symbol}</g>)] :: Sending {type} {side} {size_adj} { ' @ ' + str(price) if price else ''} -> (client_id: <r>{client_id})</r> ..."
         )
 
         order = self._broker.send_order(

@@ -148,7 +148,7 @@ class OrdersManagementEngine:
         return self._process_order(timestamp, order)
 
     def _dbg(self, message, **kwargs) -> None:
-        logger.debug(f"  [<y>OME</y>(<g>{self.instrument}</g>)] :: {message}", **kwargs)
+        logger.debug(f"    [<y>OME</y>(<g>{self.instrument}</g>)] :: {message}", **kwargs)
 
     def _process_order(self, timestamp: dt_64, order: Order) -> OmeReport:
         if order.status in ["CLOSED", "CANCELED"]:
