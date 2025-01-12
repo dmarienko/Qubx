@@ -9,7 +9,7 @@ from qubx.core.basics import Deal, Instrument, Signal, TargetPosition
 from qubx.core.interfaces import IPositionSizer, IStrategyContext, PositionsTracker
 from qubx.core.series import Bar, OrderBook, Quote, Trade
 from qubx.ta.indicators import atr
-from qubx.trackers.sizers import FixedRiskSizer, FixedSizer
+from qubx.trackers.sizers import FixedSizer
 
 RiskControllingSide: TypeAlias = Literal["broker", "client"]
 
@@ -256,36 +256,52 @@ class BrokerSideRiskController(RiskController):
 
     def on_execution_report(self, ctx: IStrategyContext, instrument: Instrument, deal: Deal):
         pos = ctx.positions[instrument].quantity
+        _waiting = self._waiting.get(instrument)
 
-        if (c_w := self._waiting.get(instrument)) is not None:
-            if abs(pos - c_w.target.target_position_size) <= instrument.min_size:
-                c_w.status = State.OPEN
+        # - check if there is any waiting signals
+        if _waiting is not None:
+            _tracking = self._trackings.get(instrument)
+            # - when asked to process 0 signal and got new execution - we need to remove all previous orders
+            if _waiting.target.target_position_size == 0:
+                self._waiting.pop(instrument)  # remove from waiting
+
+                if _tracking is not None:
+                    logger.debug(
+                        f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: got execution from <r>{deal.order_id}</r> and before was asked to process 0 by <c>{_waiting.signal}</c>"
+                    )
+                    self.__cncl_stop(ctx, _tracking)
+                    self.__cncl_take(ctx, _tracking)
+
+                return
+
+            # - when gathered asked position
+            if abs(pos - _waiting.target.target_position_size) <= instrument.min_size:
+                _waiting.status = State.OPEN
                 logger.debug(
-                    f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: <r>{deal.order_id}</r> opened position for <c>{c_w.signal}</c>"
+                    f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: <r>{deal.order_id}</r> opened position for <c>{_waiting.signal}</c>"
                 )
 
                 # - check if we need to cancel previous stop / take orders
-                ctr1 = self._trackings.get(instrument)
-                if ctr1 is not None:
-                    self.__cncl_stop(ctx, ctr1)
-                    self.__cncl_take(ctx, ctr1)
+                if _tracking is not None:
+                    self.__cncl_stop(ctx, _tracking)
+                    self.__cncl_take(ctx, _tracking)
 
-                self._trackings[instrument] = c_w  # add to tracking
+                self._trackings[instrument] = _waiting  # add to tracking
                 self._waiting.pop(instrument)  # remove from waiting
 
-                if c_w.target.take:
+                if _waiting.target.take:
                     try:
                         logger.debug(
-                            f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: sending <g>take limit</g> order at {c_w.target.take}"
+                            f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: sending <g>take limit</g> order at {_waiting.target.take}"
                         )
-                        order = ctx.trade(instrument, -pos, c_w.target.take)
-                        c_w.take_order_id = order.id
+                        order = ctx.trade(instrument, -pos, _waiting.target.take)
+                        _waiting.take_order_id = order.id
 
                         # - if order was executed immediately we don't need to send stop order
                         if order.status == "CLOSED":
-                            c_w.status = State.RISK_TRIGGERED
+                            _waiting.status = State.RISK_TRIGGERED
                             logger.debug(
-                                f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: <g>TAKE PROFIT</g> was exected immediately at {c_w.target.take}"
+                                f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: <g>TAKE PROFIT</g> was exected immediately at {_waiting.target.take}"
                             )
                             return
 
@@ -294,47 +310,47 @@ class BrokerSideRiskController(RiskController):
                             f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: couldn't send take limit order: {str(e)}"
                         )
 
-                if c_w.target.stop:
+                if _waiting.target.stop:
                     try:
                         logger.debug(
-                            f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: sending <g>stop</g> order at {c_w.target.stop}"
+                            f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: sending <g>stop</g> order at {_waiting.target.stop}"
                         )
                         # - for simulation purposes we assume that stop order will be executed at stop price
                         order = ctx.trade(
-                            instrument, -pos, c_w.target.stop, stop_type="market", fill_at_signal_price=True
+                            instrument, -pos, _waiting.target.stop, stop_type="market", fill_at_signal_price=True
                         )
-                        c_w.stop_order_id = order.id
+                        _waiting.stop_order_id = order.id
                     except Exception as e:
                         logger.error(
                             f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: couldn't send stop order: {str(e)}"
                         )
 
         # - check tracked signal
-        if (c_t := self._trackings.get(instrument)) is not None:
-            if c_t.status == State.OPEN and abs(pos) <= instrument.min_size:
-                if deal.order_id == c_t.take_order_id:
-                    c_t.status = State.RISK_TRIGGERED
-                    c_t.take_executed_price = deal.price
+        if (_tracking := self._trackings.get(instrument)) is not None:
+            if _tracking.status == State.OPEN and abs(pos) <= instrument.min_size:
+                if deal.order_id == _tracking.take_order_id:
+                    _tracking.status = State.RISK_TRIGGERED
+                    _tracking.take_executed_price = deal.price
                     logger.debug(
-                        f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: triggered <green>TAKE PROFIT</green> (<red>{c_t.take_order_id}</red>) at {c_t.take_executed_price}"
+                        f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: triggered <green>TAKE PROFIT</green> (<red>{_tracking.take_order_id}</red>) at {_tracking.take_executed_price}"
                     )
                     # - cancel stop if need
-                    self.__cncl_stop(ctx, c_t)
+                    self.__cncl_stop(ctx, _tracking)
 
-                elif deal.order_id == c_t.stop_order_id:
-                    c_t.status = State.RISK_TRIGGERED
-                    c_t.stop_executed_price = deal.price
+                elif deal.order_id == _tracking.stop_order_id:
+                    _tracking.status = State.RISK_TRIGGERED
+                    _tracking.stop_executed_price = deal.price
                     logger.debug(
-                        f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: triggered <magenta>STOP LOSS</magenta> (<red>{c_t.take_order_id}</red>) at {c_t.stop_executed_price}"
+                        f"[<y>{self._name}</y>(<g>{instrument}</g>)] :: triggered <magenta>STOP LOSS</magenta> (<red>{_tracking.take_order_id}</red>) at {_tracking.stop_executed_price}"
                     )
                     # - cancel take if need
-                    self.__cncl_take(ctx, c_t)
+                    self.__cncl_take(ctx, _tracking)
 
                 else:
                     # - closed by opposite signal or externally
-                    c_t.status = State.DONE
-                    self.__cncl_stop(ctx, c_t)
-                    self.__cncl_take(ctx, c_t)
+                    _tracking.status = State.DONE
+                    self.__cncl_stop(ctx, _tracking)
+                    self.__cncl_take(ctx, _tracking)
 
 
 class GenericRiskControllerDecorator(PositionsTracker, RiskCalculator):
@@ -392,6 +408,7 @@ class StopTakePositionTracker(GenericRiskControllerDecorator):
         stop_risk: float | None = None,
         sizer: IPositionSizer = FixedSizer(1.0, amount_in_quote=False),
         risk_controlling_side: RiskControllingSide = "broker",
+        purpose: str = "",  # if we need to distinguish different instances of the same tracker, i.e. for shorts or longs etc
     ) -> None:
         self.take_target = take_target
         self.stop_risk = stop_risk
@@ -401,7 +418,7 @@ class StopTakePositionTracker(GenericRiskControllerDecorator):
         super().__init__(
             sizer,
             GenericRiskControllerDecorator.create_risk_controller_for_side(
-                self.__class__.__name__, risk_controlling_side, self, sizer
+                f"{self.__class__.__name__}{purpose}", risk_controlling_side, self, sizer
             ),
         )
 
@@ -445,17 +462,19 @@ class AtrRiskTracker(GenericRiskControllerDecorator):
         atr_smoother="sma",
         sizer: IPositionSizer = FixedSizer(1.0),
         risk_controlling_side: RiskControllingSide = "broker",
+        purpose: str = "",  # if we need to distinguish different instances of the same tracker, i.e. for shorts or longs etc
     ) -> None:
         self.take_target = take_target
         self.stop_risk = stop_risk
         self.atr_timeframe = atr_timeframe
         self.atr_period = atr_period
         self.atr_smoother = atr_smoother
+        self._full_name = f"{self.__class__.__name__}{purpose}"
 
         super().__init__(
             sizer,
             GenericRiskControllerDecorator.create_risk_controller_for_side(
-                self.__class__.__name__, risk_controlling_side, self, sizer
+                f"{self._full_name}", risk_controlling_side, self, sizer
             ),
         )
 
@@ -469,13 +488,13 @@ class AtrRiskTracker(GenericRiskControllerDecorator):
 
         if len(volatility) < 2 or ((last_volatility := volatility[1]) is None or not np.isfinite(last_volatility)):
             logger.debug(
-                f"[<y>{self.__class__.__name__}</y>(<g>{signal.instrument}</g>)] :: not enough ATR data, skipping risk calculation"
+                f"[<y>{self._full_name}</y>(<g>{signal.instrument}</g>)] :: not enough ATR data, skipping risk calculation"
             )
             return None
 
         if quote is None:
             logger.debug(
-                f"[<y>{self.__class__.__name__}</y>(<g>{signal.instrument}</g>)] :: there is no actual market data, skipping risk calculation"
+                f"[<y>{self._full_name}</y>(<g>{signal.instrument}</g>)] :: there is no actual market data, skipping risk calculation"
             )
             return None
 

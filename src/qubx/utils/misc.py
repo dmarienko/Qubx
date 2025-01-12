@@ -1,7 +1,10 @@
 import asyncio
 import concurrent.futures
 import getpass
+import hashlib
 import os
+import re
+import string
 import sys
 import time
 from collections import OrderedDict, defaultdict, deque, namedtuple
@@ -112,7 +115,7 @@ def add_project_to_system_path(project_folder: str = "~/projects"):
         # This error can occur on Windows if user folder and python file are on different drives
         print(f"Qubx> Error during get path to projects folder:\n{e}")
     else:
-        insert_path_iff = lambda p: (sys.path.insert(0, p.as_posix()) if p.as_posix() not in sys.path else None)
+        insert_path_iff = lambda p: (sys.path.insert(0, p.as_posix()) if p.as_posix() not in sys.path else None)  # noqa: E731
         if prj.exists():
             insert_path_iff(prj)
 
@@ -176,7 +179,7 @@ def logo():
         f"""
 ⠀⠀⡰⡖⠒⠒⢒⢦⠀⠀   
 ⠀⢠⠃⠈⢆⣀⣎⣀⣱⡀  {red("QUBX")} | {cyan("Quantitative Backtesting Environment")} 
-⠀⢳⠒⠒⡞⠚⡄⠀⡰⠁         (c) 2024, ver. {magenta(version().rstrip())}
+⠀⢳⠒⠒⡞⠚⡄⠀⡰⠁         (c) 2025, ver. {magenta(version().rstrip())}
 ⠀⠀⠱⣜⣀⣀⣈⣦⠃⠀⠀⠀ 
         """
     )
@@ -505,3 +508,34 @@ class TimeLimitedDeque(deque):
 
     def _to_datetime64(self, time):
         return np.datetime64(time, self.unit)
+
+
+__VOWS = "aeiou"
+__CONS = "".join(sorted(set(string.ascii_lowercase) - set(__VOWS)))
+
+
+def generate_name(content: Any, n1, ns=0) -> str:
+    """
+    Generates short unique name for given content.
+
+    >>> print(generate_name("Qubix Trading Platform, (c) 2025", 8))
+    >>> 'Pojituke'
+    """
+    __NV, __NC = len(__VOWS), len(__CONS)
+    hdg = hashlib.sha256(str(content).encode("utf-8")).hexdigest().upper()
+    w = ""
+    for i, x in enumerate(hdg[ns : n1 + ns]):
+        if i % 2 == 0:
+            w += __CONS[int(x, 16) % __NC]
+        else:
+            w += __VOWS[int(x, 16) % __NV]
+    return w[0].upper() + w[1:]
+
+
+def string_shortener(s: str) -> str:
+    """
+    Removes all vovels and squeeze repeating symbols
+    >>> print(string_shortener("QubxAssetManager"))
+    >>> 'QbxAstMngr'
+    """
+    return re.sub(r"(.)\1+", r"\1", re.sub(r"[aeiou]", "", s))
