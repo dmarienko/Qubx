@@ -196,17 +196,19 @@ class StrategyContext(IStrategyContext):
                 self._thread_data_loop.join()
 
     def stop(self):
+        # - invoke strategy's stop code
+        try:
+            self.strategy.on_stop(self)
+        except Exception as strat_error:
+            logger.error(
+                f"[<y>StrategyContext</y>] :: Strategy {self.strategy.__class__.__name__} raised an exception in on_stop: {strat_error}"
+            )
+            logger.opt(colors=False).error(traceback.format_exc())
+
         if self._thread_data_loop:
             self._data_provider.close()
             self._data_provider.channel.stop()
             self._thread_data_loop.join()
-            try:
-                self.strategy.on_stop(self)
-            except Exception as strat_error:
-                logger.error(
-                    f"[StrategyContext] :: Strategy {self.strategy.__class__.__name__} raised an exception in on_stop: {strat_error}"
-                )
-                logger.opt(colors=False).error(traceback.format_exc())
             self._thread_data_loop = None
 
         # - stop account processing

@@ -5,7 +5,7 @@ import pandas as pd
 from joblib import delayed
 
 from qubx import QubxLogConfig, logger, lookup
-from qubx.core.basics import DataType
+from qubx.core.basics import SW, DataType
 from qubx.core.context import StrategyContext
 from qubx.core.exceptions import SimulationConfigError, SimulationError
 from qubx.core.helpers import extract_parameters_from_object, full_qualified_class_name
@@ -13,6 +13,7 @@ from qubx.core.interfaces import IStrategy
 from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
 from qubx.core.metrics import TradingSessionResult
 from qubx.data.readers import DataReader
+from qubx.pandaz.utils import _frame_to_str
 from qubx.utils.misc import ProgressParallel, get_current_user
 from qubx.utils.time import handle_start_stop
 
@@ -55,6 +56,7 @@ def simulate(
     signal_timeframe: str = "1Min",
     open_close_time_indent_secs=1,
     debug: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None = "WARNING",
+    show_latency_report: bool = False,
 ) -> list[TradingSessionResult]:
     """
     Backtest utility for trading strategies or signals using historical data.
@@ -76,6 +78,7 @@ def simulate(
         - signal_timeframe (str): Timeframe for signals, default is "1Min".
         - open_close_time_indent_secs (int): Time indent in seconds for open/close times, default is 1.
         - debug (Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None): Logging level for debugging.
+        - show_latency_report: If True, shows simulator's latency report.
 
     Returns:
         - list[TradingSessionResult]: A list of TradingSessionResult objects containing the results of each simulation setup.
@@ -135,7 +138,15 @@ def simulate(
     assert isinstance(_start, pd.Timestamp) and isinstance(_stop, pd.Timestamp), "Invalid start and stop times"
 
     # - run simulations
-    return _run_setups(simulation_setups, data_setup, _start, _stop, n_jobs=n_jobs, silent=silent)
+    return _run_setups(
+        simulation_setups,
+        data_setup,
+        _start,
+        _stop,
+        n_jobs=n_jobs,
+        silent=silent,
+        show_latency_report=show_latency_report,
+    )
 
 
 def _run_setups(
@@ -145,6 +156,7 @@ def _run_setups(
     stop: pd.Timestamp,
     n_jobs: int = -1,
     silent: bool = False,
+    show_latency_report: bool = False,
 ) -> list[TradingSessionResult]:
     # loggers don't work well with joblib and multiprocessing in general because they contain
     # open file handlers that cannot be pickled. I found a solution which requires the usage of enqueue=True
@@ -157,7 +169,7 @@ def _run_setups(
     reports = ProgressParallel(
         n_jobs=n_jobs, total=len(strategies_setups), silent=_main_loop_silent, backend="multiprocessing"
     )(
-        delayed(_run_setup)(id, f"Simulated-{id}", setup, data_setup, start, stop, silent=silent)
+        delayed(_run_setup)(id, f"Simulated-{id}", setup, data_setup, start, stop, silent, show_latency_report)
         for id, setup in enumerate(strategies_setups)
     )
     return reports  # type: ignore
@@ -171,6 +183,7 @@ def _run_setup(
     start: pd.Timestamp,
     stop: pd.Timestamp,
     silent: bool,
+    show_latency_report: bool,
 ) -> TradingSessionResult:
     _stop = pd.Timestamp(stop)
 
@@ -301,11 +314,26 @@ def _run_setup(
     except KeyboardInterrupt:
         logger.error("Simulated trading interrupted by user !")
 
+    # - stop context at this point
+    ctx.stop()
+
     # - get strategy parameters for this run
     _s_class, _s_params = "", None
     if setup.setup_type in [SetupTypes.STRATEGY, SetupTypes.STRATEGY_AND_TRACKER]:
         _s_params = extract_parameters_from_object(setup.generator)
         _s_class = full_qualified_class_name(setup.generator)
+
+    # - service latency report
+    if show_latency_report:
+        _l_r = SW.latency_report()
+        if _l_r is not None:
+            logger.info(
+                "<BLUE>   Time spent in simulation report   </BLUE>\n<r>"
+                + _frame_to_str(
+                    _l_r.sort_values("latency", ascending=False).reset_index(drop=True), "simulation", -1, -1, False
+                )
+                + "</r>"
+            )
 
     return TradingSessionResult(
         setup_id,
