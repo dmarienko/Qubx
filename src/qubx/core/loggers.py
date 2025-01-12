@@ -311,6 +311,7 @@ class ExecutionsLogger(_BaseIntervalDumper):
                     "price": d.price,
                     "commissions": d.fee_amount,
                     "commissions_quoted": d.fee_currency,
+                    "order_id": d.order_id,
                 }
             )
         self._deals.clear()

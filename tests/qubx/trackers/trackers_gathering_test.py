@@ -145,7 +145,8 @@ class GuineaPig(IStrategy):
         r = []
         for k in list(self.tests.keys()):
             if event.time >= k:
-                r.append(self.tests.pop(k))
+                r.append(s := self.tests.pop(k))
+                logger.info(f" - - - | {s} | - - - ")
         return r
 
 
@@ -176,15 +177,14 @@ class TestTrackersAndGatherers:
         assert s[0].target_position_size == i.round_size_down((_cap_in_risk / ((_entry - _stop) / _entry)) / _entry)
 
     def test_atr_tracker(self):
-        I = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
-        assert I is not None
-
         r = CsvStorageDataReader("tests/data/csv")
+        assert (I := lookup.find_symbol("BINANCE.UM", "BTCUSDT")) is not None
 
         class StrategyForTracking(IStrategy):
             timeframe: str = "1Min"
             fast_period = 5
             slow_period = 12
+            high_low_risk = False
 
             def on_init(self, ctx: IStrategyContext) -> None:
                 ctx.set_base_subscription(DataType.OHLC[self.timeframe])
@@ -198,63 +198,65 @@ class TestTrackersAndGatherers:
                     pos = ctx.positions[i].quantity
 
                     if pos <= 0 and (fast[0] > slow[0]) and (fast[1] < slow[1]):
-                        signals.append(i.signal(+1, stop=min(ohlc[0].low, ohlc[1].low)))
+                        if self.high_low_risk:
+                            signals.append(i.signal(+1, stop=min(ohlc[0].low, ohlc[1].low)))
+                        else:
+                            signals.append(i.signal(+1))
 
                     if pos >= 0 and (fast[0] < slow[0]) and (fast[1] > slow[1]):
-                        signals.append(i.signal(-1, stop=max(ohlc[0].high, ohlc[1].high)))
+                        if self.high_low_risk:
+                            signals.append(i.signal(-1, stop=max(ohlc[0].high, ohlc[1].high)))
+                        else:
+                            signals.append(i.signal(-1))
 
                 return signals
 
             def tracker(self, ctx: IStrategyContext) -> PositionsTracker:
                 return PositionsTracker(FixedRiskSizer(1, 10_000, reinvest_profit=True))
 
+        # fmt: off
         rep = simulate(
             strategies={
-                "Strategy ST client": [
-                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
+                "Strategy ST client  (0)": [
+                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25, high_low_risk=True),
                     t0 := StopTakePositionTracker(
                         None, None, sizer=FixedRiskSizer(1, 10_000), risk_controlling_side="client"
                     ),
                 ],
-                "Strategy ST broker": [
-                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
+                "Strategy ST broker  (1)": [
+                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25, high_low_risk=True),
                     t1 := StopTakePositionTracker(
                         None, None, sizer=FixedRiskSizer(1, 10_000), risk_controlling_side="broker"
                     ),
                 ],
-                "Strategy ATR client": [
-                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
+                "Strategy ATR client (2)": [
+                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25, high_low_risk=False),
                     t2 := AtrRiskTracker(
-                        5,
-                        5,
-                        "15Min",
-                        25,
-                        atr_smoother="kama",
-                        sizer=FixedRiskSizer(1, 10_000),
+                        5, 5, "15Min", 25, atr_smoother="sma", sizer=FixedRiskSizer(1, 10_000), 
                         risk_controlling_side="client",
                     ),
                 ],
-                "Strategy ATR broker": [
-                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
+                "Strategy ATR broker (3)": [
+                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25, high_low_risk=False),
                     t3 := AtrRiskTracker(
-                        5,
-                        5,
-                        "15Min",
-                        25,
-                        atr_smoother="kama",
-                        sizer=FixedRiskSizer(1, 10_000),
+                        5, 5, "15Min", 25, atr_smoother="sma", sizer=FixedRiskSizer(1, 10_000), 
                         risk_controlling_side="broker",
                     ),
                 ],
             },
-            data={"ohlc": r, "quote": r},
-            capital=10000,
-            instruments=["BINANCE.UM:BTCUSDT"],
-            commissions="vip0_usdt",
-            start="2024-01-01",
-            stop="2024-01-03 13:00",
+            data={"ohlc": r, "quote": r}, capital=10000, instruments=["BINANCE.UM:BTCUSDT"], commissions="vip0_usdt",
+            accurate_stop_orders_execution=True,
+            start="2024-01-01", stop="2024-01-03 14:00",
         )
-        assert rep[2].executions_log.iloc[-1].price < rep[3].executions_log.iloc[-1].price
+        # fmt: on
+
+        # - check first stop: client executed at the price worse than actual stop level
+        # -                 : broker executed at correct stop level
+        assert rep[2].signals_log.iloc[1].stop < rep[2].executions_log.iloc[2].price
+
+        # -                 : broker executed at correct stop level
+        assert abs(rep[3].signals_log.iloc[1].stop - rep[3].executions_log.iloc[2].price) <= I.tick_size
+
         assert t0.is_active(I) and t1.is_active(I)
         assert not t2.is_active(I) and not t3.is_active(I)
 
@@ -344,14 +346,14 @@ class TestTrackersAndGatherers:
             "BTCUSDT_ohlcv_M1", start="2024-01-01", stop="2024-01-15", transform=AsPandasFrame()
         )
         assert isinstance(ohlc, pd.DataFrame)
-
+        # fmt: off
         result = simulate(
             {
-                "TEST_StopTakePositionTracker": [
+                "TEST_StopTakePositionTracker (client)": [
                     GuineaPig(tests={"2024-01-01 20:00:00": I.signal(-1, stop=43800)}),
                     t1 := StopTakePositionTracker(None, None, sizer=FixedRiskSizer(1), risk_controlling_side="client"),
                 ],
-                "TEST2_AdvancedStopTakePositionTracker": [
+                "TEST2_AdvancedStopTakePositionTracker (broker)": [
                     GuineaPig(
                         tests={
                             "2024-01-01 20:00:00": I.signal(-1, stop=43800, take=43400),
@@ -363,15 +365,10 @@ class TestTrackersAndGatherers:
                     t2 := StopTakePositionTracker(None, None, sizer=FixedRiskSizer(1), risk_controlling_side="broker"),
                 ],
             },
-            {"ohlc": {"BTCUSDT": ohlc}},
-            10000,
-            instruments=["BINANCE.UM:BTCUSDT"],
-            silent=True,
-            debug="DEBUG",
-            commissions="vip0_usdt",
-            start="2024-01-01",
-            stop="2024-01-03",
+            {"ohlc": {"BTCUSDT": ohlc}}, 10000, instruments=["BINANCE.UM:BTCUSDT"], silent=True, debug="DEBUG", commissions="vip0_usdt",
+            start="2024-01-01", stop="2024-01-03",
         )
+        # fmt: on
         assert len(result[0].executions_log) == 2
         assert not t1.is_active(I)
 
@@ -467,3 +464,5 @@ class TestTrackersAndGatherers:
             stop="2023-08-01",
             debug="DEBUG",
         )
+        # - stop execution at signal's stop price
+        assert abs(rep[0].signals_log.iloc[0].stop - rep[0].executions_log.iloc[1].price) < I.tick_size

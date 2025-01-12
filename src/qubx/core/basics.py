@@ -86,6 +86,22 @@ class Signal:
         _c = f" ({self.comment})" if self.comment else ""
         return f"{self.group}{_r} {self.signal:+f} {self.instrument}{_p}{_s}{_t}{_c}"
 
+    def copy(self) -> "Signal":
+        """
+        Return a copy of the original signal
+        """
+        return Signal(
+            self.instrument,
+            self.signal,
+            self.price,
+            self.stop,
+            self.take,
+            self.reference_price,
+            self.group,
+            self.comment,
+            dict(self.options),
+        )
+
 
 @dataclass
 class TargetPosition:
