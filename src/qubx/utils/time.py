@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -8,9 +8,9 @@ import pandas as pd
 UNIX_T0 = np.datetime64("1970-01-01T00:00:00")
 
 
-time_to_str = lambda t, u="us": np.datetime_as_string(
+time_to_str = lambda t, u="us": np.datetime_as_string(  # noqa: E731
     t if isinstance(t, np.datetime64) else np.datetime64(t, u), unit=u
-)  # type: ignore
+)
 
 
 def convert_tf_str_td64(c_tf: str) -> np.timedelta64:
@@ -75,7 +75,7 @@ def convert_seconds_to_str(seconds: int, convert_months=False) -> str:
     return r
 
 
-def floor_t64(time: Union[np.datetime64, datetime], dt: Union[np.timedelta64, int, str]):
+def floor_t64(time: np.datetime64 | datetime, dt: np.timedelta64 | int | str):
     """
     Floor timestamp by dt
     """
@@ -91,7 +91,7 @@ def floor_t64(time: Union[np.datetime64, datetime], dt: Union[np.timedelta64, in
     return time - (time - UNIX_T0) % dt
 
 
-def infer_series_frequency(series: Union[List, pd.DataFrame, pd.Series, pd.DatetimeIndex]) -> np.timedelta64:
+def infer_series_frequency(series: list | pd.DataFrame | pd.Series | pd.DatetimeIndex) -> np.timedelta64:
     """
     Infer frequency of given timeseries
 

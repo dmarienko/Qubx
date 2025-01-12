@@ -13,7 +13,6 @@ from dash._jupyter import JupyterDisplayMode
 from dash.dependencies import Input, Output
 from IPython.display import clear_output
 from plotly.subplots import make_subplots
-from quantkit.features import FeatureManager, OrderbookImbalance, OrderbookMidPrice, TradePrice, TradeVolumeImbalance
 
 from qubx import QubxLogConfig, logger, lookup
 from qubx.backtester.simulator import SimulatedBroker
