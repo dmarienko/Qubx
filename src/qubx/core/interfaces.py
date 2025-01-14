@@ -486,6 +486,7 @@ class IMarketManager(ITimeProvider):
 
     def exchanges(self) -> list[str]: ...
 
+
 class ITradingManager:
     """Manages order operations."""
 
