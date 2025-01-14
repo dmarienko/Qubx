@@ -85,3 +85,10 @@ class MarketManager(IMarketManager):
 
     def query_instrument(self, symbol: str, exchange: str) -> Instrument | None:
         return lookup.find_symbol(exchange, symbol)
+
+    def exchanges(self) -> list[str]:
+        """
+        What exchanges are supported by the market manager.
+        Theoretically it can manage multiple exchanges.
+        """
+        return [self._data_provider.exchange()]
