@@ -285,6 +285,13 @@ def _run_setup(
         logger.debug(f"[<y>simulator</y>] :: Setting default schedule: {data_setup.default_trigger_schedule}")
         ctx.set_event_schedule(data_setup.default_trigger_schedule)
 
+    # - get strategy parameters BEFORE simulation start
+    #   potentially strategy may change it's parameters during simulation
+    _s_class, _s_params = "", None
+    if setup.setup_type in [SetupTypes.STRATEGY, SetupTypes.STRATEGY_AND_TRACKER]:
+        _s_params = extract_parameters_from_object(setup.generator)
+        _s_class = full_qualified_class_name(setup.generator)
+
     # - start context at this point
     ctx.start()
 
@@ -316,12 +323,6 @@ def _run_setup(
 
     # - stop context at this point
     ctx.stop()
-
-    # - get strategy parameters for this run
-    _s_class, _s_params = "", None
-    if setup.setup_type in [SetupTypes.STRATEGY, SetupTypes.STRATEGY_AND_TRACKER]:
-        _s_params = extract_parameters_from_object(setup.generator)
-        _s_class = full_qualified_class_name(setup.generator)
 
     # - service latency report
     if show_latency_report:

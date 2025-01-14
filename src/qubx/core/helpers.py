@@ -3,7 +3,7 @@ import sched
 import sys
 import time
 from collections import defaultdict, deque
-from inspect import isfunction
+from inspect import isbuiltin, isclass, isfunction, ismethod, ismethoddescriptor
 from threading import Thread
 from typing import Any, Callable, Dict, List
 
@@ -392,12 +392,23 @@ def extract_parameters_from_object(strategy: Any) -> dict[str, Any]:
     """
     Extract default parameters (as defined in class) and their values from object.
     """
-    r = {}
-    # - we need to get all defined attributes of strategy so look for them in class
-    for k, v in strategy.__class__.__dict__.items():
-        if not k.startswith("_") and not isfunction(v):
-            r[k] = getattr(strategy, k, v)
-    return r
+    from qubx.core.interfaces import IStrategyContext
+
+    _f_dict = {}
+    for o in [*strategy.__class__.mro()[::-1], strategy]:
+        if hasattr(o, "__dict__"):  # only objects have __dict__ attribute
+            for k, v in o.__dict__.items():
+                if not k.startswith("_") and not (
+                    # - skip any function, method, built-in, class, method descriptor
+                    isinstance(v, IStrategyContext)  # we don't want to have ctx object
+                    or isfunction(v)
+                    or ismethod(v)
+                    or isbuiltin(v)
+                    or isclass(v)
+                    or ismethoddescriptor(v)
+                ):
+                    _f_dict[k] = getattr(o, k, v)
+    return _f_dict
 
 
 def set_parameters_to_object(strategy: Any, **kwargs):
