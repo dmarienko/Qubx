@@ -983,7 +983,19 @@ class PositionsTracker:
         ...
 
 
-class IStrategy:
+class Mixable(type):
+    """
+    It's possible to create composite strategies dynamically by adding mixins with functionality.
+
+    NewStrategy = (SignalGenerator + RiskManager + PositionGathering)
+    NewStrategy(....) can be used in simulation or live trading.
+    """
+
+    def __add__(cls: type, other_cls: type):
+        return type(cls)(f"{cls.__name__}_{other_cls.__name__}", (other_cls, cls), {"__module__": cls.__module__})
+
+
+class IStrategy(metaclass=Mixable):
     """Base class for trading strategies."""
 
     ctx: IStrategyContext
