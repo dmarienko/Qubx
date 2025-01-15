@@ -14,7 +14,7 @@ from qubx.core.loggers import InMemoryLogsWriter, StrategyLogging
 from qubx.core.metrics import TradingSessionResult
 from qubx.data.readers import DataReader
 from qubx.pandaz.utils import _frame_to_str
-from qubx.utils.misc import ProgressParallel, get_current_user
+from qubx.utils.misc import ProgressParallel, Stopwatch, get_current_user
 from qubx.utils.time import handle_start_stop
 
 from .account import SimulatedAccountProcessor
@@ -86,6 +86,9 @@ def simulate(
 
     # - setup logging
     QubxLogConfig.set_log_level(debug.upper() if debug else "WARNING")
+
+    # - we need to reset stopwatch
+    Stopwatch().reset()
 
     # - process instruments:
     _instruments, _exchanges = find_instruments_and_exchanges(instruments, exchange)

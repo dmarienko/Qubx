@@ -186,7 +186,7 @@ SPEC_REGEX = re.compile(
 
 
 def _mk_cron(time: str, by: list | None) -> str:
-    HMS = lambda s: list(map(int, s.split(":") if s.count(":") == 2 else [*s.split(":"), 0]))
+    HMS = lambda s: list(map(int, s.split(":") if s.count(":") == 2 else [*s.split(":"), 0]))  # noqa: E731
 
     h, m, s = HMS(time)
     assert h < 24, f"Wrong value for hour {h}"
@@ -199,7 +199,7 @@ def _mk_cron(time: str, by: list | None) -> str:
 
 def _make_shift(_b, _w, _d, _h, _m, _s):
     D0 = pd.Timedelta(0)
-    AS_TD = lambda d: pd.Timedelta(d)
+    AS_TD = lambda d: pd.Timedelta(d)  # noqa: E731
     P, N = D0, D0
 
     # return AS_TD(f'{_b*4}W') + AS_TD(f'{_w}W') + AS_TD(f'{_d}D') + AS_TD(f'{_h}h') + AS_TD(f'{_m}Min') + AS_TD(f'{_s}Sec')
@@ -224,8 +224,8 @@ def _parse_schedule_spec(schedule: str) -> Dict[str, str]:
 
 
 def process_schedule_spec(spec_str: str | None) -> Dict[str, Any]:
-    AS_INT = lambda d, k: int(d.get(k, 0))
-    S = lambda s: [x for x in re.split(r"[, ]", s) if x]
+    AS_INT = lambda d, k: int(d.get(k, 0))  # noqa: E731
+    S = lambda s: [x for x in re.split(r"[, ]", s) if x]  # noqa: E731
     config = {}
 
     if not spec_str:
