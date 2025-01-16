@@ -1,28 +1,28 @@
 """
-   Misc graphics handy utilitites to be used in interactive analysis
+Misc graphics handy utilitites to be used in interactive analysis
 """
 
-import numpy as np
-import pandas as pd
-import statsmodels.tsa.stattools as st
-import matplotlib
-import matplotlib.pyplot as plt
 import colorsys
 import datetime
 
+import matplotlib
 import matplotlib.colors as mc
+import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-from matplotlib import colors as mcolors, pyplot as plt
+import numpy as np
+import pandas as pd
+import statsmodels.tsa.stattools as st
+from cycler import cycler
+from matplotlib import colors as mcolors
+from matplotlib import pyplot as plt
 from matplotlib.collections import LineCollection, PolyCollection
-from matplotlib.dates import num2date, date2num
+from matplotlib.dates import date2num, num2date
 from matplotlib.lines import TICKLEFT, TICKRIGHT, Line2D
 from matplotlib.patches import Rectangle
 from matplotlib.transforms import Affine2D
-from cycler import cycler
 
 from qubx.utils.misc import Struct
 from qubx.utils.time import infer_series_frequency
-
 
 DARK_MATLPLOT_THEME = [
     ("backend", "module://matplotlib_inline.backend_inline"),
@@ -225,6 +225,19 @@ def set_mpl_theme(theme: str):
 
     if "dark" in theme.lower():
         pio.templates.default = "plotly_dark"
+
+        # fmt: off
+        pio.templates[pio.templates.default]["layout"]["plot_bgcolor"] = "rgb(5,5,5)"
+        pio.templates[pio.templates.default]["layout"]["paper_bgcolor"] = "rgb(5,5,5)"
+        pio.templates[pio.templates.default]["layout"]["xaxis"]["gridcolor"] = "#171717"
+        pio.templates[pio.templates.default]["layout"]["yaxis"]["gridcolor"] = "#171717"
+        pio.templates[pio.templates.default]["layout"]["font"]["color"] = "#d0d0d0"
+        pio.templates[pio.templates.default]["layout"]["colorway"] = [
+            "#08F7FE", "#00ff41", "#FE53BB", "#F5D300", "#449AcD", 
+            "green", "#f62841", "yellow", "#088487", "#E24A33", "#f01010",
+        ]
+        # fmt: on
+
         for k, v in DARK_MATLPLOT_THEME:
             matplotlib.rcParams[k] = v
 
@@ -237,7 +250,7 @@ def set_mpl_theme(theme: str):
 def adjust_lightness(color, amount=0.5):
     try:
         c = mc.cnames[color]
-    except:
+    except:  # noqa: E722
         c = color
     c = colorsys.rgb_to_hls(*mc.to_rgb(c))
     return colorsys.hls_to_rgb(c[0], max(0, min(1, amount * c[1])), c[2])
@@ -1160,8 +1173,9 @@ def plot_trends(trends: pd.DataFrame | Struct, uc="w--", dc="m--", lw=2, ms=6, f
             plt.plot([u.index, u.end], [u.start_price, u.end_price], uc, lw=lw, marker="o", markersize=ms)
             plt.plot([d.index, d.end], [d.start_price, d.end_price], dc, lw=lw, marker="o", markersize=ms)
 
-            from matplotlib.dates import num2date
             import datetime
+
+            from matplotlib.dates import num2date
 
             ax = plt.gca()
             ax.set_xticks(ax.get_xticks(), labels=[datetime.date.strftime(num2date(x), fmt) for x in ax.get_xticks()])
