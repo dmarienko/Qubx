@@ -4,7 +4,7 @@ from copy import copy
 from io import BytesIO
 from itertools import chain
 from pathlib import Path
-from typing import Any, List, Tuple
+from typing import Any, Callable, List, Tuple
 
 import matplotlib
 import matplotlib.pylab as plt
@@ -1128,12 +1128,7 @@ def _tearsheet_single(
 
     # - make plotly charts
     if use_plotly:
-        _dd = [
-            "area",
-            -dd,
-            "lim",
-            [-dd, 0],
-        ]
+        _dd = ["area", -dd, "lim", [-dd, 0]]
         tbl = go.Table(
             columnwidth=[130, 130, 130, 130, 200],
             header=dict(
@@ -1214,6 +1209,8 @@ def chart_signals(
     show_leverage: bool = True,
     show_table: bool = False,
     height: int = 800,
+    plugins: list[Callable[[LookingGlass, pd.DataFrame, str | pd.Timestamp, str | pd.Timestamp], LookingGlass]]
+    | None = None,
 ):
     """
     Show trading signals on chart
@@ -1289,17 +1286,18 @@ def chart_signals(
         overlay = list(overlay) + [sigs]
 
     chart = LookingGlass([bars, *overlay], indicators).look(start, end, title=symbol).hover(show_info=info, h=height)
+
+    # - run plugins
+    if plugins is not None:
+        for plugin in plugins if isinstance(plugins, list) else [plugins]:
+            chart = plugin(bars, start, end, figure=chart)
+
     if not show_table:
         return chart.show()
 
     q_pos = excs["quantity"].cumsum()[start:end]
-    # excs['quantity'] = q_pos
     excs = excs[start:end]
-
-    # is_stop = lambda s: any([x in s.lower() for x in ['stop', 'expired']])
-    # print(excs['quantity'])
     colors = ["red" if t == 0 else "green" for t in q_pos]
-    # colors = ['red' if is_stop(t)  else 'green' for t in excs['comment']]
 
     tbl = go.Table(
         # columnorder = [1,2],
