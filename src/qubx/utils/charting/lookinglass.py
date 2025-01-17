@@ -130,12 +130,13 @@ def install_plotly_helpers():
                     height=h,
                     hovermode="x unified",
                     showlegend=legend,
-                    hoverdistance=1000 if show_info else 0,
+                    hoverdistance=1 if show_info else 0,
                     xaxis={"hoverformat": "%d-%b-%y %H:%M"},
                     yaxis={"hoverformat": f".{n}f"},
                     dragmode="zoom",
                     newshape=dict(line_color="yellow", line_width=1.0),
                     modebar_add=["drawline", "drawopenpath", "drawrect", "eraseshape"],
+                    hoversubplots="axis",
                 )
                 .update_xaxes(
                     showspikes=True,
