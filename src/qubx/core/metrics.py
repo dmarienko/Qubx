@@ -1208,6 +1208,7 @@ def chart_signals(
     show_value: bool = False,
     show_leverage: bool = True,
     show_table: bool = False,
+    show_portfolio: bool = True,
     height: int = 800,
     plugins: list[Callable[[LookingGlass, pd.DataFrame, str | pd.Timestamp, str | pd.Timestamp], LookingGlass]]
     | None = None,
@@ -1230,7 +1231,7 @@ def chart_signals(
     if end is None:
         end = executions.index[-1]
 
-    if portfolio is not None:
+    if portfolio is not None and show_portfolio:
         if show_quantity:
             pos = portfolio.filter(regex=f"{symbol}_Pos").loc[start:]
             indicators["Pos"] = ["area", "cyan", pos]
@@ -1293,7 +1294,7 @@ def chart_signals(
             chart = plugin(bars, start, end, figure=chart)
 
     if not show_table:
-        return chart.show()
+        return chart  # .show()
 
     q_pos = excs["quantity"].cumsum()[start:end]
     excs = excs[start:end]

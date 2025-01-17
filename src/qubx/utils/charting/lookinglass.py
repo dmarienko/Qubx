@@ -136,7 +136,8 @@ def install_plotly_helpers():
                     dragmode="zoom",
                     newshape=dict(line_color="yellow", line_width=1.0),
                     modebar_add=["drawline", "drawopenpath", "drawrect", "eraseshape"],
-                    hoversubplots="axis",
+                    # hoversubplots="axis",
+                    hoverlabel=dict(align="auto", bgcolor="rgba(10, 10, 10, 0.5)"),
                 )
                 .update_xaxes(
                     showspikes=True,
