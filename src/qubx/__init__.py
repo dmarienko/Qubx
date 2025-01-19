@@ -37,7 +37,7 @@ def formatter(record):
 class QubxLogConfig:
     @staticmethod
     def get_log_level():
-        return os.getenv("QUBX_LOG_LEVEL", "DEBUG")
+        return os.getenv("QUBX_LOG_LEVEL", "WARNING")
 
     @staticmethod
     def set_log_level(level: str):
