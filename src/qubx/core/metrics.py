@@ -1,4 +1,5 @@
 import base64
+import os
 import re
 from copy import copy
 from io import BytesIO
@@ -763,13 +764,34 @@ class TradingSessionResult:
             shutil.make_archive(name, "zip", p)  # type: ignore
             shutil.rmtree(p)  # type: ignore
 
+    @staticmethod
+    def from_file(path: str):
+        import zipfile
+
+        path = path + ".zip" if not path.endswith(".zip") else path
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"File {path} not found")
+
+        with zipfile.ZipFile(path, "r") as zip_ref:
+            info = yaml.safe_load(zip_ref.read("info.yml"))
+            portfolio = pd.read_csv(zip_ref.open("portfolio.csv"), index_col=["timestamp"], parse_dates=["timestamp"])
+            executions = pd.read_csv(zip_ref.open("executions.csv"), index_col=["timestamp"], parse_dates=["timestamp"])
+            signals = pd.read_csv(zip_ref.open("signals.csv"), index_col=["timestamp"], parse_dates=["timestamp"])
+
+        # load result
+        _qbx_version = info.pop("qubx_version")
+        info["instruments"] = info.pop("symbols")
+        tsr = TradingSessionResult(**info, portfolio_log=portfolio, executions_log=executions, signals_log=signals)
+        tsr.qubx_version = _qbx_version
+        return tsr
+
     def __repr__(self) -> str:
         _s = "Simulation" if self.is_simulation else "Live"
         _t = f"[{self.start} - {self.stop}]" if self.is_simulation else ""
         r = f"""::: {_s} {self.id} ({self.name}) {_t}
  :   QUBX: {self.qubx_version}
  :   Capital: {self.capital} {self.base_currency} ({self.commissions} @ {self.exchange})
- :   Instruments: [{','.join(self.symbols)}]
+ :   Instruments: [{",".join(self.symbols)}]
  :   Generated: {len(self.signals_log)} signals, {len(self.executions_log)} executions
  :   Strategy: {self.config(False)}
  :   Created: {self.creation_time} by {self.author} 
