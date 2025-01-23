@@ -12,6 +12,7 @@ This module includes:
 import traceback
 from typing import Any, Dict, List, Set, Tuple
 
+import numpy as np
 import pandas as pd
 
 from qubx import logger
@@ -943,6 +944,25 @@ class IPositionSizer:
             List of target positions.
         """
         raise NotImplementedError("calculate_target_positions is not implemented")
+
+    def get_signal_entry_price(
+        self, ctx: IStrategyContext, signal: Signal, use_mid_price: bool = False
+    ) -> float | None:
+        """
+        Get the entry price for a signal.
+        """
+        _entry = None
+        if signal.price is not None and signal.price > 0:
+            _entry = signal.price
+        else:
+            if (_q := ctx.quote(signal.instrument)) is not None:
+                _entry = _q.mid_price() if use_mid_price else (_q.ask if np.sign(signal.signal) > 0 else _q.bid)
+            else:
+                logger.error(
+                    f"{self.__class__.__name__}: Can't get actual market quote for {signal.instrument} and signal price is not set ({str(signal)}) !"
+                )
+
+        return _entry
 
 
 class PositionsTracker:

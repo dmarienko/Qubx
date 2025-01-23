@@ -3,7 +3,7 @@ from typing import List
 import numpy as np
 
 from qubx import logger
-from qubx.core.basics import Position, Signal, TargetPosition
+from qubx.core.basics import Signal, TargetPosition
 from qubx.core.interfaces import IPositionSizer, IStrategyContext
 
 
@@ -22,13 +22,9 @@ class FixedSizer(IPositionSizer):
             return [TargetPosition.create(ctx, s, s.signal * self.fixed_size) for s in signals]
         positions = []
         for signal in signals:
-            q = ctx.quote(signal.instrument)
-            if q is None:
-                logger.error(
-                    f"{self.__class__.__name__}: Can't get actual market quote for {signal.instrument.symbol} !"
-                )
+            if (_entry := self.get_signal_entry_price(ctx, signal)) is None:
                 continue
-            positions.append(TargetPosition.create(ctx, signal, signal.signal * self.fixed_size / q.mid_price()))
+            positions.append(TargetPosition.create(ctx, signal, signal.signal * self.fixed_size / _entry))
         return positions
 
 
@@ -51,13 +47,10 @@ class FixedLeverageSizer(IPositionSizer):
         total_capital = ctx.get_total_capital()
         positions = []
         for signal in signals:
-            q = ctx.quote(signal.instrument)
-            if q is None:
-                logger.error(
-                    f"{self.__class__.__name__}: Can't get actual market quote for {signal.instrument.symbol} !"
-                )
+            if (_entry := self.get_signal_entry_price(ctx, signal)) is None:
                 continue
-            size = signal.signal * self.leverage * total_capital / q.mid_price() / len(ctx.instruments)
+
+            size = signal.signal * self.leverage * total_capital / _entry / len(ctx.instruments)
             positions.append(TargetPosition.create(ctx, signal, size))
         return positions
 
@@ -87,15 +80,15 @@ class FixedRiskSizer(IPositionSizer):
             target_position_size = 0
             if signal.signal != 0:
                 if signal.stop and signal.stop > 0:
-                    _pos = ctx.positions[signal.instrument]
-                    _q = ctx.quote(signal.instrument)
-                    assert _q is not None
+                    # - get signal entry price
+                    if (_entry := self.get_signal_entry_price(ctx, signal)) is None:
+                        continue
 
-                    _direction = np.sign(signal.signal)
                     # - hey, we can't trade using negative balance ;)
                     _cap = max(ctx.get_total_capital() if self.reinvest_profit else ctx.get_capital(), 0)
-                    _entry = (_q.ask if _direction > 0 else _q.bid) if signal.price is None else signal.price
+
                     # fmt: off
+                    _direction = np.sign(signal.signal)
                     target_position_size = (  
                         _direction
                         *min((_cap * self.max_cap_in_risk) / abs(signal.stop / _entry - 1), self.max_allowed_position_quoted) / _entry
@@ -172,16 +165,8 @@ class LongShortRatioPortfolioSizer(IPositionSizer):
 
         t_pos = []
         for signal in signals:
-            if signal.price and signal.price > 0:
-                _entry = signal.price
-            else:
-                if (_q := ctx.quote(signal.instrument)) is not None:
-                    _entry = _q.mid_price()
-                else:
-                    logger.warning(
-                        f"{self.__class__.__name__}: {signal.instrument.symbol} Can't get actual market quote !"
-                    )
-                    continue
+            if (_entry := self.get_signal_entry_price(ctx, signal)) is None:
+                continue
 
             _p_q = cap / _entry
             _p = k_l * signal.signal if signal.signal > 0 else k_s * signal.signal
