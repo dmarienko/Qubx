@@ -1300,7 +1300,7 @@ def chart_signals(
 
     if show_trades:
         excs = executions[executions["instrument"] == symbol][
-            ["quantity", "exec_price", "commissions", "commissions_quoted"]
+            ["quantity", "exec_price", "commissions", "commissions_quoted", "order_id"]
         ]
         overlay = list(overlay) + [excs]
 
