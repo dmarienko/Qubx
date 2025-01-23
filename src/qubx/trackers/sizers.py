@@ -94,7 +94,7 @@ class FixedRiskSizer(IPositionSizer):
                     _direction = np.sign(signal.signal)
                     # - hey, we can't trade using negative balance ;)
                     _cap = max(ctx.get_total_capital() if self.reinvest_profit else ctx.get_capital(), 0)
-                    _entry = _q.ask if _direction > 0 else _q.bid
+                    _entry = (_q.ask if _direction > 0 else _q.bid) if signal.price is None else signal.price
                     # fmt: off
                     target_position_size = (  
                         _direction
@@ -172,14 +172,19 @@ class LongShortRatioPortfolioSizer(IPositionSizer):
 
         t_pos = []
         for signal in signals:
-            # _pos = ctx.positions[signal.instrument]
-            _q = ctx.quote(signal.instrument)
-            if _q is not None:
-                _p_q = cap / _q.mid_price()
-                # _t_p = (_c_p / _S_l) if signal.signal > 0 else (_c_p / _S_s) if signal.signal < 0 else 0
-                _p = k_l * signal.signal if signal.signal > 0 else k_s * signal.signal
-                t_pos.append(TargetPosition.create(ctx, signal, _p * _p_q))
+            if signal.price and signal.price > 0:
+                _entry = signal.price
             else:
-                logger.warning(f"{self.__class__.__name__}: {signal.instrument.symbol} Can't get actual market quote !")
+                if (_q := ctx.quote(signal.instrument)) is not None:
+                    _entry = _q.mid_price()
+                else:
+                    logger.warning(
+                        f"{self.__class__.__name__}: {signal.instrument.symbol} Can't get actual market quote !"
+                    )
+                    continue
+
+            _p_q = cap / _entry
+            _p = k_l * signal.signal if signal.signal > 0 else k_s * signal.signal
+            t_pos.append(TargetPosition.create(ctx, signal, _p * _p_q))
 
         return t_pos
