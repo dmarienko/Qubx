@@ -1,24 +1,25 @@
 import inspect
 import socket
 import time
+from functools import reduce
 from pathlib import Path
 
 from qubx import formatter, logger, lookup
 from qubx.backtester.account import SimulatedAccountProcessor
-from qubx.backtester.simulator import SimulatedBroker
+from qubx.backtester.simulator import SimulatedBroker, simulate
 from qubx.connectors.ccxt.account import CcxtAccountProcessor
 from qubx.connectors.ccxt.broker import CcxtBroker
 from qubx.connectors.ccxt.data import CcxtDataProvider
 from qubx.connectors.ccxt.factory import get_ccxt_exchange
 from qubx.core.basics import CtrlChannel, Instrument, ITimeProvider, LiveTimeProvider, TransactionCostsCalculator
 from qubx.core.context import StrategyContext
+from qubx.core.exceptions import SimulationConfigError
 from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IAccountProcessor, IBroker, IDataProvider, IStrategyContext
 from qubx.core.loggers import StrategyLogging
 from qubx.data import DataReader
-from qubx.data.helpers import __KNOWN_READERS
-from qubx.utils.misc import class_import
-from qubx.utils.runner.configs import ExchangeConfig, load_strategy_config_from_yaml
+from qubx.utils.misc import class_import, makedirs
+from qubx.utils.runner.configs import ExchangeConfig, load_simulation_config_from_yaml, load_strategy_config_from_yaml
 
 from .accounts import AccountConfigurationManager
 from .configs import AuxConfig, LoggingConfig, StrategyConfig
@@ -231,6 +232,9 @@ def _setup_strategy_logging(stg_name: str, log_config: LoggingConfig) -> Strateg
 def _get_aux_reader(aux_config: AuxConfig | None) -> DataReader | None:
     if aux_config is None:
         return None
+
+    from qubx.data.helpers import __KNOWN_READERS  # TODO: we need to get rid of using explicit readers lookup here !!!
+
     _reader_name = aux_config.reader
     _is_uri = "::" in _reader_name
     if _is_uri:
@@ -340,3 +344,78 @@ def _create_instruments_for_exchange(exchange_name: str, exchange_config: Exchan
     instruments = [lookup.find_symbol(exchange_name, symbol.upper()) for symbol in symbols]
     instruments = [i for i in instruments if i is not None]
     return instruments
+
+
+def simulate_strategy(
+    config_file: Path, save_path: str | None = None, start: str | None = None, stop: str | None = None
+):
+    """
+    Run a backtest simulation of a trading strategy using configuration from a YAML file.
+
+    Args:
+        config_file (Path): Path to the YAML configuration file containing strategy and simulation parameters
+        save_path (str, optional): Directory to save simulation results. Defaults to "results/" if None.
+        start (str, optional): Override simulation start date from config. Format: "YYYY-MM-DD". Defaults to None.
+        stop (str, optional): Override simulation end date from config. Format: "YYYY-MM-DD". Defaults to None.
+
+    Returns:
+        The simulation results object containing performance metrics and trade history.
+
+    Raises:
+        FileNotFoundError: If config_file does not exist
+        SimulationConfigError: If strategy configuration is invalid
+        ValueError: If required simulation parameters are missing
+
+    The configuration file should contain:
+        - strategy: Strategy class path(s) as string or list
+        - parameters: Strategy initialization parameters
+        - data: Data source configurations
+        - simulation: Backtest parameters (instruments, capital, commissions, start/stop dates)
+    """
+    from qubx.data.helpers import loader
+
+    if not config_file.exists():
+        raise FileNotFoundError(f"Configuration file for simualtion not found: {config_file}")
+
+    cfg = load_simulation_config_from_yaml(config_file)
+    stg = cfg.strategy
+
+    match stg:
+        case list():
+            stg_cls = reduce(lambda x, y: x + y, [class_import(x) for x in stg])
+        case str():
+            stg_cls = class_import(stg)
+        case _:
+            raise SimulationConfigError(f"Invalid strategy type: {stg}")
+
+    strategy = stg_cls(**cfg.parameters)
+    exp_name = config_file.stem
+
+    data_i = {}
+
+    for k, v in cfg.data.items():
+        data_i[k] = eval(v)
+
+    sim_params = cfg.simulation
+    for mp in ["instruments", "capital", "commissions", "start", "stop"]:
+        if mp not in sim_params:
+            raise ValueError(f"Simulation parameter {mp} is required")
+
+    if start is not None:
+        sim_params["start"] = start
+        logger.info(f"Start date set to {start}")
+
+    if stop is not None:
+        sim_params["stop"] = stop
+        logger.info(f"Stop date set to {stop}")
+
+    test_res = simulate({exp_name: strategy}, data=data_i, **sim_params)
+    logger.info(f"<g>Simulation Results:</g>\n{str(test_res[0])}")
+
+    _where_to_save = save_path if save_path is not None else Path("results/")
+    s_path = Path(makedirs(str(_where_to_save))) / exp_name
+
+    logger.info(f"Saving results to <g>{s_path}</g> ...")
+    test_res[0].to_file(str(s_path))
+
+    return test_res

@@ -3,7 +3,7 @@ from pathlib import Path
 import click
 
 from qubx.utils.misc import add_project_to_system_path, logo
-from qubx.utils.runner.runner import run_strategy_yaml, run_strategy_yaml_in_jupyter
+from qubx.utils.runner.runner import run_strategy_yaml, run_strategy_yaml_in_jupyter, simulate_strategy
 
 
 @click.group()
@@ -43,6 +43,24 @@ def run(config_file: Path, account_file: Path | None, paper: bool, jupyter: bool
     else:
         logo()
         run_strategy_yaml(config_file, account_file, paper, blocking=True)
+
+
+@main.command()
+@click.argument("config-file", type=Path, required=True)
+@click.option(
+    "--start", "-s", default=None, type=str, help="Override simulation start date from config.", show_default=True
+)
+@click.option(
+    "--end", "-e", default=None, type=str, help="Override simulation end date from config.", show_default=True
+)
+@click.option(
+    "--output", "-o", default="results", type=str, help="Output directory for simulation results.", show_default=True
+)
+def simulate(config_file: Path, start: str | None, end: str | None, output: str | None):
+    add_project_to_system_path()
+    add_project_to_system_path(str(config_file.parent))
+    logo()
+    simulate_strategy(config_file, output, start, end)
 
 
 if __name__ == "__main__":
