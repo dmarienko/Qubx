@@ -743,11 +743,14 @@ class TradingSessionResult:
         """
         return HTML(_tmpl)
 
-    def to_file(self, name: str, compound=True, archive=True):
+    def to_file(self, name: str, description: str | None = None, compound=True, archive=True):
         name = (name + self.creation_time.strftime("%Y%m%d%H%M%S")) if self.creation_time else name
         p = Path(makedirs(name))
         with open(p / "info.yml", "w") as f:
-            yaml.safe_dump(self.info(), f, sort_keys=False, indent=4)
+            info = self.info()
+            if description:
+                info["description"] = description
+            yaml.safe_dump(info, f, sort_keys=False, indent=4)
 
         # - save logs
         self.portfolio_log.to_csv(p / "portfolio.csv")
@@ -780,6 +783,7 @@ class TradingSessionResult:
 
         # load result
         _qbx_version = info.pop("qubx_version")
+        _decr = info.pop("description", None)
         info["instruments"] = info.pop("symbols")
         tsr = TradingSessionResult(**info, portfolio_log=portfolio, executions_log=executions, signals_log=signals)
         tsr.qubx_version = _qbx_version
