@@ -805,8 +805,9 @@ class LookingGlassPlotly(AbstractLookingGlass):
                 _b_info = "<i>bought</i> " + _b_ords.quantity.astype(str)
                 _s_info = "<i>sold</i> " + _s_ords.quantity.astype(str)
 
-                _scatter(_b_ords.exec_price, _b_info, "BOT", "triangle-up", "#3cfa00", 12)
-                _scatter(_s_ords.exec_price, _s_info, "SLD", "triangle-down", "#20ffff", 12)
+                _scatter(_b_ords.exec_price, _b_info, "BOT", "triangle-up", "#25ff00", 12)
+                _scatter(_s_ords.exec_price, _s_info, "SLD", "triangle-down", "#f0d", 12)
+                # _scatter(_s_ords.exec_price, _s_info, "SLD", "triangle-down", "#20ffff", 12)
 
             # 27-aug-2024: show generated signals from Qubx backtester
             elif self._frame_has_cols(y, ["signal", "reference_price", "price", "take", "stop", "group", "comment"]):
