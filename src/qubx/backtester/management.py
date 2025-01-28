@@ -90,8 +90,12 @@ class BacktestsResultsManager:
             stop = pd.Timestamp(info.get("stop", "")).round("1s")
             dscr = info.get("description", "")
             _s = f"{yellow(str(info.get('idx')))} - {red(name)} ::: {magenta(pd.Timestamp(info.get('creation_time', '')).round('1s'))} by {cyan(info.get('author', ''))}"
+
             if dscr:
-                _s += f"\n\t{magenta(dscr)}"
+                dscr = dscr.split("\n")
+                for _d in dscr:
+                    _s += f"\n\t{magenta('# ' + _d)}"
+
             _s += f"\n\tstrategy: {green(s_cls)}"
             _s += f"\n\tinterval: {blue(start)} - {blue(stop)}"
             _s += f"\n\tcapital: {blue(info.get('capital', ''))} {info.get('base_currency', '')} ({info.get('commissions', '')})"
