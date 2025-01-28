@@ -173,3 +173,57 @@ class LongShortRatioPortfolioSizer(IPositionSizer):
             t_pos.append(TargetPosition.create(ctx, signal, _p * _p_q))
 
         return t_pos
+
+
+class FixedRiskSizerWithConstantCapital(IPositionSizer):
+    def __init__(
+        self,
+        capital: float,
+        max_cap_in_risk: float,
+        max_allowed_position=np.inf,
+        divide_by_symbols: bool = True,
+    ):
+        """
+        Create fixed risk sizer calculator instance.
+        :param max_cap_in_risk: maximal risked capital (in percentage)
+        :param max_allowed_position: limitation for max position size in quoted currency (i.e. max 5000 in USDT)
+        :param reinvest_profit: if true use profit to reinvest
+        """
+        self.capital = capital
+        assert self.capital > 0, f" >> {self.__class__.__name__}: Capital must be positive, got {self.capital}"
+        self.max_cap_in_risk = max_cap_in_risk / 100
+        self.max_allowed_position_quoted = max_allowed_position
+        self.divide_by_symbols = divide_by_symbols
+
+    def calculate_target_positions(self, ctx: IStrategyContext, signals: List[Signal]) -> List[TargetPosition]:
+        t_pos = []
+        for signal in signals:
+            target_position_size = 0
+            if signal.signal != 0:
+                if signal.stop and signal.stop > 0:
+                    # - get signal entry price
+                    if (_entry := self.get_signal_entry_price(ctx, signal)) is None:
+                        continue
+
+                    # - just use same fixed capital
+                    _cap = self.capital / (len(ctx.instruments) if self.divide_by_symbols else 1)
+
+                    # fmt: off
+                    _direction = np.sign(signal.signal)
+                    target_position_size = (  
+                        _direction * min(
+                            (_cap * self.max_cap_in_risk) / abs(signal.stop / _entry - 1), 
+                            self.max_allowed_position_quoted
+                        ) / _entry
+                    )  
+                    # fmt: on
+
+                else:
+                    logger.warning(
+                        f" >>> {self.__class__.__name__}: stop is not specified for {str(signal)} - can't calculate position !"
+                    )
+                    continue
+
+            t_pos.append(TargetPosition.create(ctx, signal, target_position_size))
+
+        return t_pos
