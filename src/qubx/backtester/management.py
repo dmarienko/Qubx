@@ -117,3 +117,21 @@ class BacktestsResultsManager:
                 for i in _m_repr:
                     print("\t " + cyan(i))
             print()
+
+    def delete(self, name: str | int):
+        print(red(f" -> Danger zone - you are about to delete {name} ..."))
+        for info in self.results.values():
+            match name:
+                case int():
+                    if info.get("idx", -1) == name:
+                        Path(info["path"]).unlink()
+                        print(f" -> Deleted {red(name)} ...")
+                        self.reload()
+                        return
+                case str():
+                    if info.get("name", "") == name:
+                        Path(info["path"]).unlink()
+                        print(f" -> Deleted {red(name)} ...")
+                        self.reload()
+                        return
+        print(f" -> No results found for {red(name)} !")

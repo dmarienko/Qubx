@@ -416,6 +416,12 @@ def simulate_strategy(
     s_path = Path(makedirs(str(_where_to_save))) / exp_name
 
     logger.info(f"Saving results to <g>{s_path}</g> ...")
-    test_res[0].to_file(str(s_path))
+    if cfg.description is not None:
+        _descr = cfg.description
+        if isinstance(cfg.description, list):
+            _descr = "\n".join(cfg.description)
+        else:
+            _descr = str(cfg.description)
+    test_res[0].to_file(str(s_path), description=_descr)
 
     return test_res
