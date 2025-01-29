@@ -57,6 +57,7 @@ def simulate(
     open_close_time_indent_secs=1,
     debug: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None = "WARNING",
     show_latency_report: bool = False,
+    parallel_backend: Literal["loky", "multiprocessing"] = "multiprocessing",
 ) -> list[TradingSessionResult]:
     """
     Backtest utility for trading strategies or signals using historical data.
@@ -149,6 +150,7 @@ def simulate(
         n_jobs=n_jobs,
         silent=silent,
         show_latency_report=show_latency_report,
+        parallel_backend=parallel_backend,
     )
 
 
@@ -160,6 +162,7 @@ def _run_setups(
     n_jobs: int = -1,
     silent: bool = False,
     show_latency_report: bool = False,
+    parallel_backend: Literal["loky", "multiprocessing"] = "multiprocessing",
 ) -> list[TradingSessionResult]:
     # loggers don't work well with joblib and multiprocessing in general because they contain
     # open file handlers that cannot be pickled. I found a solution which requires the usage of enqueue=True
@@ -170,7 +173,7 @@ def _run_setups(
     n_jobs = 1 if _main_loop_silent else n_jobs
 
     reports = ProgressParallel(
-        n_jobs=n_jobs, total=len(strategies_setups), silent=_main_loop_silent, backend="multiprocessing"
+        n_jobs=n_jobs, total=len(strategies_setups), silent=_main_loop_silent, backend=parallel_backend
     )(
         delayed(_run_setup)(id, f"Simulated-{id}", setup, data_setup, start, stop, silent, show_latency_report)
         for id, setup in enumerate(strategies_setups)

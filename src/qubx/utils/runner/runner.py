@@ -4,8 +4,11 @@ import time
 from functools import reduce
 from pathlib import Path
 
+import pandas as pd
+
 from qubx import formatter, logger, lookup
 from qubx.backtester.account import SimulatedAccountProcessor
+from qubx.backtester.optimization import variate
 from qubx.backtester.simulator import SimulatedBroker, simulate
 from qubx.connectors.ccxt.account import CcxtAccountProcessor
 from qubx.connectors.ccxt.broker import CcxtBroker
@@ -18,7 +21,7 @@ from qubx.core.helpers import BasicScheduler
 from qubx.core.interfaces import IAccountProcessor, IBroker, IDataProvider, IStrategyContext
 from qubx.core.loggers import StrategyLogging
 from qubx.data import DataReader
-from qubx.utils.misc import class_import, makedirs
+from qubx.utils.misc import blue, class_import, cyan, green, magenta, makedirs, red, yellow
 from qubx.utils.runner.configs import ExchangeConfig, load_simulation_config_from_yaml, load_strategy_config_from_yaml
 
 from .accounts import AccountConfigurationManager
@@ -379,6 +382,8 @@ def simulate_strategy(
 
     cfg = load_simulation_config_from_yaml(config_file)
     stg = cfg.strategy
+    simulation_name = config_file.stem
+    _v_id = pd.Timestamp("now").strftime("%Y%m%d%H%M%S")
 
     match stg:
         case list():
@@ -388,8 +393,16 @@ def simulate_strategy(
         case _:
             raise SimulationConfigError(f"Invalid strategy type: {stg}")
 
-    strategy = stg_cls(**cfg.parameters)
-    exp_name = config_file.stem
+    # - create simulation setup
+    if cfg.variate:
+        experiments = variate(stg_cls, **(cfg.parameters | cfg.variate))
+        experiments = {f"{simulation_name}.{_v_id}.[{k}]": v for k, v in experiments.items()}
+        print(f"Variation is enabled. There are {len(experiments)} simualtions to run.")
+        _n_jobs = -1
+    else:
+        strategy = stg_cls(**cfg.parameters)
+        experiments = {simulation_name: strategy}
+        _n_jobs = 1
 
     data_i = {}
 
@@ -409,19 +422,30 @@ def simulate_strategy(
         sim_params["stop"] = stop
         logger.info(f"Stop date set to {stop}")
 
-    test_res = simulate({exp_name: strategy}, data=data_i, **sim_params)
-    logger.info(f"<g>Simulation Results:</g>\n{str(test_res[0])}")
+    # - run simulation
+    print(f" > Run simulation for [{red(simulation_name)}] ::: {sim_params['start']} - {sim_params['stop']}")
+    sim_params["n_jobs"] = sim_params.get("n_jobs", _n_jobs)
+    test_res = simulate(experiments, data=data_i, **sim_params)
 
     _where_to_save = save_path if save_path is not None else Path("results/")
-    s_path = Path(makedirs(str(_where_to_save))) / exp_name
+    s_path = Path(makedirs(str(_where_to_save))) / simulation_name
 
-    logger.info(f"Saving results to <g>{s_path}</g> ...")
+    # logger.info(f"Saving simulation results to <g>{s_path}</g> ...")
     if cfg.description is not None:
         _descr = cfg.description
         if isinstance(cfg.description, list):
             _descr = "\n".join(cfg.description)
         else:
             _descr = str(cfg.description)
-    test_res[0].to_file(str(s_path), description=_descr)
+
+    if len(test_res) > 1:
+        # - TODO: think how to deal with variations !
+        s_path = s_path / f"variations.{_v_id}"
+        print(f" > Saving variations results to <g>{s_path}</g> ...")
+        for k, t in enumerate(test_res):
+            t.to_file(str(s_path), description=_descr, suffix=f".{k}")
+    else:
+        print(f" > Saving simulation results to <g>{s_path}</g> ...")
+        test_res[0].to_file(str(s_path), description=_descr)
 
     return test_res

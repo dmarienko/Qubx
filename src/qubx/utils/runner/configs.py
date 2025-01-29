@@ -56,6 +56,7 @@ class StrategySimulationConfig(BaseModel):
     data: dict = Field(default_factory=dict)
     simulation: dict = Field(default_factory=dict)
     description: str | list[str] | None = None
+    variate: dict = Field(default_factory=dict)
 
 
 def load_simulation_config_from_yaml(path: Path | str) -> StrategySimulationConfig:

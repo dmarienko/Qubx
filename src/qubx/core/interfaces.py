@@ -1003,6 +1003,18 @@ class PositionsTracker:
         ...
 
 
+def _unpickle_instance(chain: tuple[type], state: dict):
+    """
+    chain is a tuple of the *original* classes, e.g. (A, B, C).
+    Reconstruct a new ephemeral class that inherits from them.
+    """
+    name = "_".join(cls.__name__ for cls in chain)
+    # Reverse the chain to respect the typical left-to-right MRO
+    inst = type(name, chain[::-1], {"__module__": "__main__"})()
+    inst.__dict__.update(state)
+    return inst
+
+
 class Mixable(type):
     """
     It's possible to create composite strategies dynamically by adding mixins with functionality.
@@ -1011,8 +1023,28 @@ class Mixable(type):
     NewStrategy(....) can be used in simulation or live trading.
     """
 
-    def __add__(cls: type, other_cls: type):
-        return type(cls)(f"{cls.__name__}_{other_cls.__name__}", (other_cls, cls), {"__module__": cls.__module__})
+    def __add__(cls, other_cls):
+        # If we already have a _composition, combine them;
+        # else treat cls itself as the start of the chain
+        cls_chain = getattr(cls, "__composition__", (cls,))
+        other_chain = getattr(other_cls, "__composition__", (other_cls,))
+
+        # Combine them into one chain. You can define your own order rules:
+        new_chain = cls_chain + other_chain
+
+        # Create ephemeral class
+        name = "_".join(c.__name__ for c in new_chain)
+
+        def __reduce__(self):
+            # Just return the chain of *original real classes*
+            return _unpickle_instance, (new_chain, self.__dict__)
+
+        new_cls = type(
+            name,
+            new_chain[::-1],
+            {"__module__": cls.__module__, "__composition__": new_chain, "__reduce__": __reduce__},
+        )
+        return new_cls
 
 
 class IStrategy(metaclass=Mixable):

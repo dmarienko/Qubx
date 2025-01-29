@@ -743,8 +743,13 @@ class TradingSessionResult:
         """
         return HTML(_tmpl)
 
-    def to_file(self, name: str, description: str | None = None, compound=True, archive=True):
-        name = (name + self.creation_time.strftime("%Y%m%d%H%M%S")) if self.creation_time else name
+    def to_file(
+        self, name: str, description: str | None = None, compound=True, archive=True, suffix: str | None = None
+    ):
+        if suffix is not None:
+            name = f"{name}{suffix}"
+        else:
+            name = (name + self.creation_time.strftime("%Y%m%d%H%M%S")) if self.creation_time else name
         p = Path(makedirs(name))
         with open(p / "info.yml", "w") as f:
             info = self.info()
