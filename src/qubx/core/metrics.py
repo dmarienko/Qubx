@@ -609,6 +609,7 @@ class TradingSessionResult:
     creation_time: pd.Timestamp | None = None        # when result was created
     author: str | None = None                        # who created the result
     qubx_version: str | None = None                  # Qubx version used to create the result
+    _metrics: dict[str, float] | None = None         # performance metrics
     # fmt: on
 
     def __init__(
@@ -649,6 +650,39 @@ class TradingSessionResult:
         self.creation_time = pd.Timestamp(creation_time) if creation_time else pd.Timestamp.now()
         self.author = author
         self.qubx_version = version()
+        self._metrics = None
+
+    def performance(self) -> dict[str, float]:
+        """
+        Calculate performance metrics for the trading session
+        """
+        if not self._metrics:
+            # - caluclate short statistics
+            self._metrics = portfolio_metrics(
+                self.portfolio_log,
+                self.executions_log,
+                self.capital,
+                performance_statistics_period=DAILY_365,
+                account_transactions=True,
+                commission_factor=1,
+            )
+            # - convert timestamps to isoformat
+            for k, v in self._metrics.items():
+                match v:
+                    case pd.Timestamp():
+                        self._metrics[k] = v.isoformat()
+                    case np.float64():
+                        self._metrics[k] = float(v)
+            # fmt: off
+            for k in [
+                "equity", "drawdown_usd", "drawdown_pct",
+                "compound_returns", "returns_daily", "returns", "monthly_returns",
+                "rolling_sharpe", "long_value", "short_value",
+            ]:
+                self._metrics.pop(k, None)
+            # fmt: on
+
+        return self._metrics
 
     @property
     def symbols(self) -> list[str]:
@@ -690,6 +724,7 @@ class TradingSessionResult:
             "author": self.author,
             "qubx_version": self.qubx_version,
             "symbols": self.symbols,
+            "performance": dict(self.performance()),
         }
 
     def to_html(self, compound=True) -> HTML:
@@ -822,9 +857,11 @@ class TradingSessionResult:
         # load result
         _qbx_version = info.pop("qubx_version")
         _decr = info.pop("description", None)
+        _perf = info.pop("performance", None)
         info["instruments"] = info.pop("symbols")
         tsr = TradingSessionResult(**info, portfolio_log=portfolio, executions_log=executions, signals_log=signals)
         tsr.qubx_version = _qbx_version
+        tsr._metrics = _perf
         return tsr
 
     def __repr__(self) -> str:
@@ -834,10 +871,13 @@ class TradingSessionResult:
  :   QUBX: {self.qubx_version}
  :   Capital: {self.capital} {self.base_currency} ({self.commissions} @ {self.exchange})
  :   Instruments: [{",".join(self.symbols)}]
- :   Generated: {len(self.signals_log)} signals, {len(self.executions_log)} executions
- :   Strategy: {self.config(False)}
  :   Created: {self.creation_time} by {self.author} 
-        """
+ :   Strategy: {self.config(False)}
+ :   Generated: {len(self.signals_log)} signals, {len(self.executions_log)} executions
+"""
+        _perf = pd.DataFrame.from_dict(self.performance(), orient="index").T.to_string(index=None)
+        for _i, s in enumerate(_perf.split("\n")):
+            r += f"       : {s}\n" if _i > 0 else f"  `----: {s}\n"
         return r
 
 
