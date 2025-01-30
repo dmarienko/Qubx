@@ -395,7 +395,15 @@ def simulate_strategy(
 
     # - create simulation setup
     if cfg.variate:
-        experiments = variate(stg_cls, **(cfg.parameters | cfg.variate))
+        # - get conditions for variations if exists
+        cond = cfg.variate.pop("with", None)
+        conditions = []
+        dict2lambda = lambda a, d: eval(f"lambda {a}: {d}")  # noqa: E731
+        if cond:
+            for a, c in cond.items():
+                conditions.append(dict2lambda(a, c))
+
+        experiments = variate(stg_cls, **(cfg.parameters | cfg.variate), conditions=conditions)
         experiments = {f"{simulation_name}.{_v_id}.[{k}]": v for k, v in experiments.items()}
         print(f"Variation is enabled. There are {len(experiments)} simualtions to run.")
         _n_jobs = -1
