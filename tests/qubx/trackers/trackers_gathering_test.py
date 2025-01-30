@@ -1,53 +1,42 @@
-from typing import Any, Optional, List
+import numpy as np
+import pandas as pd
+from pytest import approx
 
-from pandas import Timestamp
-
-from qubx import QubxLogConfig, lookup, logger
-from qubx.core.account import AccountProcessor
-from qubx.gathering.simplest import SimplePositionGatherer
-from qubx.pandaz.utils import *
-from qubx.core.utils import recognize_time, time_to_str
-
-from qubx.core.series import OHLCV, Quote
-from qubx.core.interfaces import (
-    IPositionGathering,
-    IStrategy,
-    PositionsTracker,
-    IStrategyContext,
-    TriggerEvent,
-)
-from qubx.data.readers import (
-    AsOhlcvSeries,
-    CsvStorageDataReader,
-    AsTimestampedRecords,
-    AsQuotes,
-    RestoreTicksFromOHLC,
-    AsPandasFrame,
-)
+from qubx import logger, lookup
+from qubx.backtester.simulator import simulate
+from qubx.core.account import BasicAccountProcessor
 from qubx.core.basics import (
-    ZERO_COSTS,
+    DataType,
     Deal,
     Instrument,
     Order,
-    ITimeProvider,
     Position,
     Signal,
     TargetPosition,
-    SubscriptionType,
 )
-
-
+from qubx.core.interfaces import (
+    IPositionGathering,
+    IStrategy,
+    IStrategyContext,
+    PositionsTracker,
+    TriggerEvent,
+)
 from qubx.core.metrics import portfolio_metrics
-from qubx.ta.indicators import sma, ema
-from qubx.backtester.simulator import simulate
+from qubx.core.series import OHLCV, Quote
+from qubx.core.utils import recognize_time, time_to_str
+from qubx.data.readers import (
+    AsPandasFrame,
+    CsvStorageDataReader,
+)
+from qubx.gathering.simplest import SimplePositionGatherer
+from qubx.pandaz.utils import *
+from qubx.ta.indicators import sma
 from qubx.trackers.composite import CompositeTracker, CompositeTrackerPerSide, LongTracker
-from qubx.trackers.rebalancers import PortfolioRebalancerTracker
 from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
 from qubx.trackers.sizers import FixedLeverageSizer, FixedRiskSizer, FixedSizer
+from tests.qubx.core.utils_test import DummyTimeProvider
 
-from pytest import approx
-
-N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
+N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)  # noqa: E731
 
 
 def Q(time: str, bid: float, ask: float) -> Quote:
@@ -84,7 +73,7 @@ class DebugStratageyCtx(IStrategyContext):
         self.capital = capital
 
         positions = {i: Position(i) for i in instrs}
-        self.account = AccountProcessor("test", "USDT", reserves={})  # , initial_capital=10000.0)
+        self.account = BasicAccountProcessor("test", DummyTimeProvider(), "USDT")  # , initial_capital=10000.0)
         self.account.update_balance("USDT", capital, 0)
         self.account.attach_positions(*positions.values())
         self._n_orders = 0
@@ -95,6 +84,10 @@ class DebugStratageyCtx(IStrategyContext):
     @property
     def instruments(self) -> list[Instrument]:
         return self._instruments
+
+    @property
+    def positions(self) -> dict[Instrument, Position]:
+        return self.account.positions
 
     def quote(self, symbol: str) -> Quote | None:
         return Q("2020-01-01", 1000.0, 1000.5)
@@ -143,21 +136,21 @@ class GuineaPig(IStrategy):
     tests = {}
 
     def on_init(self, ctx: IStrategyContext) -> None:
-        ctx.set_base_subscription(SubscriptionType.OHLC, timeframe="1Min")
+        ctx.set_base_subscription(DataType.OHLC["1Min"])
 
     def on_fit(self, ctx: IStrategyContext):
         self.tests = {recognize_time(k): v for k, v in self.tests.items()}
 
-    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
+    def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> list[Signal] | None:
         r = []
         for k in list(self.tests.keys()):
             if event.time >= k:
-                r.append(self.tests.pop(k))
+                r.append(s := self.tests.pop(k))
+                logger.info(f" - - - | {s} | - - - ")
         return r
 
 
 class TestTrackersAndGatherers:
-
     def test_simple_tracker_sizer(self):
         ctx = DebugStratageyCtx(instrs := [lookup.find_symbol("BINANCE.UM", "BTCUSDT")], 10000)
         tracker = PositionsTracker(FixedSizer(1000.0, amount_in_quote=False))
@@ -184,21 +177,19 @@ class TestTrackersAndGatherers:
         assert s[0].target_position_size == i.round_size_down((_cap_in_risk / ((_entry - _stop) / _entry)) / _entry)
 
     def test_atr_tracker(self):
-
-        I = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
-        assert I is not None
-
         r = CsvStorageDataReader("tests/data/csv")
+        assert (I := lookup.find_symbol("BINANCE.UM", "BTCUSDT")) is not None
 
         class StrategyForTracking(IStrategy):
             timeframe: str = "1Min"
             fast_period = 5
             slow_period = 12
+            high_low_risk = False
 
             def on_init(self, ctx: IStrategyContext) -> None:
-                ctx.set_base_subscription(SubscriptionType.OHLC, timeframe=self.timeframe)
+                ctx.set_base_subscription(DataType.OHLC[self.timeframe])
 
-            def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> List[Signal] | None:
+            def on_event(self, ctx: IStrategyContext, event: TriggerEvent) -> list[Signal] | None:
                 signals = []
                 for i in ctx.instruments:
                     ohlc = ctx.ohlc(i, self.timeframe)
@@ -207,64 +198,65 @@ class TestTrackersAndGatherers:
                     pos = ctx.positions[i].quantity
 
                     if pos <= 0 and (fast[0] > slow[0]) and (fast[1] < slow[1]):
-                        signals.append(i.signal(+1, stop=min(ohlc[0].low, ohlc[1].low)))
+                        if self.high_low_risk:
+                            signals.append(i.signal(+1, stop=min(ohlc[0].low, ohlc[1].low)))
+                        else:
+                            signals.append(i.signal(+1))
 
                     if pos >= 0 and (fast[0] < slow[0]) and (fast[1] > slow[1]):
-                        signals.append(i.signal(-1, stop=max(ohlc[0].high, ohlc[1].high)))
+                        if self.high_low_risk:
+                            signals.append(i.signal(-1, stop=max(ohlc[0].high, ohlc[1].high)))
+                        else:
+                            signals.append(i.signal(-1))
 
                 return signals
 
             def tracker(self, ctx: IStrategyContext) -> PositionsTracker:
                 return PositionsTracker(FixedRiskSizer(1, 10_000, reinvest_profit=True))
 
+        # fmt: off
         rep = simulate(
-            config={
-                "Strategy ST client": [
-                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
+            strategies={
+                "Strategy ST client  (0)": [
+                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25, high_low_risk=True),
                     t0 := StopTakePositionTracker(
                         None, None, sizer=FixedRiskSizer(1, 10_000), risk_controlling_side="client"
                     ),
                 ],
-                "Strategy ST broker": [
-                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
+                "Strategy ST broker  (1)": [
+                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25, high_low_risk=True),
                     t1 := StopTakePositionTracker(
                         None, None, sizer=FixedRiskSizer(1, 10_000), risk_controlling_side="broker"
                     ),
                 ],
-                "Strategy ATR client": [
-                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
+                "Strategy ATR client (2)": [
+                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25, high_low_risk=False),
                     t2 := AtrRiskTracker(
-                        5,
-                        5,
-                        "15Min",
-                        25,
-                        atr_smoother="kama",
-                        sizer=FixedRiskSizer(1, 10_000),
+                        5, 5, "15Min", 25, atr_smoother="sma", sizer=FixedRiskSizer(1, 10_000), 
                         risk_controlling_side="client",
                     ),
                 ],
-                "Strategy ATR broker": [
-                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25),
+                "Strategy ATR broker (3)": [
+                    StrategyForTracking(timeframe="15Min", fast_period=10, slow_period=25, high_low_risk=False),
                     t3 := AtrRiskTracker(
-                        5,
-                        5,
-                        "15Min",
-                        25,
-                        atr_smoother="kama",
-                        sizer=FixedRiskSizer(1, 10_000),
+                        5, 5, "15Min", 25, atr_smoother="sma", sizer=FixedRiskSizer(1, 10_000), 
                         risk_controlling_side="broker",
                     ),
                 ],
             },
-            data=r,
-            capital=10000,
-            instruments=["BINANCE.UM:BTCUSDT"],
-            commissions="vip0_usdt",
-            start="2024-01-01",
-            stop="2024-01-03 13:00",
+            data={"ohlc": r, "quote": r}, capital=10000, instruments=["BINANCE.UM:BTCUSDT"], commissions="vip0_usdt",
+            accurate_stop_orders_execution=True,
+            start="2024-01-01", stop="2024-01-03 14:00",
         )
+        # fmt: on
 
-        assert rep[2].executions_log.iloc[-1].price < rep[3].executions_log.iloc[-1].price
+        # - check first stop: client executed at the price worse than actual stop level
+        # -                 : broker executed at correct stop level
+        assert rep[2].signals_log.iloc[1].stop < rep[2].executions_log.iloc[2].price
+
+        # -                 : broker executed at correct stop level
+        assert abs(rep[3].signals_log.iloc[1].stop - rep[3].executions_log.iloc[2].price) <= I.tick_size
+
         assert t0.is_active(I) and t1.is_active(I)
         assert not t2.is_active(I) and not t3.is_active(I)
 
@@ -354,14 +346,14 @@ class TestTrackersAndGatherers:
             "BTCUSDT_ohlcv_M1", start="2024-01-01", stop="2024-01-15", transform=AsPandasFrame()
         )
         assert isinstance(ohlc, pd.DataFrame)
-
+        # fmt: off
         result = simulate(
             {
-                "TEST_StopTakePositionTracker": [
+                "TEST_StopTakePositionTracker (client)": [
                     GuineaPig(tests={"2024-01-01 20:00:00": I.signal(-1, stop=43800)}),
                     t1 := StopTakePositionTracker(None, None, sizer=FixedRiskSizer(1), risk_controlling_side="client"),
                 ],
-                "TEST2_AdvancedStopTakePositionTracker": [
+                "TEST2_AdvancedStopTakePositionTracker (broker)": [
                     GuineaPig(
                         tests={
                             "2024-01-01 20:00:00": I.signal(-1, stop=43800, take=43400),
@@ -373,15 +365,10 @@ class TestTrackersAndGatherers:
                     t2 := StopTakePositionTracker(None, None, sizer=FixedRiskSizer(1), risk_controlling_side="broker"),
                 ],
             },
-            {f"BINANCE.UM:BTCUSDT": ohlc},
-            10000,
-            instruments=[f"BINANCE.UM:BTCUSDT"],
-            silent=True,
-            debug="DEBUG",
-            commissions="vip0_usdt",
-            start="2024-01-01",
-            stop="2024-01-03",
+            {"ohlc": {"BTCUSDT": ohlc}}, 10000, instruments=["BINANCE.UM:BTCUSDT"], silent=True, debug="DEBUG", commissions="vip0_usdt",
+            start="2024-01-01", stop="2024-01-03",
         )
+        # fmt: on
         assert len(result[0].executions_log) == 2
         assert not t1.is_active(I)
 
@@ -391,24 +378,24 @@ class TestTrackersAndGatherers:
         assert not t2.is_active(I)
 
     def test_stop_loss_broker_side(self):
+        T = pd.Timestamp
         reader = CsvStorageDataReader("tests/data/csv")
-        ohlc = reader.read("BTCUSDT_ohlcv_M1", transform=AsPandasFrame())
-        assert isinstance(ohlc, pd.DataFrame)
-        i1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
-        assert i1 is not None
+        assert isinstance(ohlc := reader.read("BTCUSDT_ohlcv_M1", transform=AsPandasFrame()), pd.DataFrame)
+        assert (i1 := lookup.find_symbol("BINANCE.UM", "BTCUSDT")) is not None
 
-        S = pd.DataFrame(
-            {
-                i1: {
-                    pd.Timestamp("2024-01-10 15:08:59.716000"): 1,
-                    pd.Timestamp("2024-01-10 15:10:52.679000"): 1,
-                    pd.Timestamp("2024-01-10 15:32:44.798000"): 1,
-                    pd.Timestamp("2024-01-10 15:59:55.303000"): 1,
-                    pd.Timestamp("2024-01-10 16:09:00.970000"): 1,
-                    pd.Timestamp("2024-01-10 16:12:34.233000"): 1,
-                    pd.Timestamp("2024-01-10 19:16:00.905000"): 1,
-                    pd.Timestamp("2024-01-10 19:44:37.785000"): 1,
-                    pd.Timestamp("2024-01-10 20:06:00.322000"): 1,
+        # fmt: off
+        S = pd.DataFrame({ 
+            i1: {
+                    T("2024-01-10 15:08:59.716000"): 1,
+                    T("2024-01-10 15:10:52.679000"): 1,
+                    T("2024-01-10 15:32:44.798000"): 1,
+                    T("2024-01-10 15:59:55.303000"): 1,
+                    T("2024-01-10 16:09:00.970000"): 1,
+                    T("2024-01-10 16:12:34.233000"): 1,
+                    T("2024-01-10 19:04:00.905000"): 1,
+                    # T("2024-01-10 19:16:00.905000"): 1,
+                    T("2024-01-10 19:44:37.785000"): 1,
+                    T("2024-01-10 20:06:00.322000"): 1,
                 }
             }
         )
@@ -418,14 +405,9 @@ class TestTrackersAndGatherers:
                 "liq_buy_bounces_c": [S, StopTakePositionTracker(2.5, 0.5, FixedLeverageSizer(0.1), "client")],
                 "liq_buy_bounces_b": [S, StopTakePositionTracker(2.5, 0.5, FixedLeverageSizer(0.1), "broker")],
             },
-            {f"BINANCE.UM:BTCUSDT": ohlc},
-            10000,
-            ["BINANCE.UM:BTCUSDT"],
-            "vip9_usdt",
-            S.index[0] - pd.Timedelta("5Min"),
-            S.index[-1] + pd.Timedelta("5Min"),
-            signal_timeframe="1Min",
-            debug="DEBUG",
+            {"ohlc": {"BTCUSDT": ohlc}}, 10000, ["BINANCE.UM:BTCUSDT"], "vip9_usdt",
+            S.index[0] - pd.Timedelta("5Min"), S.index[-1] + pd.Timedelta("5Min"),
+            signal_timeframe="1Min", debug="DEBUG"
         )
         assert len(rep[0].executions_log) == len(rep[1].executions_log)
 
@@ -435,5 +417,52 @@ class TestTrackersAndGatherers:
         mtrx1 = portfolio_metrics(
             rep[1].portfolio_log, rep[1].executions_log, rep[1].capital, account_transactions=False, commission_factor=1
         )
-        assert N(mtrx0["gain"]) == 23.87925
-        assert N(mtrx1["gain"]) == 23.36390
+        assert 22.4721 == N(mtrx0["gain"])
+        assert 23.5487 == N(mtrx1["gain"])
+        # fmt: on
+
+    def test_composite_trackers_broker_side(self):
+        class ComplexCompositeTest(GuineaPig):
+            def tracker(self, ctx: IStrategyContext) -> PositionsTracker:
+                sizer = FixedLeverageSizer(1.0)
+                # fmt: off
+                return CompositeTrackerPerSide(
+                    long_trackers=[
+                        AtrRiskTracker(
+                            take_target=5, stop_risk=3, atr_timeframe="1h", atr_period=5,
+                            sizer=sizer, risk_controlling_side="broker",
+                        ),
+                        StopTakePositionTracker(stop_risk=10, sizer=sizer),
+                    ],
+                    short_trackers=[
+                        AtrRiskTracker(
+                            take_target=5, stop_risk=3, atr_timeframe="1h", atr_period=5,
+                            sizer=sizer, risk_controlling_side="broker",
+                        ),
+                        StopTakePositionTracker(stop_risk=10, sizer=sizer),
+                    ],
+                )
+                # fmt: on
+
+        assert (I := lookup.find_symbol("BINANCE.UM", "BTCUSDT")) is not None
+
+        strategy = ComplexCompositeTest(
+            tests={
+                "2023-07-05 00:00:00": I.signal(-1),
+            }
+        )
+
+        r = CsvStorageDataReader("tests/data/csv_1h")
+
+        rep = simulate(
+            strategies={"Composited": strategy},
+            data={"ohlc(1h)": r},
+            capital=10000,
+            instruments=["BINANCE.UM:BTCUSDT"],
+            commissions="vip0_usdt",
+            start="2023-07-01",
+            stop="2023-08-01",
+            debug="DEBUG",
+        )
+        # - stop execution at signal's stop price
+        assert abs(rep[0].signals_log.iloc[0].stop - rep[0].executions_log.iloc[1].price) < I.tick_size

@@ -1,4 +1,4 @@
-from .market import MarketDataProvider
+from .market import MarketManager
 from .processing import ProcessingManager
 from .subscription import SubscriptionManager
 from .trading import TradingManager

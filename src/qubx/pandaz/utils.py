@@ -1,10 +1,11 @@
-from typing import Any, Callable, Dict, Iterable, Literal, Optional, Set, Union, List
 from datetime import timedelta
-import pandas as pd
-import numpy as np
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Set, Union
 
+import numpy as np
+import pandas as pd
 from numpy.lib.stride_tricks import as_strided as stride
 
+from qubx.core.series import OHLCV
 from qubx.utils.misc import Struct
 
 
@@ -464,6 +465,18 @@ def ohlc_resample(
         _cols = d.columns
         _source_tz = d.index.tz
 
+        # if we have trades
+        if all([i in _cols for i in ["price", "side", "amount"]]):
+            result = _tz_convert(d.price, resample_tz, _source_tz)
+            result = result.resample(freq).agg("ohlc")
+            result["volume"] = d.amount.resample(freq).sum()
+            result["quote_volume"] = (d.amount * d.price).resample(freq).sum()
+            result["taker_buy_volume"] = d[d.side == "buy"].amount.resample(freq).sum()
+            result["taker_buy_quote_volume"] = (
+                (d[d.side == "buy"].amount * d[d.side == "buy"].price).resample(freq).sum()
+            )
+            return result if not resample_tz else result.tz_convert(_source_tz)
+
         # if we have bid/ask frame
         if "ask" in _cols and "bid" in _cols:
             # if sizes are presented we can calc vmpt if needed
@@ -576,19 +589,24 @@ class OhlcDict(dict):
 
     _fields: Set[str]
 
-    def __init__(self, orig: dict):
+    def __init__(self, orig: dict[str, pd.DataFrame | pd.Series | OHLCV]):
         _o_copy = {}
         _lst = []
         if isinstance(orig, dict):
             for k, o in orig.items():
-                if not isinstance(o, (pd.DataFrame | pd.Series)):
+                if not isinstance(o, (pd.DataFrame | pd.Series | OHLCV)):
                     raise ValueError(
-                        f"All values in the dictionary must be pandas Series or DataFrames, but {k} is {type(o)}"
+                        f"All values in the dictionary must be pandas Series, DataFrames or OHLCV, but {k} is {type(o)}"
                     )
+
+                if isinstance(o, OHLCV):
+                    o = o.pd()
+
                 # - skip empty data
                 if not o.empty:
                     _o_copy[k] = o
                     _lst.extend(o.columns.values)
+
         self._fields = set(_lst)
         super().__init__(_o_copy)
 
@@ -614,4 +632,7 @@ class OhlcDict(dict):
         return r
 
     def __str__(self) -> str:
+        return self.display(3, 3)
+
+    def __repr__(self) -> str:
         return self.display(3, 3)

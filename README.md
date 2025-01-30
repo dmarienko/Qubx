@@ -27,3 +27,28 @@ base_currency = USDT
 ```
 > python ..\src\qubx\utils\runner.py configs\zero_test.yaml -a configs\.env -j 
 ```
+
+## Running tests
+
+We use `pytest` for running tests. For running unit tests execute
+```
+just test
+```
+
+We also have several integration tests (marked with `@pytest.mark.integration`), which mainly make sure that the exchange connectors function properly. We test them on the corresponding testnets, so you will need to generate api credentials for the exchange testnets that you want to verify.
+
+Once you have the testnet credentials store them in an `.env.integration` file in the root of the Qubx directory
+```
+# BINANCE SPOT test credentials
+BINANCE_SPOT_API_KEY=...
+BINANCE_SPOT_SECRET=...
+
+# BINANCE FUTURES test credentials
+BINANCE_FUTURES_API_KEY=...
+BINANCE_FUTURES_SECRET=...
+```
+
+To run the tests simply call
+```
+just test-integration
+```

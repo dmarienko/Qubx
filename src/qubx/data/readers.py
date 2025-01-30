@@ -1,32 +1,31 @@
-import re, os
-from typing import Dict, List, Set, Union, Optional, Iterator, Iterable, Any
+import itertools
+import os
+import re
+from functools import wraps
 from os.path import exists, join
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Union
+
 import numpy as np
 import pandas as pd
-import pyarrow as pa
-from pyarrow import csv
 import psycopg as pg
-from functools import wraps
+import pyarrow as pa
+from pyarrow import csv, table
 
 from qubx import logger
-from qubx.core.series import TimeSeries, OHLCV, time_as_nsec, Quote, Trade
+from qubx.core.basics import DataType, TimestampedDict
+from qubx.core.series import OHLCV, Bar, Quote, TimeSeries, Trade, time_as_nsec
 from qubx.pandaz.utils import ohlc_resample, srows
-from qubx.utils.time import infer_series_frequency, handle_start_stop
-from psycopg.types.datetime import TimestampLoader
+from qubx.utils.time import handle_start_stop, infer_series_frequency
 
 _DT = lambda x: pd.Timedelta(x).to_numpy().item()
 D1, H1 = _DT("1D"), _DT("1h")
 MS1 = 1_000_000
+S1 = 1000 * MS1
+M1 = 60 * S1
 
 DEFAULT_DAILY_SESSION = (_DT("00:00:00.100"), _DT("23:59:59.900"))
 STOCK_DAILY_SESSION = (_DT("9:30:00.100"), _DT("15:59:59.900"))
 CME_FUTURES_DAILY_SESSION = (_DT("8:30:00.100"), _DT("15:14:59.900"))
-
-
-class NpTimestampLoader(TimestampLoader):
-    def load(self, data) -> np.datetime64:
-        dt = super().load(data)
-        return np.datetime64(dt)
 
 
 def _recognize_t(t: Union[int, str], defaultvalue, timeunit) -> int:
@@ -51,7 +50,15 @@ def _find_column_index_in_list(xs, *args):
         ai = a.lower()
         if ai in xs:
             return xs.index(ai)
-    raise IndexError(f"Can't find any from {args} in list: {xs}")
+    raise IndexError(f"Can't find any specified columns from [{args}] in provided list: {xs}")
+
+
+def _list_to_chunked_iterator(data: list[Any], chunksize: int) -> Iterable:
+    it = iter(data)
+    chunk = list(itertools.islice(it, chunksize))
+    while chunk:
+        yield chunk
+        chunk = list(itertools.islice(it, chunksize))
 
 
 _FIND_TIME_COL_IDX = lambda column_names: _find_column_index_in_list(
@@ -60,7 +67,6 @@ _FIND_TIME_COL_IDX = lambda column_names: _find_column_index_in_list(
 
 
 class DataTransformer:
-
     def __init__(self) -> None:
         self.buffer = []
         self._column_names = []
@@ -84,9 +90,11 @@ class DataTransformer:
 
 
 class DataReader:
-
     def get_names(self, **kwargs) -> List[str]:
-        raise NotImplemented()
+        """
+        TODO: not sure we really need this !
+        """
+        raise NotImplementedError("get_names() method is not implemented")
 
     def read(
         self,
@@ -97,7 +105,7 @@ class DataReader:
         chunksize=0,
         **kwargs,
     ) -> Iterator | List:
-        raise NotImplemented()
+        raise NotImplementedError("read() method is not implemented")
 
     def get_aux_data_ids(self) -> Set[str]:
         """
@@ -107,7 +115,11 @@ class DataReader:
         def _list_methods(cls):
             _meth = []
             for k, s in cls.__dict__.items():
-                if k.startswith("get_") and k not in ["get_names", "get_aux_data_ids", "get_aux_data"] and callable(s):
+                if (
+                    k.startswith("get_")
+                    and k not in ["get_names", "get_symbols", "get_time_ranges", "get_aux_data_ids", "get_aux_data"]
+                    and callable(s)
+                ):
                     _meth.append(k[4:])
             return _meth
 
@@ -125,6 +137,15 @@ class DataReader:
         raise ValueError(
             f"{self.__class__.__name__} doesn't have getter for '{data_id}' auxiliary data. Available data: {self.get_aux_data_ids()}"
         )
+
+    def get_symbols(self, exchange: str, dtype: str) -> list[str]:
+        raise NotImplementedError("get_symbols() method is not implemented")
+
+    def get_time_ranges(self, symbol: str, dtype: str) -> tuple[np.datetime64, np.datetime64]:
+        """
+        Returns first and last time for the specified symbol and data type in the reader's storage
+        """
+        raise NotImplementedError("get_time_ranges() method is not implemented")
 
 
 class CsvStorageDataReader(DataReader):
@@ -156,18 +177,9 @@ class CsvStorageDataReader(DataReader):
                 return p
         return None
 
-    def read(
-        self,
-        data_id: str,
-        start: str | None = None,
-        stop: str | None = None,
-        transform: DataTransformer = DataTransformer(),
-        chunksize=0,
-        timestamp_formatters=None,
-        timeframe=None,
-        **kwargs,
-    ) -> Iterable | Any:
-
+    def __try_read_data(
+        self, data_id: str, start: str | None = None, stop: str | None = None, timestamp_formatters=None
+    ) -> tuple[table, np.ndarray, Any, list[str], int, int]:
         f_path = self.__check_file_name(data_id)
         if not f_path:
             ValueError(f"Can't find any csv data for {data_id} in {self.path} !")
@@ -204,8 +216,8 @@ class CsvStorageDataReader(DataReader):
             if t_0:
                 start_idx = self.__find_time_idx(_time_data, t_0)
                 if start_idx >= table.num_rows:
-                    # no data for requested start date
-                    return None
+                    # - no data for requested start date
+                    return table, _time_data, _time_unit, fieldnames, -1, -1
 
             if t_1:
                 stop_idx = self.__find_time_idx(_time_data, t_1)
@@ -213,9 +225,24 @@ class CsvStorageDataReader(DataReader):
                     stop_idx = table.num_rows
 
         except Exception as exc:
-            logger.warning(exc)
-            logger.info("loading whole file")
+            logger.warning(f"exception [{exc}] during preprocessing '{f_path}'")
 
+        return table, _time_data, _time_unit, fieldnames, start_idx, stop_idx
+
+    def read(
+        self,
+        data_id: str,
+        start: str | None = None,
+        stop: str | None = None,
+        transform: DataTransformer = DataTransformer(),
+        chunksize=0,
+        timestamp_formatters=None,
+        timeframe=None,
+        **kwargs,
+    ) -> Iterable | Any:
+        table, _, _, fieldnames, start_idx, stop_idx = self.__try_read_data(data_id, start, stop, timestamp_formatters)
+        if start_idx < 0 or stop_idx < 0:
+            return None
         length = stop_idx - start_idx + 1
         selected_table = table.slice(start_idx, length)
 
@@ -256,14 +283,14 @@ class CsvStorageDataReader(DataReader):
                 if timeframe is not None:
                     x = ohlc_resample(x, timeframe)
                 _r.append(x.assign(symbol=symbol.upper(), timestamp=x.index))  # type: ignore
-        return srows(*_r).set_index(["timestamp", "symbol"])
+        return srows(*_r).set_index(["timestamp", "symbol"]) if _r else pd.DataFrame()
 
     def get_names(self, **kwargs) -> List[str]:
         _n = []
         for root, _, files in os.walk(self.path):
             path = root.split(os.sep)
             for file in files:
-                if m := re.match(r"(.*)\.csv(.gz)?$", file):
+                if re.match(r"(.*)\.csv(.gz)?$", file):
                     f = path[-1]
                     n = file.split(".")[0]
                     if f == self.path:
@@ -272,6 +299,16 @@ class CsvStorageDataReader(DataReader):
                         name = f"{f}:{ n }" if f else n
                     _n.append(name)
         return _n
+
+    def get_symbols(self, exchange: str, dtype: str) -> list[str]:
+        return self.get_names()
+
+    def get_time_ranges(self, symbol: str, dtype: str) -> tuple[np.datetime64, np.datetime64]:
+        _, _time_data, _time_unit, _, start_idx, stop_idx = self.__try_read_data(symbol, None, None, None)
+        return (
+            np.datetime64(_time_data[start_idx].value, _time_unit),
+            np.datetime64(_time_data[stop_idx - 1].value, _time_unit),
+        )
 
 
 class InMemoryDataFrameReader(DataReader):
@@ -288,11 +325,19 @@ class InMemoryDataFrameReader(DataReader):
         self._data = data
         self.exchange = exchange
 
-    def get_names(self, **kwargs) -> List[str]:
+    def get_names(self, **kwargs) -> list[str]:
         keys = list(self._data.keys())
         if self.exchange:
             return [f"{self.exchange}:{k}" for k in keys]
         return keys
+
+    def _get_data_by_key(self, data_id: str) -> tuple[str, pd.DataFrame | pd.Series]:
+        if data_id not in self._data:
+            if self.exchange and data_id.startswith(self.exchange):
+                data_id = data_id.split(":")[1]
+        if (d := self._data.get(data_id)) is None:
+            raise ValueError(f"No data found for {data_id}")
+        return data_id, d
 
     def read(
         self,
@@ -302,7 +347,7 @@ class InMemoryDataFrameReader(DataReader):
         transform: DataTransformer = DataTransformer(),
         chunksize=0,
         **kwargs,
-    ) -> Iterable | List:
+    ) -> Iterable | list:
         """
         Read and transform data for a given data_id within a specified time range.
 
@@ -332,26 +377,41 @@ class InMemoryDataFrameReader(DataReader):
             If no data is found for the given data_id.
         """
         start, stop = handle_start_stop(start, stop)
-        if data_id not in self._data:
-            if data_id.startswith(self.exchange):
-                data_id = data_id.split(":")[1]
-        d = self._data.get(data_id)
-        if d is None:
-            raise ValueError(f"No data found for {data_id}")
-        d2 = d.loc[start:stop].copy().reset_index()
-        transform.start_transform(data_id, list(d2.columns), start=start, stop=stop)
-        transform.process_data(d2.values)
-        res = transform.collect()
+        data_id, _stored_data = self._get_data_by_key(data_id)
+
+        _sliced_data = _stored_data.loc[start:stop].copy()
+        if _tf := kwargs.get("timeframe"):
+            _sliced_data = ohlc_resample(_sliced_data, _tf)
+            assert isinstance(_sliced_data, pd.DataFrame), "Resampled data should be a DataFrame"
+        _sliced_data = _sliced_data.reset_index()
+
+        def _do_transform(values: Iterable, columns: list[str]) -> Iterable:
+            transform.start_transform(data_id, columns, start=start, stop=stop)
+            transform.process_data(values)
+            return transform.collect()
+
         if chunksize > 0:
+            # returns chunked frames
+            def _chunked_dataframe(data: np.ndarray, columns: list[str], chunksize: int) -> Iterable:
+                it = iter(data)
+                chunk = list(itertools.islice(it, chunksize))
+                while chunk:
+                    yield _do_transform(chunk, columns)
+                    chunk = list(itertools.islice(it, chunksize))
 
-            def __iterable():
-                yield res
+            return _chunked_dataframe(_sliced_data.values, list(_sliced_data.columns), chunksize)
 
-            return __iterable()
-        return res
+        return _do_transform(_sliced_data.values, list(_sliced_data.columns))
 
-    def get_symbols(self, **kwargs) -> List[str]:
+    def get_symbols(self, exchange: str, dtype: str) -> list[str]:
         return self.get_names()
+
+    def get_time_ranges(self, symbol: str, dtype: DataType) -> tuple[np.datetime64 | None, np.datetime64 | None]:
+        try:
+            _, _stored_data = self._get_data_by_key(symbol)
+            return _stored_data.index[0], _stored_data.index[-1]
+        except ValueError:
+            return None, None
 
 
 class AsPandasFrame(DataTransformer):
@@ -394,6 +454,10 @@ class AsOhlcvSeries(DataTransformer):
         ```
     """
 
+    timeframe: str | None
+    _series: OHLCV | None
+    _data_type: str | None
+
     def __init__(self, timeframe: str | None = None, timestamp_units="ns") -> None:
         super().__init__()
         self.timeframe = timeframe
@@ -433,7 +497,6 @@ class AsOhlcvSeries(DataTransformer):
                 self._bid_idx = _find_column_index_in_list(column_names, "bid")
                 self._data_type = "quotes"
             except:
-
                 try:
                     self._price_idx = _find_column_index_in_list(column_names, "price")
                     self._size_idx = _find_column_index_in_list(
@@ -507,6 +570,23 @@ class AsOhlcvSeries(DataTransformer):
 
     def collect(self) -> Any:
         return self._series
+
+
+class AsBars(AsOhlcvSeries):
+    """
+    Convert incoming data into Bars sequence.
+
+    Incoming data may have one of the following structures:
+
+        ```
+        ohlcv:        time,open,high,low,close,volume|quote_volume,(buy_volume)
+        quotes:       time,bid,ask,bidsize,asksize
+        trades (TAS): time,price,size,(is_taker)
+        ```
+    """
+
+    def collect(self) -> Any:
+        return self._series[::-1] if self._series is not None else None
 
 
 class AsQuotes(DataTransformer):
@@ -606,28 +686,48 @@ class AsTimestampedRecords(DataTransformer):
         return res
 
 
-class RestoreTicksFromOHLC(DataTransformer):
-    """
-    Emulates quotes (and trades) from OHLC bars
-    """
+class RestoredEmulatorHelper(DataTransformer):
+    _freq: np.timedelta64 | None = None
+    _t_start: int
+    _t_mid1: int
+    _t_mid2: int
+    _t_end: int
+    _open_close_time_shift_secs: int
 
-    def __init__(
-        self,
-        trades: bool = False,  # if we also wants 'trades'
-        default_bid_size=1e9,  # default bid/ask is big
-        default_ask_size=1e9,  # default bid/ask is big
-        daily_session_start_end=DEFAULT_DAILY_SESSION,
-        timestamp_units="ns",
-        spread=0.0,
-    ):
+    def __init__(self, daily_session_start_end: tuple, timestamp_units: str, open_close_time_shift_secs: int):
         super().__init__()
-        self._trades = trades
-        self._bid_size = default_bid_size
-        self._ask_size = default_ask_size
-        self._s2 = spread / 2.0
         self._d_session_start = daily_session_start_end[0]
         self._d_session_end = daily_session_start_end[1]
         self._timestamp_units = timestamp_units
+        self._open_close_time_shift_secs = open_close_time_shift_secs  # type: ignore
+
+    def _detect_emulation_timestamps(self, rows_data: list[list]):
+        if self._freq is None:
+            ts = [t[self._time_idx] for t in rows_data]
+            try:
+                self._freq = infer_series_frequency(ts)
+            except ValueError:
+                logger.warning("Can't determine frequency of incoming data")
+                return
+
+            # - timestamps when we emit simulated quotes
+            dt = self._freq.astype("timedelta64[ns]").item()
+            dt10 = dt // 10
+
+            # - adjust open-close time shift to avoid overlapping timestamps
+            if self._open_close_time_shift_secs * S1 >= (dt // 2 - dt10):
+                self._open_close_time_shift_secs = (dt // 2 - 2 * dt10) // S1
+
+            if dt < D1:
+                self._t_start = self._open_close_time_shift_secs * S1
+                self._t_mid1 = dt // 2 - dt10
+                self._t_mid2 = dt // 2 + dt10
+                self._t_end = dt - self._open_close_time_shift_secs * S1
+            else:
+                self._t_start = self._d_session_start + self._open_close_time_shift_secs * S1
+                self._t_mid1 = dt // 2 - H1
+                self._t_mid2 = dt // 2 + H1
+                self._t_end = self._d_session_end - self._open_close_time_shift_secs * S1
 
     def start_transform(self, name: str, column_names: List[str], **kwargs):
         self.buffer = []
@@ -641,39 +741,48 @@ class RestoreTicksFromOHLC(DataTransformer):
         self._freq = None
         try:
             self._volume_idx = _find_column_index_in_list(column_names, "volume", "vol")
-        except:
+        except:  # noqa: E722
             pass
 
+
+class RestoreTicksFromOHLC(RestoredEmulatorHelper):
+    """
+    Emulates quotes (and trades) from OHLC bars
+    """
+
+    def __init__(
+        self,
+        trades: bool = False,  # if we also wants 'trades'
+        default_bid_size=1e9,  # default bid/ask is big
+        default_ask_size=1e9,  # default bid/ask is big
+        daily_session_start_end=DEFAULT_DAILY_SESSION,
+        timestamp_units="ns",
+        spread=0.0,
+        open_close_time_shift_secs=1.0,
+        quotes=True,
+    ):
+        super().__init__(daily_session_start_end, timestamp_units, open_close_time_shift_secs)
+        assert trades or quotes or trades and trades, "Either trades or quotes or both must be enabled"
+        self._trades = trades
+        self._quotes = quotes
+        self._bid_size = default_bid_size
+        self._ask_size = default_ask_size
+        self._s2 = spread / 2.0
+
+    def start_transform(self, name: str, column_names: list[str], **kwargs):
+        super().start_transform(name, column_names, **kwargs)
+        # -  disable trades if no volume information is available
         if self._volume_idx is None and self._trades:
             logger.warning("Input OHLC data doesn't contain volume information so trades can't be emulated !")
             self._trades = False
 
-    def process_data(self, rows_data: List[List]) -> Any:
+    def process_data(self, rows_data: list[list]) -> Any:
         if rows_data is None:
             return
 
         s2 = self._s2
-
         if self._freq is None:
-            ts = [t[self._time_idx] for t in rows_data[:100]]
-            try:
-                self._freq = infer_series_frequency(ts)
-            except ValueError:
-                logger.warning("Can't determine frequency of incoming data")
-                return
-
-            # - timestamps when we emit simulated quotes
-            dt = self._freq.astype("timedelta64[ns]").item()
-            if dt < D1:
-                self._t_start = MS1  # dt // 10
-                self._t_mid1 = dt // 2 - dt // 10
-                self._t_mid2 = dt // 2 + dt // 10
-                self._t_end = dt - MS1  # dt - dt // 10
-            else:
-                self._t_start = self._d_session_start
-                self._t_mid1 = dt // 2 - H1
-                self._t_mid2 = dt // 2 + H1
-                self._t_end = self._d_session_end
+            self._detect_emulation_timestamps(rows_data[:100])
 
         # - input data
         for data in rows_data:
@@ -684,67 +793,194 @@ class RestoreTicksFromOHLC(DataTransformer):
             l = data[self._low_idx]
             c = data[self._close_idx]
             rv = data[self._volume_idx] if self._volume_idx else 0
+            rv = rv / (h - l) if h > l else rv
 
             # - opening quote
-            self.buffer.append(Quote(ti + self._t_start, o - s2, o + s2, self._bid_size, self._ask_size))
+            if self._quotes:
+                self.buffer.append(Quote(ti + self._t_start, o - s2, o + s2, self._bid_size, self._ask_size))
 
             if c >= o:
                 if self._trades:
                     self.buffer.append(Trade(ti + self._t_start, o - s2, rv * (o - l)))  # sell 1
-                self.buffer.append(
-                    Quote(
-                        ti + self._t_mid1,
-                        l - s2,
-                        l + s2,
-                        self._bid_size,
-                        self._ask_size,
+
+                if self._quotes:
+                    self.buffer.append(
+                        Quote(
+                            ti + self._t_mid1,
+                            l - s2,
+                            l + s2,
+                            self._bid_size,
+                            self._ask_size,
+                        )
                     )
-                )
 
                 if self._trades:
                     self.buffer.append(Trade(ti + self._t_mid1, l + s2, rv * (c - o)))  # buy 1
-                self.buffer.append(
-                    Quote(
-                        ti + self._t_mid2,
-                        h - s2,
-                        h + s2,
-                        self._bid_size,
-                        self._ask_size,
+
+                if self._quotes:
+                    self.buffer.append(
+                        Quote(
+                            ti + self._t_mid2,
+                            h - s2,
+                            h + s2,
+                            self._bid_size,
+                            self._ask_size,
+                        )
                     )
-                )
 
                 if self._trades:
                     self.buffer.append(Trade(ti + self._t_mid2, h - s2, rv * (h - c)))  # sell 2
             else:
                 if self._trades:
                     self.buffer.append(Trade(ti + self._t_start, o + s2, rv * (h - o)))  # buy 1
-                self.buffer.append(
-                    Quote(
-                        ti + self._t_mid1,
-                        h - s2,
-                        h + s2,
-                        self._bid_size,
-                        self._ask_size,
+
+                if self._quotes:
+                    self.buffer.append(
+                        Quote(
+                            ti + self._t_mid1,
+                            h - s2,
+                            h + s2,
+                            self._bid_size,
+                            self._ask_size,
+                        )
                     )
-                )
 
                 if self._trades:
                     self.buffer.append(Trade(ti + self._t_mid1, h - s2, rv * (o - c)))  # sell 1
-                self.buffer.append(
-                    Quote(
-                        ti + self._t_mid2,
-                        l - s2,
-                        l + s2,
-                        self._bid_size,
-                        self._ask_size,
+
+                if self._quotes:
+                    self.buffer.append(
+                        Quote(
+                            ti + self._t_mid2,
+                            l - s2,
+                            l + s2,
+                            self._bid_size,
+                            self._ask_size,
+                        )
                     )
-                )
 
                 if self._trades:
                     self.buffer.append(Trade(ti + self._t_mid2, l + s2, rv * (c - l)))  # buy 2
 
             # - closing quote
-            self.buffer.append(Quote(ti + self._t_end, c - s2, c + s2, self._bid_size, self._ask_size))
+            if self._quotes:
+                self.buffer.append(Quote(ti + self._t_end, c - s2, c + s2, self._bid_size, self._ask_size))
+
+
+class RestoreQuotesFromOHLC(RestoreTicksFromOHLC):
+    """
+    Restore (emulate) quotes from OHLC bars
+    """
+
+    def __init__(
+        self,
+        default_bid_size=1e9,  # default bid/ask is big
+        default_ask_size=1e9,  # default bid/ask is big
+        daily_session_start_end=DEFAULT_DAILY_SESSION,
+        timestamp_units="ns",
+        spread=0.0,
+        open_close_time_shift_secs=1.0,
+    ):
+        super().__init__(
+            trades=False,
+            default_bid_size=default_bid_size,
+            default_ask_size=default_ask_size,
+            daily_session_start_end=daily_session_start_end,
+            timestamp_units=timestamp_units,
+            spread=spread,
+            open_close_time_shift_secs=open_close_time_shift_secs,
+            quotes=True,
+        )
+
+
+class RestoreTradesFromOHLC(RestoreTicksFromOHLC):
+    """
+    Restore (emulate) trades from OHLC bars
+    """
+
+    def __init__(
+        self,
+        daily_session_start_end=DEFAULT_DAILY_SESSION,
+        timestamp_units="ns",
+        open_close_time_shift_secs=1.0,
+    ):
+        super().__init__(
+            trades=True,
+            default_bid_size=0,
+            default_ask_size=0,
+            daily_session_start_end=daily_session_start_end,
+            timestamp_units=timestamp_units,
+            spread=0,
+            open_close_time_shift_secs=open_close_time_shift_secs,
+            quotes=False,
+        )
+
+
+class RestoredBarsFromOHLC(RestoredEmulatorHelper):
+    """
+    Transforms OHLC data into a sequence of bars trying to mimic real-world market data updates
+    """
+
+    def __init__(
+        self, daily_session_start_end=DEFAULT_DAILY_SESSION, timestamp_units="ns", open_close_time_shift_secs=1.0
+    ):
+        super().__init__(daily_session_start_end, timestamp_units, open_close_time_shift_secs)
+
+    def process_data(self, rows_data: List[List]) -> Any:
+        if rows_data is None:
+            return
+
+        if self._freq is None:
+            self._detect_emulation_timestamps(rows_data[:100])
+
+        # - input data
+        for data in rows_data:
+            ti = _time(data[self._time_idx], self._timestamp_units)
+            o = data[self._open_idx]
+            h = data[self._high_idx]
+            l = data[self._low_idx]
+            c = data[self._close_idx]
+
+            vol = data[self._volume_idx] if self._volume_idx is not None else 0
+            rvol = vol / (h - l) if h > l else vol
+
+            # - opening bar (o,h,l,c=o, v=0)
+            self.buffer.append(Bar(ti + self._t_start, o, o, o, o, 0))
+
+            if c >= o:
+                v1 = rvol * (o - l)
+                self.buffer.append(Bar(ti + self._t_mid1, o, o, l, l, v1))
+
+                v2 = v1 + rvol * (c - o)
+                self.buffer.append(Bar(ti + self._t_mid2, o, h, l, h, v2))
+
+            else:
+                v1 = rvol * (h - o)
+                self.buffer.append(Bar(ti + self._t_mid1, o, h, o, h, v1))
+
+                v2 = v1 + rvol * (o - c)
+                self.buffer.append(Bar(ti + self._t_mid2, o, h, l, l, v2))
+
+            # - full bar
+            self.buffer.append(Bar(ti + self._t_end, o, h, l, c, vol))
+
+
+class AsDict(DataTransformer):
+    """
+    Tries to keep incoming data as list of dictionaries with preprocessed time
+    """
+
+    def start_transform(self, name: str, column_names: List[str], **kwargs):
+        self.buffer = list()
+        self._time_idx = _FIND_TIME_COL_IDX(column_names)
+        self._column_names = column_names
+        self._time_name = column_names[self._time_idx]
+
+    def process_data(self, rows_data: Iterable):
+        if rows_data is not None:
+            for d in rows_data:
+                _r_dict = dict(zip(self._column_names, d))
+                self.buffer.append(TimestampedDict(_time(d[self._time_idx], "ns"), _r_dict))  # type: ignore
 
 
 def _retry(fn):
@@ -769,8 +1005,39 @@ class QuestDBSqlBuilder:
     Generic sql builder for QuestDB data
     """
 
-    def get_table_name(self, data_id: str, sfx: str = "") -> str | None:
-        pass
+    _aliases = {"um": "umfutures", "cm": "cmfutures", "f": "futures"}
+
+    def get_table_name(self, data_id: str, sfx: str = "") -> str:
+        """
+        Get table name for data_id
+        data_id can have format <exchange>.<type>:<symbol>
+        for example:
+            BINANCE.UM:BTCUSDT or BINANCE:BTCUSDT for spot
+        """
+        sfx = sfx or "candles_1m"
+        table_name = data_id
+        _exch, _symb, _mktype = self._get_exchange_symbol_market_type(data_id)
+        if _exch and _symb:
+            parts = [_exch.lower(), _mktype]
+            if "candles" not in sfx:
+                parts.append(_symb)
+            parts.append(sfx)
+            table_name = ".".join(filter(lambda x: x, parts))
+
+        return table_name
+
+    def _get_exchange_symbol_market_type(self, data_id: str) -> tuple[str | None, str | None, str | None]:
+        _ss = data_id.split(":")
+        if len(_ss) > 1:
+            _exch, symb = _ss
+            _mktype = "spot"
+            _ss = _exch.split(".")
+            if len(_ss) > 1:
+                _exch = _ss[0]
+                _mktype = _ss[1]
+            _mktype = _mktype.lower()
+            return _exch.lower(), symb.lower(), self._aliases.get(_mktype, _mktype)
+        return None, None, None
 
     def prepare_data_sql(
         self,
@@ -785,37 +1052,18 @@ class QuestDBSqlBuilder:
     def prepare_names_sql(self) -> str:
         return "select table_name from tables()"
 
+    def prepare_symbols_sql(self, exchange: str, dtype: str) -> str:
+        _table = self.get_table_name(f"{exchange}:BTCUSDT", dtype)
+        return f"select distinct(symbol) from {_table}"
+
+    def prepare_data_ranges_sql(self, data_id: str) -> str:
+        raise NotImplementedError()
+
 
 class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
     """
     Sql builder for candles data
     """
-
-    def get_table_name(self, data_id: str, sfx: str = "") -> str:
-        """
-        Get table name for data_id
-        data_id can have format <exchange>.<type>:<symbol>
-        for example:
-            BINANCE.UM:BTCUSDT or BINANCE:BTCUSDT for spot
-        """
-        _aliases = {"um": "umfutures", "cm": "cmfutures", "f": "futures"}
-        sfx = sfx or "candles_1m"
-        table_name = data_id
-        _ss = data_id.split(":")
-        if len(_ss) > 1:
-            _exch, symb = _ss
-            _mktype = "spot"
-            _ss = _exch.split(".")
-            if len(_ss) > 1:
-                _exch = _ss[0]
-                _mktype = _ss[1]
-            _mktype = _mktype.lower()
-            parts = [_exch.lower(), _aliases.get(_mktype, _mktype)]
-            if "candles" not in sfx:
-                parts.append(symb.lower())
-            parts.append(sfx)
-            table_name = ".".join(filter(lambda x: x, parts))
-        return table_name
 
     def prepare_names_sql(self) -> str:
         return "select table_name from tables() where table_name like '%candles%'"
@@ -836,15 +1084,11 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
         resample: str | None,
         data_type: str,
     ) -> str:
-        _ss = data_id.split(":")
-        if len(_ss) > 1:
-            _exch, symb = _ss
-        else:
-            symb = data_id
+        _exch, _symb, _mktype = self._get_exchange_symbol_market_type(data_id)
+        if _symb is None:
+            _symb = data_id
 
-        symb = symb.lower()
-
-        where = f"where symbol = '{symb}'"
+        where = f"where symbol = '{_symb}'"
         w0 = f"timestamp >= '{start}'" if start else ""
         w1 = f"timestamp < '{end}'" if end else ""
 
@@ -866,10 +1110,7 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
         table_name = self.get_table_name(data_id, data_type)
         return f"""
                 select timestamp, 
-                first(open) as open, 
-                max(high) as high,
-                min(low) as low,
-                last(close) as close,
+                first(open) as open, max(high) as high, min(low) as low, last(close) as close,
                 sum(volume) as volume,
                 sum(quote_volume) as quote_volume,
                 sum(count) as count,
@@ -877,6 +1118,27 @@ class QuestDBSqlCandlesBuilder(QuestDBSqlBuilder):
                 sum(taker_buy_quote_volume) as taker_buy_quote_volume
                 from "{table_name}" {where} {_rsmpl};
             """
+
+    def prepare_data_ranges_sql(self, data_id: str) -> str:
+        _exch, _symb, _mktype = self._get_exchange_symbol_market_type(data_id)
+        if _exch is None:
+            raise ValueError(f"Can't get exchange name from data id: {data_id} !")
+        return f"""(SELECT timestamp FROM "{ _exch }.{_mktype}.candles_1m" WHERE symbol='{_symb}' ORDER BY timestamp ASC LIMIT 1)
+                        UNION
+                   (SELECT timestamp FROM "{ _exch }.{_mktype}.candles_1m" WHERE symbol='{_symb}' ORDER BY timestamp DESC LIMIT 1)
+                """
+
+
+class QuestDBSqlTOBBilder(QuestDBSqlBuilder):
+    def prepare_data_ranges_sql(self, data_id: str) -> str:
+        _exch, _symb, _mktype = self._get_exchange_symbol_market_type(data_id)
+        if _exch is None:
+            raise ValueError(f"Can't get exchange name from data id: {data_id} !")
+        # TODO: ????
+        return f"""(SELECT timestamp FROM "{ _exch }.{_mktype}.{_symb}.orderbook" ORDER BY timestamp ASC LIMIT 1)
+                        UNION
+                   (SELECT timestamp FROM "{ _exch }.{_mktype}.{_symb}.orderbook" ORDER BY timestamp DESC LIMIT 1)
+                """
 
 
 class QuestDBConnector(DataReader):
@@ -939,14 +1201,6 @@ class QuestDBConnector(DataReader):
             self._builder,
         )
 
-    def get_symbols(self, exchange: str) -> list[str]:
-        table_name = QuestDBSqlCandlesBuilder().get_table_name(f"{exchange}:BTCUSDT")
-        query = f"""
-        select distinct symbol
-        from "{table_name}";
-        """
-        return self.execute(query)["symbol"].tolist()
-
     def get_candles(
         self,
         exchange: str,
@@ -958,7 +1212,7 @@ class QuestDBConnector(DataReader):
         assert len(symbols) > 0, "No symbols provided"
         quoted_symbols = [f"'{s.lower()}'" for s in symbols]
         where = f"where symbol in ({', '.join(quoted_symbols)}) and timestamp >= '{start}' and timestamp < '{stop}'"
-        table_name = QuestDBSqlCandlesBuilder().get_table_name(f"{exchange}:{symbols[0]}")
+        table_name = QuestDBSqlCandlesBuilder().get_table_name(f"{exchange}:{list(symbols)[0]}")
 
         _rsmpl = f"sample by {QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(timeframe)}"
 
@@ -1006,10 +1260,16 @@ class QuestDBConnector(DataReader):
         return vol_stats.set_index("symbol")["quote_volume"]
 
     def get_fundamental_data(
-        self, exchange: str, start: str | pd.Timestamp | None = None, stop: str | pd.Timestamp | None = None
+        self,
+        exchange: str,
+        symbols: list[str] | None = None,
+        start: str | pd.Timestamp | None = None,
+        stop: str | pd.Timestamp | None = None,
+        timeframe: str = "1d",
     ) -> pd.DataFrame:
         table_name = {"BINANCE.UM": "binance.umfutures.fundamental"}[exchange]
-        query = f"select * from {table_name}"
+        query = f"select timestamp, symbol, metric, last(value) as value from {table_name}"
+        # TODO: fix handling without start/stop, where needs to be added
         if start or stop:
             conditions = []
             if start:
@@ -1017,6 +1277,10 @@ class QuestDBConnector(DataReader):
             if stop:
                 conditions.append(f"timestamp < '{stop}'")
             query += " where " + " and ".join(conditions)
+        if symbols:
+            query += f" and symbol in ({', '.join(symbols)})"
+        _rsmpl = f"sample by {QuestDBSqlCandlesBuilder._convert_time_delta_to_qdb_resample_format(timeframe)}"
+        query += f" {_rsmpl}"
         df = self.execute(query)
         if df.empty:
             return pd.DataFrame()
@@ -1079,7 +1343,7 @@ class QuestDBConnector(DataReader):
             _cursor.close()
 
     @_retry
-    def _get_names(self, builder: QuestDBSqlBuilder) -> List[str]:
+    def _get_names(self, builder: QuestDBSqlBuilder) -> list[str]:
         _cursor = None
         try:
             _cursor = self._connection.cursor()  # type: ignore
@@ -1090,12 +1354,35 @@ class QuestDBConnector(DataReader):
                 _cursor.close()
         return [r[0] for r in records]
 
+    @_retry
+    def _get_symbols(self, builder: QuestDBSqlBuilder, exchange: str, dtype: str) -> list[str]:
+        _cursor = None
+        try:
+            _cursor = self._connection.cursor()  # type: ignore
+            _cursor.execute(builder.prepare_symbols_sql(exchange, dtype))  # type: ignore
+            records = _cursor.fetchall()
+        finally:
+            if _cursor:
+                _cursor.close()
+        return [f"{exchange}:{r[0].upper()}" for r in records]
+
+    @_retry
+    def _get_range(self, builder: QuestDBSqlBuilder, data_id: str) -> tuple[Any] | None:
+        _cursor = None
+        try:
+            _cursor = self._connection.cursor()  # type: ignore
+            _cursor.execute(builder.prepare_data_ranges_sql(data_id))  # type: ignore
+            return tuple([np.datetime64(r[0]) for r in _cursor.fetchall()])
+        finally:
+            if _cursor:
+                _cursor.close()
+
     def __del__(self):
         try:
             if self._connection is not None:
                 logger.debug("Closing connection")
                 self._connection.close()
-        except:
+        except:  # noqa: E722
             pass
 
 
@@ -1131,7 +1418,6 @@ WHERE timestamp BETWEEN '{raw_start_dt}' AND '{end_dt}'
 
 
 class TradeSql(QuestDBSqlCandlesBuilder):
-
     def prepare_data_sql(
         self,
         data_id: str,
@@ -1161,6 +1447,10 @@ class TradeSql(QuestDBSqlCandlesBuilder):
 
         return sql
 
+    def prepare_symbols_sql(self, exchange: str, dtype: str) -> str:
+        # TODO:
+        raise NotImplementedError("Not implemented yet")
+
 
 class MultiQdbConnector(QuestDBConnector):
     """
@@ -1185,6 +1475,7 @@ class MultiQdbConnector(QuestDBConnector):
 
     _TYPE_TO_BUILDER = {
         "candles_1m": QuestDBSqlCandlesBuilder(),
+        "tob": QuestDBSqlTOBBilder(),
         "trade": TradeSql(),
         "agg_trade": TradeSql(),
         "orderbook": QuestDBSqlOrderBookBuilder(),
@@ -1197,6 +1488,7 @@ class MultiQdbConnector(QuestDBConnector):
         "ob": "orderbook",
         "trd": "trade",
         "td": "trade",
+        "quote": "tob",
         "aggTrade": "agg_trade",
         "agg_trades": "agg_trade",
         "aggTrades": "agg_trade",
@@ -1249,5 +1541,19 @@ class MultiQdbConnector(QuestDBConnector):
             self._TYPE_TO_BUILDER[_mapped_data_type],
         )
 
-    def get_names(self, data_type: str) -> List[str]:
+    def get_names(self, data_type: str) -> list[str]:
         return self._get_names(self._TYPE_TO_BUILDER[self._TYPE_MAPPINGS.get(data_type, data_type)])
+
+    def get_symbols(self, exchange: str, dtype: str) -> list[str]:
+        return self._get_symbols(
+            self._TYPE_TO_BUILDER[self._TYPE_MAPPINGS.get(dtype, dtype)],
+            exchange,
+            self._TYPE_MAPPINGS.get(dtype, dtype),
+        )
+
+    def get_time_ranges(self, symbol: str, dtype: str) -> tuple[np.datetime64, np.datetime64]:
+        try:
+            _xr = self._get_range(self._TYPE_TO_BUILDER[self._TYPE_MAPPINGS.get(dtype, dtype)], symbol)
+            return (None, None) if not _xr else _xr  # type: ignore
+        except Exception:
+            return (None, None)  # type: ignore

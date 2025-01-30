@@ -1,18 +1,20 @@
+import re
+import sched
+import sys
+import time
+from collections import defaultdict, deque
+from inspect import isbuiltin, isclass, isfunction, ismethod, ismethoddescriptor
+from threading import Thread
+from typing import Any, Callable, Dict, List
+
 import numpy as np
 import pandas as pd
-import re, sched, time
-
-from collections import defaultdict, deque
-from typing import Any, Callable, Dict, List, Optional, Tuple
 from croniter import croniter
-from collections import defaultdict
-from threading import Thread
 
 from qubx import logger
-from qubx.core.basics import CtrlChannel, Instrument, SW, SubscriptionType
-from qubx.core.series import TimeSeries, Trade, Quote, Bar, OHLCV, OrderBook
-from qubx.utils.misc import Stopwatch
-from qubx.utils.time import convert_tf_str_td64, convert_seconds_to_str
+from qubx.core.basics import SW, CtrlChannel, DataType, Instrument, Timestamped
+from qubx.core.series import OHLCV, Bar, OrderBook, Quote, Trade
+from qubx.utils.time import convert_seconds_to_str, convert_tf_str_td64
 
 
 class CachedMarketDataHolder:
@@ -85,34 +87,34 @@ class CachedMarketDataHolder:
 
     def update(self, instrument: Instrument, event_type: str, data: Any, update_ohlc: bool = False) -> None:
         # - store data in buffer if it's not OHLC
-        if event_type != SubscriptionType.OHLC:
+        if event_type != DataType.OHLC:
             self._instr_to_sub_to_buffer[instrument][event_type].append(data)
 
         if not update_ohlc:
             return
 
         match event_type:
-            case SubscriptionType.OHLC:
+            case DataType.OHLC:
                 self.update_by_bar(instrument, data)
-            case SubscriptionType.QUOTE:
+            case DataType.QUOTE:
                 self.update_by_quote(instrument, data)
-            case SubscriptionType.TRADE:
+            case DataType.TRADE:
                 self.update_by_trade(instrument, data)
-            case SubscriptionType.ORDERBOOK:
+            case DataType.ORDERBOOK:
                 assert isinstance(data, OrderBook)
                 self.update_by_quote(instrument, data.to_quote())
             case _:
                 pass
 
     @SW.watch("CachedMarketDataHolder")
-    def update_by_bars(self, instrument: Instrument, timeframe: str, bars: List[Bar]) -> OHLCV:
+    def update_by_bars(self, instrument: Instrument, timeframe: str | np.timedelta64, bars: List[Bar]) -> OHLCV:
         """
         Substitute or create new series based on provided historical bars
         """
         if instrument not in self._ohlcvs:
             self._ohlcvs[instrument] = {}
 
-        tf = convert_tf_str_td64(timeframe)
+        tf = convert_tf_str_td64(timeframe) if isinstance(timeframe, str) else timeframe
         new_ohlc = OHLCV(instrument.symbol, tf)
         for b in bars:
             new_ohlc.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume, b.bought_volume)
@@ -184,7 +186,7 @@ SPEC_REGEX = re.compile(
 
 
 def _mk_cron(time: str, by: list | None) -> str:
-    HMS = lambda s: list(map(int, s.split(":") if s.count(":") == 2 else [*s.split(":"), 0]))
+    HMS = lambda s: list(map(int, s.split(":") if s.count(":") == 2 else [*s.split(":"), 0]))  # noqa: E731
 
     h, m, s = HMS(time)
     assert h < 24, f"Wrong value for hour {h}"
@@ -197,7 +199,7 @@ def _mk_cron(time: str, by: list | None) -> str:
 
 def _make_shift(_b, _w, _d, _h, _m, _s):
     D0 = pd.Timedelta(0)
-    AS_TD = lambda d: pd.Timedelta(d)
+    AS_TD = lambda d: pd.Timedelta(d)  # noqa: E731
     P, N = D0, D0
 
     # return AS_TD(f'{_b*4}W') + AS_TD(f'{_w}W') + AS_TD(f'{_d}D') + AS_TD(f'{_h}h') + AS_TD(f'{_m}Min') + AS_TD(f'{_s}Sec')
@@ -222,8 +224,8 @@ def _parse_schedule_spec(schedule: str) -> Dict[str, str]:
 
 
 def process_schedule_spec(spec_str: str | None) -> Dict[str, Any]:
-    AS_INT = lambda d, k: int(d.get(k, 0))
-    S = lambda s: [x for x in re.split(r"[, ]", s) if x]
+    AS_INT = lambda d, k: int(d.get(k, 0))  # noqa: E731
+    S = lambda s: [x for x in re.split(r"[, ]", s) if x]  # noqa: E731
     config = {}
 
     if not spec_str:
@@ -276,9 +278,6 @@ def process_schedule_spec(spec_str: str | None) -> Dict[str, Any]:
     return config
 
 
-_SEC2TS = lambda t: pd.Timestamp(t, unit="s")
-
-
 class BasicScheduler:
     """
     Basic scheduler functionality. It helps to create scheduled event task
@@ -287,8 +286,10 @@ class BasicScheduler:
     _chan: CtrlChannel
     _scdlr: sched.scheduler
     _ns_time_fun: Callable[[], float]
-    _crons: Dict[str, croniter]
+    _crons: dict[str, croniter]
     _is_started: bool
+    _next_nearest_time: np.datetime64
+    _next_times: dict[str, float]
 
     def __init__(self, channel: CtrlChannel, time_provider_ns: Callable[[], float]):
         self._chan = channel
@@ -296,6 +297,8 @@ class BasicScheduler:
         self._scdlr = sched.scheduler(self.time_sec)
         self._crons = dict()
         self._is_started = False
+        self._next_nearest_time = np.datetime64(sys.maxsize, "ns")
+        self._next_times = dict()
 
     def time_sec(self) -> float:
         return self._ns_time_fun() / 1000000000.0
@@ -307,6 +310,17 @@ class BasicScheduler:
 
         if self._is_started:
             self._arm_schedule(event_name, self.time_sec())
+
+    def next_expected_event_time(self) -> np.datetime64:
+        """
+        Returns the next scheduled event time
+        """
+        return self._next_nearest_time
+
+    def get_schedule_for_event(self, event_name: str) -> str | None:
+        if event_name in self._crons:
+            return " ".join(self._crons[event_name].expressions)
+        return None
 
     def get_event_last_time(self, event_name: str) -> pd.Timestamp | None:
         if event_name in self._crons:
@@ -330,9 +344,11 @@ class BasicScheduler:
         next_time = iter.get_next(start_time=start_time)
         if next_time:
             self._scdlr.enterabs(next_time, 1, self._trigger, (event, prev_time, next_time))
-            # logger.debug(
-            #     f"Now is <red>{_SEC2TS(self.time_sec())}</red> next ({event}) at <cyan>{_SEC2TS(next_time)}</cyan>"
-            # )
+
+            # - update next nearest time
+            self._next_times[event] = next_time
+            self._next_nearest_time = np.datetime64(int(min(self._next_times.values()) * 1000000000), "ns")
+
             return True
         logger.debug(f"({event}) task is not scheduled")
         return False
@@ -341,7 +357,7 @@ class BasicScheduler:
         now = self.time_sec()
 
         # - send notification to channel
-        self._chan.send((None, event, (prev_time_sec, trig_time)))
+        self._chan.send((None, event, (prev_time_sec, trig_time), False))
 
         # - try to arm this event again
         self._arm_schedule(event, now)
@@ -372,6 +388,29 @@ class BasicScheduler:
             self._is_started = True
 
 
+def extract_parameters_from_object(strategy: Any) -> dict[str, Any]:
+    """
+    Extract default parameters (as defined in class) and their values from object.
+    """
+    from qubx.core.interfaces import IStrategyContext
+
+    _f_dict = {}
+    for o in [*strategy.__class__.mro()[::-1], strategy]:
+        if hasattr(o, "__dict__"):  # only objects have __dict__ attribute
+            for k, v in o.__dict__.items():
+                if not k.startswith("_") and not (
+                    # - skip any function, method, built-in, class, method descriptor
+                    isinstance(v, IStrategyContext)  # we don't want to have ctx object
+                    or isfunction(v)
+                    or ismethod(v)
+                    or isbuiltin(v)
+                    or isclass(v)
+                    or ismethoddescriptor(v)
+                ):
+                    _f_dict[k] = getattr(o, k, v)
+    return _f_dict
+
+
 def set_parameters_to_object(strategy: Any, **kwargs):
     """
     Set given parameters values to object.
@@ -388,3 +427,40 @@ def set_parameters_to_object(strategy: Any, **kwargs):
 
     if _log_info:
         logger.debug(f"<yellow>{strategy.__class__.__name__}</yellow> new parameters:" + _log_info)
+
+
+def extract_price(update: float | Timestamped) -> float:
+    """Extract the price from various types of market data updates.
+
+    Args:
+        update: The market data update, which can be a float, Quote, Trade, Bar or OrderBook.
+
+    Returns:
+        float: The extracted price.
+
+    Raises:
+        ValueError: If the update type is unknown.
+    """
+    if isinstance(update, float):
+        return update
+    elif isinstance(update, Quote) or isinstance(update, OrderBook):
+        return update.mid_price()
+    elif isinstance(update, Trade):
+        return update.price
+    elif isinstance(update, Bar):
+        return update.close
+    elif isinstance(update, OrderBook):
+        return update.mid_price()
+    else:
+        raise ValueError(f"Unknown update type: {type(update)}")
+
+
+def full_qualified_class_name(obj: object):
+    """
+    Returns full qualified class name of object.
+    """
+    klass = obj.__class__
+    module = klass.__module__
+    if module in ["__builtin__", "__main__"]:
+        return klass.__qualname__  # avoid outputs like 'builtins.str'
+    return module + "." + klass.__name__

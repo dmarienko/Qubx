@@ -1,12 +1,12 @@
-from collections import OrderedDict
 import types
-from typing import Any, Callable, List, Union, Tuple
+from collections import OrderedDict
+from typing import Any, Callable, List, Tuple, Union
 
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
-from statsmodels.regression.linear_model import OLS
 from numba import njit
+from statsmodels.regression.linear_model import OLS
 
 from qubx.pandaz.utils import check_frame_columns, continuous_periods, has_columns, ohlc_resample, scols, srows
 from qubx.utils.misc import Struct
@@ -1413,6 +1413,7 @@ def _jma(x, period, phase, power):
     return x
 
 
+@__wrap_dataframe_decorator
 def jma(x, period, phase=0, power=2):
     """
     Jurik MA (code from https://www.tradingview.com/script/nZuBWW9j-Jurik-Moving-Average/)
@@ -1918,10 +1919,7 @@ def qqe_mod(
     res = res.assign(
         # here we code hist bars:
         #  -1 -> silver < 0, +1 -> silver > 0, +2 -> green, -2 -> red
-        code=-1 * (res.silver < 0)
-        + 1 * (res.silver > 0)
-        + 2 * (res.green > 0)
-        - 2 * (res.red < 0)
+        code=-1 * (res.silver < 0) + 1 * (res.silver > 0) + 2 * (res.green > 0) - 2 * (res.red < 0)
     )
 
     return res
@@ -2098,7 +2096,7 @@ def norm_pdf(x):
 
 @njit
 def lognorm_pdf(x, s):
-    return np.exp(-np.log(x) ** 2 / (2 * s**2)) / (x * s * np.sqrt(2 * np.pi))
+    return np.exp(-(np.log(x) ** 2) / (2 * s**2)) / (x * s * np.sqrt(2 * np.pi))
 
 
 @njit
@@ -2382,7 +2380,6 @@ def find_movements_hilo(
 
                 # check condition
                 if (vL - xL_mi >= threshold) or (l_mv < vL - xL_mi):
-
                     # case when HighLow of a one bar are extreme points, to avoid infinite loop
                     if mx == mi:
                         mi += 1

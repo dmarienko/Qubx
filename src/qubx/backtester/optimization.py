@@ -1,28 +1,30 @@
-from typing import Any, Dict, List, Sequence, Tuple, Type
-import numpy as np
 import re
-
-from types import FunctionType
 from itertools import product
+from types import FunctionType
+from typing import Any, Callable, Type
+
+import numpy as np
+
+from qubx.utils.misc import generate_name
 
 
-def _wrap_single_list(param_grid: List | Dict) -> Dict[str, Any] | List:
+def _wrap_single_list(param_grid: list | dict) -> dict[str, Any] | list:
     """
     Wraps all non list values as single
     :param param_grid:
     :return:
     """
-    as_list = lambda x: x if isinstance(x, (tuple, list, dict, np.ndarray)) else [x]
+    as_list = lambda x: x if isinstance(x, (tuple, list, dict, np.ndarray)) else [x]  # noqa: E731
     if isinstance(param_grid, list):
         return [_wrap_single_list(ps) for ps in param_grid]
     return {k: as_list(v) for k, v in param_grid.items()}
 
 
 def permutate_params(
-    parameters: Dict[str, List | Tuple | Any],
-    conditions: FunctionType | List | Tuple | None = None,
+    parameters: dict[str, list | tuple | Any],
+    conditions: FunctionType | list | tuple | None = None,
     wrap_as_list=False,
-) -> List[Dict]:
+) -> list[dict]:
     """
     Generate list of all permutations for given parameters and theirs possible values
 
@@ -115,7 +117,7 @@ def dicts_product(d1: dict, d2: dict) -> dict:
     }
 
     """
-    flatten = lambda l: [item for sublist in l for item in (sublist if isinstance(sublist, list) else [sublist])]
+    flatten = lambda l: [item for sublist in l for item in (sublist if isinstance(sublist, list) else [sublist])]  # noqa: E731
     return {(a + " + " + b): flatten([d1[a], d2[b]]) for a, b in product(d1.keys(), d2.keys())}
 
 
@@ -124,7 +126,7 @@ class _dict(dict):
         return _dict(dicts_product(self, other))
 
 
-def variate(clz: Type[Any] | List[Type[Any]], *args, conditions=None, **kwargs) -> _dict:
+def variate(clz: Type[Any] | list[Type[Any]], *args, conditions=None, **kwargs) -> _dict:
     """
     Make variations of parameters for simulations (micro optimizer)
 
@@ -167,21 +169,26 @@ def variate(clz: Type[Any] | List[Type[Any]], *args, conditions=None, **kwargs) 
     """
 
     def _cmprss(xs: str):
-        return "".join([x[0] for x in re.split("((?<!-)(?=[A-Z]))|_|(\d)", xs) if x])
+        return "".join([x[0] for x in re.split(r"((?<!-)(?=[A-Z]))|_|(\d)", xs) if x])
 
-    if isinstance(clz, type):
+    if isinstance(clz, (type, Callable)):
         sfx = _cmprss(clz.__name__)
-        _mk = lambda k, *args, **kwargs: k(*args, **kwargs)
+        _mk = lambda k, *args, **kwargs: k(*args, **kwargs)  # noqa: E731
     elif isinstance(clz, (list, tuple)) and clz and isinstance(clz[0], type):
         sfx = _cmprss(clz[0].__name__)
-        _mk = lambda k, *args, **kwargs: [k[0](*args, **kwargs), *k[1:]]
+        _mk = lambda k, *args, **kwargs: [k[0](*args, **kwargs), *k[1:]]  # noqa: E731
     else:
         raise ValueError(
             "Can't recognize data for variating: must be either a class type or a list where first element is class type"
         )
 
+    def _v_to_str(x: Any) -> str:
+        if isinstance(x, (list, tuple, dict, set, np.ndarray)) and len(xs := str(x)) > 15:
+            return "[" + generate_name(xs, 8).lower() + "]"
+        return str(x)
+
     to_excl = [s for s, v in kwargs.items() if not isinstance(v, (list, set, tuple, range))]
-    dic2str = lambda ds: [_cmprss(k) + "=" + str(v) for k, v in ds.items() if k not in to_excl]
+    dic2str = lambda ds: [_cmprss(k) + "=" + _v_to_str(v) for k, v in ds.items() if k not in to_excl]  # noqa: E731
 
     return _dict(
         {

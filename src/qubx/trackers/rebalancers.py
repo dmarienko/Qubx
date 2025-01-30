@@ -1,10 +1,11 @@
-from typing import Iterable, List, Set, Tuple, Union, Dict, Optional
 from dataclasses import dataclass
+from typing import Dict, Iterable, List, Optional, Set, Tuple, Union
+
 import numpy as np
 import pandas as pd
 
 from qubx import logger
-from qubx.core.basics import Position, Signal, TargetPosition
+from qubx.core.basics import Instrument, Position, Signal, TargetPosition
 from qubx.core.interfaces import IPositionGathering, IStrategyContext, PositionsTracker
 from qubx.trackers.sizers import LongShortRatioPortfolioSizer
 
@@ -32,29 +33,31 @@ class PortfolioRebalancerTracker(PositionsTracker):
         self._positions_sizer = positions_sizer
 
     def calculate_released_capital(
-        self, ctx: IStrategyContext, symbols_to_close: List[str] | None = None
+        self, ctx: IStrategyContext, instr_to_close: list[Instrument] | None = None
     ) -> Tuple[float, List[str]]:
         """
         Calculate capital that would be released if close positions for provided symbols_to_close list
         """
         released_capital_after_close = 0.0
         closed_symbols = []
-        if symbols_to_close is not None:
-            for symbol in symbols_to_close:
-                p = ctx.positions.get(symbol)
+        if instr_to_close is not None:
+            for instr in instr_to_close:
+                p = ctx.positions.get(instr)
                 if p is not None and p.quantity != 0:
                     released_capital_after_close += p.get_amount_released_funds_after_closing(
                         to_remain=ctx.get_reserved(p.instrument)
                     )
-                    closed_symbols.append(symbol)
+                    closed_symbols.append(instr)
         return released_capital_after_close, closed_symbols
 
-    def estimate_capital_to_trade(self, ctx: IStrategyContext, symbols_to_close: List[str] | None = None) -> Capital:
+    def estimate_capital_to_trade(
+        self, ctx: IStrategyContext, instr_to_close: list[Instrument] | None = None
+    ) -> Capital:
         released_capital = 0.0
         closed_positions = None
 
-        if symbols_to_close is not None:
-            released_capital, closed_positions = self.calculate_released_capital(ctx, symbols_to_close)
+        if instr_to_close is not None:
+            released_capital, closed_positions = self.calculate_released_capital(ctx, instr_to_close)
 
         cap_to_invest = ctx.get_capital() + released_capital
         if self.capital_invested > 0:
@@ -98,23 +101,6 @@ class PortfolioRebalancerTracker(PositionsTracker):
                 )
 
         return _close_first + _then_open
-
-    def close_all(self, ctx: IStrategyContext) -> None:
-        """
-        Emergency close all positions
-        """
-        for s, pos in ctx.positions.items():
-            if pos.quantity != 0:
-                reserved = ctx.get_reserved(pos.instrument)
-                to_close = self._max_size_can_be_closed(pos.quantity, reserved)
-                if to_close != 0:
-                    try:
-                        logger.debug(
-                            f"({self.__class__.__name__}) {s} - closing {to_close} from {pos.quantity} amount (reserved: {reserved})"
-                        )
-                        ctx.trade(s, -pos.quantity)
-                    except Exception as err:
-                        logger.error(f"({self.__class__.__name__}) {s} Error processing closing order: {str(err)}")
 
     def _correct_target_position(self, start_position: float, new_position: float, reserved: float) -> float:
         """

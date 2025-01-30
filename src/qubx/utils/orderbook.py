@@ -1,29 +1,23 @@
-import os, msgspec, gzip, traceback
-import pandas as pd
-import numpy as np
-
+import gzip
+import os
+import traceback
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, List, Dict
-from os.path import join, exists
+from os.path import exists, join
 from pathlib import Path
-from tqdm.auto import tqdm
-from datetime import datetime
+from typing import Any
+
+import msgspec
+import numpy as np
+import pandas as pd
 from numba import njit, types
 from numba.typed import Dict
+from tqdm.auto import tqdm
 
-from qubx import logger, QubxLogConfig, lookup
+from qubx import QubxLogConfig, logger, lookup
 from qubx.core.basics import Instrument
-from qubx.pandaz.utils import srows, scols
-
-
-def count_decimal_places(number: float) -> int:
-    number_str = ("%.10f" % number).strip("0")
-    if "." in number_str:
-        integer_part, decimal_part = number_str.split(".")
-        return len(decimal_part)
-    else:
-        return 0
+from qubx.pandaz.utils import scols, srows
+from qubx.utils.numbers_utils import count_decimal_places
 
 
 @njit
@@ -307,7 +301,7 @@ def snapshots_to_frame(snaps: list) -> pd.DataFrame:
     """
     Convert snapshots to dataframe
     """
-    reindx = lambda s, d: {f"{s}{k}": v for k, v in d.items()}
+    reindx = lambda s, d: {f"{s}{k}": v for k, v in d.items()}  # noqa: E731
     data = {
         snaps[i][0]: (
             reindx("b", dict(snaps[i][1]))
@@ -325,11 +319,11 @@ def read_and_process_orderbook_updates(
     price_bin_pct: float,
     n_levels: int,
     sizes_in_quoted=False,
-    symbols: List[str] | None = None,
+    symbols: list[str] | None = None,
     dates: slice | None = None,
     path_to_store: str | None = None,
     collect_snapshots: bool = True,
-) -> Dict[str, Dict[datetime, pd.DataFrame]]:
+) -> dict[str, dict[datetime, pd.DataFrame]]:
     QubxLogConfig.set_log_level("INFO")
 
     # - preprocess ranges
@@ -397,8 +391,8 @@ def read_and_process_orderbook_updates(
                 day_updates,
                 n_levels,
                 price_bin_pct,
-                instr.min_tick,
-                instr.min_size_step,
+                instr.tick_size,
+                instr.lot_size,
                 sizes_in_quoted=sizes_in_quoted,
                 initial_snapshot=_latest_snapshot,
             )
@@ -418,7 +412,7 @@ def read_and_process_orderbook_updates(
     return symb_snapshots
 
 
-def get_combined_cumulative_snapshot(data: Dict[str, Dict[datetime, pd.DataFrame]], max_levs=1000000) -> pd.DataFrame:
+def get_combined_cumulative_snapshot(data: dict[str, dict[datetime, pd.DataFrame]], max_levs=1000000) -> pd.DataFrame:
     frms = []
     for s, dv in data.items():
         _f = {}
@@ -437,7 +431,7 @@ def get_path_to_snapshots_file(path: str, symbol: str, date: str) -> str:
     return join(_s_path, pd.Timestamp(date).strftime("%Y-%m-%d")) + ".h5"
 
 
-def store_snapshots_to_h5(path: str, data: Dict[str, Dict[str, pd.DataFrame]], p, nl):
+def store_snapshots_to_h5(path: str, data: dict[str, dict[str, pd.DataFrame]], p, nl):
     """
     Store orderbook data to HDF5 files
     """
@@ -449,7 +443,7 @@ def store_snapshots_to_h5(path: str, data: Dict[str, Dict[str, pd.DataFrame]], p
             )
 
 
-def load_snapshots_from_h5(path: str, symbol: str, dates: slice | str, p: float, nl: int) -> Dict[str, pd.DataFrame]:
+def load_snapshots_from_h5(path: str, symbol: str, dates: slice | str, p: float, nl: int) -> dict[str, pd.DataFrame]:
     symbol = symbol.upper()
     if isinstance(dates, slice):
         dates_start = pd.Timestamp(dates.start if dates and dates.start else "1970-01-01")
@@ -467,7 +461,7 @@ def load_snapshots_from_h5(path: str, symbol: str, dates: slice | str, p: float,
     return rs
 
 
-def aggregate_symbol(path: str, symbol: str, p: float, nl: int, reload=False) -> pd.DataFrame:
+def aggregate_symbol(path: str, symbol: str, p: float, nl: int, reload=False) -> pd.DataFrame | None:
     """
     Aggregate orderbook data for a symbol on a daily basis and save to HDF5 file
     """
@@ -489,7 +483,7 @@ def aggregate_symbol(path: str, symbol: str, p: float, nl: int, reload=False) ->
     return result
 
 
-def aggregate_symbols_from_list(path: str, symbols: List[str] | Dict[str, Any], p: float, nl: int, reload=False):
+def aggregate_symbols_from_list(path: str, symbols: list[str] | dict[str, Any], p: float, nl: int, reload=False):
     """
     Aggregate orderbook data for a list of symbols on a daily basis and save to HDF5 file
     """

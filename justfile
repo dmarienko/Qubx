@@ -8,7 +8,11 @@ help:
 
 
 test:
-	poetry run pytest
+	poetry run pytest -m "not integration"
+
+
+test-integration:
+	poetry run pytest -m integration --env=.env.integration
 
 
 build:
@@ -18,9 +22,13 @@ build:
 
 
 dev-install:
-	# - install in dev environment
-	pip install -e . --upgrade
+	poetry lock --no-update || true
+	poetry install
 	
 
 publish: build test
 	@if [ "$(git symbolic-ref --short -q HEAD)" = "main" ]; then rm -rf dist && rm -rf build && poetry build && twine upload dist/*; else echo ">>> Not in master branch !"; fi
+
+
+dev-publish: build
+	@rm -rf dist && rm -rf build && poetry build && twine upload dist/*
