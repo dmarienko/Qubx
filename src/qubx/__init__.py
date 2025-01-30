@@ -1,10 +1,13 @@
+import os
+import sys
 from typing import Callable
-from qubx.utils import set_mpl_theme, runtime_env
-from qubx.utils.misc import install_pyx_recompiler_for_dev
 
+import stackprinter
 from loguru import logger
-import os, sys, stackprinter
+
 from qubx.core.lookups import FeesLookup, GlobalLookup, InstrumentsLookup
+from qubx.utils import runtime_env, set_mpl_theme
+from qubx.utils.misc import install_pyx_recompiler_for_dev
 
 # - TODO: import some main methods from packages
 
@@ -15,7 +18,10 @@ def formatter(record):
     if record["level"].name in {"WARNING", "SNAKY"}:
         fmt = "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - %s" % fmt
 
-    prefix = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [ <level>%s</level> ] " % record["level"].icon
+    prefix = (
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [ <level>%s</level> ] <cyan>({module})</cyan> "
+        % record["level"].icon
+    )
 
     if record["exception"] is not None:
         # stackprinter.set_excepthook(style='darkbg2')
@@ -29,10 +35,9 @@ def formatter(record):
 
 
 class QubxLogConfig:
-
     @staticmethod
     def get_log_level():
-        return os.getenv("QUBX_LOG_LEVEL", "DEBUG")
+        return os.getenv("QUBX_LOG_LEVEL", "WARNING")
 
     @staticmethod
     def set_log_level(level: str):
@@ -64,8 +69,8 @@ lookup = GlobalLookup(InstrumentsLookup(), FeesLookup())
 
 # registering magic for jupyter notebook
 if runtime_env() in ["notebook", "shell"]:
-    from IPython.core.magic import Magics, magics_class, line_magic, line_cell_magic
     from IPython.core.getipython import get_ipython
+    from IPython.core.magic import Magics, line_cell_magic, line_magic, magics_class
 
     @magics_class
     class QubxMagics(Magics):
@@ -107,13 +112,14 @@ if runtime_env() in ["notebook", "shell"]:
             if line:
                 if "dark" in line.lower():
                     set_mpl_theme("dark")
+                    # - temporary workaround for vscode - dark theme not applying to ipywidgets in notebook
+                    # - see https://github.com/microsoft/vscode-jupyter/issues/7161
+                    if runtime_env() == "notebook":
+                        _vscode_clr_trick = """from IPython.display import display, HTML; display(HTML("<style> .cell-output-ipywidget-background { background-color: transparent !important; } :root { --jp-widgets-color: var(--vscode-editor-foreground); --jp-widgets-font-size: var(--vscode-editor-font-size); } .widget-hprogress, .jupyter-widget-hprogress { height: 16px; align-self: center; kj} table.dataframe, .dataframe td, .dataframe tr { border: 1px solid #55554a85; border-collapse: collapse; color: #859548d9 !important; } .dataframe th { border: 1px solid #55554a85; border-collapse: collapse; background-color: #010101 !important; color: #177 !important; } </style>"))"""
+                        exec(_vscode_clr_trick, self.shell.user_ns)
 
                 elif "light" in line.lower():
                     set_mpl_theme("light")
-
-            # install additional plotly helpers
-            # from qube.charting.plot_helpers import install_plotly_helpers
-            # install_plotly_helpers()
 
         def _get_manager(self):
             if self.__manager is None:
@@ -133,7 +139,8 @@ if runtime_env() in ["notebook", "shell"]:
 
             """
             import multiprocessing as m
-            import time, re
+            import re
+            import time
 
             # create ext args
             name = None
@@ -148,7 +155,7 @@ if runtime_env() in ["notebook", "shell"]:
                         return
 
                 ipy = get_ipython()
-                for a in [x for x in re.split("[\ ,;]", line.strip()) if x]:
+                for a in [x for x in re.split(r"[\ ,;]", line.strip()) if x]:
                     ipy.push({a: self._get_manager().Value(None, None)})
 
             # code to run

@@ -1,11 +1,23 @@
+import asyncio
+import concurrent.futures
+import getpass
+import hashlib
 import os
+import re
+import string
+import sys
 import time
-import joblib
-import pandas as pd
+from collections import OrderedDict, defaultdict, deque, namedtuple
+from collections.abc import Callable
+from functools import wraps
+from os.path import abspath, exists, expanduser, relpath
 from pathlib import Path
-from typing import Any, Dict, Set, Union, List
-from collections import OrderedDict, defaultdict, namedtuple
-from os.path import basename, exists, dirname, join, expanduser
+from threading import Lock
+from typing import Any, Awaitable, Union
+
+import joblib
+import numpy as np
+import pandas as pd
 from tqdm.auto import tqdm
 
 
@@ -16,7 +28,7 @@ def version() -> str:
         import importlib_metadata
 
         version = importlib_metadata.version("qubx")
-    except:
+    except:  # noqa: E722
         pass
 
     return version
@@ -66,15 +78,33 @@ def get_local_qubx_folder() -> str:
     return _QUBX_FLDR
 
 
+def get_current_user() -> str:
+    """
+    Get current user's username.
+    """
+    return getpass.getuser()
+
+
+def this_project_root(path: str = ".") -> Path | None:
+    """
+    Tries to find current research project root.
+    This is convenient when need to get relative paths in notebook in research project.
+    """
+    _toml = Path("pyproject.toml")
+    _x = Path(abspath(expanduser(path)))
+    _terminator = str(_x.root)
+    while str(_x) != _terminator:
+        if (_x / _toml).exists():
+            return _x
+        _x = _x.parent
+    return None
+
+
 def add_project_to_system_path(project_folder: str = "~/projects"):
     """
     Add path to projects folder to system python path to be able importing any modules from project
     from test.Models.handy_utils import some_module
     """
-    import sys
-    from os.path import expanduser, relpath
-    from pathlib import Path
-
     # we want to track folders with these files as separate paths
     toml = Path("pyproject.toml")
     src = Path("src")
@@ -83,9 +113,9 @@ def add_project_to_system_path(project_folder: str = "~/projects"):
         prj = Path(relpath(expanduser(project_folder)))
     except ValueError as e:
         # This error can occur on Windows if user folder and python file are on different drives
-        print(f"Qube> Error during get path to projects folder:\n{e}")
+        print(f"Qubx> Error during get path to projects folder:\n{e}")
     else:
-        insert_path_iff = lambda p: (sys.path.insert(0, p.as_posix()) if p.as_posix() not in sys.path else None)
+        insert_path_iff = lambda p: (sys.path.insert(0, p.as_posix()) if p.as_posix() not in sys.path else None)  # noqa: E731
         if prj.exists():
             insert_path_iff(prj)
 
@@ -98,7 +128,22 @@ def add_project_to_system_path(project_folder: str = "~/projects"):
                     else:
                         insert_path_iff(di)
         else:
-            print(f"Qube> Cant find {project_folder} folder for adding to python path !")
+            print(f"Qubx> Cant find {project_folder} folder for adding to python path !")
+
+
+def class_import(name: str):
+    """
+    Import class by its name.
+
+    For example:
+    >>> class_import("qubx.core.data.DataProvider")
+    <class 'qubx.core.data.DataProvider'>
+    """
+    components = name.split(".")
+    clz = components[-1]
+    mod = __import__(".".join(components[:-1]), fromlist=[clz])
+    mod = getattr(mod, clz)
+    return mod
 
 
 def is_localhost(host):
@@ -134,7 +179,7 @@ def logo():
         f"""
 ⠀⠀⡰⡖⠒⠒⢒⢦⠀⠀   
 ⠀⢠⠃⠈⢆⣀⣎⣀⣱⡀  {red("QUBX")} | {cyan("Quantitative Backtesting Environment")} 
-⠀⢳⠒⠒⡞⠚⡄⠀⡰⠁         (c) 2024, ver. {magenta(version().rstrip())}
+⠀⢳⠒⠒⡞⠚⡄⠀⡰⠁         (c) 2025, ver. {magenta(version().rstrip())}
 ⠀⠀⠱⣜⣀⣀⣈⣦⠃⠀⠀⠀ 
         """
     )
@@ -261,9 +306,9 @@ class Stopwatch:
     Stopwatch timer for performance
     """
 
-    starts: Dict[str | None, int] = {}
-    counts: Dict[str | None, int] = defaultdict(lambda: 0)
-    latencies: Dict[str | None, int] = {}
+    starts: dict[str | None, int] = {}
+    counts: dict[str | None, int] = defaultdict(lambda: 0)
+    latencies: dict[str | None, int] = {}
     _current_scope: str | None = None
 
     def __new__(cls):
@@ -348,7 +393,7 @@ class Stopwatch:
         return lats
 
 
-def quotify(sx: Union[str, List[str]], quote="USDT"):
+def quotify(sx: str | list[str], quote="USDT"):
     """
     Make XXX<quote> from anything if that anything doesn't end with <quote>
     """
@@ -359,7 +404,7 @@ def quotify(sx: Union[str, List[str]], quote="USDT"):
     raise ValueError("Can't process input data !")
 
 
-def dequotify(sx: Union[str, List[str]], quote="USDT"):
+def dequotify(sx: str | list[str], quote="USDT"):
     """
     Turns XXX<quote> to XXX (reverse of quotify)
     """
@@ -391,3 +436,106 @@ class ProgressParallel(joblib.Parallel):
             return
         self._pbar.n = self.n_completed_tasks
         self._pbar.refresh()
+
+
+class AsyncThreadLoop:
+    """
+    Helper class to submit coroutines to asyncio loop from separate thread.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop):
+        self.loop = loop
+
+    def submit(self, coro: Awaitable) -> concurrent.futures.Future:
+        return asyncio.run_coroutine_threadsafe(coro, self.loop)
+
+
+def synchronized(func: Callable):
+    """Decorator that ensures only one thread can execute the decorated function at a time."""
+    lock = Lock()
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        with lock:
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
+class TimeLimitedDeque(deque):
+    """
+    A deque that removes elements older than a given time limit.
+    Assumes that elements are inserted in increasing order of time.
+    """
+
+    def __init__(self, time_limit: str, time_key=lambda x: x[0], unit="ns", *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.time_limit = pd.Timedelta(time_limit).to_timedelta64()
+        self.unit = unit
+        self.time_key = lambda x: self._to_datetime64(time_key(x))
+
+    def append(self, item):
+        super().append(item)
+        self._remove_old_elements()
+
+    def __getitem__(self, idx) -> list[Any]:
+        if isinstance(idx, slice) and (isinstance(idx.start, str) or isinstance(idx.stop, str)):
+            start_loc, end_loc = 0, len(self)
+            if idx.start is not None:
+                start = self._to_datetime64(idx.start)
+                while start_loc < len(self) and self.time_key(self[start_loc]) < start:
+                    start_loc += 1
+            if idx.stop is not None:
+                stop = self._to_datetime64(idx.stop)
+                while end_loc > 0 and self.time_key(self[end_loc - 1]) > stop:
+                    end_loc -= 1
+            return list(self)[start_loc:end_loc]
+        else:
+            return super().__getitem__(idx)
+
+    def appendleft(self, item):
+        raise NotImplementedError("appendleft is not supported for TimeLimitedDeque")
+
+    def extendleft(self, items):
+        raise NotImplementedError("extendleft is not supported for TimeLimitedDeque")
+
+    def _remove_old_elements(self):
+        if not self:
+            return
+        current_time = self.time_key(self[-1])
+        while self and (current_time - self.time_key(self[0])) > self.time_limit:
+            self.popleft()
+
+    def _to_datetime64(self, time):
+        return np.datetime64(time, self.unit)
+
+
+__VOWS = "aeiou"
+__CONS = "".join(sorted(set(string.ascii_lowercase) - set(__VOWS)))
+
+
+def generate_name(content: Any, n1, ns=0) -> str:
+    """
+    Generates short unique name for given content.
+
+    >>> print(generate_name("Qubix Trading Platform, (c) 2025", 8))
+    >>> 'Pojituke'
+    """
+    __NV, __NC = len(__VOWS), len(__CONS)
+    hdg = hashlib.sha256(str(content).encode("utf-8")).hexdigest().upper()
+    w = ""
+    for i, x in enumerate(hdg[ns : n1 + ns]):
+        if i % 2 == 0:
+            w += __CONS[int(x, 16) % __NC]
+        else:
+            w += __VOWS[int(x, 16) % __NV]
+    return w[0].upper() + w[1:]
+
+
+def string_shortener(s: str) -> str:
+    """
+    Removes all vovels and squeeze repeating symbols
+    >>> print(string_shortener("QubxAssetManager"))
+    >>> 'QbxAstMngr'
+    """
+    return re.sub(r"(.)\1+", r"\1", re.sub(r"[aeiou]", "", s))

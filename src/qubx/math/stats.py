@@ -26,8 +26,8 @@ def compare_to_norm(xs, xranges=None):
     """
     Compare distribution from xs against normal using estimated mean and std
     """
-    import scipy.stats as stats
     import matplotlib.pyplot as plt
+    import scipy.stats as stats
     import seaborn as sns
 
     _m, _s = np.mean(xs), np.std(xs)
@@ -63,12 +63,35 @@ def kde(array, cut_down=True, bw_method="scott"):
     return gaussian_kde(array, bw_method=bw_method)
 
 
-def hurst(series: np.array, max_lag: int = 20):
+def hurst(series: np.ndarray, max_lag: int = 20) -> float:
     """
-    Simplest Hurst exponent helps test whether the time series is:
-    (1) A Random Walk (H ~ 0.5)
-    (2) Trending (H > 0.5)
-    (3) Mean reverting (H < 0.5)
+    Calculate the Hurst exponent to determine the long-term memory of a time series.
+
+    The Hurst exponent (H) is a measure that helps identify:
+    - Random Walk (H ≈ 0.5): Each step is independent of past values
+    - Trending/Persistent (H > 0.5): Positive values tend to be followed by positive values
+    - Mean Reverting/Anti-persistent (H < 0.5): Positive values tend to be followed by negative values
+
+    The calculation uses the relationship between the range of the data and the time lag,
+    specifically examining how the variance of price differences scales with increasing lags.
+
+    Parameters
+    ----------
+    series : np.ndarray
+        Input time series data (typically price or returns)
+    max_lag : int, optional
+        Maximum lag to consider in calculation, by default 20
+
+    Returns
+    -------
+    float
+        Hurst exponent value between 0 and 1
+
+    Notes
+    -----
+    - Values very close to 0 or 1 may indicate issues with the data
+    - Requires sufficient data points for reliable estimation
+    - Implementation uses variance scaling method
     """
     tau, lagvec = [], []
 

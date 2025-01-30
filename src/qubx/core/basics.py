@@ -1,27 +1,59 @@
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+from enum import StrEnum
+from queue import Empty, Queue
+from threading import Event, Lock
+from typing import Any, Literal, Optional, TypeAlias, Union
+
 import numpy as np
 import pandas as pd
-from dataclasses import dataclass, field
 
-from threading import Event, Lock
-from queue import Queue, Empty
-from enum import StrEnum
-
-from qubx import logger
 from qubx.core.exceptions import QueueTimeout
-from qubx.utils.misc import Stopwatch
-from qubx.core.series import Quote, Trade, time_as_nsec
-from qubx.core.utils import prec_ceil, prec_floor
-
+from qubx.core.series import Bar, OrderBook, Quote, Trade, time_as_nsec
+from qubx.core.utils import prec_ceil, prec_floor, time_delta_to_str
+from qubx.utils.misc import Stopwatch, version
+from qubx.utils.ntp import start_ntp_thread, time_now
 
 dt_64 = np.datetime64
 td_64 = np.timedelta64
-ns_to_dt_64 = lambda ns: np.datetime64(ns, "ns")
 
 OPTION_FILL_AT_SIGNAL_PRICE = "fill_at_signal_price"
 
 SW = Stopwatch()
+
+
+@dataclass
+class Liquidation:
+    time: dt_64
+    quantity: float
+    price: float
+    side: int
+
+
+@dataclass
+class FundingRate:
+    time: dt_64
+    rate: float
+    interval: str
+    next_funding_time: dt_64
+    mark_price: float | None = None
+    index_price: float | None = None
+
+
+@dataclass
+class TimestampedDict:
+    """
+    Generic class for representing arbitrary data (as dict) with timestamp
+
+    TODO: probably we need to have generic interface for classes like Quote, Bar, .... etc
+    """
+
+    time: dt_64
+    data: dict[str, Any]
+
+
+# Alias for timestamped data types used in Qubx
+Timestamped: TypeAlias = Quote | Trade | Bar | OrderBook | TimestampedDict | FundingRate | Liquidation
 
 
 @dataclass
@@ -51,9 +83,23 @@ class Signal:
         _s = f" stop: { self.stop }" if self.stop is not None else ""
         _t = f" take: { self.take }" if self.take is not None else ""
         _r = f" {self.reference_price:.2f}" if self.reference_price is not None else ""
-        _c = f" [{self.comment}]" if self.take is not None else ""
-        return (
-            f"{self.group}{_r} {self.signal:+f} {self.instrument.symbol}{_p}{_s}{_t} on {self.instrument.exchange}{_c}"
+        _c = f" ({self.comment})" if self.comment else ""
+        return f"{self.group}{_r} {self.signal:+f} {self.instrument}{_p}{_s}{_t}{_c}"
+
+    def copy(self) -> "Signal":
+        """
+        Return a copy of the original signal
+        """
+        return Signal(
+            self.instrument,
+            self.signal,
+            self.price,
+            self.stop,
+            self.take,
+            self.reference_price,
+            self.group,
+            self.comment,
+            dict(self.options),
         )
 
 
@@ -107,59 +153,63 @@ class TargetPosition:
         return self._is_service
 
     def __str__(self) -> str:
-        return f"{'::: INFORMATIVE ::: ' if self.is_service else ''}Target for {self.signal} -> {self.target_position_size} at {self.time}"
+        return f"{'::: INFORMATIVE ::: ' if self.is_service else ''}Target {self.target_position_size:+f} for {self.signal}"
 
 
-@dataclass
-class FuturesInfo:
-    contract_type: Optional[str] = None  # contract type
-    delivery_date: Optional[datetime] = None  # delivery date
-    onboard_date: Optional[datetime] = None  # futures contract size
-    contract_size: float = 1.0  # futures contract size
-    maint_margin: float = 0.0  # maintanance margin
-    required_margin: float = 0.0  # required margin
-    liquidation_fee: float = 0.0  # liquidation cost
+class AssetType(StrEnum):
+    CRYPTO = "CRYPTO"
+    STOCK = "STOCK"
+    FX = "FX"
+    INDEX = "INDEX"
 
-    def __str__(self) -> str:
-        return f"{self.contract_type} ({self.contract_size}) {self.onboard_date.isoformat()} -> {self.delivery_date.isoformat()}"
+
+class MarketType(StrEnum):
+    SPOT = "SPOT"
+    MARGIN = "MARGIN"
+    SWAP = "SWAP"
+    FUTURE = "FUTURE"
+    OPTION = "OPTION"
 
 
 @dataclass
 class Instrument:
-    symbol: str  # instrument's name
-    market_type: str  # market type (CRYPTO, STOCK, FX, etc)
-    exchange: str  # exchange id
-    base: str  # base symbol
-    quote: str  # quote symbol
-    margin_symbol: str  # margin asset
-    min_tick: float = 0.0  # tick size - minimal price change
-    min_size_step: float = 0.0  # minimal position change step size
-    min_size: float = 0.0  # minimal allowed position size
-
-    # - futures section
-    futures_info: Optional[FuturesInfo] = None
-
-    _aux_instrument: Optional["Instrument"] = None  # instrument used for conversion to main asset basis
-    #  | let's say we trade BTC/ETH with main account in USDT
-    #  | so we need to use ETH/USDT for convert profits/losses to USDT
-    _tick_precision: int = field(repr=False, default=-1)  # type: check
-    _size_precision: int = field(repr=False, default=-1)
-
-    @property
-    def is_futures(self) -> bool:
-        return self.futures_info is not None
+    symbol: str
+    asset_type: AssetType
+    market_type: MarketType
+    exchange: str
+    base: str
+    quote: str
+    settle: str
+    exchange_symbol: str  # symbol used by the exchange
+    tick_size: float  # minimal price step
+    lot_size: float  # minimal position size
+    min_size: float  # minimal allowed position size
+    min_notional: float = 0.0  # minimal notional value
+    initial_margin: float = 0.0  # initial margin
+    maint_margin: float = 0.0  # maintenance margin
+    liquidation_fee: float = 0.0  # liquidation fee
+    contract_size: float = 1.0  # contract size
+    onboard_date: datetime | None = None
+    delivery_date: datetime | None = None
 
     @property
     def price_precision(self):
-        if self._tick_precision < 0:
-            self._tick_precision = int(abs(np.log10(self.min_tick)))
-        return self._tick_precision
+        if not hasattr(self, "_price_precision"):
+            self._price_precision = int(abs(np.log10(self.tick_size)))
+        return self._price_precision
 
     @property
     def size_precision(self):
-        if self._size_precision < 0:
-            self._size_precision = int(abs(np.log10(self.min_size_step)))
+        if not hasattr(self, "_size_precision"):
+            self._size_precision = int(abs(np.log10(self.lot_size)))
         return self._size_precision
+
+    def is_futures(self) -> bool:
+        return self.market_type in [MarketType.FUTURE, MarketType.SWAP]
+
+    def is_spot(self) -> bool:
+        # TODO: handle margin better
+        return self.market_type in [MarketType.SPOT, MarketType.MARGIN]
 
     def round_size_down(self, size: float) -> float:
         """
@@ -219,32 +269,19 @@ class Instrument:
             options=(options or {}) | kwargs,
         )
 
-    @property
-    def id(self) -> str:
-        # TODO: maybe change this later to include exchange and market type
-        return self.symbol
-
     def __hash__(self) -> int:
         return hash((self.symbol, self.exchange, self.market_type))
 
     def __eq__(self, other: Any) -> bool:
-        if other is None:
+        if other is None or not isinstance(other, Instrument):
             return False
-        if type(other) != type(self):
-            return False
-        return self.symbol == other.symbol and self.exchange == other.exchange and self.market_type == other.market_type
+        return str(self) == str(other)
 
     def __str__(self) -> str:
-        return f"{self.exchange}:{self.market_type}:{self.symbol}"
+        return ":".join([self.exchange, self.market_type, self.symbol])
 
     def __repr__(self) -> str:
         return self.__str__()
-
-
-@dataclass
-class BatchEvent:
-    time: dt_64 | pd.Timestamp
-    data: list[Any]
 
 
 class TransactionCostsCalculator:
@@ -311,18 +348,28 @@ class MarketEvent:
 
     time: dt_64
     type: str
-    instrument: Instrument
+    instrument: Instrument | None
     data: Any
     is_trigger: bool = False
 
+    def to_trigger(self) -> TriggerEvent:
+        return TriggerEvent(self.time, self.type, self.instrument, self.data)
+
     def __repr__(self):
-        return f"MarketEvent(time={self.time}, type={self.type}, instrument={self.instrument}, data={self.data})"
+        _items = [
+            f"time={self.time}",
+            f"type={self.type}",
+        ]
+        if self.instrument is not None:
+            _items.append(f"instrument={self.instrument}")
+        _items.append(f"data={self.data}")
+        return f"MarketEvent({', '.join(_items)})"
 
 
 @dataclass
 class Deal:
-    id: str | int  # trade id
-    order_id: str | int  # order's id
+    id: str  # trade id
+    order_id: str  # order's id
     time: dt_64  # time of trade
     amount: float  # signed traded amount: positive for buy and negative for selling
     price: float
@@ -334,6 +381,14 @@ class Deal:
 OrderType = Literal["MARKET", "LIMIT", "STOP_MARKET", "STOP_LIMIT"]
 OrderSide = Literal["BUY", "SELL"]
 OrderStatus = Literal["OPEN", "CLOSED", "CANCELED", "NEW"]
+
+
+@dataclass
+class OrderRequest:
+    instrument: Instrument
+    quantity: float
+    price: float | None = None
+    options: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -352,11 +407,38 @@ class Order:
     options: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
-        return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.instrument.symbol} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
+        return f"[{self.id}] {self.type} {self.side} {self.quantity} of {self.instrument} {('@ ' + str(self.price)) if self.price > 0 else ''} ({self.time_in_force}) [{self.status}]"
+
+
+@dataclass
+class AssetBalance:
+    free: float = 0.0
+    locked: float = 0.0
+    total: float = 0.0
+
+    def __str__(self) -> str:
+        return f"free={self.free:.2f} locked={self.locked:.2f} total={self.total:.2f}"
+
+    def lock(self, lock_amount: float) -> None:
+        self.locked += lock_amount
+        self.free = self.total - self.locked
+
+    def __add__(self, amount: float) -> "AssetBalance":
+        self.total += amount
+        self.free += amount
+        return self
+
+    def __sub__(self, amount: float) -> "AssetBalance":
+        self.total -= amount
+        self.free -= amount
+        return self
+
+
+MARKET_TYPE = Literal["SPOT", "MARGIN", "SWAP", "FUTURES", "OPTION"]
 
 
 class Position:
-    instrument: Instrument  # instrument for this poisition
+    instrument: Instrument  # instrument for this position
     quantity: float = 0.0  # quantity positive for long and negative for short
     pnl: float = 0.0  # total cumulative position PnL in portfolio basic funds currency
     r_pnl: float = 0.0  # total cumulative position PnL in portfolio basic funds currency
@@ -366,27 +448,25 @@ class Position:
     position_avg_price_funds: float = 0.0  # average position price
     commissions: float = 0.0  # cumulative commissions paid for this position
 
-    last_update_time: int = np.nan  # when price updated or position changed
+    last_update_time: int = np.nan  # when price updated or position changed    # type: ignore
     last_update_price: float = np.nan  # last update price (actually instrument's price) in quoted currency
     last_update_conversion_rate: float = np.nan  # last update conversion rate
 
+    # margin requirements
+    maint_margin: float = 0.0
+
     # - helpers for position processing
-    _formatter: str
-    _prc_formatter: str
     _qty_multiplier: float = 1.0
     __pos_incr_qty: float = 0
 
-    def __init__(self, instrument: Instrument, quantity=0.0, pos_average_price=0.0, r_pnl=0.0) -> None:
+    def __init__(
+        self,
+        instrument: Instrument,
+        quantity: float = 0.0,
+        pos_average_price: float = 0.0,
+        r_pnl: float = 0.0,
+    ) -> None:
         self.instrument = instrument
-
-        # - size/price formaters
-        #                 time         [symbol]                                                        qty
-        self._formatter = f"%s [{instrument.exchange}:{instrument.symbol}] %{instrument.size_precision+8}.{instrument.size_precision}f"
-        #                           pos_avg_px                 pnl  | mkt_price mkt_value
-        self._formatter += f"%10.{instrument.price_precision}f %+10.4f | %s  %10.2f"
-        self._prc_formatter = f"%.{instrument.price_precision}f"
-        if instrument.is_futures:
-            self._qty_multiplier = instrument.futures_info.contract_size  # type: ignore
 
         self.reset()
         if quantity != 0.0 and pos_average_price > 0.0:
@@ -394,7 +474,7 @@ class Position:
             self.position_avg_price = pos_average_price
             self.r_pnl = r_pnl
 
-    def reset(self):
+    def reset(self) -> None:
         """
         Reset position to zero
         """
@@ -409,7 +489,28 @@ class Position:
         self.last_update_time = np.nan  # type: ignore
         self.last_update_price = np.nan
         self.last_update_conversion_rate = np.nan
+        self.maint_margin = 0.0
         self.__pos_incr_qty = 0
+        self._qty_multiplier = self.instrument.contract_size
+
+    def reset_by_position(self, pos: "Position") -> None:
+        self.quantity = pos.quantity
+        self.pnl = pos.pnl
+        self.r_pnl = pos.r_pnl
+        self.market_value = pos.market_value
+        self.market_value_funds = pos.market_value_funds
+        self.position_avg_price = pos.position_avg_price
+        self.position_avg_price_funds = pos.position_avg_price_funds
+        self.commissions = pos.commissions
+        self.last_update_time = pos.last_update_time
+        self.last_update_price = pos.last_update_price
+        self.last_update_conversion_rate = pos.last_update_conversion_rate
+        self.maint_margin = pos.maint_margin
+        self.__pos_incr_qty = pos.__pos_incr_qty
+
+    @property
+    def notional_value(self) -> float:
+        return self.quantity * self.last_update_price / self.last_update_conversion_rate
 
     def _price(self, update: Quote | Trade) -> float:
         if isinstance(update, Quote):
@@ -455,7 +556,7 @@ class Position:
                 self.__pos_incr_qty -= _abs_qty_close
 
                 # - reset average price to 0 if smaller than minimal price change to avoid cumulative error
-                if abs(quantity) < self.instrument.min_size_step:
+                if abs(quantity) < self.instrument.lot_size:
                     quantity = 0.0
                     self.position_avg_price = 0.0
                     self.__pos_incr_qty = 0
@@ -507,19 +608,35 @@ class Position:
         self.last_update_conversion_rate = conversion_rate
 
         if not np.isnan(price):
-            self.pnl = self.quantity * (price - self.position_avg_price) / conversion_rate + self.r_pnl
-            self.market_value = self.quantity * self.last_update_price * self._qty_multiplier
+            u_pnl = self.unrealized_pnl()
+            self.pnl = u_pnl + self.r_pnl
+            if self.instrument.is_futures():
+                # for derivatives market value of the position is the current unrealized PnL
+                self.market_value = u_pnl
+            else:
+                # for spot: market value is the current value of the position
+                # TODO: implement market value calculation for margin
+                self.market_value = self.quantity * self.last_update_price * self._qty_multiplier
 
             # calculate mkt value in funded currency
             self.market_value_funds = self.market_value / conversion_rate
+
+            # - update margin requirements
+            self._update_maint_margin()
+
         return self.pnl
 
     def total_pnl(self) -> float:
         # TODO: account for commissions
-        pnl = self.r_pnl
-        if not np.isnan(self.last_update_price):  # type: ignore
-            pnl += self.quantity * (self.last_update_price - self.position_avg_price) / self.last_update_conversion_rate  # type: ignore
-        return pnl
+        return self.r_pnl + self.unrealized_pnl()
+
+    def unrealized_pnl(self) -> float:
+        if not np.isnan(self.last_update_price):
+            return self.quantity * (self.last_update_price - self.position_avg_price) / self.last_update_conversion_rate  # type: ignore
+        return 0.0
+
+    def is_open(self) -> bool:
+        return abs(self.quantity) > self.instrument.min_size
 
     def get_amount_released_funds_after_closing(self, to_remain: float = 0.0) -> float:
         """
@@ -541,15 +658,26 @@ class Position:
         )
 
     def __str__(self):
-        _mkt_price = (self._prc_formatter % self.last_update_price) if self.last_update_price else "---"
-        return self._formatter % (
-            Position._t2s(self.last_update_time),
-            self.quantity,
-            self.position_avg_price_funds,
-            self.pnl,
-            _mkt_price,
-            self.market_value_funds,
+        return " ".join(
+            [
+                f"{self._t2s(self.last_update_time)}",
+                f"[{self.instrument}]",
+                f"qty={self.quantity:.{self.instrument.size_precision}f}",
+                f"entryPrice={self.position_avg_price:.{self.instrument.price_precision}f}",
+                f"price={self.last_update_price:.{self.instrument.price_precision}f}",
+                f"pnl={self.unrealized_pnl():.2f}",
+                f"value={self.market_value_funds:.2f}",
+            ]
         )
+
+    def __repr__(self):
+        return self.__str__()
+
+    def _update_maint_margin(self) -> None:
+        if self.instrument.maint_margin:
+            self.maint_margin = (
+                self.instrument.maint_margin * self._qty_multiplier * abs(self.quantity) * self.last_update_price
+            )
 
 
 class CtrlChannel:
@@ -562,7 +690,7 @@ class CtrlChannel:
     name: str
     lock: Lock
 
-    def __init__(self, name: str, sentinel=(None, None, None)):
+    def __init__(self, name: str, sentinel=(None, None, None, None)):
         self.name = name
         self.control = Event()
         self.lock = Lock()
@@ -592,40 +720,6 @@ class CtrlChannel:
             raise QueueTimeout(f"Timeout waiting for data on {self.name} channel")
 
 
-class SimulatedCtrlChannel(CtrlChannel):
-    """
-    Simulated communication channel. Here we don't use queue but it invokes callback directly
-    """
-
-    _callback: Callable[[Tuple], bool]
-
-    def register(self, callback):
-        self._callback = callback
-
-    def send(self, data):
-        # - when data is sent, invoke callback
-        return self._callback.process_data(*data)
-
-    def receive(self, timeout: int | None = None) -> Any:
-        raise ValueError("This method should not be called in a simulated environment.")
-
-    def stop(self):
-        self.control.clear()
-
-    def start(self):
-        self.control.set()
-
-
-class IComminucationManager:
-    databus: CtrlChannel
-
-    def get_communication_channel(self) -> CtrlChannel:
-        return self.databus
-
-    def set_communication_channel(self, channel: CtrlChannel):
-        self.databus = channel
-
-
 class ITimeProvider:
     """
     Generic interface for providing current time
@@ -638,15 +732,24 @@ class ITimeProvider:
         ...
 
 
-class SubscriptionType(StrEnum):
-    """Subscription type constants."""
+class DataType(StrEnum):
+    """
+    Data type constants. Used for specifying the type of data and can be used for subscription to.
+    Special value `DataType.ALL` can be used to subscribe to all available data types
+    that are currently in use by the broker for other instruments.
+    """
 
+    ALL = "__all__"
+    NONE = "__none__"
     QUOTE = "quote"
     TRADE = "trade"
     OHLC = "ohlc"
     ORDERBOOK = "orderbook"
     LIQUIDATION = "liquidation"
     FUNDING_RATE = "funding_rate"
+    OHLC_QUOTES = "ohlc_quotes"  # when we want to emulate quotes from OHLC data
+    OHLC_TRADES = "ohlc_trades"  # when we want to emulate trades from OHLC data
+    RECORD = "record"  # arbitrary timestamped data (actually liquidation and funding rates fall into this type)
 
     def __repr__(self) -> str:
         return self.value
@@ -654,51 +757,94 @@ class SubscriptionType(StrEnum):
     def __str__(self) -> str:
         return self.value
 
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, DataType):
+            return self.value == other.value
+        return self.value == DataType.from_str(other)[0].value
 
-class TradingSessionResult:
-    id: int
-    name: str
-    start: str | pd.Timestamp
-    stop: str | pd.Timestamp
-    exchange: str
-    instruments: List[Instrument]
-    capital: float
-    leverage: float
-    base_currency: str
-    commissions: str
-    portfolio_log: pd.DataFrame
-    executions_log: pd.DataFrame
-    signals_log: pd.DataFrame
-    is_simulation: bool
+    def __hash__(self) -> int:
+        return hash(self.value)
 
-    def __init__(
-        self,
-        id: int,
-        name: str,
-        start: str | pd.Timestamp,
-        stop: str | pd.Timestamp,
-        exchange: str,
-        instruments: List[Instrument],
-        capital: float,
-        leverage: float,
-        base_currency: str,
-        commissions: str,
-        portfolio_log: pd.DataFrame,
-        executions_log: pd.DataFrame,
-        signals_log: pd.DataFrame,
-        is_simulation=True,
-    ):
-        self.id = id
-        self.name = name
-        self.start = start
-        self.stop = stop
-        self.exchange = exchange
-        self.instruments = instruments
-        self.capital = capital
-        self.leverage = leverage
-        self.base_currency = base_currency
-        self.commissions = commissions
-        self.portfolio_log = portfolio_log
-        self.executions_log = executions_log
-        self.signals_log = signals_log
-        self.is_simulation = is_simulation
+    def __getitem__(self, *args, **kwargs) -> str:
+        match self:
+            case DataType.OHLC | DataType.OHLC_QUOTES:
+                tf = args[0] if args else kwargs.get("timeframe")
+                if not tf:
+                    raise ValueError("Timeframe is not provided for OHLC subscription")
+                return f"{self.value}({tf})"
+            case DataType.ORDERBOOK:
+                if len(args) == 2:
+                    tick_size_pct, depth = args
+                elif len(args) > 0:
+                    raise ValueError(f"Invalid arguments for ORDERBOOK subscription: {args}")
+                else:
+                    tick_size_pct = kwargs.get("tick_size_pct", 0.01)
+                    depth = kwargs.get("depth", 200)
+                return f"{self.value}({tick_size_pct}, {depth})"
+            case _:
+                return self.value
+
+    @staticmethod
+    def from_str(value: Union[str, "DataType"]) -> tuple["DataType", dict[str, Any]]:
+        """
+        Parse subscription type from string.
+        Returns: (subtype, params)
+
+        Example:
+        >>> Subtype.from_str("ohlc(1Min)")
+        (Subtype.OHLC, {"timeframe": "1Min"})
+
+        >>> Subtype.from_str("orderbook(0.01, 100)")
+        (Subtype.ORDERBOOK, {"tick_size_pct": 0.01, "depth": 100})
+
+        >>> Subtype.from_str("quote")
+        (Subtype.QUOTE, {})
+        """
+        if isinstance(value, DataType):
+            return value, {}
+        try:
+            _value = value.lower()
+            _has_params = DataType._str_has_params(value)
+            if not _has_params and value.upper() not in DataType.__members__:
+                return DataType.NONE, {}
+            elif not _has_params:
+                return DataType(_value), {}
+            else:
+                type_name, params_str = value.split("(", 1)
+                params = [p.strip() for p in params_str.rstrip(")").split(",")]
+                match type_name.lower():
+                    case DataType.OHLC.value:
+                        return DataType.OHLC, {"timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())}
+
+                    case DataType.OHLC_QUOTES.value:
+                        return DataType.OHLC_QUOTES, {
+                            "timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())
+                        }
+
+                    case DataType.OHLC_TRADES.value:
+                        return DataType.OHLC_TRADES, {
+                            "timeframe": time_delta_to_str(pd.Timedelta(params[0]).asm8.item())
+                        }
+
+                    case DataType.ORDERBOOK.value:
+                        return DataType.ORDERBOOK, {"tick_size_pct": float(params[0]), "depth": int(params[1])}
+
+                    case _:
+                        return DataType.NONE, {}
+        except IndexError:
+            raise ValueError(f"Invalid subscription type: {value}")
+
+    @staticmethod
+    def _str_has_params(value: str) -> bool:
+        return "(" in value
+
+
+class LiveTimeProvider(ITimeProvider):
+    def __init__(self):
+        self._start_ntp_thread()
+
+    def time(self) -> dt_64:
+        return time_now()
+
+    def _start_ntp_thread(self):
+        start_ntp_thread()

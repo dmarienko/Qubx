@@ -4,6 +4,7 @@ cimport numpy as np
 from cython cimport abs
 from typing import Union
 from qubx.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
+from qubx.utils.time import infer_series_frequency
 
 
 cdef extern from "math.h":
@@ -950,6 +951,18 @@ cdef class OHLCV(TimeSeries):
         })
         df.index.name = 'timestamp'
         return df
+
+    @staticmethod
+    def from_dataframe(object df_p, str name="ohlc"):
+        if not isinstance(df_p, pd.DataFrame):
+            ValueError(f"Input must be a pandas DataFrame, got {type(df_p).__name__}")
+
+        _ohlc = OHLCV(name, infer_series_frequency(df_p).item())
+        for t in df_p.itertuples():
+            _ohlc.update_by_bar(
+                t.Index.asm8, t.open, t.high, t.low, t.close, getattr(t, "volume", 0.0), getattr(t, "taker_buy_volume", 0.0)
+            )
+        return _ohlc
 
     def to_records(self) -> dict:
         ts = [np.datetime64(t, 'ns') for t in self.times[::-1]]

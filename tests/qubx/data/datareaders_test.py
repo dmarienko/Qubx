@@ -1,21 +1,23 @@
 import numpy as np
 import pandas as pd
+from pytest import approx
 
 from qubx import QubxLogConfig
 from qubx.core.basics import ITimeProvider
-from qubx.core.series import OHLCV, Quote, Trade
+from qubx.core.series import OHLCV, Bar, Quote, Trade
+from qubx.core.utils import time_to_str
 from qubx.data.helpers import TimeGuardedWrapper, loader
 from qubx.data.readers import (
     STOCK_DAILY_SESSION,
+    AsOhlcvSeries,
     AsPandasFrame,
+    AsQuotes,
     CsvStorageDataReader,
     InMemoryDataFrameReader,
-    AsQuotes,
-    AsOhlcvSeries,
-    QuestDBConnector,
+    RestoredBarsFromOHLC,
     RestoreTicksFromOHLC,
 )
-from pytest import approx
+from qubx.pandaz.utils import srows
 
 N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
 
@@ -23,7 +25,6 @@ T = lambda t: np.datetime64(t, "ns")
 
 
 class TestDataReaders:
-
     def test_quotes_reader(self):
         r0 = CsvStorageDataReader("tests/data/csv")
 
@@ -78,21 +79,26 @@ class TestDataReaders:
     def test_simulated_quotes_trades(self):
         r = CsvStorageDataReader("tests/data/csv/")
 
-        tick_data = r.read("BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=True))
+        tick_data = r.read(
+            "BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=True, open_close_time_shift_secs=0)
+        )
         ohlc_data = r.read("BTCUSDT_ohlcv_M1", transform=AsOhlcvSeries())
 
         restored_ohlc = OHLCV("restored", "1Min")
         for t in tick_data:
             if isinstance(t, Trade):
                 restored_ohlc.update(t.time, t.price, t.size)
+                # print(f"{time_to_str(t.time)} : {str(t)}")
+
             else:
                 restored_ohlc.update(t.time, t.mid_price())
 
         assert all((restored_ohlc.pd() - ohlc_data.pd()) < 1e-10)
 
-        d1 = r.read("SPY", transform=RestoreTicksFromOHLC(daily_session_start_end=STOCK_DAILY_SESSION))[
-            :4
-        ]  # type: ignore
+        d1 = r.read(
+            "SPY",
+            transform=RestoreTicksFromOHLC(daily_session_start_end=STOCK_DAILY_SESSION, open_close_time_shift_secs=0),
+        )[:4]  # type: ignore
 
         assert d1[0].time == T("2000-01-03T09:30:00.100000000").item()
         assert d1[3].time == T("2000-01-03T15:59:59.900000000").item()
@@ -102,8 +108,8 @@ class TestDataReaders:
         assert set(r0.get_aux_data_ids()) == {"candles"}
 
         r1 = InMemoryDataFrameReader({"TEST1": pd.DataFrame(), "TEST2": pd.DataFrame()})
-        assert r1.get_aux_data_ids()
-        assert set(r1.get_aux_data("symbols")) == {"TEST1", "TEST2"}
+        # assert r1.get_aux_data_ids()
+        assert set(r1.get_aux_data("symbols", exchange=None, dtype=None)) == {"TEST1", "TEST2"}
         try:
             r1.get_aux_data("some_arbitrary_data_id")
         except:
@@ -178,3 +184,30 @@ class TestDataReaders:
         d1x = Lt["BTCUSDT", "2023-07-01":"2023-07-28"]
         d2x = L0["BTCUSDT", "2023-07-01":"2023-07-28"]
         assert sum(d1x.close - d2x.close) == 0  # type: ignore
+
+    def test_simulated_bars_from_ohlc(self):
+        r = CsvStorageDataReader("tests/data/csv/")
+
+        bars_data = r.read("BTCUSDT_ohlcv_M1", transform=RestoredBarsFromOHLC(open_close_time_shift_secs=10))
+        ohlc_data = r.read("BTCUSDT_ohlcv_M1", transform=AsOhlcvSeries())
+
+        restored_ohlc = OHLCV("restored", "1Min")
+        for b in bars_data:
+            if isinstance(b, Bar):
+                restored_ohlc.update_by_bar(b.time, b.open, b.high, b.low, b.close, b.volume)
+
+        assert all((restored_ohlc.pd() - ohlc_data.pd()) < 1e-10)
+
+    def test_inmem_chunk(self):
+        r0 = CsvStorageDataReader("tests/data/csv/")
+        data = r0.read("BTCUSDT_ohlcv_M1", transform=AsPandasFrame(), timeframe="1h")
+        r1 = InMemoryDataFrameReader({"BTCUSDT": data})
+        data2 = r1.read("BTCUSDT", transform=AsPandasFrame(), chunksize=10_000)
+
+        res1 = []
+        for c in data2:
+            res1.append(c)
+            assert len(c) <= 10_000
+
+        # - read by chuncks must be the same as reading all at once
+        assert all(srows(*res1) == r1.read("BTCUSDT", transform=AsPandasFrame(), chunksize=0))

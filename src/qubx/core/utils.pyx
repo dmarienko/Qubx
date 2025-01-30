@@ -28,7 +28,7 @@ cpdef str time_delta_to_str(long long d):
     if days > 0:
         r += '%dD' % days
     if hours > 0:
-        r += '%dH' % hours
+        r += '%dh' % hours
     if minutes > 0:
         r += '%dMin' % minutes
     if seconds > 0:

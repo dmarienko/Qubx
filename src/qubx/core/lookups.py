@@ -1,14 +1,18 @@
-import glob, re
-import json, os, dataclasses
-from datetime import datetime
-from typing import Dict, List, Optional
 import configparser
+import dataclasses
+import glob
+import json
+import os
+import re
+from datetime import datetime
+from pathlib import Path
+
 import stackprinter
 
-from qubx.core.basics import Instrument, FuturesInfo, TransactionCostsCalculator, ZERO_COSTS
-from qubx.utils.marketdata.binance import get_binance_symbol_info_for_type
 from qubx import logger
-from qubx.utils.misc import makedirs, get_local_qubx_folder
+from qubx.core.basics import ZERO_COSTS, AssetType, Instrument, MarketType, TransactionCostsCalculator
+from qubx.utils.marketdata.dukas import SAMPLE_INSTRUMENTS
+from qubx.utils.misc import get_local_qubx_folder, makedirs
 
 _DEF_INSTRUMENTS_FOLDER = "instruments"
 _DEF_FEES_FOLDER = "fees"
@@ -24,29 +28,43 @@ class _InstrumentEncoder(json.JSONEncoder):
 
 
 class _InstrumentDecoder(json.JSONDecoder):
-    def _preprocess(d, ks):
-        fi = d.get(ks)
-        _preproc = lambda x: x[: x.find(".")] if x.endswith("Z") else x
-        if fi:
-            fi["delivery_date"] = datetime.strptime(
-                _preproc(fi.get("delivery_date", "5000-01-01T00:00:00")), "%Y-%m-%dT%H:%M:%S"
-            )
-            fi["onboard_date"] = datetime.strptime(
-                _preproc(fi.get("onboard_date", "1970-01-01T00:00:00")), "%Y-%m-%dT%H:%M:%S"
-            )
-        return d | {ks: FuturesInfo(**fi) if fi else None}
-
     def decode(self, json_string):
         obj = super(_InstrumentDecoder, self).decode(json_string)
         if isinstance(obj, dict):
-            return Instrument(**_InstrumentDecoder._preprocess(obj, "futures_info"))
+            # Convert delivery_date and onboard_date strings to datetime
+            delivery_date = obj.get("delivery_date")
+            onboard_date = obj.get("onboard_date")
+            if delivery_date:
+                obj["delivery_date"] = datetime.strptime(delivery_date.split(".")[0], "%Y-%m-%dT%H:%M:%S")
+            if onboard_date:
+                obj["onboard_date"] = datetime.strptime(onboard_date.split(".")[0], "%Y-%m-%dT%H:%M:%S")
+            return Instrument(
+                symbol=obj["symbol"],
+                asset_type=AssetType[obj["asset_type"]],
+                market_type=MarketType[obj["market_type"]],
+                exchange=obj["exchange"],
+                base=obj["base"],
+                quote=obj["quote"],
+                settle=obj["settle"],
+                exchange_symbol=obj.get("exchange_symbol", obj["symbol"]),
+                tick_size=float(obj["tick_size"]),
+                lot_size=float(obj["lot_size"]),
+                min_size=float(obj["min_size"]),
+                min_notional=float(obj.get("min_notional", 0.0)),
+                initial_margin=float(obj.get("initial_margin", 0.0)),
+                maint_margin=float(obj.get("maint_margin", 0.0)),
+                liquidation_fee=float(obj.get("liquidation_fee", 0.0)),
+                contract_size=float(obj.get("contract_size", 1.0)),
+                onboard_date=obj.get("onboard_date"),
+                delivery_date=obj.get("delivery_date"),
+            )
         elif isinstance(obj, list):
-            return [Instrument(**_InstrumentDecoder._preprocess(o, "futures_info")) for o in obj]
+            return [self.decode(json.dumps(item)) for item in obj]
         return obj
 
 
 class InstrumentsLookup:
-    _lookup: Dict[str, Instrument]
+    _lookup: dict[str, Instrument]
     _path: str
 
     def __init__(self, path: str = makedirs(get_local_qubx_folder(), _DEF_INSTRUMENTS_FOLDER)) -> None:
@@ -61,7 +79,7 @@ class InstrumentsLookup:
         for fs in glob.glob(self._path + "/*.json"):
             try:
                 with open(fs, "r") as f:
-                    instrs = json.load(f, cls=_InstrumentDecoder)
+                    instrs: list[Instrument] = json.load(f, cls=_InstrumentDecoder)
                     for i in instrs:
                         self._lookup[f"{i.exchange}:{i.symbol}"] = i
                     data_exists = True
@@ -71,19 +89,19 @@ class InstrumentsLookup:
 
         return data_exists
 
-    def find(self, exchange: str, base: str, quote: str, margin: Optional[str] = None) -> Optional[Instrument]:
+    def find(self, exchange: str, base: str, quote: str, settle: str | None = None) -> Instrument | None:
         for i in self._lookup.values():
             if i.exchange == exchange and (
                 (i.base == base and i.quote == quote) or (i.base == quote and i.quote == base)
             ):
-                if margin is not None and i.margin_symbol is not None:
-                    if i.margin_symbol == margin:
+                if settle is not None and i.settle is not None:
+                    if i.settle == settle:
                         return i
                 else:
                     return i
         return None
 
-    def find_symbol(self, exchange: str, symbol: str) -> Optional[Instrument]:
+    def find_symbol(self, exchange: str, symbol: str) -> Instrument | None:
         for i in self._lookup.values():
             if (i.exchange == exchange) and (i.symbol == symbol):
                 return i
@@ -92,12 +110,12 @@ class InstrumentsLookup:
     def find_instruments(self, exchange: str, quote: str | None = None) -> list[Instrument]:
         return [i for i in self._lookup.values() if i.exchange == exchange and (quote is None or i.quote == quote)]
 
-    def _save_to_json(self, path, instruments: List[Instrument]):
+    def _save_to_json(self, path, instruments: list[Instrument]):
         with open(path, "w") as f:
-            json.dump(instruments, f, cls=_InstrumentEncoder)
+            json.dump(instruments, f, cls=_InstrumentEncoder, indent=4)
         logger.info(f"Saved {len(instruments)} to {path}")
 
-    def find_aux_instrument_for(self, instrument: Instrument, base_currency: str) -> Optional[Instrument]:
+    def find_aux_instrument_for(self, instrument: Instrument, base_currency: str) -> Instrument | None:
         """
         Tries to find aux instrument (for conversions to funded currency)
         for example:
@@ -106,11 +124,11 @@ class InstrumentsLookup:
             ...
         """
         base_currency = base_currency.upper()
-        if instrument.quote != base_currency and instrument._aux_instrument is None:
+        if instrument.quote != base_currency:
             return self.find(instrument.exchange, instrument.quote, base_currency)
-        return instrument._aux_instrument
+        return None
 
-    def __getitem__(self, spath: str) -> List[Instrument]:
+    def __getitem__(self, spath: str) -> list[Instrument]:
         res = []
         c = re.compile(spath)
         for k, v in self._lookup.items():
@@ -123,124 +141,58 @@ class InstrumentsLookup:
             if mn.startswith("_update_"):
                 getattr(self, mn)(self._path)
 
-    def _update_kraken(self, path: str):
+    def _ccxt_update(
+        self,
+        path: str,
+        file_name: str,
+        exchange_to_ccxt_name: dict[str, str],
+        keep_types: list[MarketType] | None = None,
+    ):
         import ccxt as cx
 
-        kf = cx.krakenfutures()
-        ks = cx.kraken()
-        f_mkts = kf.load_markets()
-        s_mkts = ks.load_markets()
+        from qubx.utils.marketdata.ccxt import ccxt_symbol_to_instrument
 
-        # - process futures
-        f_instruments = []
-        for _, v in f_mkts.items():
-            info = v["info"]
-            # - we skip index as it's not traded
-            if v["index"]:
-                continue
-            maint_margin = 0
-            required_margin = 0
-            if "marginLevels" in info:
-                margins = info["marginLevels"][0]
-                maint_margin = float(margins["maintenanceMargin"])
-                required_margin = float(margins["initialMargin"])
-            f_instruments.append(
-                Instrument(
-                    v["symbol"],
-                    v["type"],
-                    "KRAKEN.F",
-                    v["base"],
-                    v["quote"],
-                    v["settle"],
-                    min_tick=float(v["precision"]["price"]),
-                    min_size_step=float(v["precision"]["amount"]),
-                    min_size=v["precision"]["amount"],
-                    futures_info=FuturesInfo(
-                        contract_type=info["type"],
-                        contract_size=float(info["contractSize"]),
-                        onboard_date=info["openingDate"],
-                        delivery_date=v["expiryDatetime"] if "expiryDatetime" in info else "2100-01-01T00:00:00",
-                        maint_margin=maint_margin,
-                        required_margin=required_margin,
-                    ),
-                )
-            )
+        # - first we try to load packed data from QUBX resources
+        instruments = {}
+        _packed_data = _load_qubx_resources_as_json(f"instruments/symbols-{file_name}")
+        if _packed_data:
+            for i in _convert_instruments_metadata_to_qubx(_packed_data):
+                instruments[i] = i
+
+        # - replace defaults with data from CCXT
+        for exch, ccxt_name in exchange_to_ccxt_name.items():
+            exch = exch.upper()
+            ccxt_name = ccxt_name.lower()
+            ex: cx.Exchange = getattr(cx, ccxt_name)()
+            mkts = ex.load_markets()
+            for v in mkts.values():
+                if v["index"]:
+                    continue
+                instr = ccxt_symbol_to_instrument(exch, v)
+                if not keep_types or instr.market_type in keep_types:
+                    instruments[instr] = instr
+
         # - drop to file
-        self._save_to_json(os.path.join(path, "kraken.f.json"), f_instruments)
+        self._save_to_json(os.path.join(path, f"{file_name}.json"), list(instruments.values()))
 
-        # - process spots
-        s_instruments = []
-        for _, v in s_mkts.items():
-            info = v["info"]
-            s_instruments.append(
-                Instrument(
-                    v["symbol"],
-                    v["type"],
-                    "KRAKEN",
-                    v["base"],
-                    v["quote"],
-                    v["settle"],
-                    min_tick=float(info["tick_size"]),
-                    min_size_step=float(v["precision"]["price"]),
-                    min_size=float(v["precision"]["amount"]),
-                )
-            )
-        # - drop to file
-        self._save_to_json(os.path.join(path, "kraken.json"), s_instruments)
+    def _update_kraken(self, path: str):
+        self._ccxt_update(path, "kraken.f", {"kraken.f": "krakenfutures"})
+        self._ccxt_update(path, "kraken", {"kraken": "kraken"})
 
-    def _update_dukas(self, path: str):
-        instruments = [
-            Instrument("EURUSD", "FX", "DUKAS", "EUR", "USD", "USD", 0.00001, 1, 1000),
-            Instrument("GBPUSD", "FX", "DUKAS", "GBP", "USD", "USD", 0.00001, 1, 1000),
-            Instrument("USDJPY", "FX", "DUKAS", "USD", "JPY", "USD", 0.001, 1, 1000),
-            Instrument("USDCAD", "FX", "DUKAS", "USD", "CAD", "USD", 0.00001, 1, 1000),
-            Instrument("AUDUSD", "FX", "DUKAS", "AUD", "USD", "USD", 0.00001, 1, 1000),
-            Instrument("USDPLN", "FX", "DUKAS", "USD", "PLN", "USD", 0.00001, 1, 1000),
-            Instrument("EURGBP", "FX", "DUKAS", "EUR", "GBP", "USD", 0.00001, 1, 1000),
-            # TODO: addd all or find how to get it from site
-        ]
-        self._save_to_json(os.path.join(path, "dukas.json"), instruments)
+    def _update_hyperliquid(self, path: str):
+        self._ccxt_update(path, "hyperliquid", {"hyperliquid": "hyperliquid"}, keep_types=[MarketType.SPOT])
+        self._ccxt_update(path, "hyperliquid.f", {"hyperliquid.f": "hyperliquid"}, keep_types=[MarketType.SWAP])
 
     def _update_binance(self, path: str):
-        infos = get_binance_symbol_info_for_type(["UM", "CM", "SPOT"])
-        for exchange, info in infos.items():
-            instruments = []
-            for s in info["symbols"]:
-                tick_size, size_step = None, None
-                for i in s["filters"]:
-                    if i["filterType"] == "PRICE_FILTER":
-                        tick_size = float(i["tickSize"])
-                    if i["filterType"] == "LOT_SIZE":
-                        size_step = float(i["stepSize"])
+        self._ccxt_update(path, "binance", {"binance": "binance"}, keep_types=[MarketType.SPOT, MarketType.MARGIN])
+        self._ccxt_update(path, "binance.um", {"binance.um": "binanceusdm"})
+        self._ccxt_update(path, "binance.cm", {"binance.cm": "binancecoinm"})
 
-                fut_info = None
-                if "contractType" in s:
-                    fut_info = FuturesInfo(
-                        s.get("contractType", "UNKNOWN"),
-                        datetime.fromtimestamp(s.get("deliveryDate", 0) / 1000.0),
-                        datetime.fromtimestamp(s.get("onboardDate", 0) / 1000.0),
-                        float(s.get("contractSize", 1)),
-                        float(s.get("maintMarginPercent", 0)),
-                        float(s.get("requiredMarginPercent", 0)),
-                        float(s.get("liquidationFee", 0)),
-                    )
+    def _update_bitfinex(self, path: str):
+        self._ccxt_update(path, "bitfinex.f", {"bitfinex.f": "bitfinex"}, keep_types=[MarketType.SWAP])
 
-                instruments.append(
-                    Instrument(
-                        s["symbol"],
-                        "CRYPTO",
-                        exchange.upper(),
-                        s["baseAsset"],
-                        s["quoteAsset"],
-                        s.get("marginAsset", None),
-                        tick_size,
-                        size_step,
-                        min_size=size_step,  # TODO: not sure about minimal position for Binance
-                        futures_info=fut_info,
-                    )
-                )
-            # - store to file
-            self._save_to_json(os.path.join(path, f"{exchange}.json"), instruments)
+    def _update_dukas(self, path: str):
+        self._save_to_json(os.path.join(path, "dukas.json"), SAMPLE_INSTRUMENTS)
 
 
 # - TODO: need to find better way to extract actual data !!
@@ -351,7 +303,7 @@ class FeesLookup:
     Fees lookup
     """
 
-    _lookup: Dict[str, TransactionCostsCalculator]
+    _lookup: dict[str, TransactionCostsCalculator]
     _path: str
 
     def __init__(self, path: str = makedirs(get_local_qubx_folder(), _DEF_FEES_FOLDER)) -> None:
@@ -379,7 +331,7 @@ class FeesLookup:
 
         return data_exists
 
-    def __getitem__(self, spath: str) -> List[Instrument]:
+    def __getitem__(self, spath: str) -> list[Instrument]:
         res = []
         c = re.compile(spath)
         for k, v in self._lookup.items():
@@ -391,7 +343,7 @@ class FeesLookup:
         with open(os.path.join(self._path, "default.ini"), "w") as f:
             f.write(_DEFAULT_FEES)
 
-    def find(self, exchange: str, spec: str | None) -> Optional[TransactionCostsCalculator]:
+    def find(self, exchange: str, spec: str | None) -> TransactionCostsCalculator | None:
         if spec is None:
             return ZERO_COSTS
         key = f"{exchange}_{spec}"
@@ -410,17 +362,88 @@ class GlobalLookup:
     instruments: InstrumentsLookup
     fees: FeesLookup
 
-    def find_fees(self, exchange: str, spec: str | None) -> Optional[TransactionCostsCalculator]:
+    def find_fees(self, exchange: str, spec: str | None) -> TransactionCostsCalculator | None:
         return self.fees.find(exchange, spec)
 
-    def find_aux_instrument_for(self, instrument: Instrument, base_currency: str) -> Optional[Instrument]:
+    def find_aux_instrument_for(self, instrument: Instrument, base_currency: str) -> Instrument | None:
         return self.instruments.find_aux_instrument_for(instrument, base_currency)
 
-    def find_instrument(self, exchange: str, base: str, quote: str) -> Optional[Instrument]:
+    def find_instrument(self, exchange: str, base: str, quote: str) -> Instrument | None:
         return self.instruments.find(exchange, base, quote)
 
     def find_instruments(self, exchange: str, quote: str | None = None) -> list[Instrument]:
         return self.instruments.find_instruments(exchange, quote)
 
-    def find_symbol(self, exchange: str, symbol: str) -> Optional[Instrument]:
+    def find_symbol(self, exchange: str, symbol: str) -> Instrument | None:
         return self.instruments.find_symbol(exchange, symbol)
+
+
+def _load_qubx_resources_as_json(path: Path | str) -> list[dict]:
+    """
+    Reads a JSON file from resource module
+    """
+    import importlib.resources
+    import json
+
+    if isinstance(path, str):
+        path = Path(path)
+
+    if path.suffix != ".json":
+        path = path.with_suffix(path.suffix + ".json")
+
+    data = []
+    try:
+        res_path = importlib.resources.files("qubx.resources") / path
+        with res_path.open() as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.warning(f"Can't load resource file from {path} - {str(e)}")
+
+    return data
+
+
+def _convert_instruments_metadata_to_qubx(data: list[dict]):
+    """
+    Converting tardis symbols meta-data to Qubx instruments
+    """
+    _excs = {
+        "binance": "BINANCE",
+        "binance-delivery": "BINANCE.CM",
+        "binance-futures": "BINANCE.UM",
+        "kraken": "KRAKEN",
+        "cryptofacilities": "KRAKEN.F",
+        "bitfinex": "BITFINEX",
+        "bitfinex-derivatives": "BITFINEX.F",
+        "hyperliquid": "HYPERLIQUID",
+    }
+    r = []
+    for s in data:
+        match s["type"]:
+            case "perpetual":
+                _type = MarketType.SWAP
+            case "spot":
+                _type = MarketType.SPOT
+            case "future":
+                _type = MarketType.FUTURE
+            case _:
+                raise ValueError(f" -> Unknown type {s['type']}")
+        r.append(
+            Instrument(
+                s["baseCurrency"] + s["quoteCurrency"],
+                AssetType.CRYPTO,
+                _type,
+                _excs.get(s["exchange"], s["exchange"].upper()),
+                s["baseCurrency"],
+                s["quoteCurrency"],
+                s["quoteCurrency"],
+                s["id"],
+                tick_size=s["priceIncrement"],
+                lot_size=s["minTradeAmount"],
+                min_size=s["amountIncrement"],
+                min_notional=0,  # we don't have this info from tardis
+                contract_size=s.get("contractMultiplier", 1.0),
+                onboard_date=s.get("availableSince", None),
+                delivery_date=s.get("availableTo", None),
+            )
+        )
+    return r

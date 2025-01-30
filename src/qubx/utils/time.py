@@ -1,14 +1,16 @@
-from datetime import datetime
-from typing import List, Optional, Tuple, Union
-import numpy as np
 import re
+from datetime import datetime
+from typing import Callable
 
+import numpy as np
 import pandas as pd
 
 UNIX_T0 = np.datetime64("1970-01-01T00:00:00")
 
 
-time_to_str = lambda t, u="us": np.datetime_as_string(t if isinstance(t, np.datetime64) else np.datetime64(t, u), unit=u)  # type: ignore
+time_to_str = lambda t, u="us": np.datetime_as_string(  # noqa: E731
+    t if isinstance(t, np.datetime64) else np.datetime64(t, u), unit=u
+)
 
 
 def convert_tf_str_td64(c_tf: str) -> np.timedelta64:
@@ -17,7 +19,7 @@ def convert_tf_str_td64(c_tf: str) -> np.timedelta64:
 
     '15Min' -> timedelta64(15, 'm') etc
     """
-    _t = re.findall("(\d+)([A-Za-z]+)", c_tf)
+    _t = re.findall(r"(\d+)([A-Za-z]+)", c_tf)
     _dt = 0
     for g in _t:
         unit = g[1].lower()
@@ -66,14 +68,14 @@ def convert_seconds_to_str(seconds: int, convert_months=False) -> str:
 
     minutes, seconds = divmod(seconds, 60)
     if minutes > 0:
-        r += "%dMin" % minutes
+        r += "%dmin" % minutes
 
     if seconds > 0:
-        r += "%dS" % seconds
+        r += "%ds" % seconds
     return r
 
 
-def floor_t64(time: Union[np.datetime64, datetime], dt: Union[np.timedelta64, int, str]):
+def floor_t64(time: np.datetime64 | datetime, dt: np.timedelta64 | int | str):
     """
     Floor timestamp by dt
     """
@@ -89,7 +91,7 @@ def floor_t64(time: Union[np.datetime64, datetime], dt: Union[np.timedelta64, in
     return time - (time - UNIX_T0) % dt
 
 
-def infer_series_frequency(series: Union[List, pd.DataFrame, pd.Series, pd.DatetimeIndex]) -> np.timedelta64:
+def infer_series_frequency(series: list | pd.DataFrame | pd.Series | pd.DatetimeIndex) -> np.timedelta64:
     """
     Infer frequency of given timeseries
 
@@ -114,7 +116,9 @@ def infer_series_frequency(series: Union[List, pd.DataFrame, pd.Series, pd.Datet
                 (
                     x
                     if isinstance(x, (np.timedelta64, int, np.int64))
-                    else int(x) if isinstance(x, float) else int(1e9 * x.total_seconds())
+                    else int(x)
+                    if isinstance(x, float)
+                    else int(1e9 * x.total_seconds())
                 )
                 for x in np.abs(np.diff(times_index))
             ]
@@ -126,18 +130,20 @@ def infer_series_frequency(series: Union[List, pd.DataFrame, pd.Series, pd.Datet
     return np.timedelta64(max(freqs, key=freqs.get))
 
 
-def handle_start_stop(s: Optional[str], e: Optional[str], convert=str) -> Tuple[str | None, str | None]:
+def handle_start_stop(
+    s: str | pd.Timestamp | None, e: str | pd.Timestamp | None, convert: Callable = str
+) -> tuple[str | pd.Timestamp | None, str | pd.Timestamp | None]:
     """
     Process start/stop times
 
-        handle_start_stop('2020-01-01', '2020-02-01') # 2020-01-01, 2020-02-01
-        handle_start_stop('2020-02-01', '2020-01-01') # 2020-01-01, 2020-02-01
-        handle_start_stop('2020-01-01', '1w')         # 2020-01-01, 2020-01-01 + 1week
-        handle_start_stop('1w', '2020-01-01')         # 2020-01-01 - 1week, '2020-01-01'
-        handle_start_stop('2020-01-01', '-1w')        # 2020-01-01 - 1week, 2020-01-01,
-        handle_start_stop(None, '2020-01-01')         # None, '2020-01-01'
-        handle_start_stop('2020-01-01', None)         # '2020-01-01', None
-        handle_start_stop(None, None)                 # None, None
+    >>>  handle_start_stop('2020-01-01', '2020-02-01') # 2020-01-01, 2020-02-01
+    >>>  handle_start_stop('2020-02-01', '2020-01-01') # 2020-01-01, 2020-02-01
+    >>>  handle_start_stop('2020-01-01', '1w')         # 2020-01-01, 2020-01-01 + 1week
+    >>>  handle_start_stop('1w', '2020-01-01')         # 2020-01-01 - 1week, '2020-01-01'
+    >>>  handle_start_stop('2020-01-01', '-1w')        # 2020-01-01 - 1week, 2020-01-01,
+    >>>  handle_start_stop(None, '2020-01-01')         # None, '2020-01-01'
+    >>>  handle_start_stop('2020-01-01', None)         # '2020-01-01', None
+    >>>  handle_start_stop(None, None)                 # None, None
 
     """
 
@@ -153,7 +159,9 @@ def handle_start_stop(s: Optional[str], e: Optional[str], convert=str) -> Tuple[
 
     t0, d0 = _h_time_like(s) if s else (None, False)
     t1, d1 = _h_time_like(e) if e else (None, False)
-    converts = lambda xs: [convert(xs[0]) if xs[0] else None, convert(xs[1]) if xs[1] else None]
+
+    def _converts(xs):
+        return (convert(xs[0]) if xs[0] else None, convert(xs[1]) if xs[1] else None)
 
     if not t1 and not t0:
         return None, None
@@ -164,13 +172,56 @@ def handle_start_stop(s: Optional[str], e: Optional[str], convert=str) -> Tuple[
     if d0:
         if not t1:
             raise ValueError("First argument is delta but stop time is not defined !")
-        return converts(sorted([t1 - abs(t0), t1]))
+        return _converts(sorted([t1 - abs(t0), t1]))
     if d1:
         if not t0:
             raise ValueError("Second argument is delta but start time is not defined !")
-        return converts(sorted([t0, t0 + t1]))
+        return _converts(sorted([t0, t0 + t1]))
 
     if t0 and t1:
-        return converts(sorted([t0, t1]))
+        return _converts(sorted([t0, t1]))
 
-    return converts([t0, t1])
+    return _converts([t0, t1])
+
+
+def timedelta_to_crontab(td: pd.Timedelta) -> str:
+    """
+    Convert a pandas Timedelta to a crontab specification string.
+
+    Args:
+        td (pd.Timedelta): Timedelta to convert to crontab spec
+
+    Returns:
+        str: Crontab specification string
+
+    Examples:
+        >>> timedelta_to_crontab(pd.Timedelta('4h'))
+        '0 */4 * * *'
+        >>> timedelta_to_crontab(pd.Timedelta('2d'))
+        '59 23 */2 * *'
+        >>> timedelta_to_crontab(pd.Timedelta('1d23h50Min10Sec'))
+        '50 23 */2 * * 10'
+    """
+    days = td.days
+    hours = td.components.hours
+    minutes = td.components.minutes
+    seconds = td.components.seconds
+
+    if days > 0:
+        if hours == 0 and minutes == 0 and seconds == 0:
+            hours, minutes, seconds = 23, 59, 59
+        _sched = f"{minutes} {hours} */{days} * *"
+        return _sched + f" {seconds}" if seconds > 0 else _sched
+
+    if hours > 0:
+        _sched = f"{minutes} */{hours} * * *"
+        return _sched + f" {seconds}" if seconds > 0 else _sched
+
+    if minutes > 0:
+        _sched = f"*/{minutes} * * * *"
+        return _sched + f" {seconds}" if seconds > 0 else _sched
+
+    if seconds > 0:
+        return f"* * * * * */{seconds}"
+
+    raise ValueError("Timedelta must specify a non-zero period of days, hours, minutes or seconds")

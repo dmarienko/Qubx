@@ -1,12 +1,13 @@
-import pandas as pd
 from dataclasses import dataclass
 from typing import List, Union
-from qubx import lookup
 
+import pandas as pd
+
+from qubx import lookup
+from qubx.core.basics import ZERO_COSTS, DataType, Instrument, Position, TransactionCostsCalculator
+from qubx.core.series import Quote, Trade, time_as_nsec
 from qubx.utils.time import convert_seconds_to_str
 from tests.qubx.ta.utils_for_testing import N
-from qubx.core.basics import Instrument, Position, TransactionCostsCalculator, ZERO_COSTS
-from qubx.core.series import time_as_nsec, Trade, Quote
 
 TIME = lambda x: pd.Timestamp(x, unit="ns").asm8
 
@@ -42,7 +43,6 @@ pos_round = lambda s, p, i: (p * round(s / p, i.size_precision), p, round(s / p,
 
 
 class TestBasics:
-
     def test_convertors(self):
         assert "3w" == convert_seconds_to_str(int(pd.Timedelta("3w").total_seconds()))
         assert "1d5h" == convert_seconds_to_str(int(pd.Timedelta("1d5h").total_seconds()))
@@ -100,6 +100,7 @@ class TestBasics:
             (0.1621, 50.0),
         ]:
             p.change_position_by(0, _s, _p)
+
         p.update_market_price(0, 0.1538, 1)
         # - 2024-10-12: fixed after part position closing fix
         assert p.position_avg_price == 0.1647  # , p.r_pnl, p.pnl - p.r_pnl, p.commissions, p.market_value

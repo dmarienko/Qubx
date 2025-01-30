@@ -1,4 +1,7 @@
-from qubx.core.utils import prec_floor, prec_ceil
+import pandas as pd
+
+from qubx.core.basics import ITimeProvider, dt_64
+from qubx.core.utils import prec_ceil, prec_floor
 
 
 def test_prec_floor():
@@ -15,3 +18,8 @@ def test_prec_ceil():
     precision = 2
     assert prec_ceil(a, precision) == 608.82
     assert prec_ceil(prec_ceil(a, precision), precision) == prec_ceil(a, precision)
+
+
+class DummyTimeProvider(ITimeProvider):
+    def time(self) -> dt_64:
+        return pd.Timestamp("2024-04-07 13:48:37.611000").asm8

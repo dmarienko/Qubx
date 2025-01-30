@@ -1,18 +1,26 @@
-from typing import Any, Dict, List, Tuple
+import csv
+import os
 from multiprocessing.pool import ThreadPool
-import numpy as np
-import csv, os
+from typing import Any, Dict, List, Tuple
 
+import numpy as np
 import pandas as pd
 
 from qubx import logger
-from qubx.core.basics import Deal, Position, Signal, TargetPosition, Instrument
-
+from qubx.core.basics import (
+    AssetBalance,
+    Deal,
+    Instrument,
+    Position,
+    Signal,
+    TargetPosition,
+)
 from qubx.core.metrics import split_cumulative_pnl
 from qubx.core.series import time_as_nsec
-from qubx.core.utils import time_to_str, time_delta_to_str, recognize_timeframe
+from qubx.core.utils import recognize_timeframe, time_delta_to_str, time_to_str
 from qubx.pandaz.utils import scols
-from qubx.utils.misc import makedirs, Stopwatch
+from qubx.utils.misc import Stopwatch, makedirs
+from qubx.utils.time import convert_tf_str_td64, floor_t64
 
 _SW = Stopwatch()
 
@@ -129,7 +137,6 @@ class CsvFileLogsWriter(LogsWriter):
 
     def _do_write(self, log_type, data):
         match log_type:
-
             case "positions":
                 with open(self._pos_file_path, "w", newline="") as f:
                     w = csv.writer(f)
@@ -225,9 +232,10 @@ class PositionsDumper(_BaseIntervalDumper):
             data.append(
                 {
                     "timestamp": str(actual_timestamp),
-                    "instrument_id": i.id,
+                    "instrument_id": i.symbol,
                     "pnl_quoted": p.total_pnl(),
                     "quantity": p.quantity,
+                    "notional": p.notional_value,
                     "realized_pnl_quoted": p.r_pnl,
                     "avg_position_price": p.position_avg_price if p.quantity != 0.0 else 0.0,
                     "current_price": p.last_update_price,
@@ -251,7 +259,7 @@ class PortfolioLogger(PositionsDumper):
             data.append(
                 {
                     "timestamp": str(interval_start_time),
-                    "instrument_id": i.id,
+                    "instrument_id": i.symbol,
                     "pnl_quoted": p.total_pnl(),
                     "quantity": p.quantity,
                     "realized_pnl_quoted": p.r_pnl,
@@ -296,12 +304,14 @@ class ExecutionsLogger(_BaseIntervalDumper):
             data.append(
                 {
                     "timestamp": d.time,
-                    "instrument_id": i.id,
+                    "instrument_id": i.symbol,
+                    "exchange_id": i.exchange,
                     "side": "buy" if d.amount > 0 else "sell",
                     "filled_qty": d.amount,
                     "price": d.price,
                     "commissions": d.fee_amount,
                     "commissions_quoted": d.fee_currency,
+                    "order_id": d.order_id,
                 }
             )
         self._deals.clear()
@@ -343,7 +353,7 @@ class SignalsLogger(_BaseIntervalDumper):
             data.append(
                 {
                     "timestamp": s.time,
-                    "instrument_id": s.instrument.id,
+                    "instrument_id": s.instrument.symbol,
                     "exchange_id": s.instrument.exchange,
                     "signal": s.signal.signal,
                     "target_position": s.target_position_size,
@@ -379,7 +389,7 @@ class BalanceLogger(_BaseIntervalDumper):
         super().__init__(None)  # no intervals
         self._writer = writer
 
-    def record_balance(self, timestamp: np.datetime64, balance: Dict[str, Tuple[float, float]]):
+    def record_balance(self, timestamp: np.datetime64, balance: Dict[str, AssetBalance]):
         if balance:
             data = []
             for s, d in balance.items():
@@ -387,8 +397,8 @@ class BalanceLogger(_BaseIntervalDumper):
                     {
                         "timestamp": timestamp,
                         "instrument_id": s,
-                        "total": d[0],
-                        "locked": d[1],
+                        "total": d.total,
+                        "locked": d.locked,
                     }
                 )
             self._writer.write_data("balance", data)
@@ -410,6 +420,9 @@ class StrategyLogging:
     executions_logger: ExecutionsLogger | None = None
     balance_logger: BalanceLogger | None = None
     signals_logger: SignalsLogger | None = None
+    heartbeat_freq: np.timedelta64 | None = None
+
+    _last_heartbeat_ts: np.datetime64 | None = None
 
     def __init__(
         self,
@@ -418,6 +431,7 @@ class StrategyLogging:
         portfolio_log_freq: str = "5Min",
         num_exec_records_to_write=1,  # in live let's write every execution
         num_signals_records_to_write=1,
+        heartbeat_freq: str | None = None,
     ) -> None:
         # - instantiate loggers
         if logs_writer:
@@ -442,8 +456,13 @@ class StrategyLogging:
         else:
             logger.warning("Log writer is not defined - strategy activity will not be saved !")
 
+        self.heartbeat_freq = convert_tf_str_td64(heartbeat_freq) if heartbeat_freq else None
+
     def initialize(
-        self, timestamp: np.datetime64, positions: Dict[Instrument, Position], balances: Dict[str, Tuple[float, float]]
+        self,
+        timestamp: np.datetime64,
+        positions: dict[Instrument, Position],
+        balances: dict[str, AssetBalance],
     ) -> None:
         # - attach positions to loggers
         if self.positions_dumper:
@@ -476,6 +495,9 @@ class StrategyLogging:
         if self.portfolio_logger:
             self.portfolio_logger.store(timestamp)
 
+        # - log heartbeat
+        self._log_heartbeat(timestamp)
+
     def save_deals(self, instrument: Instrument, deals: List[Deal]):
         if self.executions_logger:
             self.executions_logger.record_deals(instrument, deals)
@@ -483,3 +505,11 @@ class StrategyLogging:
     def save_signals_targets(self, targets: List[TargetPosition]):
         if self.signals_logger and targets:
             self.signals_logger.record_signals(targets)
+
+    def _log_heartbeat(self, timestamp: np.datetime64):
+        if not self.heartbeat_freq:
+            return
+        _floored_ts = floor_t64(timestamp, self.heartbeat_freq)
+        if not self._last_heartbeat_ts or _floored_ts - self._last_heartbeat_ts >= self.heartbeat_freq:
+            self._last_heartbeat_ts = _floored_ts
+            logger.info(f"Heartbeat at {_floored_ts.astype('datetime64[s]')}")

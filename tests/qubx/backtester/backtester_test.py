@@ -1,18 +1,16 @@
-from typing import Any, Optional, List
+import numpy as np
+import pandas as pd
 
-from qubx import lookup, logger
-from qubx.pandaz.utils import *
-
+from qubx import logger, lookup
+from qubx.backtester.ome import OrdersManagementEngine
+from qubx.backtester.simulator import simulate
+from qubx.core.basics import ZERO_COSTS, DataType, Deal, Instrument, ITimeProvider, Order
+from qubx.core.interfaces import IStrategy, IStrategyContext, TriggerEvent
 from qubx.core.series import Quote
 from qubx.core.utils import recognize_time
-from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider, SubscriptionType
-from qubx.core.interfaces import IStrategy, IStrategyContext, TriggerEvent
-from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, AsTimestampedRecords, AsQuotes, RestoreTicksFromOHLC
-
-from qubx.backtester.ome import OrdersManagementEngine
-
-from qubx.ta.indicators import sma, ema
-from qubx.backtester.simulator import simulate
+from qubx.data.readers import AsOhlcvSeries, CsvStorageDataReader, RestoreTicksFromOHLC
+from qubx.pandaz.utils import shift_series
+from qubx.ta.indicators import ema, sma
 
 
 class _TimeService(ITimeProvider):
@@ -31,7 +29,6 @@ def Q(time: str, bid: float, ask: float) -> Quote:
 
 
 class TestBacktesterStuff:
-
     def test_basic_ome(self):
         instr = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         assert instr
@@ -125,8 +122,8 @@ class TestBacktesterStuff:
         instr = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         assert instr is not None
         r = CsvStorageDataReader("tests/data/csv")
-        stream = r.read("BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=False, spread=instr.min_tick))
-        assert isinstance(stream, List)
+        stream = r.read("BTCUSDT_ohlcv_M1", transform=RestoreTicksFromOHLC(trades=False, spread=instr.tick_size))
+        assert isinstance(stream, list)
 
         ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
         ome.update_bbo(t.g(stream[0]))
@@ -145,14 +142,13 @@ class TestBacktesterStuff:
         assert execs[1].price == 52000.0
 
     def test_simulator(self):
-
         class CrossOver(IStrategy):
             timeframe: str = "1Min"
             fast_period = 5
             slow_period = 12
 
             def on_init(self, ctx: IStrategyContext):
-                ctx.set_base_subscription(SubscriptionType.OHLC, timeframe=self.timeframe)
+                ctx.set_base_subscription(DataType.OHLC[self.timeframe])
 
             def on_event(self, ctx: IStrategyContext, event: TriggerEvent):
                 for i in ctx.instruments:
@@ -168,7 +164,7 @@ class TestBacktesterStuff:
                             ctx.trade(i, -pos - i.min_size * 10)
                 return None
 
-            def ohlcs(self, timeframe: str) -> Dict[str, pd.DataFrame]:
+            def ohlcs(self, timeframe: str) -> dict[str, pd.DataFrame]:
                 return {s.symbol: self.ctx.ohlc(s, timeframe).pd() for s in self.ctx.instruments}
 
         r = CsvStorageDataReader("tests/data/csv")
@@ -182,21 +178,19 @@ class TestBacktesterStuff:
         sigs = sigs[sigs != 0]
         i1 = lookup.find_symbol("BINANCE.UM", "BTCUSDT")
         assert i1 is not None
-        s2 = shift_series(sigs, "4Min59Sec").rename(i1) / 100  # type: ignore
+        # s2 = shift_series(sigs, "4Min59Sec").rename(i1) / 100  # type: ignore
+        s2 = shift_series(sigs, "5Min").rename(i1) / 100  # type: ignore
+
+        # fmt: off
         rep1 = simulate(
             {
                 # - generated signals as series
                 "test0": CrossOver(timeframe="5Min", fast_period=5, slow_period=15),
                 "test1": s2,
             },
-            r,
-            10000,
-            ["BINANCE.UM:BTCUSDT"],
-            "vip0_usdt",
-            "2024-01-01",
-            "2024-01-02",
-            n_jobs=1,
-        )
+            {'ohlc(5Min)': r}, 10000, ["BINANCE.UM:BTCUSDT"], "vip0_usdt", "2024-01-01", "2024-01-02", n_jobs=1
+        ) 
+        # fmt:on
 
         assert all(
             rep1[0].executions_log[["filled_qty", "price", "side"]]
@@ -212,9 +206,9 @@ class TestBacktesterStuff:
             "BTCUSDT_ohlcv_M1",
             start="2024-01-01",
             stop="2024-01-15",
-            transform=RestoreTicksFromOHLC(trades=False, spread=instr.min_tick),
+            transform=RestoreTicksFromOHLC(trades=False, spread=instr.tick_size),
         )
-        assert isinstance(stream, List)
+        assert isinstance(stream, list)
 
         ome = OrdersManagementEngine(instr, t := _TimeService(), tcc=ZERO_COSTS)
         q0 = t.g(stream[0])

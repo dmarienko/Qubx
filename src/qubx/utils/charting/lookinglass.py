@@ -5,10 +5,8 @@ from plotly.graph_objs.graph_objs import FigureWidget
 from plotly.subplots import make_subplots
 
 from qubx.core.series import OHLCV, TimeSeries
-from qubx.utils.charting.mpl_helpers import ohlc_plot
-from qubx.utils.charting.mpl_helpers import plot_trends
-from qubx.utils.charting.mpl_helpers import subplot
 from qubx.utils import Struct
+from qubx.utils.charting.mpl_helpers import ohlc_plot, plot_trends, subplot
 
 
 def install_plotly_helpers():
@@ -106,7 +104,7 @@ def install_plotly_helpers():
                 )
             )
 
-        def arrow(look, x2, y2, x1, y1, c="red", text="", lw=1, font=dict(size=8)):
+        def arrow(look, x2, y2, x1, y1, c="red", text="", lw=1, font=dict(size=8), head=1):
             return look.add_annotation(
                 x=x1,
                 y=y1,
@@ -119,7 +117,7 @@ def install_plotly_helpers():
                 text=text,
                 font=font,
                 showarrow=True,
-                arrowhead=1,
+                arrowhead=head,
                 arrowsize=1,
                 arrowwidth=lw,
                 arrowcolor=c,
@@ -132,12 +130,14 @@ def install_plotly_helpers():
                     height=h,
                     hovermode="x unified",
                     showlegend=legend,
-                    hoverdistance=1000 if show_info else 0,
+                    hoverdistance=1 if show_info else 0,
                     xaxis={"hoverformat": "%d-%b-%y %H:%M"},
                     yaxis={"hoverformat": f".{n}f"},
                     dragmode="zoom",
                     newshape=dict(line_color="yellow", line_width=1.0),
                     modebar_add=["drawline", "drawopenpath", "drawrect", "eraseshape"],
+                    # hoversubplots="axis",
+                    hoverlabel=dict(align="auto", bgcolor="rgba(10, 10, 10, 0.5)"),
                 )
                 .update_xaxes(
                     showspikes=True,
@@ -163,7 +163,7 @@ def install_plotly_helpers():
         FigureWidget.hline = hline  # type: ignore
         FigureWidget.dliney = dliney  # type: ignore
         FigureWidget.arrow = arrow  # type: ignore
-    except:
+    except:  # noqa: E722
         print(" >>> Cant attach helpers to plotly::FigureWidget - probably it isn't installed !")
 
 
@@ -259,7 +259,6 @@ class AbstractLookingGlass:
 
 
 class LookingGlass:
-
     def __init__(self, master, studies: dict | None = None, title="", backend="plotly", **kwargs):
         if backend in ["matplotlib", "mpl"]:
             self.__instance = LookingGlassMatplotLib(master=master, studies=studies, title=title, **kwargs)
@@ -273,7 +272,6 @@ class LookingGlass:
 
 
 class LookingGlassMatplotLib(AbstractLookingGlass):
-
     def __init__(
         self,
         master,
@@ -467,7 +465,6 @@ class LookingGlassMatplotLib(AbstractLookingGlass):
             plt.bar(y.index, y, lw=0.4, width=_bw, edgecolor=__clr, color=__clr, label=label)
 
     def _show_plot(self, vert_bar, title, zoom):
-
         # plot all master series
         shape = (self.s_size * len(self.s) + self.m_size, 1)
         subplot(shape, 1, rowspan=self.m_size)
@@ -509,7 +506,6 @@ class LookingGlassMatplotLib(AbstractLookingGlass):
 
             wait_for_limits = False
             for j, v in enumerate(vs):
-
                 # if we need to read limits
                 if wait_for_limits:
                     if isinstance(v, (list, tuple)) and len(v) > 1:
@@ -805,12 +801,17 @@ class LookingGlassPlotly(AbstractLookingGlass):
                 _b_ords = yy[yy.quantity > 0]
                 _s_ords = yy[yy.quantity < 0]
 
-                _scatter(_b_ords.exec_price, None, "BOT", "triangle-up", "#3cfa00", 12)
-                _scatter(_s_ords.exec_price, None, "SLD", "triangle-down", "#20ffff", 12)
+                # - how much was traded
+                _b_info = "<i>bought</i> " + _b_ords.quantity.astype(str)
+                _s_info = "<i>sold</i> " + _s_ords.quantity.astype(str)
+
+                _scatter(_b_ords.exec_price, _b_info, "BOT", "triangle-up", "#25ff00", 12)
+                _scatter(_s_ords.exec_price, _s_info, "SLD", "triangle-down", "#f0d", 12)
+                # _scatter(_s_ords.exec_price, _s_info, "SLD", "triangle-down", "#20ffff", 12)
 
             # 27-aug-2024: show generated signals from Qubx backtester
             elif self._frame_has_cols(y, ["signal", "reference_price", "price", "take", "stop", "group", "comment"]):
-                _sel_price = lambda x: x["reference_price"].where(x["price"].isna(), x["price"])
+                _sel_price = lambda x: x["reference_price"].where(x["price"].isna(), x["price"])  # noqa: E731
                 _b_sigs = yy[yy.signal > 0]
                 _z_sigs = yy[yy.signal == 0]
                 _s_sigs = yy[yy.signal < 0]
@@ -840,37 +841,20 @@ class LookingGlassPlotly(AbstractLookingGlass):
         if plot_style == "line":
             self.fig.add_trace(
                 go.Scatter(
-                    x=y.index,
-                    y=y,
-                    mode="lines",
-                    line={"width": 0.5, "dash": style, "color": color},
-                    name=label,
+                    x=y.index, y=y, mode="lines", line={"width": 0.5, "dash": style, "color": color}, name=label
                 ),
                 row=row,
                 col=col,
             )
         elif plot_style == "area":
             self.fig.add_trace(
-                go.Scatter(
-                    x=y.index,
-                    y=y,
-                    mode="lines",
-                    line={"width": 1, "color": color},
-                    fill="tozeroy",
-                    name=label,
-                ),
+                go.Scatter(x=y.index, y=y, mode="lines", line={"width": 1, "color": color}, fill="tozeroy", name=label),
                 row=row,
                 col=col,
             )
         elif plot_style.startswith("step"):
             self.fig.add_trace(
-                go.Scatter(
-                    x=y.index,
-                    y=y,
-                    mode="lines",
-                    line={"shape": "hv", "color": color},
-                    name=label,
-                ),
+                go.Scatter(x=y.index, y=y, mode="lines", line={"shape": "hv", "color": color}, name=label),
                 row=row,
                 col=col,
             )
@@ -918,8 +902,7 @@ class LookingGlassPlotly(AbstractLookingGlass):
 
         plotly_style, plotly_color = None, None
 
-        if mpl_style in plotly_styles:
-            # specified plotly style line
+        if mpl_style in plotly_styles:  # specified plotly style line
             plotly_style = mpl_style
         elif mpl_style == ":":
             plotly_style = "dot"
@@ -930,8 +913,7 @@ class LookingGlassPlotly(AbstractLookingGlass):
         elif mpl_style == "-":
             plotly_style = "solid"
 
-        if plotly_style is None and mpl_color is None:
-            # it looks only color is specified
+        if plotly_style is None and mpl_color is None:  # it looks only color is specified
             mpl_color = mpl_style
 
         if mpl_color == "r":
@@ -945,14 +927,14 @@ class LookingGlassPlotly(AbstractLookingGlass):
 
         return plotly_style, plotly_color
 
-    def __mpl_color_to_plotly(self, color):
-        if color == "r":
-            color = "red"
-        elif color == "g":
-            color = "green"
-        elif color == "w":
-            color = "white"
-        return color
+    # def __mpl_color_to_plotly(self, color):
+    #     if color == "r":
+    #         color = "red"
+    #     elif color == "g":
+    #         color = "green"
+    #     elif color == "w":
+    #         color = "white"
+    #     return color
 
     def _show_plot(self, vert_bar, title, zoom):
         # plot all master series
@@ -961,12 +943,9 @@ class LookingGlassPlotly(AbstractLookingGlass):
         axis_rules = {}
         if len(self.s):
             row_heights.extend([(1 - master_fraction) / len(self.s)] * len(self.s))
+
         self.fig = make_subplots(
-            rows=len(self.s) + 1,
-            cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.01,
-            row_heights=row_heights,
+            rows=len(self.s) + 1, cols=1, shared_xaxes=True, vertical_spacing=0.01, row_heights=row_heights
         )
 
         ms = self.m if isinstance(self.m, (tuple, list)) else [self.m]
@@ -1039,27 +1018,16 @@ class LookingGlassPlotly(AbstractLookingGlass):
                 else:
                     self.__plt_series(v, zoom, k, j, i, 1, plot_style=plot_style)
 
-        if title is not None:
-            plot_title = "%s %s" % (self._title, str(title))
-        else:
-            plot_title = "%s %s" % (self._title, str(vert_bar))
-
-        if plot_title is not None:
+        plot_title = title or self._title or ""
+        plot_title += str(vert_bar) if vert_bar else ""  # add title to plot
+        if plot_title:
             self.fig.update_layout(
-                title={
-                    "text": plot_title,
-                    "y": 0.9,
-                    "x": 0.5,
-                    "xanchor": "center",
-                    "yanchor": "top",
-                }
+                title={"text": plot_title, "y": 0.9, "x": 0.5, "xanchor": "center", "yanchor": "top"}
             )
 
         self.fig.update_layout(axis_rules)
         self.fig.update_layout(
-            xaxis_rangeslider_visible=False,
-            margin=dict(l=5, r=5, t=35, b=5),
-            height=self.mph + self.sph * len(self.s),
+            xaxis_rangeslider_visible=False, margin=dict(l=5, r=5, t=35, b=5), height=self.mph + self.sph * len(self.s)
         )
 
         return go.FigureWidget(self.fig)
@@ -1068,14 +1036,7 @@ class LookingGlassPlotly(AbstractLookingGlass):
         # Line Vertical
         self.fig.add_shape(
             go.layout.Shape(
-                type="line",
-                x0=x,
-                x1=x,
-                xref=xref,
-                yref="paper",
-                y0=0,
-                y1=1,
-                line=dict(width=1, dash="dot"),
+                type="line", x0=x, x1=x, xref=xref, yref="paper", y0=0, y1=1, line=dict(width=1, dash="dot")
             )
         )
 

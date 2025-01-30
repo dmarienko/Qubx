@@ -1,35 +1,17 @@
-from typing import Any, Optional, List
+import numpy as np
+from pytest import approx
 
-from pandas import Timestamp
-
-from qubx import QubxLogConfig, lookup, logger
-from qubx.core.account import AccountProcessor
+from qubx import logger, lookup
+from qubx.core.account import BasicAccountProcessor
+from qubx.core.basics import Deal, Instrument, Order, Position, Signal, TargetPosition
+from qubx.core.interfaces import IPositionGathering, IStrategy, IStrategyContext, PositionsTracker, TriggerEvent
+from qubx.core.series import Quote
+from qubx.core.utils import recognize_time
 from qubx.gathering.simplest import SimplePositionGatherer
 from qubx.pandaz.utils import *
-from qubx.core.utils import recognize_time, time_to_str
-
-from qubx.core.series import OHLCV, Quote
-from qubx.core.interfaces import IPositionGathering, IStrategy, PositionsTracker, IStrategyContext, TriggerEvent
-from qubx.data.readers import (
-    AsOhlcvSeries,
-    CsvStorageDataReader,
-    AsTimestampedRecords,
-    AsQuotes,
-    RestoreTicksFromOHLC,
-    AsPandasFrame,
-)
-from qubx.core.basics import ZERO_COSTS, Deal, Instrument, Order, ITimeProvider, Position, Signal, TargetPosition
-
-
-from qubx.core.metrics import portfolio_metrics
-from qubx.ta.indicators import sma, ema
-from qubx.backtester.simulator import simulate
-from qubx.trackers.composite import CompositeTracker, CompositeTrackerPerSide, LongTracker
 from qubx.trackers.rebalancers import PortfolioRebalancerTracker
-from qubx.trackers.riskctrl import AtrRiskTracker, StopTakePositionTracker
-from qubx.trackers.sizers import FixedLeverageSizer, FixedRiskSizer, FixedSizer, LongShortRatioPortfolioSizer
-
-from pytest import approx
+from qubx.trackers.sizers import LongShortRatioPortfolioSizer
+from tests.qubx.core.utils_test import DummyTimeProvider
 
 N = lambda x, r=1e-4: approx(x, rel=r, nan_ok=True)
 
@@ -38,8 +20,8 @@ def Q(time: str, p: float) -> Quote:
     return Quote(recognize_time(time), p, p, 0, 0)
 
 
-def S(ctx, sdict: dict):
-    return [ctx.get_instrument(s).signal(v) for s, v in sdict.items()]
+def S(ctx: IStrategyContext, sdict: dict):
+    return [ctx.query_instrument(s).signal(v) for s, v in sdict.items()]
 
 
 class TestingPositionGatherer(IPositionGathering):
@@ -56,7 +38,6 @@ class TestingPositionGatherer(IPositionGathering):
             # position.quantity = new_size
             q = ctx.quote(instrument)
             assert q is not None
-            position.update_position(ctx.time(), new_size, q.mid_price())
             r = ctx.trade(instrument, to_trade, at_price)
             logger.info(
                 f"{instrument.symbol} >>> (TESTS) Adjusting position from {current_position} to {new_size} : {r}"
@@ -67,27 +48,28 @@ class TestingPositionGatherer(IPositionGathering):
 
 
 class DebugStratageyCtx(IStrategyContext):
-    _exchange: str = "BINANCE"
-    _d_qts: Dict[Instrument, Quote]
+    _exchange: str
+    _d_qts: dict[Instrument, Quote]
     _c_time: int = 0
     _o_id: int = 10000
 
-    def __init__(self, symbols: List[str], capital) -> None:
+    def __init__(self, symbols: list[str], capital, exchange: str = "BINANCE") -> None:
+        self._exchange = exchange
         self._instruments = [x for s in symbols if (x := lookup.find_symbol(self._exchange, s)) is not None]
         self._symbol_to_instrument = {i.symbol: i for i in self._instruments}
         self._d_qts = {i: None for i in self._instruments}  # type: ignore
         self._positions = {i: Position(i) for i in self.instruments}
         self.capital = capital
-        self.acc = AccountProcessor("test", "USDT", reserves={})
+        self.acc = BasicAccountProcessor("test", DummyTimeProvider(), "USDT")
         self.acc.update_balance("USDT", capital, 0)
         self.acc.attach_positions(*self.positions.values())
 
     @property
-    def instruments(self) -> List[Instrument]:
+    def instruments(self) -> list[Instrument]:
         return self._instruments
 
     @property
-    def positions(self) -> Dict[Instrument, Position]:
+    def positions(self) -> dict[Instrument, Position]:
         return self._positions
 
     def quote(self, instrument: Instrument) -> Quote | None:
@@ -105,13 +87,13 @@ class DebugStratageyCtx(IStrategyContext):
     def get_reserved(self, instrument: Instrument) -> float:
         return 0.0
 
-    def get_instrument(self, instrument: str) -> Instrument:
+    def query_instrument(self, instrument: str) -> Instrument:
         return self._symbol_to_instrument[instrument]
 
-    def push(self, quotes: Dict[str, Quote]) -> None:
+    def push(self, quotes: dict[str, Quote]) -> None:
         for s, q in quotes.items():
-            self._d_qts[self.get_instrument(s)] = q
-            self.positions[self.get_instrument(s)].update_market_price_by_tick(q)
+            self._d_qts[self.query_instrument(s)] = q
+            self.positions[self.query_instrument(s)].update_market_price_by_tick(q)
             self._c_time = max(q.time, self._c_time)
 
     def reset(self):
@@ -129,16 +111,16 @@ class DebugStratageyCtx(IStrategyContext):
         print(" >>> ", side, instrument, amount)
 
         order = Order(
-            f"test_{self._o_id}",
-            "MARKET",
-            instrument,
-            np.datetime64(0, "ns"),
-            amount,
-            price if price is not None else 0,
-            side,
-            "CLOSED",
-            "gtc",
-            "test1",
+            id=f"test_{self._o_id}",
+            type="MARKET",
+            instrument=instrument,
+            time=np.datetime64(0, "ns"),
+            quantity=amount,
+            price=price if price is not None else 0,
+            side=side,
+            status="CLOSED",
+            time_in_force="gtc",
+            client_id="test1",
         )
 
         self._o_id += 1
@@ -152,22 +134,29 @@ class DebugStratageyCtx(IStrategyContext):
         _p_l, _p_s = 0, 0
         for p in self.positions.values():
             print(f"\t{p}")
-            _p_l += abs(p.market_value_funds) if p.market_value_funds > 0 else 0
-            _p_s += abs(p.market_value_funds) if p.market_value_funds < 0 else 0
+            _p_l += abs(p.notional_value) if p.notional_value > 0 else 0
+            _p_s += abs(p.notional_value) if p.notional_value < 0 else 0
         print(f"\tTOTAL net value: {_p_l + _p_s} | L: {_p_l} S: {_p_s}")
         return _p_l, _p_s
 
 
 class TestPortfolioRelatedStuff:
-
     def test_portfolio_rebalancer_process_signals(self):
         ctx = DebugStratageyCtx(
             ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
             30000,
         )
 
-        I = [ctx.get_instrument(s) for s in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]]
+        I = [ctx.query_instrument(s) for s in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]]
         assert I[0] is not None and I[1] is not None and I[2] is not None
+
+        ctx.push(
+            {
+                "BTCUSDT": Q("2022-01-01", 1),
+                "ETHUSDT": Q("2022-01-01", 1),
+                "SOLUSDT": Q("2022-01-01", 1),
+            }
+        )
 
         tracker = PortfolioRebalancerTracker(30000, 0)
         targets = tracker.process_signals(ctx, [I[0].signal(+0.5), I[1].signal(+0.3), I[2].signal(+0.2)])
@@ -175,7 +164,7 @@ class TestPortfolioRelatedStuff:
         gathering = TestingPositionGatherer()
         gathering.alter_positions(ctx, targets)
 
-        print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
+        # print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
         tracker.process_signals(
             ctx,
             [
@@ -185,7 +174,7 @@ class TestPortfolioRelatedStuff:
             ],
         )
 
-        print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
+        # print(" - - - - - - - - - - - - - - - - - - - - - - - - -")
         targets = tracker.process_signals(
             ctx,
             [
@@ -301,3 +290,49 @@ class TestPortfolioRelatedStuff:
 
         # - long exposure ~ cap / 2
         assert N(_v_l, 10) == ctx.acc.get_total_capital() / 2
+
+    def test_LongShortRatioPortfolioSizer_Perp(self):
+        ctx = DebugStratageyCtx(
+            exchange="BINANCE.UM",
+            symbols=["ADAUSDT", "CRVUSDT", "NEARUSDT", "ETHUSDT", "XRPUSDT", "LTCUSDT"],
+            capital=100000.0,
+        )
+        prt = PortfolioRebalancerTracker(100_000, 10, LongShortRatioPortfolioSizer(longs_to_shorts_ratio=1))
+        g = SimplePositionGatherer()
+
+        # - market data
+        ctx.push(
+            {
+                "ADAUSDT": Q("2022-01-01", 2.5774),
+                "CRVUSDT": Q("2022-01-01", 5.569),
+                "NEARUSDT": Q("2022-01-01", 14.7149),
+                "ETHUSDT": Q("2022-01-01", 3721.67),
+                "XRPUSDT": Q("2022-01-01", 0.8392),
+                "LTCUSDT": Q("2022-01-01", 149.08),
+            }
+        )
+
+        # - 'trade'
+        c_positions = g.alter_positions(
+            ctx,
+            prt.process_signals(
+                ctx,
+                S(
+                    ctx,
+                    # - how it comes from the strategy
+                    {
+                        "ADAUSDT": 0.6143356287746169,
+                        "CRVUSDT": 0.07459699350250036,
+                        "NEARUSDT": 0.31106737772288284,
+                        "ETHUSDT": -0.33,
+                        "XRPUSDT": -0.33,
+                        "LTCUSDT": -0.33,
+                    },
+                ),
+            ),
+        )
+
+        _v_l, _v_s = ctx.pos_board()
+
+        # - expected ratio should be close near 1
+        assert N(_v_l / _v_s, 10) == 1.0
