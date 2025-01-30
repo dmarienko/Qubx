@@ -744,8 +744,37 @@ class TradingSessionResult:
         return HTML(_tmpl)
 
     def to_file(
-        self, name: str, description: str | None = None, compound=True, archive=True, suffix: str | None = None
+        self,
+        name: str,
+        description: str | None = None,
+        compound=True,
+        archive=True,
+        suffix: str | None = None,
+        attachments: list[str] | None = None,
     ):
+        """
+        Save the trading session results to files.
+
+        Args:
+            name (str): Base name/path for saving the files
+            description (str | None, optional): Description to include in info file. Defaults to None.
+            compound (bool, optional): Whether to use compound returns in report. Defaults to True.
+            archive (bool, optional): Whether to zip the output files. Defaults to True.
+            suffix (str | None, optional): Optional suffix to append to filename. Defaults to None.
+            attachments (list[str] | None, optional): Additional files to include. Defaults to None.
+
+        The following files are saved:
+            - info.yml: Contains strategy configuration and metadata
+            - portfolio.csv: Portfolio state log
+            - executions.csv: Trade execution log
+            - signals.csv: Strategy signals log
+            - report.html: HTML performance report
+            - Any provided attachment files
+
+        If archive=True, all files are zipped into a single archive and the directory is removed.
+        """
+        import shutil
+
         if suffix is not None:
             name = f"{name}{suffix}"
         else:
@@ -766,9 +795,13 @@ class TradingSessionResult:
         with open(p / "report.html", "w") as f:
             f.write(self.to_html(compound=compound).data)
 
-        if archive:
-            import shutil
+        # - save attachments
+        if attachments:
+            for a in attachments:
+                if (af := Path(a)).is_file():
+                    shutil.copy(af, p / af.name)
 
+        if archive:
             shutil.make_archive(name, "zip", p)  # type: ignore
             shutil.rmtree(p)  # type: ignore
 

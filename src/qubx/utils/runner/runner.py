@@ -451,9 +451,9 @@ def simulate_strategy(
         s_path = s_path / f"variations.{_v_id}"
         print(f" > Saving variations results to <g>{s_path}</g> ...")
         for k, t in enumerate(test_res):
-            t.to_file(str(s_path), description=_descr, suffix=f".{k}")
+            t.to_file(str(s_path), description=_descr, suffix=f".{k}", attachments=[str(config_file)])
     else:
         print(f" > Saving simulation results to <g>{s_path}</g> ...")
-        test_res[0].to_file(str(s_path), description=_descr)
+        test_res[0].to_file(str(s_path), description=_descr, attachments=[str(config_file)])
 
     return test_res
